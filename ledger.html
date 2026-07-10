@@ -3490,7 +3490,11 @@ function renderReconcile(){
   const wEl=$('reconWarn');
   if(wEl){
     const pd=(perp!=null)?recPerp-perp:null;
-    const material=pd!=null && Math.abs(pd)>Math.max(50,Math.abs(perp)*0.01);
+    // Only alarm on a genuinely material gap. Small perp reconstruction differences are
+    // routine (funding attribution timing, fills near the pagination boundary) and are
+    // already shown quietly by the per-line "recon" tag — the banner is reserved for the
+    // case where enough trades are missing/mis-attributed to actually distort analytics.
+    const material=pd!=null && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05);
     if(material){
       wEl.classList.remove('hide');
       wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`;
