@@ -228,7 +228,19 @@ if (require.main === module) {
     console.warn('[ledger] WARNING: the served HTML has no server-sync client (no initServerSync found).\n'
       + '           You are deploying an OLD ledger.html. The API works, but the app will run browser-only:\n'
       + '           no token prompt, no syncing, journal entries stay in the browser. Update ledger.html.');
-  app.listen(port, () => console.log('[ledger] listening on :' + port));
+  const srv = app.listen(port, () => console.log('[ledger] listening on :' + port));
+
+  // Graceful shutdown. Railway sends SIGTERM to the running container on every redeploy;
+  // without a handler Node dies with exit code 143 (non-zero) and Railway marks the
+  // deployment "Crashed" on every push. Close cleanly and exit 0 instead. The timer is a
+  // backstop in case a client holds a connection open past the drain window.
+  const shutdown = (sig) => {
+    console.log('[ledger] ' + sig + ' received — shutting down');
+    srv.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = { createApp };

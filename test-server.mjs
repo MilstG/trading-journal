@@ -202,5 +202,21 @@ await t("CSP connect-src 'self' still covers same-origin /api calls", () => {
   ok(/connect-src 'self' https:\/\/api\.hyperliquid\.xyz/.test(html));
 });
 
+// Railway sends SIGTERM to the old container on every redeploy. A non-zero exit
+// (Node's default 143) makes Railway flag the deployment "Crashed" on every push.
+await t('server exits 0 on SIGTERM (graceful redeploy)', async () => {
+  const { spawn } = await import('node:child_process');
+  const code = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, [join(here, '..', 'server.js')],
+      { env: { ...process.env, PORT: '39271' } });
+    let out = '';
+    p.stdout.on('data', d => { out += d; if (out.includes('listening')) setTimeout(() => p.kill('SIGTERM'), 50); });
+    p.on('exit', c => resolve(c));
+    p.on('error', reject);
+    setTimeout(() => { p.kill('SIGKILL'); reject(new Error('shutdown timed out')); }, 8000);
+  });
+  ok(code === 0, `expected exit 0, got ${code}`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
