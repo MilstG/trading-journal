@@ -1,0 +1,13 @@
+{
+  "name": "ledger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Client-side Hyperliquid trading journal with a minimal persistence server",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/run-all.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
