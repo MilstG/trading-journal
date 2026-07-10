@@ -42,10 +42,21 @@ await t('serves the app HTML at / with no-cache and nosniff', async () => {
   const body = await r.text();
   ok(body.includes('initServerSync'), 'served file is the sync-capable app');
 });
-await t('health is unauthenticated and reports auth mode', async () => {
+await t('health is unauthenticated and reports auth mode + app sync capability', async () => {
   const r = await fetch(base + '/api/health');
   eq(r.status, 200);
-  eq(await r.json(), { ok: true, auth: true });
+  eq(await r.json(), { ok: true, auth: true, appSyncCapable: true });
+});
+await t('stale ledger.html (no sync client) is detected, not silently served', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ledger-stale-'));
+  const stale = join(dir, 'old.html');
+  writeFileSync(stale, '<html><script>/* an old build with no sync client */</script></html>');
+  const app = createApp({ dataDir: dir, auth: 'secret', htmlPath: stale });
+  eq(app.appSyncCapable, false, 'flag exposed for the boot warning');
+  const b = await listen(app);
+  const h = await (await fetch(b + '/api/health')).json();
+  eq(h.appSyncCapable, false, 'health surfaces the mismatch remotely');
+  await new Promise(res => app.close(res));
 });
 await t('unknown routes 404 as JSON (no path-based file serving → no traversal surface)', async () => {
   for (const p of ['/nope', '/../server.js', '/api/../../etc/passwd']) {

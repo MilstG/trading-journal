@@ -50,6 +50,12 @@ function createApp(opts) {
   const dataFile = path.join(dataDir, 'ledger-data.json');
   fs.mkdirSync(dataDir, { recursive: true });
 
+  // Guard against the easy mistake of deploying server.js next to an older ledger.html:
+  // the API would work while the app silently ran browser-only (no token prompt, no sync).
+  // Detected once at boot, surfaced in the logs and on /api/health.
+  let appSyncCapable = false;
+  try { appSyncCapable = fs.readFileSync(htmlPath, 'utf8').includes('initServerSync'); } catch (e) {}
+
   const readData = () => {
     try { return JSON.parse(fs.readFileSync(dataFile, 'utf8')); } catch (e) { return null; }
   };
@@ -73,7 +79,7 @@ function createApp(opts) {
     res.end(body);
   };
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const url = (req.url || '/').split('?')[0];
 
     // --- static: the app itself ---
@@ -93,7 +99,7 @@ function createApp(opts) {
 
     // --- health: unauthenticated so the client can detect the server and whether auth is on ---
     if (req.method === 'GET' && url === '/api/health') {
-      return json(res, 200, { ok: true, auth: !!auth });
+      return json(res, 200, { ok: true, auth: !!auth, appSyncCapable });
     }
 
     if (url === '/api/data') {
@@ -141,6 +147,8 @@ function createApp(opts) {
 
     return json(res, 404, { error: 'not found' });
   });
+  server.appSyncCapable = appSyncCapable;
+  return server;
 }
 
 if (require.main === module) {
@@ -150,6 +158,10 @@ if (require.main === module) {
     console.warn('[ledger] WARNING: AUTH_TOKEN is not set — the persistence API is open to anyone with the URL.');
   if (!fs.existsSync('/data') && !process.env.DATA_DIR)
     console.warn('[ledger] WARNING: no /data volume detected — data will NOT survive redeploys. Attach a Railway Volume at /data.');
+  if (!app.appSyncCapable)
+    console.warn('[ledger] WARNING: the served HTML has no server-sync client (no initServerSync found).\n'
+      + '           You are deploying an OLD ledger.html. The API works, but the app will run browser-only:\n'
+      + '           no token prompt, no syncing, journal entries stay in the browser. Update ledger.html.');
   app.listen(port, () => console.log('[ledger] listening on :' + port));
 }
 
