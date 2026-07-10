@@ -325,10 +325,19 @@ body.bb .chk.on{border-color:var(--lbl)}
 .diag-card{border:1px solid var(--line);padding:15px 17px}
 .diag-card h3{font-size:10.5px;color:var(--lbl);margin-bottom:12px}
 .diag-card .lead{font-size:11.5px}
-.metric-row{display:flex;justify-content:space-between;gap:14px;padding:6px 0;font-size:12px;border-bottom:1px solid var(--line2)}
+.metric-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 14px;padding:6px 0;font-size:12px;border-bottom:1px solid var(--line2)}
 .metric-row:last-child{border-bottom:none}
-.metric-row .ml{color:var(--muted);font-family:var(--prose)}
-.metric-row .mv{font-weight:600;text-align:right}
+.metric-row .ml{color:var(--muted);font-family:var(--prose);flex:1 1 auto;min-width:0}
+.metric-row .mv{font-weight:600;text-align:right;margin-left:auto;white-space:nowrap}
+/* two-line rows for behavioral states: name + verdict on top, muted detail underneath —
+   avoids the awkward mid-value wrapping of long labels in a left/right metric row */
+.state-row{padding:7px 0;border-bottom:1px solid var(--line2);font-size:12px}
+.state-row:last-child{border-bottom:none}
+.state-row .sr-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.state-row .sr-name{color:var(--text);font-family:var(--prose)}
+.state-row .sr-note{color:var(--faint);font-family:var(--mono);font-size:10.5px;white-space:nowrap;flex-shrink:0}
+.state-row .sr-sub{color:var(--muted);font-size:11.5px;margin-top:2px;font-family:var(--prose)}
+.state-row .sr-sub b{color:var(--text)}
 .diag-list{list-style:none}
 .diag-list li{padding:8px 0;border-bottom:1px solid var(--line2);font-size:12px;line-height:1.55;display:flex;gap:10px;font-family:var(--prose)}
 .diag-list li:last-child{border-bottom:none}
@@ -1130,7 +1139,7 @@ function minerFams(closed,ST){
     dir:[['Long trades',t=>t.dir==='Long'],['Short trades',t=>t.dir==='Short'],['Spot buys',t=>t.dir==='Spot']],
     market:(()=>{ const cnt={}; closed.forEach(t=>{const k=t.symbol||dcoin(t);cnt[k]=(cnt[k]||0)+1;});
       return Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([c])=>[dispMarket(c),t=>(t.symbol||dcoin(t))===c]); })(),
-    session:[['00–08 '+TZ,t=>H(t)<8],['08–16 '+TZ,t=>H(t)>=8&&H(t)<16],['16–24 '+TZ,t=>H(t)>=16]],
+    session:[['00–08h '+TZ,t=>H(t)<8],['08–16h '+TZ,t=>H(t)>=8&&H(t)<16],['16–24h '+TZ,t=>H(t)>=16]],
     day:[['weekends',t=>D(t)===0||D(t)===6],['weekdays',t=>D(t)>0&&D(t)<6]],
     hold:[['quick trades'+(isFinite(hq1)&&hq1>0?' (held under '+fDur(hq1)+')':' (fastest 25%)'),t=>(t.durationMs||0)<=hq1],
           ['long holds'+(isFinite(hq3)?' (held over '+fDur(hq3)+')':' (slowest 25%)'),t=>(t.durationMs||0)>=hq3]],
@@ -2774,8 +2783,11 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
   if(deep&&deep.states){
     const rows=deep.states.filter(x=>!x.skip);
     statesHtml=rows.map(x=>{
-      const b=x.sig?(x.delta<0?'<span class="badge no">drain</span>':'<span class="badge ok">boost</span>'):'<span class="badge mid">no clear effect</span>';
-      return `<div class="metric-row" data-tip="Expectancy of trades entered in this state vs your overall average, in the selected basis. p from a two-sample test vs all other trades; significance is Benjamini–Hochberg FDR-controlled across every state tested, so 'boost'/'drain' isn't just the best of many coin-flips. 'no clear effect' = not distinguishable from your average."><span class="ml">${esc(x.name)} · ${x.n} trades</span><span class="mv">${fmtA(x.exp)}/trade · ${x.delta>=0?'+':'\u2212'}${fmtA(Math.abs(x.delta)).replace('+','')} vs baseline ${b}</span></div>`;
+      const tag=x.sig?(x.delta<0?'<span class="badge no">drain</span>':'<span class="badge ok">boost</span>'):'<span class="sr-note">no clear effect</span>';
+      const d=basis==='pct'
+        ? (x.delta>=0?'+':'\u2212')+Math.abs(x.delta).toFixed(2)+' pts'
+        : (x.delta>=0?'+':'\u2212')+fmtUsd(Math.abs(x.delta));
+      return `<div class="state-row" data-tip="Expectancy of trades entered in this state vs your overall average, in the selected basis. p from a two-sample test vs all other trades; significance is Benjamini–Hochberg FDR-controlled across every state tested, so 'boost'/'drain' isn't just the best of many coin-flips. 'no clear effect' = not distinguishable from your average."><div class="sr-top"><span class="sr-name">${esc(x.name)}</span>${tag}</div><div class="sr-sub">${x.n} trades · averaged <b>${fmtA(x.exp)}</b> per trade · ${d} vs your baseline</div></div>`;
     }).join('')||'<p class="lead">Too few trades per state.</p>';
     const _thr=basis==='pct'?5:100;
     for(const x of rows){
@@ -2792,7 +2804,8 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
   }
   if(deep&&deep.sz){
     const z=deep.sz;
-    szHtml=`<div class="metric-row" data-tip="Spearman rank correlation between position notional and %-return on notional, permutation-tested. Percent basis is deliberate: $ PnL scales mechanically with size, which fakes a correlation — % isolates whether your decision quality actually changes with size."><span class="ml">Do bigger trades do better or worse? (${z.n} trades)</span><span class="mv"><span style="color:var(--faint)">\u03c1=${z.rho.toFixed(2)} · p=${z.p<0.001?'<0.001':z.p.toFixed(3)}</span> ${z.sig?(z.rho<0?'<span class="badge no">bigger = worse</span>':'<span class="badge ok">bigger = better</span>'):'<span class="badge mid">no dependence</span>'}</span></div>`;
+    const szSub=z.sig?(z.rho<0?'your results get worse as your position size grows':'your results improve as your position size grows'):'size barely relates to outcome here';
+    szHtml=`<div class="state-row" data-tip="Spearman rank correlation between position notional and %-return on notional, permutation-tested. Percent basis is deliberate: $ PnL scales mechanically with size, which fakes a correlation — % isolates whether your decision quality actually changes with size."><div class="sr-top"><span class="sr-name">Do bigger trades do better or worse?</span>${z.sig?(z.rho<0?'<span class="badge no">bigger = worse</span>':'<span class="badge ok">bigger = better</span>'):'<span class="sr-note">no dependence</span>'}</div><div class="sr-sub">${z.n} trades · ${szSub} (rank correlation \u03c1=${z.rho.toFixed(2)}, p=${z.p<0.001?'<0.001':z.p.toFixed(3)})</div></div>`;
     if(z.sig&&z.rho<-0.1) ideas.push({w:500,txt:`Outcome falls as size rises (ρ=${z.rho.toFixed(2)}, significant) — conviction sizing is miscalibrated. Cap size at your median notional until the correlation flattens.`});
   }
   let probHtml='';
