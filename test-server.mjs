@@ -138,6 +138,40 @@ await t('non-PUT/GET on /api/data → 405', async () => {
 });
 await new Promise(res => s2.app.close(res));
 
+console.log('\nServer: PWA assets');
+const s3 = makeServer('tok');
+const base3 = await listen(s3.app);
+const authH3 = { Authorization: 'Bearer tok' };
+await t('sw.js, manifest, icon served with right content types', async () => {
+  const sw = await fetch(base3 + '/sw.js');
+  eq(sw.status, 200); ok((sw.headers.get('content-type') || '').includes('javascript'));
+  ok((await sw.text()).includes("u.pathname.startsWith('/api/')"), 'sw never intercepts the API');
+  const mf = await (await fetch(base3 + '/manifest.webmanifest')).json();
+  eq(mf.name, 'Ledger'); eq(mf.display, 'standalone');
+  const ic = await fetch(base3 + '/icon.svg');
+  ok((ic.headers.get('content-type') || '').includes('svg'));
+});
+
+console.log('\nServer: attachments');
+await t('attachment CRUD round-trip', async () => {
+  const arr = ['data:image/jpeg;base64,AAA', 'data:image/png;base64,BBB'];
+  const w = await fetch(base3 + '/api/att/dHJhZGUx', { method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authH3 }, body: JSON.stringify(arr) });
+  eq(await w.json().then(j => j.count), 2);
+  const g = await fetch(base3 + '/api/att/dHJhZGUx', { headers: authH3 });
+  eq(await g.json(), arr);
+  await fetch(base3 + '/api/att/dHJhZGUx', { method: 'DELETE', headers: authH3 });
+  eq((await fetch(base3 + '/api/att/dHJhZGUx', { headers: authH3 })).status, 404);
+});
+await t('attachments require auth and validate keys + payload', async () => {
+  eq((await fetch(base3 + '/api/att/dHJhZGUx')).status, 401);
+  eq((await fetch(base3 + '/api/att/..%2Fescape', { headers: authH3 })).status, 400, 'traversal-shaped key rejected');
+  const bad = await fetch(base3 + '/api/att/dHJhZGUx', { method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authH3 }, body: JSON.stringify(['javascript:evil']) });
+  eq(bad.status, 400, 'non-image payload rejected');
+});
+await new Promise(res => s3.app.close(res));
+
 console.log('\nClient wiring guards');
 await t('boot probes the server before local reads; FSA skipped in server mode', () => {
   ok(html.includes('try{ await initServerSync(); }catch(e){}'));

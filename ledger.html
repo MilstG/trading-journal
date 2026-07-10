@@ -565,6 +565,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <button class="linkish" id="exportTax" data-tip="Accountant-ready CSV of every realized (closed) trade across all markets and wallets, sorted by close date with a tax-year column and a per-year summary. Ignores the view/period filters — tax needs the full history.">Export tax</button>
       <button class="linkish" id="exportJ">Export journal</button>
       <button class="linkish" id="backupAll">Backup all</button>
+      <button class="linkish" id="autoBtn" data-tip="Auto-refresh: while this tab is open, re-fetch new fills every 3 minutes and automatically lock in MAE/MFE measurements for freshly closed trades. Incremental — only new activity is fetched.">⟳ auto: on</button>
       <button class="linkish" id="clearCandles" data-tip="Candles fetched for MAE/MFE excursions are cached in this browser (IndexedDB) and quietly become the largest thing stored. Clearing is safe — candles re-fetch on the next run, and completed MAE/MFE measurements are saved separately and kept.">Clear candle cache</button>
       <button class="linkish hide" id="installPWA" data-tip="Install Ledger as an app (available when the page is served over http/https and your browser supports it).">Install app</button>
     </div>
@@ -730,6 +731,10 @@ async function initServerSync(){
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
       if(j.snapshot)await applySnapshot(j.snapshot); }
+    // PWA: only meaningful when served — installable app icon + offline shell
+    try{ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+      if(!document.querySelector('link[rel=manifest]')){ const l=document.createElement('link');
+        l.rel='manifest'; l.href='/manifest.webmanifest'; document.head.appendChild(l); } }catch(e){}
   }catch(e){ SRV.enabled=false; return false; }
   return true;
 }
@@ -792,7 +797,7 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
     }
     el.className='datafile on';
     const tag=state==='saved'?'<span style="color:var(--profit)">saved</span>':'synced';
-    el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Attachments and candle caches stay in this browser.">☁ Server sync · rev ${SRV.rev} · ${tag}</span>
+    el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>
       <span class="sp"></span><button class="df-btn" id="srvSaveNow">Save now</button>`;
     $('srvSaveNow').onclick=writeServer;
     return;
@@ -1931,6 +1936,8 @@ function renderDiagnostic(closed, allv){
      </div>
      <div class="diag-card" style="margin-top:14px"><h3 data-tip="Where the money actually comes from, by month: price PnL vs funding vs fees. A strategy can be price-profitable and still bleed out through funding payments or fee drag — the single net number hides which one is happening.">PnL decomposition — price vs funding vs fees</h3>
        <div style="height:240px"><canvas id="diagDecomp"></canvas></div></div>
+     <div class="diag-card hide" style="margin-top:14px"><h3 data-tip="Your cumulative net PnL expressed as % of your AVERAGE deployed notional (a stated approximation — you don't hold one fixed stake), against simply buying and holding BTC or HYPE over the same window. The uncomfortable but necessary question for any active trader.">You vs buy-and-hold</h3>
+       <div style="height:240px"><canvas id="diagBench"></canvas></div></div>
    </div>
    <div class="diag-section">
      <h2>Result distribution</h2>
@@ -1990,6 +1997,7 @@ function renderDiagnostic(closed, allv){
   renderDistribution(closed);
   wireExtraDiag(closed,allv,s);
   wireExcursions(closed);
+  renderBenchmark(closed); // async; reveals its card only when candle data exists
   // --- monthly PnL decomposition: price vs funding vs fees ---
   (function(){ const el=$('diagDecomp'); if(!el)return;
     const by={}; for(const t of closed){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0');
@@ -2306,24 +2314,33 @@ async function fetchCandles(coin,itvName,a,b){
   while(start<b&&pages<12){ // HL caps ~5000 candles per response; paginate if the range is bigger
     const rows=await hlPost({type:'candleSnapshot',req:{coin,interval:itvName,startTime:Math.floor(start),endTime:Math.floor(b)}});
     if(!Array.isArray(rows)||!rows.length)break;
-    for(const r of rows)out.push([+r.t,parseFloat(r.h),parseFloat(r.l)]);
+    for(const r of rows)out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c)]);
     const lastT=+rows[rows.length-1].t;
     if(rows.length<5000||lastT<=start)break;
     start=lastT+1; pages++; await sleep(120);
   }
   return out;
 }
-// candles: sorted [openTime, high, low]; a candle counts if it overlaps (openTime, closeTime)
+// candles: sorted [openTime, high, low]; a candle counts if it overlaps (openTime, closeTime).
+// Also records WHEN the extremes happened: maeAt/mfeAt are fractions of the trade's duration
+// (0 = at entry, 1 = at exit, candle-midpoint resolution) — "winners dip early, peak late"
+// is a different exit prescription than "winners peak early, then bleed".
 function computeExcursion(t,candles,ms){
   const a=t.openTime,b=t.closeTime;
   let lo=0,hi=candles.length; while(lo<hi){ const m=(lo+hi)>>1; if(candles[m][0]+ms<=a)lo=m+1; else hi=m; }
-  let h=-Infinity,l=Infinity,n=0;
-  for(let i=lo;i<candles.length&&candles[i][0]<b;i++){ const c=candles[i]; if(c[1]>h)h=c[1]; if(c[2]<l)l=c[2]; n++; }
+  let h=-Infinity,l=Infinity,n=0,hT=null,lT=null;
+  for(let i=lo;i<candles.length&&candles[i][0]<b;i++){ const c=candles[i];
+    if(c[1]>h){ h=c[1]; hT=c[0]; } if(c[2]<l){ l=c[2]; lT=c[0]; } n++; }
   if(!n)return null;
   const e=t.avgEntry; if(!(e>0))return null;
   h=Math.max(h,e); l=Math.min(l,e); // your own entry is by definition part of the path
   const short=t.dir==='Short';
-  return {maePct:(short?(h-e):(e-l))/e*100, mfePct:(short?(e-l):(h-e))/e*100, nC:n};
+  const dur=Math.max(1,b-a);
+  const frac=x=>x==null?null:Math.max(0,Math.min(1,(x+ms/2-a)/dur));
+  const advT=short?hT:lT, favT=short?lT:hT;
+  const maePct=(short?(h-e):(e-l))/e*100, mfePct=(short?(e-l):(h-e))/e*100;
+  return {maePct,mfePct,nC:n,
+    maeAt:maePct>0?frac(advT):null, mfeAt:mfePct>0?frac(favT):null};
 }
 function excSummary(rows){
   if(!rows||!rows.length)return null;
@@ -2342,7 +2359,10 @@ function excSummary(rows){
   const left=W.reduce((s,r)=>s+Math.max(0,mfe$(r)-r.net),0);
   const medMfeW=med(W.map(r=>r.mfePct));
   const wR=W.map(r=>r.maeR).filter(x=>x!=null);
+  const wMaeAt=W.map(r=>r.maeAt).filter(x=>x!=null), wMfeAt=W.map(r=>r.mfeAt).filter(x=>x!=null);
   return {n:use.length,w:W.length,l:L.length,coarseN:rows.length-precise.length,approx,
+    // timing: when winners hit worst dip / peak, as fraction of the hold (0=entry, 1=exit)
+    medMaeAtW:med(wMaeAt), medMfeAtW:med(wMfeAt), timedN:Math.min(wMaeAt.length,wMfeAt.length),
     medMaeW:med(W.map(r=>r.maePct)), medMfeW,
     medMaeL:med(L.map(r=>r.maePct)), medMfeL:med(L.map(r=>r.mfePct)),
     winnersMaeP90:q(W.map(r=>r.maePct),0.9), capture, left,
@@ -2360,6 +2380,7 @@ function excRow(t,ex,risk){
   const r=(risk>0)?risk:null;
   return {id:t.id,coin:t.coin,symbol:t.symbol,dir:t.dir,net:t.net,ret:retPct(t),notional,
     maePct:ex.maePct,mfePct:ex.mfePct,nC:ex.nC,risk:r,
+    maeAt:ex.maeAt!=null?ex.maeAt:null, mfeAt:ex.mfeAt!=null?ex.mfeAt:null,
     itvMs:ex.itvMs||null, coarse:!!(ex.itvMs&&(t.closeTime-t.openTime)<2*ex.itvMs),
     maeR:r?ex.maePct/100*notional/r:null, mfeR:r?ex.mfePct/100*notional/r:null};
 }
@@ -2391,7 +2412,7 @@ async function runExcursions(closed,openTrades){
   const store=new Map(); const skippedCoins=new Set(); const measured=new Map();
   let pending=[];
   for(const t of base){ const p=persisted.rows[t.id];
-    if(p&&p.maePct!=null)measured.set(t.id,{t,ex:{maePct:p.maePct,mfePct:p.mfePct,nC:p.nC,itvMs:p.itvMs}});
+    if(p&&p.maePct!=null)measured.set(t.id,{t,ex:{maePct:p.maePct,mfePct:p.mfePct,nC:p.nC,itvMs:p.itvMs,maeAt:p.maeAt!=null?p.maeAt:null,mfeAt:p.mfeAt!=null?p.mfeAt:null}});
     else pending.push(t);
   }
   const reused=measured.size;
@@ -2437,6 +2458,7 @@ async function runExcursions(closed,openTrades){
   let dirty=false;
   for(const {t,ex} of measured.values()){ if(t._open||persisted.rows[t.id])continue;
     persisted.rows[t.id]={maePct:ex.maePct,mfePct:ex.mfePct,nC:ex.nC,itvMs:ex.itvMs,
+      maeAt:ex.maeAt!=null?ex.maeAt:null, mfeAt:ex.mfeAt!=null?ex.mfeAt:null,
       coarse:!!(ex.itvMs&&(t.closeTime-t.openTime)<2*ex.itvMs)}; dirty=true;
   }
   if(dirty){ try{ await idbSet('excRows',persisted); }catch(err){} schedulePersist(); }
@@ -2456,6 +2478,10 @@ function excVerdict(s){
     out.push(`9 in 10 of your winning trades never moved more than <b>${s.winnersMaeP90.toFixed(2)}%</b>${R(s.winnersMaeP90R)} against you before working out. A stop just beyond that line protects almost every winner${s.medMaeL!=null?` — and your typical loser fell <b>${s.medMaeL.toFixed(2)}%</b>, so it cuts those sooner`:''}.`);
   if(s.capture!=null)
     out.push(`For every $1 of peak open profit on winning trades, you banked <b>${Math.round(s.capture*100)}¢</b> and gave back <b>${Math.round(100-s.capture*100)}¢</b> before exiting.`);
+  if(s.medMaeAtW!=null&&s.medMfeAtW!=null&&(s.timedN||0)>=10){
+    const early=s.medMaeAtW<=0.35, late=s.medMfeAtW>=0.6;
+    out.push(`Timing: your typical winner hits its worst dip <b>${Math.round(s.medMaeAtW*100)}%</b> of the way through the hold and peaks at <b>${Math.round(s.medMfeAtW*100)}%</b>${early&&late?' — dip-early-run-late: the danger zone is right after entry, and patience pays at the end':early?' — the danger zone is right after entry':''}.`);
+  }
   if(s.paperWinners!=null&&s.paperWinners>0&&s.l)
     out.push(`<b>${s.paperWinners}</b> of your ${s.l} losers were up as much as a typical winner before closing red — those losses came from <b>exits</b>, not entries.`);
   if(s.approx)
@@ -2539,6 +2565,154 @@ function wireExcursions(closed){
       setStatus(`Excursions computed for ${out.rows.length} trade${out.rows.length===1?'':'s'}${out.openRows&&out.openRows.length?' + '+out.openRows.length+' open':''}${out.skippedN?' · '+out.skippedN+' skipped (no candles)':''}.`);
     }catch(e){ box.innerHTML='<p class="lead">Excursion scan stopped: '+esc(e.message)+'</p>'
       +'<button class="btn ghost" id="runExc">Retry</button>'; wireExcursions(closed); setStatus(''); } };
+}
+
+/* ============================ trade replay (per-trade candle chart) ============================ */
+let _replayChart=null,_replayFor=null;
+async function ensureTradeCandles(t){
+  // fetch (cache-aware) candles for one trade's window, falling back coarser like the main scan
+  const now=Date.now();
+  for(let pass=0;pass<3;pass++){
+    const itv=chooseItv(t,now,pass), k=excKey(t.coin,itv.name);
+    let cache=null; try{ cache=await idbGet('cnd:'+k); }catch(e){}
+    if(!cache||cache.v!==1||!Array.isArray(cache.candles)||!Array.isArray(cache.ranges))cache={v:1,candles:[],ranges:[]};
+    const want=[t.openTime-itv.ms,(t.isOpen?now:t.closeTime)+itv.ms];
+    for(const u of uncoveredRanges(want,cache.ranges)){
+      if(u[1]-u[0]<=itv.ms)continue;
+      try{ const c=await fetchCandles(t.coin,itv.name,u[0],u[1]);
+        cache.candles=mergeCandles(cache.candles,c);
+        cache.ranges=mergeRanges([...cache.ranges,[u[0],u[1]]],1);
+      }catch(e){ return null; }
+    }
+    try{ await idbSet('cnd:'+k,cache); }catch(e){}
+    const a=t.openTime-itv.ms, b=(t.isOpen?now:t.closeTime)+itv.ms;
+    const win=cache.candles.filter(c=>c[0]>=a&&c[0]<=b);
+    if(win.length)return {candles:win,itv};
+  }
+  return null;
+}
+async function openReplay(id,btn){
+  const box=document.getElementById('replay-'+id); if(!box)return;
+  if(_replayFor===id&&_replayChart){ _replayChart.destroy(); _replayChart=null; _replayFor=null; box.innerHTML=''; return; }
+  const t=allTrades.find(x=>x.id===id); if(!t){ box.innerHTML='<p class="lead">Trade not found.</p>'; return; }
+  if(btn)btn.textContent='Loading candles…';
+  const got=await ensureTradeCandles(t);
+  if(btn)btn.textContent='📈 Price chart';
+  if(!got){ box.innerHTML='<p class="lead" style="font-size:12px">No candles available for this trade (coin unsupported or beyond retention).</p>'; return; }
+  const {candles,itv}=got;
+  const closeT=t.isOpen?Date.now():t.closeTime;
+  const ex=computeExcursion({...t,isOpen:false,closeTime:closeT},candles,itv.ms);
+  const px=c=>isFinite(c[3])?c[3]:(c[1]+c[2])/2; // close, else midpoint (older cached candles lack close)
+  const line=candles.map(c=>({x:c[0],y:px(c)}));
+  const hiB=candles.map(c=>({x:c[0],y:c[1]})), loB=candles.map(c=>({x:c[0],y:c[2]}));
+  const marks=[];
+  if(ex&&ex.maeAt!=null)marks.push({x:t.openTime+ex.maeAt*(closeT-t.openTime),y:t.dir==='Short'?Math.max(...candles.map(c=>c[1])):Math.min(...candles.map(c=>c[2])),lbl:'worst dip'});
+  if(ex&&ex.mfeAt!=null)marks.push({x:t.openTime+ex.mfeAt*(closeT-t.openTime),y:t.dir==='Short'?Math.min(...candles.map(c=>c[2])):Math.max(...candles.map(c=>c[1])),lbl:'peak'});
+  const hline=(y,color,dash)=>({type:'line',data:[{x:candles[0][0],y},{x:candles[candles.length-1][0],y}],borderColor:color,borderWidth:1.2,borderDash:dash,pointRadius:0,fill:false});
+  const dsets=[
+    {type:'line',data:hiB,borderColor:'transparent',backgroundColor:'rgba(139,147,255,.10)',pointRadius:0,fill:'+1',tension:0},
+    {type:'line',data:loB,borderColor:'transparent',pointRadius:0,fill:false,tension:0},
+    {type:'line',data:line,borderColor:'rgba(139,147,255,.9)',borderWidth:1.4,pointRadius:0,fill:false,tension:0},
+    hline(t.avgEntry,'rgba(230,180,80,.8)',[4,3]),
+  ];
+  if(!t.isOpen&&t.avgExit>0)dsets.push(hline(t.avgExit,'rgba(47,208,140,.8)',[4,3]));
+  if(marks.length)dsets.push({type:'scatter',data:marks,pointRadius:5,pointStyle:'rectRot',
+    backgroundColor:marks.map(m=>m.lbl==='peak'?'rgba(47,208,140,.95)':'rgba(240,97,109,.95)')});
+  box.innerHTML='<div class="chart-box" style="height:260px;margin:8px 0"><canvas id="rp-'+id.replace(/[^a-zA-Z0-9_-]/g,'_')+'"></canvas></div>'
+    +'<p class="lead" style="font-size:11.5px;color:var(--faint);margin:2px 0 8px">'+itv.name+' candles · shaded band = candle high/low range · gold dash = entry'+(!t.isOpen&&t.avgExit>0?' · green dash = exit':'')+(marks.length?' · markers = worst dip / peak moments':'')+'</p>';
+  const cv=box.querySelector('canvas');
+  if(_replayChart)_replayChart.destroy();
+  _replayFor=id;
+  _replayChart=new Chart(cv,{data:{datasets:dsets},options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{filter:i=>i.datasetIndex===2||i.datasetIndex===dsets.length-1&&marks.length,
+      callbacks:{label:c=>c.raw.lbl?(' '+c.raw.lbl+' · '+c.parsed.y):(' '+new Date(c.parsed.x).toLocaleString()+' · '+c.parsed.y)}}},
+    scales:{x:{type:'linear',min:candles[0][0],max:candles[candles.length-1][0],grid:{color:GRID,drawTicks:false},border:{display:false},
+      ticks:{maxTicksLimit:7,callback:v=>{const d=new Date(v);return (closeT-t.openTime>3*86400e3)?(d.getMonth()+1)+'/'+d.getDate():d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');}}},
+      y:{grid:{color:GRID,drawTicks:false},border:{display:false}}},
+    interaction:{intersect:false,mode:'nearest'}}});
+}
+
+/* ============================ benchmark: you vs buy-and-hold ============================ */
+async function renderBenchmark(closed){
+  const el=$('diagBench'); if(!el||closed.length<5)return;
+  try{
+    const t0=Math.min(...closed.map(t=>t.openTime)), t1=Math.max(...closed.map(t=>t.closeTime));
+    if(!(t1>t0))return;
+    const series={};
+    for(const coin of ['BTC','HYPE']){
+      const k=excKey(coin,'1d');
+      let cache=null; try{ cache=await idbGet('cnd:'+k); }catch(e){}
+      if(!cache||cache.v!==1||!Array.isArray(cache.candles)||!Array.isArray(cache.ranges))cache={v:1,candles:[],ranges:[]};
+      const want=[t0-86400e3,t1+86400e3];
+      for(const u of uncoveredRanges(want,cache.ranges)){
+        if(u[1]-u[0]<=86400e3)continue;
+        try{ const c=await fetchCandles(coin,'1d',u[0],u[1]);
+          cache.candles=mergeCandles(cache.candles,c);
+          cache.ranges=mergeRanges([...cache.ranges,[u[0],u[1]]],1); }catch(e){}
+      }
+      try{ await idbSet('cnd:'+k,cache); }catch(e){}
+      const win=cache.candles.filter(c=>c[0]>=t0-86400e3&&c[0]<=t1+86400e3);
+      if(win.length>=2)series[coin]=win;
+    }
+    if(!Object.keys(series).length)return;
+    // your line: cumulative net as % of average deployed notional — a stated approximation
+    const avgNotional=_avg(closed.map(t=>(t.maxSize||0)*(t.avgEntry||0)).filter(x=>x>0));
+    if(!(avgNotional>0))return;
+    const byClose=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+    let cum=0; const mine=byClose.map(t=>{ cum+=t.net; return {x:t.closeTime,y:cum/avgNotional*100}; });
+    mine.unshift({x:t0,y:0});
+    const px=c=>isFinite(c[3])?c[3]:(c[1]+c[2])/2;
+    const colors={BTC:'rgba(230,180,80,.85)',HYPE:'rgba(47,208,140,.85)'};
+    const dsets=Object.entries(series).map(([coin,win])=>{ const base=px(win[0]);
+      return {label:coin+' hold',data:win.map(c=>({x:c[0],y:(px(c)/base-1)*100})),
+        borderColor:colors[coin],borderWidth:1.3,pointRadius:0,fill:false,tension:0}; });
+    dsets.push({label:'you',data:mine,borderColor:'rgba(139,147,255,.95)',borderWidth:1.8,pointRadius:0,fill:false,stepped:true});
+    const card=el.closest('.diag-card'); if(card)card.classList.remove('hide');
+    if(_diagCharts.bench)_diagCharts.bench.destroy();
+    _diagCharts.bench=new Chart(el,{type:'line',data:{datasets:dsets},options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>' '+c.dataset.label+' '+(c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(1)+'%'}}},
+      scales:{x:{type:'linear',grid:{color:GRID,drawTicks:false},border:{display:false},
+        ticks:{maxTicksLimit:8,callback:v=>{const d=new Date(v);return (d.getMonth()+1)+'/'+d.getDate();}}},
+        y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>v+'%'}}},
+      interaction:{intersect:false,mode:'nearest'}}});
+  }catch(e){ /* benchmark is a bonus — never break the diagnostic over it */ }
+}
+
+/* ============================ auto-refresh + automatic MAE/MFE ratchet ============================ */
+let _loading=false,_excBusy=false;
+async function autoRatchet(){
+  // silently lock in precise MAE/MFE for recently closed trades after each data load —
+  // the ratchet then maintains itself without ever pressing the excursions button
+  if(_excBusy)return; _excBusy=true;
+  try{
+    const now=Date.now();
+    let persisted=null; try{ persisted=await idbGet('excRows'); }catch(e){}
+    const have=(persisted&&persisted.v===1&&persisted.rows)||{};
+    const recent=allTrades.filter(t=>!t.isOpen&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0
+      &&t.closeTime>now-21*86400e3&&!have[t.id]);
+    if(!recent.length)return;
+    setStatus('Locking in MAE/MFE for '+recent.length+' recent trade'+(recent.length===1?'':'s')+'…',true);
+    const out=await runExcursions(recent,[]);
+    for(const r of out.rows)_excM[r.id]=r;
+    schedulePersist();
+    setStatus('MAE/MFE locked in for '+out.rows.length+' recent trade'+(out.rows.length===1?'':'s')+'.');
+  }catch(e){ /* budget guard or transient — the manual button still works */ }
+  finally{ _excBusy=false; }
+}
+let _autoTimer=null;
+function setupAutoRefresh(){
+  if(_autoTimer)clearInterval(_autoTimer);
+  const btn=$('autoBtn');
+  const on=settings.autoRefresh!==false;
+  if(btn){ btn.textContent='⟳ auto: '+(on?'on':'off'); btn.classList.toggle('on',on);
+    btn.onclick=()=>{ settings.autoRefresh=!(settings.autoRefresh!==false); Store.set(S_KEY,settings); setupAutoRefresh(); }; }
+  if(!on)return;
+  _autoTimer=setInterval(()=>{
+    if(document.visibilityState!=='visible')return;
+    if(_loading||!settings.wallets.length)return;
+    loadAll({auto:true});
+  },180000);
 }
 
 let _minerCache={key:null,res:null,deep:null};
@@ -2919,7 +3093,9 @@ function journalRow(t,j,R){
     </div>
     <div class="field"><label>Screenshots / attachments <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— stored in this browser (IndexedDB), not in the JSON backup</span></label>
       <div class="attgrid" id="att-${t.id}"><span style="color:var(--faint);font-size:11.5px">Loading…</span></div>
-      <label class="btn ghost attbtn">+ Add image<input type="file" data-att="${t.id}" accept="image/*" multiple hidden></label></div>
+      <label class="btn ghost attbtn">+ Add image<input type="file" data-att="${t.id}" accept="image/*" multiple hidden></label>
+      <button class="btn ghost attbtn" data-replay="${t.id}" data-tip="Candle chart of this trade: price path with entry/exit lines and the worst-dip / peak moments marked. Uses the locally cached candles where possible.">📈 Price chart</button></div>
+    <div id="replay-${t.id}"></div>
     <div class="jsave"><span class="saved-tag" id="saved-${t.id}">Saved ✓</span>
       <button class="btn" data-save="${t.id}">Save journal</button></div>
   </div></td></tr>`;
@@ -2936,8 +3112,20 @@ function downscaleImage(file,max){ max=max||1200; return new Promise((res,rej)=>
       try{ res(c.toDataURL('image/jpeg',0.72)); }catch(e){ rej(e); } };
     img.onerror=rej; img.src=rd.result; };
   rd.onerror=rej; rd.readAsDataURL(file); }); }
+const _attKey=id=>btoa(unescape(encodeURIComponent(id))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function syncAttUp(id){ if(!SRV.enabled)return;
+  try{ const arr=(await idbGet('att:'+id))||[];
+    if(arr.length)await srvFetch('/api/att/'+_attKey(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(arr)});
+    else await srvFetch('/api/att/'+_attKey(id),{method:'DELETE'});
+  }catch(e){} }
+async function syncAttDown(id){ if(!SRV.enabled)return null;
+  try{ const r=await srvFetch('/api/att/'+_attKey(id));
+    if(!r.ok)return null; const arr=await r.json();
+    if(Array.isArray(arr)&&arr.length){ await idbSet('att:'+id,arr); return arr; }
+  }catch(e){} return null; }
 async function loadAttachments(id){ const box=document.getElementById('att-'+id); if(!box)return;
-  const arr=(await idbGet('att:'+id))||[];
+  let arr=(await idbGet('att:'+id))||[];
+  if(!arr.length&&SRV.enabled){ const dl=await syncAttDown(id); if(dl)arr=dl; } // images follow you across devices
   if(!arr.length){ box.innerHTML='<span style="color:var(--faint);font-size:11.5px">No attachments yet.</span>'; return; }
   box.innerHTML=arr.map((src,i)=>`<div class="attthumb"><img src="${src}" data-att-view="${id}:${i}" alt="attachment ${i+1}"><button class="att-del" data-att-del="${id}:${i}" title="Remove" aria-label="Remove attachment ${i+1}">×</button></div>`).join(''); }
 async function addAttachments(id,files){ const box=document.getElementById('att-'+id);
@@ -2945,9 +3133,9 @@ async function addAttachments(id,files){ const box=document.getElementById('att-
   let arr=(await idbGet('att:'+id))||[];
   for(const f of files){ if(!/^image\//.test(f.type))continue; if(arr.length>=12){ setStatus('Max 12 images per trade.'); break; }
     try{ arr.push(await downscaleImage(f)); }catch(e){} }
-  await idbSet('att:'+id,arr); loadAttachments(id); }
+  await idbSet('att:'+id,arr); loadAttachments(id); syncAttUp(id); }
 async function removeAttachment(id,idx){ let arr=(await idbGet('att:'+id))||[]; arr.splice(idx,1);
-  if(arr.length)await idbSet('att:'+id,arr); else await idbDel('att:'+id); loadAttachments(id); }
+  if(arr.length)await idbSet('att:'+id,arr); else await idbDel('att:'+id); loadAttachments(id); syncAttUp(id); }
 function ensureJ(id){ if(!journal[id])journal[id]={notes:'',tags:[],setup:'',rating:0,mistakes:[],risk:null}; return journal[id]; }
 async function saveJournal(id){
   const j=ensureJ(id);
@@ -3113,6 +3301,7 @@ async function removeWallet(i){
   setStatus('Removed '+labelFor(w)+(settings.wallets.length?'':' · list empty'));
 }
 async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
+  if(_loading)return; _loading=true; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
   if(!settings.wallets.length){ setErr('Add at least one wallet address first.'); return; }
   $('loadAll').disabled=true;
@@ -3175,6 +3364,9 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
     setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
   }catch(e){ console.error(e); setErr('Couldn\u2019t reach Hyperliquid from the browser ('+e.message+'). Use “Paste data” instead.'); }
   finally{ $('loadAll').disabled=false; }
+
+  } finally { _loading=false; }
+  autoRatchet();
 }
 async function loadFromPaste(fills){
   if(!fills.length){ setErr('No fills found in that data.'); return; }
@@ -3292,6 +3484,7 @@ document.querySelectorAll('.trades th.sortable').forEach(th=>{
 $('tbody').addEventListener('click',e=>{
   const save=e.target.closest('[data-save]'); if(save){ saveJournal(save.dataset.save); return; }
   const del=e.target.closest('[data-att-del]'); if(del){ const[id,idx]=del.dataset.attDel.split(':'); removeAttachment(id,+idx); return; }
+  const rp=e.target.closest('[data-replay]'); if(rp){ openReplay(rp.dataset.replay,rp); return; }
   const av=e.target.closest('[data-att-view]'); if(av){ const w=window.open(); if(w)w.document.write('<img src="'+av.getAttribute('src')+'" style="max-width:100%">'); return; }
   const star=e.target.closest('.star'); if(star){ setStar(star); return; }
   const chk=e.target.closest('.chk'); if(chk){ const id=chk.parentElement.dataset.id,m=chk.querySelector('input').dataset.m;
@@ -3465,6 +3658,7 @@ window.addEventListener('appinstalled',()=>{ const b=$('installPWA'); if(b)b.cla
     else renderDatafile();
   }catch(e){ renderDatafile(); }
   if(settings.wallets.length) setStatus(settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' remembered — hit Load all to refresh.');
+  setupAutoRefresh();
 })();
 </script>
 </body>

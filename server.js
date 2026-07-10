@@ -48,7 +48,11 @@ function createApp(opts) {
        .find(p => fs.existsSync(p))
     || path.join(__dirname, 'ledger.html');
   const dataFile = path.join(dataDir, 'ledger-data.json');
+  const attDir = path.join(dataDir, 'att');
   fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(attDir, { recursive: true });
+  const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
+  const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
 
   // Guard against the easy mistake of deploying server.js next to an older ledger.html:
   // the API would work while the app silently ran browser-only (no token prompt, no sync).
@@ -97,6 +101,35 @@ function createApp(opts) {
       return;
     }
 
+    // --- PWA assets (tiny, inline — no extra files to deploy) ---
+    if (req.method === 'GET' && url === '/sw.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' });
+      // network-first for the app shell so updates land immediately; cached copy = offline fallback.
+      // API and exchange calls are never intercepted.
+      return res.end(
+        "const C='ledger-v1';" +
+        "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.add('/')))});" +
+        "self.addEventListener('activate',e=>{e.waitUntil(clients.claim())});" +
+        "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);" +
+        "if(u.origin!==location.origin||u.pathname.startsWith('/api/'))return;" +
+        "if(e.request.mode==='navigate'||u.pathname==='/'){e.respondWith(" +
+        "fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put('/',cp));return r;})" +
+        ".catch(()=>caches.match('/')));}});");
+    }
+    if (req.method === 'GET' && url === '/manifest.webmanifest') {
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
+      return res.end(JSON.stringify({ name: 'Ledger', short_name: 'Ledger',
+        start_url: '/', display: 'standalone', background_color: '#0c0e14', theme_color: '#0c0e14',
+        icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] }));
+    }
+    if (req.method === 'GET' && url === '/icon.svg') {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' });
+      return res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        + '<rect width="100" height="100" rx="18" fill="#0c0e14"/>'
+        + '<path d="M20 72 L38 50 L52 60 L80 28" stroke="#8b93ff" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+        + '<circle cx="80" cy="28" r="6" fill="#2fd08c"/></svg>');
+    }
+
     // --- health: unauthenticated so the client can detect the server and whether auth is on ---
     if (req.method === 'GET' && url === '/api/health') {
       return json(res, 200, { ok: true, auth: !!auth, appSyncCapable });
@@ -142,6 +175,39 @@ function createApp(opts) {
         return;
       }
 
+      return json(res, 405, { error: 'method not allowed' });
+    }
+
+    // --- journal image attachments: /api/att/<base64url-key> ---
+    const attMatch = url.match(/^\/api\/att\/([^/]+)$/);
+    if (attMatch) {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      const key = attMatch[1];
+      if (!ATT_KEY.test(key)) return json(res, 400, { error: 'bad attachment key' });
+      const file = path.join(attDir, key + '.json');
+      if (req.method === 'GET') {
+        return fs.readFile(file, (err, buf) => err
+          ? json(res, 404, { error: 'not found' })
+          : (res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }), res.end(buf)));
+      }
+      if (req.method === 'PUT') {
+        let size = 0; const chunks = []; let aborted = false;
+        req.on('data', c => { size += c.length;
+          if (size > MAX_ATT) { aborted = true; json(res, 413, { error: 'attachments too large' }); req.destroy(); return; }
+          chunks.push(c); });
+        req.on('end', () => { if (aborted) return;
+          let arr; try { arr = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
+          if (!Array.isArray(arr) || !arr.every(x => typeof x === 'string' && x.startsWith('data:image/')))
+            return json(res, 400, { error: 'expected array of image data URLs' });
+          try { fs.writeFileSync(file + '.tmp', JSON.stringify(arr)); fs.renameSync(file + '.tmp', file); }
+          catch (e) { return json(res, 500, { error: 'write failed' }); }
+          return json(res, 200, { ok: true, count: arr.length }); });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        try { fs.unlinkSync(file); } catch (e) {}
+        return json(res, 200, { ok: true });
+      }
       return json(res, 405, { error: 'method not allowed' });
     }
 
