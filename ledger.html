@@ -506,6 +506,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <button data-tab="dash" class="on" role="tab" aria-selected="true" aria-controls="dashView">Dashboard</button>
       <button data-tab="review" role="tab" aria-selected="false" aria-controls="reviewView">Review</button>
       <button data-tab="diag" role="tab" aria-selected="false" aria-controls="diagView">Diagnostic</button>
+      <button data-tab="proj" role="tab" aria-selected="false" aria-controls="projView" data-tip="Simulate your current performance forward — weekly / monthly / yearly pace, a Monte Carlo fan of possible equity paths, and milestone dates. Positive visualization, not a forecast.">Project</button>
     </div>
     <div id="reconWarn" class="reconwarn hide"></div>
     <div id="reconcile" class="reconcile hide"></div>
@@ -575,6 +576,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <span class="count" id="tcount"></span>
       <button class="linkish" id="exportCsv">Export CSV</button>
       <button class="linkish" id="exportTax" data-tip="Accountant-ready CSV of every realized (closed) trade across all markets and wallets, sorted by close date with a tax-year column and a per-year summary. Ignores the view/period filters — tax needs the full history.">Export tax</button>
+      <button class="linkish" id="exportTaxPdf" data-tip="Bank-statement-style PDF for your accountant: per-year and per-month summaries plus every realized trade with a running balance. Generated entirely in the browser — nothing leaves your machine. Ignores view/period filters.">Tax PDF</button>
       <button class="linkish" id="exportJ">Export journal</button>
       <button class="linkish" id="backupAll">Backup all</button>
       <button class="linkish" id="autoBtn" data-tip="Auto-refresh: while this tab is open, re-fetch new fills every 3 minutes and automatically lock in MAE/MFE measurements for freshly closed trades. Incremental — only new activity is fetched.">⟳ auto: on</button>
@@ -617,6 +619,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
     </div><!-- /dashView -->
     <div id="diagView" class="hide" role="tabpanel" aria-label="Diagnostic"></div>
     <div id="reviewView" class="hide" role="tabpanel" aria-label="Review"></div>
+    <div id="projView" class="hide" role="tabpanel" aria-label="Projection"></div>
   </div>
 </div>
 
@@ -1143,6 +1146,61 @@ function mcMaxDD(nets,iters){ if(nets.length<2)return null; const dds=new Array(
     let peak=0,cum=0,mdd=0; for(const n of a){ cum+=n; if(cum>peak)peak=cum; const dd=cum-peak; if(dd<mdd)mdd=dd; } dds[k]=-mdd; }
   dds.sort((a,b)=>a-b); const q=p=>dds[Math.min(iters-1,Math.floor(p*iters))];
   return {median:q(0.5),p95:q(0.95)}; }
+/* ============================ forward projection (Project tab) ============================ */
+// Calendar daily net series over a lookback window (flat days included, ending today).
+// Pure given tzMidnight/addDays/isWin/isLoss, so the Node harness can pin exact outputs.
+function projBaseline(trades, lookbackDays, now){
+  now=now||Date.now();
+  const closed=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
+  const from=lookbackDays>0? now-lookbackDays*86400000 : -Infinity;
+  const inWin=closed.filter(t=>t.closeTime>=from);
+  if(!inWin.length) return null;
+  const m={}; let min=Infinity;
+  inWin.forEach(t=>{ const k=tzMidnight(t.closeTime); m[k]=(m[k]||0)+t.net; if(k<min)min=k; });
+  const end=tzMidnight(now);
+  const daily=[]; let active=0;
+  for(let d=min; d<=end; d=addDays(d,1)){ daily.push(m[d]||0); if(m[d]!=null)active++; }
+  const total=inWin.reduce((s,t)=>s+t.net,0);
+  const w=inWin.filter(t=>isWin(t.net)).length, l=inWin.filter(t=>isLoss(t.net)).length;
+  return { daily, trades:inWin.length, total,
+    perDay: daily.length? total/daily.length : 0,
+    activeDays:active, calDays:daily.length,
+    winRate:(w+l)? w/(w+l) : null,
+    expectancy: total/inWin.length,
+    tradesPerWeek: daily.length? inWin.length/(daily.length/7) : 0 };
+}
+// Bootstrap Monte Carlo: resample the observed daily distribution i.i.d. forward
+// `horizonDays`. Deterministic for a given seed (mulberry32 via _srand). Returns per-day
+// quantile bands of the cumulative-PnL path plus end-of-horizon quantiles.
+function projectForward(daily, horizonDays, paths, seed){
+  if(!daily||!daily.length||!(horizonDays>=1)) return null;
+  paths=paths||400; horizonDays=Math.floor(horizonDays);
+  _srand(seed!=null?seed:_hashSeed(daily.length+':'+horizonDays+':'+daily.reduce((s,x)=>s+x,0).toFixed(2)));
+  const N=daily.length, ends=new Array(paths), cums=new Array(paths);
+  for(let p=0;p<paths;p++){ let c=0; const row=new Float64Array(horizonDays);
+    for(let d=0;d<horizonDays;d++){ c+=daily[(_rng()*N)|0]; row[d]=c; }
+    cums[p]=row; ends[p]=c; }
+  const q=(sorted,p)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.round(p*(sorted.length-1))))];
+  const bands={p05:[],p25:[],p50:[],p75:[],p95:[]};
+  const col=new Array(paths);
+  for(let d=0; d<horizonDays; d++){
+    for(let p=0;p<paths;p++)col[p]=cums[p][d];
+    const s=col.slice().sort((a,b)=>a-b);
+    bands.p05.push(q(s,0.05)); bands.p25.push(q(s,0.25)); bands.p50.push(q(s,0.5)); bands.p75.push(q(s,0.75)); bands.p95.push(q(s,0.95));
+  }
+  const es=ends.slice().sort((a,b)=>a-b);
+  return { bands, end:{p05:q(es,0.05),p25:q(es,0.25),p50:q(es,0.5),p75:q(es,0.75),p95:q(es,0.95)},
+    probPositive: es.filter(v=>v>0).length/paths };
+}
+// Next "nice round" milestone targets strictly above `start` (1 / 2 / 2.5 / 5 x 10^k ladder).
+function projMilestones(start, count){
+  count=count||4; const out=[]; if(!isFinite(start))return out;
+  const steps=[1,2,2.5,5]; let cands=[];
+  for(let e=2;e<=9;e++) for(const s of steps) cands.push(s*Math.pow(10,e));
+  cands=[...new Set(cands)].sort((a,b)=>a-b);
+  for(const c of cands){ if(c>start+1e-9){ out.push(c); if(out.length>=count)break; } }
+  return out;
+}
 function currentDD(nets){ let peak=0,cum=0,peakIdx=-1;
   for(let i=0;i<nets.length;i++){ cum+=nets[i]; if(cum>=peak){peak=cum;peakIdx=i;} }
   return {dd:cum-peak, pct:peak>0?Math.abs(cum-peak)/peak:null, since:nets.length-1-peakIdx}; }
@@ -3390,6 +3448,7 @@ function render(){
   refreshTagFilter(); renderTable();
   if(activeTab==='diag') renderDiagnostic(pt,ptAll);
   if(activeTab==='review') renderReview();
+  if(activeTab==='proj') renderProjection();
 }
 function renderHeaderSummary(){
   const el=$('hdrsum'); if(!el)return;
@@ -3477,6 +3536,88 @@ function renderReview(){
      </div>
    </div></div>
    <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>`;
+}
+/* ============================ Project tab ============================ */
+let _proj={look:90,hor:182}; let _projChart=null;
+const PROJ_LOOKS=[[30,'Last 30 days'],[60,'Last 60 days'],[90,'Last 90 days'],[180,'Last 180 days'],[365,'Last year'],[0,'All history']];
+const PROJ_HORS=[[30,'1 month'],[91,'3 months'],[182,'6 months'],[365,'1 year'],[730,'2 years']];
+function renderProjection(){
+  const el=$('projView'); if(!el)return;
+  if(_projChart){ _projChart.destroy(); _projChart=null; }
+  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  if(closed.length<5){ el.innerHTML='<div class="diag-section"><p class="lead">Need at least 5 closed trades in this view to project forward. Load more history first.</p></div>'; return; }
+  let base=projBaseline(closed,_proj.look);
+  if((!base||base.trades<5)&&_proj.look>0) base=projBaseline(closed,0); // fall back to all history if the window is too thin
+  if(!base){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades inside the selected lookback window.</p></div>'; return; }
+  const fc=projectForward(base.daily,_proj.hor,400);
+  const now=Date.now(), startBal=closed.reduce((s,t)=>s+t.net,0);
+  const medPerDay=fc.end.p50/_proj.hor;
+  const horLabel=(PROJ_HORS.find(h=>h[0]===_proj.hor)||[0,_proj.hor+' days'])[1];
+  const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+  const usd=v=>'<span class="'+cls(v)+'">'+fmtUsd(v)+'</span>';
+  const sel=(id,opts,cur)=>`<select id="${id}">`+opts.map(o=>`<option value="${o[0]}"${o[0]===cur?' selected':''}>${o[1]}</option>`).join('')+'</select>';
+  // milestones off the median simulated pace
+  const targets=projMilestones(startBal,4);
+  const msRows=medPerDay>0? targets.map(tg=>{ const days=Math.ceil((tg-startBal)/medPerDay);
+      const dt=new Date(now+days*86400000), p=tzParts(dt.getTime());
+      return mrow(fmtUsd(tg).replace('.00',''),`${fmtUsd(tg-startBal).replace('.00','')} away · ~${days<45?days+' days':Math.round(days/30.44)+' months'} · ${MONTHS[p.mo]} ${p.y}`,'At your median simulated pace of '+fmtUsd(medPerDay)+'/day.');
+    }).join('')
+    : '<p class="lead">Median simulated pace is not positive over this lookback, so milestone dates are unavailable. Pick a stronger stretch — or go make one.</p>';
+  el.innerHTML=`
+   <div class="diag-section"><h2>Projection <span>· if you kept trading exactly like this</span></h2>
+    <p class="lead">A visualization, not a forecast: this just replays your recent daily results forward a few hundred times and shows where the paths land. Markets owe nobody their past distribution — but it is a fine way to see what staying the course could look like.</p>
+    <div class="filters" style="margin-bottom:14px">
+      ${sel('projLook',PROJ_LOOKS,_proj.look)}
+      ${sel('projHor',PROJ_HORS,_proj.hor)}
+      <span class="count">basis: ${base.trades} trades over ${base.calDays} days (${base.activeDays} active)</span>
+    </div>
+    <div class="diag-grid">
+      <div class="diag-card"><h3>Your current pace</h3>
+        ${mrow('Avg per calendar day',usd(base.perDay),'Lookback net divided by all calendar days, flat days included.')}
+        ${mrow('Trades / week',base.tradesPerWeek.toFixed(1))}
+        ${mrow('Win rate',base.winRate==null?'—':(base.winRate*100).toFixed(0)+'%','Scratches inside the break-even band excluded.')}
+        ${mrow('Expectancy / trade',usd(base.expectancy))}
+        ${mrow('Lookback net',usd(base.total))}
+      </div>
+      <div class="diag-card"><h3>If you keep this up</h3>
+        ${mrow('Per week',usd(base.perDay*7))}
+        ${mrow('Per month',usd(base.perDay*30.44))}
+        ${mrow('Per year',usd(base.perDay*365.25))}
+        <p class="mini-note">Straight-line extrapolation of your average day. The chart below adds the uncertainty.</p>
+      </div>
+      <div class="diag-card"><h3>${esc(horLabel)} out — simulated</h3>
+        ${mrow('Median path',usd(fc.end.p50))}
+        ${mrow('Good stretch (75th)',usd(fc.end.p75))}
+        ${mrow('Hot streak (95th)',usd(fc.end.p95))}
+        ${mrow('Rough stretch (25th)',usd(fc.end.p25))}
+        ${mrow('Odds you finish green',(fc.probPositive*100).toFixed(0)+'%','Share of 400 simulated paths ending above zero.')}
+      </div>
+      <div class="diag-card"><h3>Milestones <span style="color:var(--faint)">from ${esc(fmtUsd(startBal))} realized</span></h3>
+        ${msRows}
+      </div>
+    </div>
+   </div>
+   <div class="diag-section"><h2>Possible paths <span>· cumulative PnL from today</span></h2>
+    <div class="card"><div class="chart-box" style="height:300px"><canvas id="projChart"></canvas></div>
+    <p class="mini-note">Solid line = median of 400 bootstrap simulations; inner band = middle 50% of paths; outer band = middle 90%. Deterministic for a given data selection.</p></div>
+   </div>`;
+  $('projLook').onchange=e=>{ _proj.look=+e.target.value; renderProjection(); };
+  $('projHor').onchange=e=>{ _proj.hor=+e.target.value; renderProjection(); };
+  const start=tzMidnight(now), labels=[];
+  for(let d=1; d<=_proj.hor; d++){ const p=tzParts(addDays(start,d)); labels.push(MONTHS[p.mo]+' '+p.day+(_proj.hor>200?' \u2019'+String(p.y).slice(2):'')); }
+  const G='#2FD08C';
+  const band=(data,bg,bw)=>({data,borderColor:'rgba(47,208,140,'+bw+')',borderWidth:1,pointRadius:0,fill:false,tension:.1});
+  const ds=[
+    Object.assign(band(fc.bands.p95,0,.30),{label:'95th'}),
+    Object.assign(band(fc.bands.p05,0,.30),{label:'5th',fill:'-1',backgroundColor:'rgba(47,208,140,.06)'}),
+    Object.assign(band(fc.bands.p75,0,0),{label:'75th',borderColor:'rgba(47,208,140,0)'}),
+    Object.assign(band(fc.bands.p25,0,0),{label:'25th',borderColor:'rgba(47,208,140,0)',fill:'-1',backgroundColor:'rgba(47,208,140,.14)'}),
+    {label:'median',data:fc.bands.p50,borderColor:G,borderWidth:2,pointRadius:0,fill:false,tension:.1}
+  ];
+  _projChart=new Chart($('projChart'),{type:'line',data:{labels,datasets:ds},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+fmtUsd(c.parsed.y)}}},
+      scales:scales()}});
 }
 function renderReconcile(){
   const el=$('reconcile');
@@ -3629,10 +3770,11 @@ $('rBasis').addEventListener('change',async e=>{ settings.rBasis=e.target.value;
   await Store.set(S_KEY,settings); if(allTrades.length)render(); });
 function activateTab(b){ if(!b)return;
   activeTab=b.dataset.tab; document.querySelectorAll('#topnav button').forEach(x=>{ const on=x===b; x.classList.toggle('on',on); x.setAttribute('aria-selected',on?'true':'false'); });
-  $('dashView').classList.toggle('hide',activeTab!=='dash'); $('diagView').classList.toggle('hide',activeTab!=='diag'); $('reviewView').classList.toggle('hide',activeTab!=='review');
+  $('dashView').classList.toggle('hide',activeTab!=='dash'); $('diagView').classList.toggle('hide',activeTab!=='diag'); $('reviewView').classList.toggle('hide',activeTab!=='review'); $('projView').classList.toggle('hide',activeTab!=='proj');
   renderReconcile();
   if(activeTab==='diag') renderDiagnostic(periodTrades(),periodTradesAll());
-  if(activeTab==='review') renderReview(); }
+  if(activeTab==='review') renderReview();
+  if(activeTab==='proj') renderProjection(); }
 $('topnav').addEventListener('click',e=>{ const b=e.target.closest('button'); if(b)activateTab(b); });
 $('topnav').addEventListener('keydown',e=>{ if(e.key!=='ArrowRight'&&e.key!=='ArrowLeft')return;
   const btns=[...document.querySelectorAll('#topnav button')]; const i=btns.indexOf(document.activeElement); if(i<0)return;
@@ -3783,6 +3925,197 @@ $('exportCsv').onclick=()=>{
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-trades-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
   setStatus('Exported '+rows.length+' trades (current filters) to CSV.');
+};
+/* ============================ tax statement PDF ============================ */
+// Minimal single-purpose PDF writer: US-letter pages, base-14 Courier fonts, zero deps —
+// keeps the app self-contained and CSP-clean. Courier is fixed-width (600/1000 em) so
+// column alignment is exact and the Node harness can verify layout math.
+class MiniPDF{
+  constructor(){ this.pages=[]; this.newPage(); }
+  newPage(){ this._ops=[]; this.pages.push(this._ops); }
+  usePage(i){ this._ops=this.pages[i]; }
+  _esc(s){ s=String(s)
+      .replace(/[\u2014\u2013\u2212]/g,'-').replace(/\u00b7/g,'.').replace(/\u2248/g,'~')
+      .replace(/\u00d7/g,'x').replace(/\u2192/g,'->').replace(/[\u2018\u2019]/g,"'")
+      .replace(/[\u201c\u201d]/g,'"').replace(/[^\x20-\x7E]/g,'?');
+    return s.replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
+  w(s,size){ return String(s).length*0.6*(size||8); } // Courier advance = 600/1000 em
+  text(x,y,s,o={}){ const size=o.size||8, f=o.bold?'F2':(o.italic?'F3':'F1'), c=o.color||[0,0,0];
+    this._ops.push(`BT /${f} ${size} Tf ${c[0]} ${c[1]} ${c[2]} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${this._esc(s)}) Tj ET`); }
+  textR(x,y,s,o={}){ this.text(x-this.w(s,o.size||8),y,s,o); } // right-aligned
+  line(x1,y1,x2,y2,o={}){ const c=o.color||[0.72,0.74,0.78];
+    this._ops.push(`${c[0]} ${c[1]} ${c[2]} RG ${(o.w||0.7)} w ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`); }
+  rect(x,y,w,h,o={}){ const c=o.fill||[0.95,0.95,0.96];
+    this._ops.push(`${c[0]} ${c[1]} ${c[2]} rg ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`); }
+  output(){
+    const n=this.pages.length, objs=[];
+    const pageRefs=[]; let num=6;
+    for(let i=0;i<n;i++){ pageRefs.push({page:num,content:num+1}); num+=2; }
+    objs[1]='<< /Type /Catalog /Pages 2 0 R >>';
+    objs[2]=`<< /Type /Pages /Kids [${pageRefs.map(r=>r.page+' 0 R').join(' ')}] /Count ${n} >>`;
+    objs[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>';
+    objs[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>';
+    objs[5]='<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Oblique >>';
+    for(let i=0;i<n;i++){ const r=pageRefs[i];
+      objs[r.page]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents ${r.content} 0 R >>`;
+      objs[r.content]={stream:this.pages[i].join('\n')};
+    }
+    let out='%PDF-1.4\n'; const offs=[0];
+    for(let i=1;i<num;i++){ offs[i]=out.length; const o=objs[i];
+      out+=(o&&o.stream!==undefined)
+        ? `${i} 0 obj\n<< /Length ${o.stream.length} >>\nstream\n${o.stream}\nendstream\nendobj\n`
+        : `${i} 0 obj\n${o}\nendobj\n`;
+    }
+    const xref=out.length;
+    out+=`xref\n0 ${num}\n0000000000 65535 f \n`;
+    for(let i=1;i<num;i++) out+=String(offs[i]).padStart(10,'0')+' 00000 n \n';
+    out+=`trailer\n<< /Size ${num} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    return out;
+  }
+}
+// Pure statement model: chronological realized trades grouped by UTC tax year with monthly
+// subtotals and a running balance (cumulative realized net from the first trade onward).
+// Sign convention matches the tax CSV: fees shown as a negative cost; pnl+fees+funding=net.
+function taxStatementModel(trades,wallets,nowIso){
+  const rows=trades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
+  if(!rows.length)return null;
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dU=ms=>new Date(ms).toISOString().slice(0,10);
+  let bal=0; const years=[]; let Y=null,M=null;
+  const grand={n:0,pnl:0,fees:0,funding:0,net:0};
+  for(const t of rows){ const d=new Date(t.closeTime), yr=d.getUTCFullYear(), mo=d.getUTCMonth();
+    if(!Y||Y.year!==yr){ Y={year:yr,open:bal,close:bal,totals:{n:0,pnl:0,fees:0,funding:0,net:0},months:[],lines:[]}; years.push(Y); M=null; }
+    if(!M||M.mo!==mo){ M={mo,label:MON[mo]+' '+yr,n:0,wins:0,losses:0,pnl:0,fees:0,funding:0,net:0,endBal:bal}; Y.months.push(M); }
+    const fees=-t.fees, fund=t.funding||0;
+    bal+=t.net;
+    Y.lines.push({date:dU(t.closeTime),symbol:dcoin(t),market:t.market,dir:t.dir,
+      held:t.durationMs?t.durationMs/86400000:0,pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
+      wallet:t.wallet&&(t.wallet.label||(t.wallet.address?t.wallet.address.slice(0,10):''))||''});
+    M.n++; if(t.net>0)M.wins++; else if(t.net<0)M.losses++;
+    M.pnl+=t.pnl; M.fees+=fees; M.funding+=fund; M.net+=t.net; M.endBal=bal;
+    Y.totals.n++; Y.totals.pnl+=t.pnl; Y.totals.fees+=fees; Y.totals.funding+=fund; Y.totals.net+=t.net; Y.close=bal;
+    grand.n++; grand.pnl+=t.pnl; grand.fees+=fees; grand.funding+=fund; grand.net+=t.net;
+  }
+  return { generated:(nowIso||new Date().toISOString()).replace(/\.\d{3}Z$/,'Z'),
+    from:dU(rows[0].closeTime), to:dU(rows[rows.length-1].closeTime),
+    wallets:(wallets||[]).map(w=>({label:w.label||'',address:w.address||''})),
+    years, grand, endBalance:bal };
+}
+// Renders the statement model into PDF ops. Pure aside from fmtUsd.
+function renderTaxPdfDoc(model){
+  const pdf=new MiniPDF(); const W=612,H=792,Mg=42;
+  const gray=[0.44,0.46,0.52], faint=[0.6,0.62,0.67], dark=[0.09,0.10,0.13];
+  const pos=[0.05,0.52,0.33], neg=[0.75,0.19,0.24];
+  const colFor=v=>v>0.004?pos:v<-0.004?neg:dark;
+  const money=v=>fmtUsd(v);
+  let y;
+  const runHead=()=>{ pdf.text(Mg,H-30,'LEDGER - ACCOUNT STATEMENT',{size:7,bold:true,color:gray});
+    pdf.textR(W-Mg,H-30,model.from+' to '+model.to,{size:7,color:gray});
+    pdf.line(Mg,H-36,W-Mg,H-36); y=H-52; };
+  const page=()=>{ pdf.newPage(); runHead(); };
+  const ensure=h=>{ if(y-h<Mg+26)page(); };
+  // ---- cover header ----
+  pdf.text(Mg,H-64,'LEDGER',{size:20,bold:true,color:dark});
+  pdf.textR(W-Mg,H-64,'ACCOUNT STATEMENT',{size:11,color:gray});
+  pdf.text(Mg,H-80,'Hyperliquid trading activity - realized PnL',{size:8.5,color:gray});
+  pdf.line(Mg,H-90,W-Mg,H-90,{w:1.1,color:dark});
+  y=H-108;
+  pdf.text(Mg,y,'Period covered:',{size:8,color:gray}); pdf.text(Mg+110,y,model.from+'  to  '+model.to,{size:8,bold:true}); y-=13;
+  pdf.text(Mg,y,'Generated:',{size:8,color:gray});      pdf.text(Mg+110,y,model.generated,{size:8}); y-=13;
+  if(model.wallets.length){ pdf.text(Mg,y,'Wallets:',{size:8,color:gray});
+    for(const w of model.wallets){ pdf.text(Mg+110,y,(w.label?w.label+'  ':'')+w.address,{size:8}); y-=11; } y-=2; }
+  y-=8;
+  // ---- statement summary (per year) ----
+  const cols={yr:Mg, n:Mg+92, pnl:Mg+205, fees:Mg+285, fund:Mg+365, net:Mg+445, bal:W-Mg};
+  const sumHead=(title)=>{ ensure(40); pdf.rect(Mg-4,y-4,W-2*Mg+8,15); pdf.text(Mg,y,title,{size:8,bold:true,color:dark}); y-=16;
+    pdf.text(cols.yr,y,'TAX YEAR',{size:7,color:gray}); pdf.textR(cols.n,y,'TRADES',{size:7,color:gray});
+    pdf.textR(cols.pnl,y,'REALIZED PNL',{size:7,color:gray}); pdf.textR(cols.fees,y,'FEES',{size:7,color:gray});
+    pdf.textR(cols.fund,y,'FUNDING',{size:7,color:gray}); pdf.textR(cols.net,y,'NET',{size:7,color:gray});
+    pdf.textR(cols.bal,y,'CLOSING BAL',{size:7,color:gray}); y-=4; pdf.line(Mg,y,W-Mg,y); y-=11; };
+  sumHead('STATEMENT SUMMARY');
+  for(const Y of model.years){ ensure(12);
+    pdf.text(cols.yr,y,String(Y.year),{size:8,bold:true});
+    pdf.textR(cols.n,y,String(Y.totals.n),{size:8});
+    pdf.textR(cols.pnl,y,money(Y.totals.pnl),{size:8,color:colFor(Y.totals.pnl)});
+    pdf.textR(cols.fees,y,money(Y.totals.fees),{size:8,color:colFor(Y.totals.fees)});
+    pdf.textR(cols.fund,y,money(Y.totals.funding),{size:8,color:colFor(Y.totals.funding)});
+    pdf.textR(cols.net,y,money(Y.totals.net),{size:8,bold:true,color:colFor(Y.totals.net)});
+    pdf.textR(cols.bal,y,money(Y.close),{size:8});
+    y-=12; }
+  pdf.line(Mg,y+4,W-Mg,y+4); y-=2;
+  pdf.text(cols.yr,y,'TOTAL',{size:8,bold:true});
+  pdf.textR(cols.n,y,String(model.grand.n),{size:8,bold:true});
+  pdf.textR(cols.pnl,y,money(model.grand.pnl),{size:8,bold:true,color:colFor(model.grand.pnl)});
+  pdf.textR(cols.fees,y,money(model.grand.fees),{size:8,bold:true,color:colFor(model.grand.fees)});
+  pdf.textR(cols.fund,y,money(model.grand.funding),{size:8,bold:true,color:colFor(model.grand.funding)});
+  pdf.textR(cols.net,y,money(model.grand.net),{size:8,bold:true,color:colFor(model.grand.net)});
+  pdf.textR(cols.bal,y,money(model.endBalance),{size:8,bold:true});
+  y-=24;
+  // ---- per-year detail ----
+  const dcols={date:Mg, sym:Mg+52, dir:Mg+150, held:Mg+218, pnl:Mg+286, fees:Mg+348, fund:Mg+410, net:Mg+468, bal:W-Mg};
+  const detHead=()=>{ pdf.text(dcols.date,y,'CLOSE',{size:6.5,color:gray}); pdf.text(dcols.sym,y,'MARKET',{size:6.5,color:gray});
+    pdf.text(dcols.dir,y,'SIDE',{size:6.5,color:gray}); pdf.textR(dcols.held,y,'HELD(D)',{size:6.5,color:gray});
+    pdf.textR(dcols.pnl,y,'PNL',{size:6.5,color:gray}); pdf.textR(dcols.fees,y,'FEES',{size:6.5,color:gray});
+    pdf.textR(dcols.fund,y,'FUNDING',{size:6.5,color:gray}); pdf.textR(dcols.net,y,'NET',{size:6.5,color:gray});
+    pdf.textR(dcols.bal,y,'BALANCE',{size:6.5,color:gray}); y-=3.5; pdf.line(Mg,y,W-Mg,y); y-=9.5; };
+  const ensureDet=h=>{ if(y-h<Mg+26){ page(); detHead(); } };
+  for(const Y of model.years){
+    ensure(78);
+    pdf.rect(Mg-4,y-4,W-2*Mg+8,15,{fill:[0.92,0.93,0.94]});
+    pdf.text(Mg,y,'TAX YEAR '+Y.year,{size:8.5,bold:true});
+    pdf.textR(W-Mg,y,'opening '+money(Y.open)+'   closing '+money(Y.close),{size:7.5,color:gray});
+    y-=18;
+    // monthly summary
+    pdf.text(Mg,y,'Monthly summary',{size:7,italic:true,color:gray}); y-=11;
+    const mc={mo:Mg, n:Mg+120, wl:Mg+185, pnl:Mg+265, fees:Mg+330, fund:Mg+395, net:Mg+455, bal:W-Mg};
+    for(const m of Y.months){ ensure(10);
+      pdf.text(mc.mo,y,m.label,{size:7.5});
+      pdf.textR(mc.n,y,m.n+' trades',{size:7.5,color:gray});
+      pdf.textR(mc.wl,y,m.wins+'W/'+m.losses+'L',{size:7.5,color:gray});
+      pdf.textR(mc.pnl,y,money(m.pnl),{size:7.5,color:colFor(m.pnl)});
+      pdf.textR(mc.fees,y,money(m.fees),{size:7.5,color:colFor(m.fees)});
+      pdf.textR(mc.fund,y,money(m.funding),{size:7.5,color:colFor(m.funding)});
+      pdf.textR(mc.net,y,money(m.net),{size:7.5,bold:true,color:colFor(m.net)});
+      pdf.textR(mc.bal,y,money(m.endBal),{size:7.5});
+      y-=10.5; }
+    y-=6;
+    // transaction detail
+    ensure(30);
+    pdf.text(Mg,y,'Transactions ('+Y.lines.length+')',{size:7,italic:true,color:gray}); y-=11;
+    detHead();
+    let alt=false;
+    for(const ln of Y.lines){ ensureDet(9.5);
+      if(alt)pdf.rect(Mg-2,y-2.4,W-2*Mg+4,9.2,{fill:[0.965,0.968,0.975]}); alt=!alt;
+      pdf.text(dcols.date,y,ln.date,{size:7});
+      pdf.text(dcols.sym,y,String(ln.symbol).slice(0,15)+(ln.market==='spot'?' (s)':''),{size:7});
+      pdf.text(dcols.dir,y,ln.dir,{size:7,color:gray});
+      pdf.textR(dcols.held,y,ln.held<0.01?'<0.01':ln.held.toFixed(2),{size:7,color:gray});
+      pdf.textR(dcols.pnl,y,money(ln.pnl),{size:7,color:colFor(ln.pnl)});
+      pdf.textR(dcols.fees,y,money(ln.fees),{size:7,color:colFor(ln.fees)});
+      pdf.textR(dcols.fund,y,money(ln.funding),{size:7,color:colFor(ln.funding)});
+      pdf.textR(dcols.net,y,money(ln.net),{size:7,bold:true,color:colFor(ln.net)});
+      pdf.textR(dcols.bal,y,money(ln.balance),{size:7});
+      y-=9.5; }
+    y-=8; pdf.line(Mg,y+5,W-Mg,y+5,{color:faint});
+    pdf.textR(W-Mg,y-3,'Year '+Y.year+' net: '+money(Y.totals.net),{size:8,bold:true,color:colFor(Y.totals.net)});
+    y-=20;
+  }
+  // ---- footers (need final page count) ----
+  const nP=pdf.pages.length;
+  for(let i=0;i<nP;i++){ pdf.usePage(i);
+    pdf.line(Mg,Mg-8,W-Mg,Mg-8);
+    pdf.text(Mg,Mg-19,'Realized PnL only - no unrealized positions or transferred cost basis. Not tax advice.',{size:6.5,color:faint});
+    pdf.textR(W-Mg,Mg-19,'Page '+(i+1)+' of '+nP,{size:6.5,color:faint});
+  }
+  return pdf.output();
+}
+$('exportTaxPdf').onclick=()=>{
+  const model=taxStatementModel(allTrades,settings.wallets);
+  if(!model){ setStatus('No closed trades to export.'); return; }
+  let doc; try{ doc=renderTaxPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the PDF ('+e.message+').'); return; }
+  const blob=new Blob([doc],{type:'application/pdf'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-statement-'+new Date().toISOString().slice(0,10)+'.pdf'; a.click();
+  setStatus(`Exported statement PDF: ${model.grand.n} realized trades across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
 };
 $('exportTax').onclick=()=>{
   // realized (closed) trades across ALL markets/wallets, ignoring view/period filters
