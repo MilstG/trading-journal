@@ -129,11 +129,18 @@ The statistician's view of your trading. Sections top to bottom:
   etc., each tested for significance.
 - **Edge breakdown** — a dimension selector (coin, hour, weekday, setup, tag…)
   showing exactly where your edge is and isn't, with reliability shading.
+- **What if I stopped doing X** — pick any condition the miner knows about and
+  deterministically replay your actual trade sequence *without* those trades:
+  side-by-side net, expectancy, win rate, drawdown, and an
+  actual-vs-counterfactual equity chart. This is what turns a miner finding
+  into a dollar number. (Hindsight removal is the optimistic bound, and the
+  panel says so.)
 - **Drawdown recovery & streak depth**, **Risk & discipline**,
   **Recommendations**, and the two on-demand engines below.
-- **Export report** (top right) — snapshots this entire view, including any
-  miner/excursion results on screen, into one self-contained HTML file with
-  charts embedded as images. For archiving monthly reviews.
+- **Export report / Export PDF** (top right) — snapshot this entire view,
+  including any miner/excursion results on screen, as a self-contained HTML
+  file or a print-grade PDF with charts embedded as images. For archiving
+  monthly reviews or handing to an accountant/backer.
 
 An **$ / % basis toggle** switches the analytical basis between dollar PnL and
 percent-of-notional return for the distribution, miner, and related panels.
@@ -219,10 +226,21 @@ You get:
   numbers off your average day.
 - **Simulated horizon outcomes** — median, 25th/75th/95th percentile paths and
   the share of simulations that finish green.
+- **Drawdown reality-check** — the honest companion to the fan chart: the max
+  peak-to-trough dip *inside* each simulated path, reported as median / 1-in-4
+  / 1-in-20 quantiles. The fan shows where paths end; this shows how ugly the
+  ride gets on the way.
+- **Sizing at this edge** — full-Kelly and quarter-Kelly risk fractions (and $
+  at your live account value) from the same trades the projection is built on,
+  with the usual "in-sample, edges drift" caveats attached.
 - **Milestones** — the next round-number realized-PnL targets and roughly when
   the median simulated pace reaches them.
 - A **fan chart** of possible cumulative-PnL paths (median line, middle-50%
   and middle-90% bands).
+- A **resampling toggle**: i.i.d. daily (the classic bootstrap) or 5/7-day
+  *block* bootstrap, which samples contiguous runs of days and so preserves
+  your hot/cold streaks — bands typically widen, which is the more honest
+  picture. Both modes are seeded and fully reproducible.
 
 The page says it plainly: markets don't owe anyone their past distribution.
 Treat it as positive visualization of staying the course, nothing more.
@@ -248,9 +266,11 @@ Treat it as positive visualization of staying the course, nothing more.
 | **Export CSV** | The trade table as CSV. |
 | **Tax CSV** | Clean 14-column, ISO-8601, CRLF file of realized results — importable into tax tooling. |
 | **Tax PDF** | Bank-statement-style PDF for your accountant: cover summary per tax year, monthly subtotals, and every realized trade with a running balance and page footers. Generated entirely client-side by a built-in dependency-free PDF writer (base-14 Courier fonts) — nothing leaves your machine, and the strict CSP stays intact. |
+| **Spot lots** | 8949-style lot-level CSV for spot: FIFO cost basis, one row per lot consumed by each sale — quantity, acquired/disposed dates, proceeds, basis, gain, short/long term. Sales of tokens that were transferred or airdropped in (no on-exchange purchase) are emitted at zero cost with an explicit `UNKNOWN BASIS` note for your accountant to resolve. Built from the locally cached fills. |
 | **Export journal** | Journal entries as JSON. |
 | **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
+| **Export PDF** (Diagnostic) | Print-grade PDF sibling of the report: headline stats, every visible chart embedded as a JPEG image (the built-in PDF writer gained DCTDecode image XObjects for this), and the recommendations — opens anywhere, no browser needed. |
 | **Clear candle cache** | Frees the (large) cached candles; saved measurements are kept. |
 
 ## Persistence: three modes
@@ -306,12 +326,23 @@ a public URL). The app asks for the token once per browser.
   at small sample sizes.
 - **hip3 pill** — position/trade on a HIP-3 builder-deployed DEX rather than
   the main perp clearinghouse.
+- **Open-position risk panel** (Dashboard, under the position strip) — the
+  open book summarized as *risk* rather than a list: per-position distance to
+  liquidation sorted nearest-first, net directional exposure by coin netted
+  across wallets (HIP-3 dexs included), concentration, and a warning callout
+  for anything within 10% of its liquidation price.
 
 ## Limitations, stated honestly
 
 - The fills API paginates ~60 pages deep (~120k fills). Wallets beyond that
   can't be fully backfilled — existing local caches preserve older history, so
-  keep backups.
+  keep backups. Caches are now gzip-compressed in IndexedDB
+  (`CompressionStream`, ~5–10× smaller; plain-JSON fallback on old browsers,
+  and backups always store the portable uncompressed shape).
+- Spot FIFO lots are only as complete as the fill history: tokens transferred
+  or airdropped in have no on-exchange purchase, so their sales are exported
+  at zero cost with an explicit `UNKNOWN BASIS` flag rather than a guessed
+  number.
 - Candle retention caps how precisely *old, short* trades can be measured;
   such measurements are marked ≈ and excluded from excursion statistics rather
   than allowed to distort them. The ratchet makes this a shrinking problem.
