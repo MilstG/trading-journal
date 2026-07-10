@@ -252,6 +252,8 @@ body.bb .topnav button.on{color:#FFD79A;background:#0A0A08}
 body.bb .pill{border-color:#3A3A32}
 body.bb .pill.long{border-color:#134D2E} body.bb .pill.short{border-color:#55201F}
 .badge{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;border:1px solid #223049;margin-right:6px;background:none}
+.reconwarn{border:1px solid var(--gold);background:rgba(201,168,92,.07);color:var(--text);font-size:12px;font-family:var(--prose);padding:9px 13px;margin:0 0 12px;line-height:1.5}
+.reconwarn b{color:var(--gold)}
 .badge.ok{color:var(--profit);border-color:#17493A}
 .badge.no{color:var(--loss);border-color:#4A2230}
 .badge.mid{color:var(--gold);border-color:#4A3A20}
@@ -505,6 +507,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <button data-tab="review" role="tab" aria-selected="false" aria-controls="reviewView">Review</button>
       <button data-tab="diag" role="tab" aria-selected="false" aria-controls="diagView">Diagnostic</button>
     </div>
+    <div id="reconWarn" class="reconwarn hide"></div>
     <div id="reconcile" class="reconcile hide"></div>
     <div id="dashView" role="tabpanel" aria-label="Dashboard">
     <div id="guardrails"></div>
@@ -758,6 +761,31 @@ async function connectServerToken(){
   location.reload(); // clean boot with the token applies server data in the right order
 }
 
+async function toggleSnapHistory(){
+  let p=$('snapPanel');
+  if(p){ p.remove(); return; }
+  const host=$('datafile'); if(!host)return;
+  p=document.createElement('div'); p.id='snapPanel'; p.className='datafile'; p.style.cssText='display:block;margin-top:6px';
+  p.innerHTML='<span>Loading snapshot history\u2026</span>'; host.insertAdjacentElement('afterend',p);
+  try{
+    const r=await srvFetch('/api/snapshots'); if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json(); const snaps=j.snapshots||[];
+    if(!snaps.length){ p.innerHTML='<span>No snapshots yet \u2014 one is written per day on the first save of that day.</span>'; return; }
+    p.innerHTML='<span data-tip="One snapshot per day (UTC), kept for 14 days, written automatically on the first save of each day. Restoring loads that day\u2019s data and saves it as the newest revision \u2014 nothing is deleted, and today\u2019s pre-restore state is itself in today\u2019s snapshot.">Server snapshots \u2014 restore a previous day:</span> '+
+      snaps.map(s=>`<button class="df-btn snapRestore" data-d="${s.date}">${s.date}${s.rev!=null?' \u00b7 rev '+s.rev:''} \u00b7 ${(s.bytes/1024).toFixed(0)}kB</button>`).join(' ');
+    p.querySelectorAll('.snapRestore').forEach(b=>{ b.onclick=async()=>{
+      if(!confirm('Restore the '+b.dataset.d+' snapshot? Your current data will be replaced (it stays recoverable from today\u2019s snapshot).'))return;
+      b.disabled=true; b.textContent='restoring\u2026';
+      try{
+        const rr=await srvFetch('/api/snapshots/'+b.dataset.d); if(!rr.ok)throw new Error('HTTP '+rr.status);
+        const jj=await rr.json();
+        if(jj&&jj.snapshot){ await applySnapshot(jj.snapshot); await writeServer(); location.reload(); }
+        else throw new Error('snapshot empty');
+      }catch(e){ setErr('Restore failed: '+e.message); b.disabled=false; b.textContent=b.dataset.d; }
+    }; });
+  }catch(e){ p.innerHTML='<span>Could not load snapshots: '+esc(e.message)+'</span>'; }
+}
+
 let _writing=false,_writeAgain=false;
 async function writeLinked(){ if(!linkedHandle)return;
   if(_writing){ _writeAgain=true; return; }
@@ -807,8 +835,9 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
     el.className='datafile on';
     const tag=state==='saved'?'<span style="color:var(--profit)">saved</span>':'synced';
     el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>
-      <span class="sp"></span><button class="df-btn" id="srvSaveNow">Save now</button>`;
+      <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days). Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>`;
     $('srvSaveNow').onclick=writeServer;
+    $('srvHist').onclick=toggleSnapHistory;
     return;
   }
   if(!FSA){ el.className='datafile'; el.innerHTML=`<span class="dot"></span><span>Saved in this browser. For a portable, sync-able copy use <b>Backup all</b> to export / re-import a JSON.</span>`; el.classList.remove('hide'); return; }
@@ -1117,6 +1146,27 @@ function mcMaxDD(nets,iters){ if(nets.length<2)return null; const dds=new Array(
 function currentDD(nets){ let peak=0,cum=0,peakIdx=-1;
   for(let i=0;i<nets.length;i++){ cum+=nets[i]; if(cum>=peak){peak=cum;peakIdx=i;} }
   return {dd:cum-peak, pct:peak>0?Math.abs(cum-peak)/peak:null, since:nets.length-1-peakIdx}; }
+// Longest calendar stretch spent below the high-water mark (peak -> recovery), from
+// chronologically sorted closed trades. `ongoingMs` is set when currently underwater.
+function underwaterStats(chron){ if(!chron.length)return null;
+  let peak=0,cum=0,peakT=chron[0].closeTime,maxSpan=0,spanStart=null;
+  for(const t of chron){ cum+=t.net;
+    if(cum>=peak){ peak=cum;
+      if(spanStart!=null){ const sp=t.closeTime-spanStart; if(sp>maxSpan)maxSpan=sp; spanStart=null; }
+      peakT=t.closeTime; }
+    else if(spanStart==null) spanStart=peakT; }
+  let ongoing=null;
+  if(spanStart!=null){ ongoing=chron[chron.length-1].closeTime-spanStart; if(ongoing>maxSpan)maxSpan=ongoing; }
+  return {maxSpanMs:maxSpan, ongoingMs:ongoing}; }
+// Forward sequence risk: bootstrap (sample WITH replacement) H future trades from your own
+// per-trade nets, take the worst drawdown of each simulated path. Unlike mcMaxDD (which
+// reshuffles the exact past), this asks what the NEXT H trades could plausibly do.
+function fwdMaxDD(nets,H,iters){ if(nets.length<10)return null; const dds=new Array(iters);
+  for(let k=0;k<iters;k++){ let peak=0,cum=0,mdd=0;
+    for(let i=0;i<H;i++){ cum+=nets[(_rng()*nets.length)|0]; if(cum>peak)peak=cum; const dd=cum-peak; if(dd<mdd)mdd=dd; }
+    dds[k]=-mdd; }
+  dds.sort((a,b)=>a-b); const q=p=>dds[Math.min(iters-1,Math.floor(p*iters))];
+  return {median:q(0.5),p75:q(0.75),p95:q(0.95),H}; }
 function edgeSignificance(nets){ const m=_avg(nets),sd=_std(nets),N=nets.length;
   const t=(sd>0&&N>1)?m/(sd/Math.sqrt(N)):null; const p=t!=null?1-_normCdf(t):null;
   const d=sd>0?m/sd:null; const needN=(d&&d>0)?Math.ceil((1.645/d)**2):null;
@@ -1126,61 +1176,69 @@ function edgeSignificance(nets){ const m=_avg(nets),sd=_std(nets),N=nets.length;
 // Mines single conditions AND pairwise interactions over trade features (+journal metadata),
 // tests each with a permutation test, controls false discoveries with Benjamini–Hochberg (FDR 10%),
 // then prunes diluted marginals, complements, and overlapping echoes.
-function minerFams(closed,ST){
+function minerFams(closed,ST,fz){
+  // fz = frozen thresholds from the moment a pattern was pinned; without it thresholds
+  // are recomputed from `closed`. Ids (3rd tuple element) are stable, name-independent
+  // handles so pinned patterns can be re-resolved after names/thresholds drift.
+  fz=fz||{};
   const H=t=>tzHour(t.closeTime), D=t=>tzDow(t.closeTime); const TZ=tzLabel();
   const qv=(vals,p)=>{const s=[...vals].sort((a,b)=>a-b);return s.length?s[Math.min(s.length-1,Math.floor(p*s.length))]:null;};
   const notion=t=>(t.maxSize||0)*(t.avgEntry||0);
-  const nq3=qv(closed.map(notion).filter(x=>x>0),0.75)||Infinity, nq1=qv(closed.map(notion).filter(x=>x>0),0.25)||0;
-  const hq3=qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.75)||Infinity, hq1=qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.25)||0;
+  const nq3=fz.nq3!=null?fz.nq3:(qv(closed.map(notion).filter(x=>x>0),0.75)||Infinity), nq1=fz.nq1!=null?fz.nq1:(qv(closed.map(notion).filter(x=>x>0),0.25)||0);
+  const hq3=fz.hq3!=null?fz.hq3:(qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.75)||Infinity), hq1=fz.hq1!=null?fz.hq1:(qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.25)||0);
+  let _dq3=null,_maq3=null,_maq1=null,_mfMed=null;
   // compact formatters so condition names carry their actual thresholds ("largest 25% by $ size (≥ $12.5k)")
   const fUsd=n=>!isFinite(n)?'':n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(1)+'k':'$'+n.toFixed(0);
   const fDur=ms=>{ if(!isFinite(ms)||ms<=0)return ''; const m=ms/60000; return m<1?Math.round(ms/1000)+'s':m<90?Math.round(m)+' min':m<2880?(m/60).toFixed(1)+'h':(m/1440).toFixed(1)+'d'; };
   const fams={
-    dir:[['Long trades',t=>t.dir==='Long'],['Short trades',t=>t.dir==='Short'],['Spot buys',t=>t.dir==='Spot']],
+    dir:[['Long trades',t=>t.dir==='Long','dir:Long'],['Short trades',t=>t.dir==='Short','dir:Short'],['Spot buys',t=>t.dir==='Spot','dir:Spot']],
     market:(()=>{ const cnt={}; closed.forEach(t=>{const k=t.symbol||dcoin(t);cnt[k]=(cnt[k]||0)+1;});
-      return Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([c])=>[dispMarket(c),t=>(t.symbol||dcoin(t))===c]); })(),
-    session:[['00–08h '+TZ,t=>H(t)<8],['08–16h '+TZ,t=>H(t)>=8&&H(t)<16],['16–24h '+TZ,t=>H(t)>=16]],
-    day:[['weekends',t=>D(t)===0||D(t)===6],['weekdays',t=>D(t)>0&&D(t)<6]],
-    hold:[['quick trades'+(isFinite(hq1)&&hq1>0?' (held under '+fDur(hq1)+')':' (fastest 25%)'),t=>(t.durationMs||0)<=hq1],
-          ['long holds'+(isFinite(hq3)?' (held over '+fDur(hq3)+')':' (slowest 25%)'),t=>(t.durationMs||0)>=hq3]],
-    size:[['largest 25% by $ size'+(isFinite(nq3)?' (\u2265 '+fUsd(nq3)+')':''),t=>notion(t)>=nq3],
-          ['smallest 25% by $ size'+(nq1>0?' (\u2264 '+fUsd(nq1)+')':''),t=>notion(t)<=nq1]],
+      return Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([c])=>[dispMarket(c),t=>(t.symbol||dcoin(t))===c,'mkt:'+c]); })(),
+    session:[['00–08h '+TZ,t=>H(t)<8,'sess:0'],['08–16h '+TZ,t=>H(t)>=8&&H(t)<16,'sess:1'],['16–24h '+TZ,t=>H(t)>=16,'sess:2']],
+    day:[['weekends',t=>D(t)===0||D(t)===6,'day:we'],['weekdays',t=>D(t)>0&&D(t)<6,'day:wd']],
+    hold:[['quick trades'+(isFinite(hq1)&&hq1>0?' (held under '+fDur(hq1)+')':' (fastest 25%)'),t=>(t.durationMs||0)<=hq1,'hold:lo'],
+          ['long holds'+(isFinite(hq3)?' (held over '+fDur(hq3)+')':' (slowest 25%)'),t=>(t.durationMs||0)>=hq3,'hold:hi']],
+    size:[['largest 25% by $ size'+(isFinite(nq3)?' (\u2265 '+fUsd(nq3)+')':''),t=>notion(t)>=nq3,'size:hi'],
+          ['smallest 25% by $ size'+(nq1>0?' (\u2264 '+fUsd(nq1)+')':''),t=>notion(t)<=nq1,'size:lo']],
     state:[
-      ['entered within 1h of a loss',t=>{const x=ST.get(t.id);return !!(x&&x.prevNet!=null&&isLoss(x.prevNet)&&x.gap<=3600000);}],
-      ['entered after 2+ straight losses',t=>{const x=ST.get(t.id);return !!(x&&x.streak<=-2);}],
-      ['entered after 2+ straight wins',t=>{const x=ST.get(t.id);return !!(x&&x.streak>=2);}],
-      ['re-entered within 15 min of last trade',t=>{const x=ST.get(t.id);return !!(x&&x.gap!=null&&x.gap<=9e5);}],
-      ['4th-or-later trade of the day',t=>{const x=ST.get(t.id);return !!(x&&x.idxDay>=4);}],
-      ['entered while down on the day',t=>{const x=ST.get(t.id);return !!(x&&x.dayPnl<0);}],
+      ['entered within 1h of a loss',t=>{const x=ST.get(t.id);return !!(x&&x.prevNet!=null&&isLoss(x.prevNet)&&x.gap<=3600000);},'st:loss1h'],
+      ['entered after 2+ straight losses',t=>{const x=ST.get(t.id);return !!(x&&x.streak<=-2);},'st:loss2'],
+      ['entered after 2+ straight wins',t=>{const x=ST.get(t.id);return !!(x&&x.streak>=2);},'st:win2'],
+      ['re-entered within 15 min of last trade',t=>{const x=ST.get(t.id);return !!(x&&x.gap!=null&&x.gap<=9e5);},'st:re15'],
+      ['4th-or-later trade of the day',t=>{const x=ST.get(t.id);return !!(x&&x.idxDay>=4);},'st:idx4'],
+      ['entered while down on the day',t=>{const x=ST.get(t.id);return !!(x&&x.dayPnl<0);},'st:red'],
     ],
   };
   const setups=[...new Set(closed.map(t=>(journal[t.id]||{}).setup).filter(Boolean))].slice(0,8);
-  if(setups.length)fams.setup=setups.map(sn=>['setup: '+sn,t=>(journal[t.id]||{}).setup===sn]);
+  if(setups.length)fams.setup=setups.map(sn=>['setup: '+sn,t=>(journal[t.id]||{}).setup===sn,'setup:'+sn]);
   const tags=[...new Set(closed.flatMap(t=>(journal[t.id]||{}).tags||[]))].slice(0,8);
-  if(tags.length)fams.tag=tags.map(tg=>['tag: '+tg,t=>((journal[t.id]||{}).tags||[]).includes(tg)]);
+  if(tags.length)fams.tag=tags.map(tg=>['tag: '+tg,t=>((journal[t.id]||{}).tags||[]).includes(tg),'tag:'+tg]);
   if(closed.some(t=>{const j=journal[t.id]||{};return j.mistakes&&j.mistakes.length;}))
-    fams.flag=[['mistake-flagged',t=>{const j=journal[t.id]||{};return !!(j.mistakes&&j.mistakes.length);}]];
+    fams.flag=[['mistake-flagged',t=>{const j=journal[t.id]||{};return !!(j.mistakes&&j.mistakes.length);},'flag:any']];
   if(closed.some(t=>(journal[t.id]||{}).rating))
-    fams.rating=[['rated ≤2★ execution',t=>{const r=(journal[t.id]||{}).rating;return !!r&&r<=2;}],
-                 ['rated 4–5★ execution',t=>{const r=(journal[t.id]||{}).rating;return !!r&&r>=4;}]];
+    fams.rating=[['rated ≤2★ execution',t=>{const r=(journal[t.id]||{}).rating;return !!r&&r<=2;},'rate:lo'],
+                 ['rated 4–5★ execution',t=>{const r=(journal[t.id]||{}).rating;return !!r&&r>=4;},'rate:hi']];
   // execution style: taker share of notional (fill-level truth, always available)
   const tk=t=>{const tot=(t.makerNotional||0)+(t.takerNotional||0);return tot>0?(t.takerNotional||0)/tot:null;};
-  fams.exec=[['mostly market orders (\u226575% taker volume)',t=>{const x=tk(t);return x!=null&&x>=0.75;}],
-             ['mostly limit orders (\u226425% taker volume)',t=>{const x=tk(t);return x!=null&&x<=0.25;}]];
+  fams.exec=[['mostly market orders (\u226575% taker volume)',t=>{const x=tk(t);return x!=null&&x>=0.75;},'exec:taker'],
+             ['mostly limit orders (\u226425% taker volume)',t=>{const x=tk(t);return x!=null&&x<=0.25;},'exec:maker']];
   // entry drift: chased entries (scaled in at adverse prices), when drift is known for most trades
   const drifts=closed.map(t=>t.entryDrift).filter(x=>x!=null&&isFinite(x));
-  if(drifts.length>=closed.length*0.5){ const dq3=qv(drifts,0.75);
-    if(dq3!=null&&dq3>0)fams.drift=[['chased entries (added at worsening prices, worst 25%)',t=>t.entryDrift!=null&&t.entryDrift>=dq3]]; }
+  if(fz.dq3!=null || drifts.length>=closed.length*0.5){ const dq3=fz.dq3!=null?fz.dq3:qv(drifts,0.75); _dq3=dq3;
+    if(dq3!=null&&dq3>0)fams.drift=[['chased entries (added at worsening prices, worst 25%)',t=>t.entryDrift!=null&&t.entryDrift>=dq3,'drift:hi']]; }
   // excursion families: available once MAE/MFE has been computed for most of this pool
   const exR=closed.map(t=>_excM[t.id]).filter(e=>e&&e.maePct!=null);
-  if(exR.length>=closed.length*0.6){
-    const maq3=qv(exR.map(e=>e.maePct),0.75), maq1=qv(exR.map(e=>e.maePct),0.25);
-    const mfMed=qv(exR.map(e=>e.mfePct),0.5);
+  if(fz.maq3!=null || exR.length>=closed.length*0.6){
+    const maq3=fz.maq3!=null?fz.maq3:qv(exR.map(e=>e.maePct),0.75), maq1=fz.maq1!=null?fz.maq1:qv(exR.map(e=>e.maePct),0.25);
+    const mfMed=fz.mfMed!=null?fz.mfMed:qv(exR.map(e=>e.mfePct),0.5);
+    _maq3=maq3; _maq1=maq1; _mfMed=mfMed;
     const EX=t=>_excM[t.id];
-    fams.exc=[['went deep underwater first (worst 25% MAE)',t=>{const e=EX(t);return !!e&&e.maePct!=null&&e.maePct>=maq3;}],
-              ['barely went underwater (best 25% MAE)',t=>{const e=EX(t);return !!e&&e.maePct!=null&&e.maePct<=maq1;}],
-              ['peaked in profit but closed red (MFE \u2265 median)',t=>{const e=EX(t);return !!e&&e.mfePct!=null&&e.mfePct>=mfMed&&t.net<=0;}]];
+    fams.exc=[['went deep underwater first (worst 25% MAE)',t=>{const e=EX(t);return !!e&&e.maePct!=null&&e.maePct>=maq3;},'exc:maeHi'],
+              ['barely went underwater (best 25% MAE)',t=>{const e=EX(t);return !!e&&e.maePct!=null&&e.maePct<=maq1;},'exc:maeLo'],
+              ['peaked in profit but closed red (MFE \u2265 median)',t=>{const e=EX(t);return !!e&&e.mfePct!=null&&e.mfePct>=mfMed&&t.net<=0;},'exc:giveback']];
   }
+  // frozen-threshold capture for pinning (non-enumerable: for..in over families must not see it)
+  Object.defineProperty(fams,'__params',{value:{nq3:isFinite(nq3)?nq3:null,nq1,hq3:isFinite(hq3)?hq3:null,hq1,dq3:_dq3,maq3:_maq3,maq1:_maq1,mfMed:_mfMed},enumerable:false});
   return fams;
 }
 function mineInsights(closed,V){ V=V||(t=>t.net);
@@ -1198,16 +1256,16 @@ function mineInsights(closed,V){ V=V||(t=>t.net);
   const minN=Math.max(8,Math.round(Nd*0.05)), maxN=Math.round(Nd*0.9);
   const fams=minerFams(mineSet,ST); // quantile/market thresholds come from the discovery slice only
 
-  const singles=[]; for(const f in fams) for(const [name,fn] of fams[f]) singles.push({name,fn,fam:f});
+  const singles=[]; for(const f in fams) for(const [name,fn,cid] of fams[f]) singles.push({name,fn,fam:f,cid});
   const cands=[];
   const idxOf=fn=>{ const a=[]; for(let i=0;i<Nd;i++) if(fn(mineSet[i]))a.push(i); return a; };
   const singleIdx=singles.map(s=>idxOf(s.fn));
-  singles.forEach((s,i)=>{ const idx=singleIdx[i]; if(idx.length>=minN&&idx.length<=maxN)cands.push({name:s.name,fams:[s.fam],idx,pred:s.fn}); });
+  singles.forEach((s,i)=>{ const idx=singleIdx[i]; if(idx.length>=minN&&idx.length<=maxN)cands.push({name:s.name,fams:[s.fam],pid:s.cid,idx,pred:s.fn}); });
   for(let a=0;a<singles.length;a++)for(let b=a+1;b<singles.length;b++){
     if(singles[a].fam===singles[b].fam)continue;
     const setB=new Set(singleIdx[b]); const idx=singleIdx[a].filter(i=>setB.has(i));
     if(idx.length>=minN&&idx.length<=maxN){ const fA=singles[a].fn,fB=singles[b].fn;
-      cands.push({name:singles[a].name+' × '+singles[b].name,fams:[singles[a].fam,singles[b].fam],idx,pred:t=>fA(t)&&fB(t)}); }
+      cands.push({name:singles[a].name+' × '+singles[b].name,fams:[singles[a].fam,singles[b].fam],pid:singles[a].cid+'&'+singles[b].cid,idx,pred:t=>fA(t)&&fB(t)}); }
   }
   // permutation test (reusable buffer, partial Fisher–Yates)
   const nets=Float64Array.from(mineSet.map(V)); let mAll=0; for(let i=0;i<Nd;i++)mAll+=nets[i]; mAll/=Nd;
@@ -1256,8 +1314,11 @@ function mineInsights(closed,V){ V=V||(t=>t.net);
       v.holds = (v.oosN>=5 && v.oosExp!=null && Math.sign(v.oosExp-mAllHold)===Math.sign(v.exp-mAll)); }
   };
   top.forEach(enrich); suggestive.forEach(enrich);
-  return {validated:top,suggestive,tested:M,minN,perms:PERMS,mAll,
-    split,discN:mineSet.length,holdN:holdSet.length,mAllHold};
+  // strip functions/index arrays: they can't cross postMessage (DataCloneError), which was
+  // silently forcing the miner onto the blocking main-thread fallback. pid strings remain.
+  const strip=v=>{ delete v.pred; delete v.idx; return v; };
+  return {validated:top.map(strip),suggestive:suggestive.map(strip),tested:M,minN,perms:PERMS,mAll,
+    split,discN:mineSet.length,holdN:holdSet.length,mAllHold,famParams:fams.__params||null};
 }
 function avgLossOf(closed){ const l=closed.filter(t=>isLoss(t.net)).map(t=>-t.net); return l.length?_avg(l):null; }
 let _oneR=null;
@@ -1772,6 +1833,63 @@ function exportReport(){
   a.download='ledger-report-'+new Date().toISOString().slice(0,10)+'.html'; a.click();
   setStatus('Report exported ('+(blob.size/1024/1024).toFixed(1)+' MB). Run the miner / excursions first if you want them included.');
 }
+/* ============================ forward pattern tracker ============================ */
+// Patterns pinned from the miner are re-measured on ONLY trades closed after the pin —
+// true out-of-sample confirmation. Thresholds are frozen at pin time (pin.params) so the
+// hypothesis being tested forward is exactly the one that was discovered, even as new
+// trades shift the live quartiles. Condition identity is the stable pid, not the display name.
+function pinsList(){ return Array.isArray(settings.pins)?settings.pins:[]; }
+function resolvePinPred(pin,closed,ST){
+  const fams=minerFams(closed,ST,pin.params||{});
+  const map={}; for(const f in fams) for(const [nm,fn,cid] of fams[f]) if(cid)map[cid]=fn;
+  const one=id=>{
+    if(map[id])return map[id];
+    // value-carrying conditions can drop out of the top-N family slices as data shifts;
+    // rebuild them directly from the id so old pins never go unresolvable.
+    const m=id.match(/^(mkt|setup|tag):([\s\S]*)$/);
+    if(m){ const val=m[2];
+      if(m[1]==='mkt')return t=>(t.symbol||dcoin(t))===val;
+      if(m[1]==='setup')return t=>(journal[t.id]||{}).setup===val;
+      if(m[1]==='tag')return t=>(((journal[t.id]||{}).tags)||[]).includes(val);
+    }
+    return null; };
+  const fns=pin.pid.split('&').map(one);
+  if(fns.some(f=>!f))return null;
+  return fns.length===1?fns[0]:(t=>fns.every(f=>f(t)));
+}
+async function addPin(v,basis,famParams){
+  const pins=pinsList();
+  if(pins.some(p=>p.pid===v.pid&&p.basis===basis))return false;
+  pins.push({pid:v.pid,name:v.name,basis,params:famParams||{},pinnedAt:Date.now(),
+    disc:{exp:v.exp,n:v.n,uplift:v.uplift}});
+  settings.pins=pins; await Store.set(S_KEY,settings); return true;
+}
+function trackedSectionHtml(closed){
+  const pins=pinsList(); if(!pins.length)return '';
+  const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+  const ST=tradeStates(chron);
+  const rows=pins.map((pin,i)=>{
+    const pred=resolvePinPred(pin,chron,ST);
+    const fA=pin.basis==='pct'?(x=>(x>=0?'+':'')+x.toFixed(2)+'%'):(x=>(x>=0?'+':'')+fmtUsd(x));
+    let body,badge;
+    if(!pred){ body='condition can\u2019t be resolved on the current data'; badge='<span class="sr-note">unresolved</span>'; }
+    else{
+      const fwd=chron.filter(t=>t.closeTime>pin.pinnedAt&&pred(t)&&(pin.basis!=='pct'||retPct(t)!==null));
+      const n=fwd.length;
+      if(n<8){ body=`collecting forward trades \u2014 <b>${n}</b> so far (verdict at 8) \u00b7 discovered at <b>${fA(pin.disc.exp)}</b>/trade over ${pin.disc.n} trades`; badge='<span class="sr-note">collecting</span>'; }
+      else{
+        const Vv=pin.basis==='pct'?(t=>retPct(t)):(t=>t.net);
+        const fe=_avg(fwd.map(Vv));
+        const same=pin.disc.exp===0?fe>=0:Math.sign(fe)===Math.sign(pin.disc.exp);
+        const strong=same&&Math.abs(fe)>=Math.abs(pin.disc.exp)*0.5;
+        badge=strong?'<span class="badge ok">holding forward</span>':same?'<span class="badge mid">weakening</span>':'<span class="badge no">not holding</span>';
+        body=`<b>${n}</b> forward trades at <b>${fA(fe)}</b>/trade, vs <b>${fA(pin.disc.exp)}</b>/trade when discovered (${pin.disc.n} trades)`;
+      }
+    }
+    return `<div class="state-row"><div class="sr-top"><span class="sr-name">${esc(pin.name)} <span style="color:var(--faint);font-size:10.5px">judged in ${pin.basis==='pct'?'%':'$'}</span></span><span style="white-space:nowrap">${badge} <button class="btn ghost unpin" data-pi="${i}" style="font-size:10px;padding:1px 7px;margin-left:6px">unpin</button></span></div><div class="sr-sub">pinned ${fmtDate(pin.pinnedAt)} \u00b7 ${body}</div></div>`;
+  }).join('');
+  return `<div class="diag-section"><div class="diag-card" id="trackedCard"><h3 data-tip="Patterns you pinned from the miner, re-measured on ONLY the trades closed after you pinned them \u2014 a rolling out-of-sample test. Thresholds (size quartiles, hold cutoffs, MAE bands) are frozen at pin time so you keep testing the exact hypothesis you pinned. \u2018Holding\u2019 = same direction and at least half the discovered edge; verdicts start at 8 forward trades and sharpen as more arrive.">Tracked patterns \u2014 forward test</h3>${rows}</div></div>`;
+}
 function renderDiagnostic(closed, allv){
   destroyDiagCharts();
   _srand(_hashSeed('diag|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:'')));
@@ -1792,6 +1910,10 @@ function renderDiagnostic(closed, allv){
   const acf1 = _autocorr1(chronNets);
   const mcdd = chronNets.length>=5 ? mcMaxDD(chronNets,MCI) : null;
   const cdd = chronNets.length? currentDD(chronNets) : null;
+  const chronT=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+  const uw = underwaterStats(chronT);
+  const HZN = Math.min(200,Math.max(50,N));
+  const fdd = chronNets.length>=10 ? fwdMaxDD(chronNets,HZN,N>3000?400:800) : null;
   // cost drag: fees as % of gross realized profit (before fees/funding)
   const grossReal = s.net + s.fees - s.fund; // undo costs
   const costDragPct = grossReal>0 ? s.fees/grossReal : null;
@@ -1870,6 +1992,7 @@ function renderDiagnostic(closed, allv){
   if(overtrading) recs.push(`Overtrading: on your busiest days you make ${fmtUsd(hiExp)}/trade vs ${fmtUsd(loExp)} on normal days. More activity is hurting, not helping — cap trades per day.`);
   if(fragile) recs.push(`Fragile profits: your top 10% of trades produce ${pct(topShare)} of gross profit; without your single best trade net is ${fmtUsd(netNoBest)}. Your edge leans on a few outliers — make sure they're repeatable, not luck.`);
   if(skew!=null && skew>1.5) recs.push(`Your trade returns are strongly right-skewed (skew ${skew.toFixed(1)}) — a handful of big winners carry you while most trades are small losers. That's psychologically punishing and fragile; protect your rare winners (don't cut them early) and confirm they're not luck.`);
+  if(uw && uw.ongoingMs!=null && uw.ongoingMs>30*86400000) recs.push(`You have been below your high-water mark for ${fmtDur(uw.ongoingMs)}. Long underwater stretches are where discipline breaks — pre-commit your responses (size cap, trade cap, review cadence) in writing rather than deciding under stress.`);
   if(mcdd && s.maxDD<0 && mcdd.p95 > Math.abs(s.maxDD)*1.4) recs.push(`Sequence risk: your realized max drawdown is ${fmtUsd(s.maxDD)}, but reshuffling the same trades, a 1-in-20 ordering hits ${fmtUsd(-mcdd.p95)}. Size so you could survive that deeper draw, not just the one you happened to get.`);
   if(cdd && cdd.pct!=null && cdd.pct>0.15) recs.push(`You're currently ${(cdd.pct*100).toFixed(0)}% (${fmtUsd(cdd.dd)}) below your high-water mark, ${cdd.since} trades since the peak. Drawdowns are when discipline slips — stick to your rules and avoid sizing up to "make it back."`);
   if(costDragPct!=null && costDragPct>0.25) recs.push(`Fees eat ${(costDragPct*100).toFixed(0)}% of your gross profit. Favor maker over taker fills, trade less often, or widen targets — cutting cost drag drops straight to your bottom line.`);
@@ -1934,6 +2057,8 @@ function renderDiagnostic(closed, allv){
          ${mrow('Concentration',topMkt?`${pct(Math.abs(conc))} of net in ${esc(dispMarket(topMkt.key))}`:'—','Share of your net PnL that comes from a single market. High concentration means your track record depends on one instrument — riskier and less generalizable than it looks.')}
          ${mrow('Current drawdown',cdd?(cdd.dd<-1e-6?`<span class="loss">${fmtUsd(cdd.dd)}${cdd.pct!=null?' · '+(cdd.pct*100).toFixed(1)+'%':''}</span> · ${cdd.since} trades ago peak`:'<span class="badge ok">at a high-water mark</span>'):'—','Where you stand right now versus your best-ever cumulative PnL. Tells you if you are currently underwater and by how much, and how many trades since your peak — useful for knowing whether to press or ease off.')}
          ${mrow('Simulated worst DD',mcdd?`median ${fmtUsd(-mcdd.median)} · 1-in-20 ${fmtUsd(-mcdd.p95)}`:'—','Monte-Carlo drawdown: your exact trades reshuffled into '+MCI+' random orderings. Shows how deep a drawdown to expect from ordering luck alone. Your realized max DD is one draw; the 1-in-20 (95th percentile) is a realistic bad case to size for.')}
+         ${mrow('Longest underwater',uw&&uw.maxSpanMs>0?fmtDur(uw.maxSpanMs)+(uw.ongoingMs!=null?' · <span class="loss">currently '+fmtDur(uw.ongoingMs)+' in</span>':''):(uw?'<span class="badge ok">never left highs</span>':'—'),'Longest calendar stretch spent below your high-water mark before making a new high. Drawdown depth tells you how much it hurts; this tells you how LONG it hurts — the dimension that actually breaks discipline.')}
+         ${mrow('Next '+HZN+'-trade DD (bootstrap)',fdd?`median ${fmtUsd(-fdd.median)} · 1-in-4 ${fmtUsd(-fdd.p75)} · 1-in-20 ${fmtUsd(-fdd.p95)}`:'—','Forward-looking sequence risk: '+(N>3000?400:800)+' simulated futures of '+HZN+' trades, each drawn (with replacement) from your own per-trade results, reporting the worst drawdown per path. If the 1-in-4 number would force you to stop trading or cut size, you are oversized NOW — decide the response before it happens, not during.')}
        </div>
        <div class="diag-card"><h3 data-tip="Behavioral biases the timing of your trades reveals: holding losers too long, tilting after losses, and overtrading.">Behavioral patterns</h3>
          ${mrow('Hold winners vs losers',(avgWHold!=null&&avgLHold!=null)?`${fmtDur(avgWHold)} vs ${fmtDur(avgLHold)}`:'—','Average hold time of winning vs losing trades. Holding losers much longer than winners is the classic disposition effect — hoping losers come back while snatching small wins.')}
@@ -1998,6 +2123,7 @@ function renderDiagnostic(closed, allv){
        <p class="lead" id="distCap" style="margin-top:11px;font-size:12px;color:var(--faint);min-height:18px"></p>
      </div>
    </div>
+   ${trackedSectionHtml(closed)}
    <div class="diag-section">
      <h2>Pattern miner <span style="font-size:11px;color:var(--faint);font-weight:400">finds conditions where you reliably make or lose money · statistically tested</span></h2>
      <p class="lead">Scans single conditions <b>and pairwise combinations</b> (e.g. Short × weekend, BTC × after-a-loss) that one-dimensional breakdowns can't see. Every candidate is permutation-tested and the whole scan is corrected for multiple comparisons (Benjamini–Hochberg, 10% FDR) — so a pattern only appears here if it's unlikely to be luck <i>given how many things were tested</i>.</p>
@@ -2020,6 +2146,10 @@ function renderDiagnostic(closed, allv){
      <ol class="recs">${recs.map(r=>`<li>${r}</li>`).join('')}</ol>
    </div>
    <p class="lead" style="text-align:center;margin-top:8px">Diagnostic reflects the current view (${view}) and period. Bucket signals require ≥${MIN} trades to appear.</p>`;
+  document.querySelectorAll('#trackedCard .unpin').forEach(b=>{ b.onclick=async()=>{
+    const i=+b.dataset.pi; const pins=Array.isArray(settings.pins)?settings.pins:[];
+    pins.splice(i,1); settings.pins=pins; await Store.set(S_KEY,settings);
+    renderDiagnostic(periodTrades(),periodTradesAll()); }; });
   const runBtn=$('runMiner');
   const repBtn=$('exportReport');
   if(repBtn)repBtn.onclick=()=>{ try{ exportReport(); }catch(e){ setErr('Report export failed: '+e.message); } };
@@ -2171,7 +2301,15 @@ function changePoint(closed,V){ V=V||(t=>t.net);
     if(_maxSplitT(y).t>=obs.t)ge++; }
   const p=(ge+1)/(PERMS+1);
   const A=chron.slice(0,obs.k), B=chron.slice(obs.k);
-  return {p,sig:p<0.05,at:chron[obs.k].closeTime,k:obs.k,
+  // rolling-mean expectancy series (downsampled to <=120 points) so the UI can draw the
+  // sequence with the detected break marked, instead of only stating a conclusion.
+  const w=Math.max(10,Math.round(N/15));
+  const roll=new Array(N); let acc=0;
+  for(let i=0;i<N;i++){ acc+=x[i]; if(i>=w)acc-=x[i-w]; roll[i]=acc/Math.min(i+1,w); }
+  const step=Math.max(1,Math.ceil(N/120)); const series=[];
+  for(let i=0;i<N;i+=step) series.push({i,t:chron[i].closeTime,v:roll[i]});
+  if((N-1)%step!==0) series.push({i:N-1,t:chron[N-1].closeTime,v:roll[N-1]});
+  return {p,sig:p<0.05,at:chron[obs.k].closeTime,k:obs.k,series,win:w,
     before:{n:A.length,exp:_avg(A.map(V))}, after:{n:B.length,exp:_avg(B.map(V))}};
 }
 function sizeDependence(closed){
@@ -2775,7 +2913,12 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
       : `${v.n} trades averaging <b>${fmtA(v.exp)}</b> each, vs ${fmtA(r.mAll)} across all your trades — this pattern cost you roughly <b>${lossTxt}</b> ${basis==='pct'?'of cumulative return':''} vs trading at your baseline.`;
     const stats=`<span style="color:var(--faint);font-size:11px" data-tip="p is the chance of a gap this large appearing by pure luck (permutation test) — lower means more likely real. The CI is the plausible range for the true per-trade average.">p=${v.p<0.001?'<0.001':v.p.toFixed(3)}${ciTag(v)}</span>`;
     return li(good?'good':'bad',good?'▲':'▼',
-      `<b>${esc(v.name)}</b>${oosTag(v)}<br>${sent}<br>${stats}`); };
+      `<b>${esc(v.name)}</b>${oosTag(v)}${pinCtl(v)}<br>${sent}<br>${stats}`); };
+  const byPid={};
+  const pinCtl=v=>{ if(!v.pid)return''; byPid[v.pid]=v;
+    const already=pinsList().some(p=>p.pid===v.pid&&p.basis===basis);
+    return already?' <span class="sr-note" style="margin-left:6px">tracking \u2713</span>'
+      :` <button class="btn ghost pinbtn" data-pid="${esc(v.pid)}" data-tip="Pin this pattern to track it forward: every trade you close from now on that matches this condition gets measured against the discovered edge \u2014 a rolling out-of-sample test in the Tracked patterns card above." style="font-size:10px;padding:1px 7px;margin-left:6px">\ud83d\udccc track forward</button>`; };
   const vHtml=r.validated.length?r.validated.map(row).join(''):li('warn','·','No pattern here is statistically distinguishable from luck yet — after accounting for how many combinations were scanned, every apparent hot or cold pocket is within what chance alone would produce. That itself is useful to know.');
   const sHtml=r.suggestive.length?r.suggestive.map(row).join(''):'';
 
@@ -2800,6 +2943,7 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
     cpHtml=c.sig
       ? `<p class="lead">Strongest break in your expectancy sequence: <b>${fmtDate(c.at)}</b> (trade ${c.k} of ${c.before.n+c.after.n}) — ${fmtA(c.before.exp)}/trade before → <b>${fmtA(c.after.exp)}/trade</b> after (p=${c.p<0.001?'<0.001':c.p.toFixed(3)}). Your edge <b>${dir}</b> around that date; think back to what changed — size, markets, process — and ${dir==='improved'?'protect it':'undo it'}.</p>`
       : `<p class="lead">No statistically significant regime change (p=${c.p.toFixed(2)}) — your per-trade expectancy is consistent across the whole sequence. Stability is a feature.</p>`;
+    if(c.series&&c.series.length>2) cpHtml+=`<div style="height:130px;margin-top:10px"><canvas id="regimeSpark"></canvas></div><p class="lead" style="font-size:11px;color:var(--faint);margin-top:4px">Rolling ${c.win}-trade expectancy over your sequence${c.sig?' — the gold dashed line marks the detected break':''}.</p>`;
     if(c.sig&&c.after.exp<c.before.exp) ideas.push({w:(basis==='pct'?40:1)*(c.before.exp-c.after.exp)*c.after.n,txt:`Your expectancy <b>dropped around ${fmtDate(c.at)}</b> (${fmtA(c.before.exp)} → ${fmtA(c.after.exp)}/trade, significant). Review what changed then — this is the single highest-leverage question in your data.`});
   }
   if(deep&&deep.sz){
@@ -2830,6 +2974,14 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
       : (r.split && v.holds ? 'Stop taking these — the leak persists on fresh data.' : 'Stop or paper-trade these for a month to confirm before risking more.');
     ideas.push({w:(basis==='pct'?40:1)*Math.abs(v.uplift)*0.8*((r.split&&!v.holds&&v.oosN>=5)?0.3:1),txt:`${v.uplift>=0?'Best validated pattern':'Worst validated leak'}: <b>${esc(v.name)}</b> (${(v.uplift>=0?'+':'')+(basis==='pct'?v.uplift.toFixed(1)+' %-points cumulative':fmtUsd(v.uplift))}, FDR-controlled)${oos}. ${act}`}); }
   ideas.sort((a,b)=>b.w-a.w);
+  // one-line top verdict: the single most actionable finding, or an honest null result
+  let verdictHtml='';
+  { const holders=r.validated.filter(v=>v.holds);
+    const pool=holders.length?holders:r.validated;
+    if(pool.length){ const v0=[...pool].sort((a,b)=>Math.abs(b.uplift)-Math.abs(a.uplift))[0];
+      const amt=basis==='pct'?Math.abs(v0.uplift).toFixed(1)+' '+unitT:fmtUsd(Math.abs(v0.uplift));
+      verdictHtml=`<p class="lead" style="font-size:13px;margin:0 0 12px;border-left:2px solid var(--${v0.uplift>=0?'profit':'loss'});padding-left:10px">${v0.uplift>=0?'Your clearest real edge':'Your clearest leak'}: <b>${esc(v0.name)}</b> \u2014 roughly <b>${amt}</b> of your ${basis==='pct'?'cumulative return':'PnL'} ${v0.uplift>=0?'traces to it':'drained into it'}${v0.holds?', and it held up on trades it was not discovered on':''}.</p>`; }
+    else verdictHtml=`<p class="lead" style="font-size:13px;margin:0 0 12px;border-left:2px solid var(--line);padding-left:10px">No condition beats luck yet across ${r.tested} candidates \u2014 your hot and cold pockets are within what chance produces. Trade your process and re-scan as the sample grows.</p>`; }
   const ideasHtml=ideas.length?`
    <div class="diag-section" style="margin-top:22px">
      <h2>Actionable ideas <span style="font-size:11px;color:var(--faint);font-weight:400">ranked by dollar impact · in-sample</span></h2>
@@ -2839,7 +2991,7 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
   const splitNote = r.split
     ? `<p class="lead" style="margin:0 0 10px;font-size:11.5px">Discovered on your earlier <b>${r.discN}</b> trades, then re-tested on the <b>${r.holdN}</b> most recent (held out). The out-of-sample tag on each pattern is the important part — it's the difference between an edge and a lucky slice.</p>`
     : `<p class="lead" style="margin:0 0 10px;font-size:11.5px">In-sample only — need \u226560 trades to hold out a validation slice. Treat these as hypotheses to confirm forward.</p>`;
-  box.innerHTML=`
+  box.innerHTML=`${verdictHtml}
     <div class="diag-grid">
       <div class="diag-card"><h3 data-tip="Survived the permutation test AND the false-discovery correction across all ${r.tested} candidates tested — discovered on an earlier slice and, where possible, re-tested on held-out recent trades. Correlated conditions can still be proxies for one cause.">Patterns that survived statistical testing <span style="font-size:11px;color:var(--faint);font-weight:400">FDR 10%</span></h3>${splitNote}<ul class="diag-list">${vHtml}</ul></div>
       <div class="diag-card"><h3 data-tip="Raw p ≤ 0.05 but did NOT survive correction for the ${r.tested} candidates scanned — with this many tests, some of these are expected to be flukes. Watch, don't act.">Hints only — could easily be flukes <span style="font-size:11px;color:var(--faint);font-weight:400">p \u2264 0.05, failed correction</span></h3><ul class="diag-list">${sHtml||li('warn','·','None.')}</ul></div>
@@ -2851,6 +3003,28 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
     ${probHtml}
     ${ideasHtml}
     <p class="lead" style="margin-top:10px">How this works: ${r.tested} candidate conditions were scanned (single conditions plus cross-combinations, each needing ≥${r.minN} trades). Each was shuffle-tested ${r.perms} times to ask “could luck alone produce this gap?”, and because scanning many candidates guarantees a few flukes, results are corrected so no more than ~10% of what survives is expected to be a false alarm (Benjamini–Hochberg FDR). Behavioral states use only what you knew at entry time. Numbers are in your selected basis (${basis==='pct'?'% of notional — size-neutral':'dollars'}). Everything here shows correlation on past trades — treat patterns as hypotheses to trade deliberately and re-test, not guarantees.${r.seed?' Deterministic run (seed '+r.seed+'): the same trade selection always reproduces these exact numbers.':''}</p>`;
+  // pin buttons -> forward tracker (re-render restores miner results from cache)
+  box.querySelectorAll('.pinbtn').forEach(b=>{ b.onclick=async()=>{ const v=byPid[b.dataset.pid]; if(!v)return;
+    b.disabled=true; b.textContent='pinned \u2713';
+    await addPin(v,basis,r.famParams||null);
+    renderDiagnostic(periodTrades(),periodTradesAll()); }; });
+  // rolling-expectancy sparkline with the change-point marked
+  if(charts.regime){ try{charts.regime.destroy();}catch(e){} charts.regime=null; }
+  if(deep&&deep.cp&&deep.cp.series&&$('regimeSpark')){
+    const S=deep.cp.series; let cpX=null;
+    if(deep.cp.sig){ cpX=S.findIndex(p=>p.i>=deep.cp.k); if(cpX<0)cpX=null; }
+    const vline={id:'cpv',afterDatasetsDraw(ch){ if(ch.$cp==null)return;
+      const x=ch.scales.x.getPixelForValue(ch.$cp), a=ch.chartArea, c=ch.ctx;
+      c.save(); c.strokeStyle='#C9A85C'; c.setLineDash([4,3]); c.lineWidth=1;
+      c.beginPath(); c.moveTo(x,a.top); c.lineTo(x,a.bottom); c.stroke(); c.restore(); }};
+    const ch=new Chart($('regimeSpark'),{type:'line',plugins:[vline],
+      data:{labels:S.map(p=>fmtDate(p.t)),datasets:[{data:S.map(p=>p.v),borderColor:'#8a7bd8',borderWidth:1.6,pointRadius:0,tension:.3,fill:false}]},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c2=>fmtA(c2.parsed.y)+'/trade (rolling '+deep.cp.win+')'}}},
+        scales:{x:{ticks:{color:TXT,maxTicksLimit:4,maxRotation:0,font:{size:10}},grid:{display:false}},
+                y:{ticks:{color:TXT,font:{size:10},callback:v=>fmtA(v)},grid:{color:GRID}}}}});
+    ch.$cp=cpX; charts.regime=ch;
+  }
 }
 /* ============================ extra analytics ============================ */
 // Maker/taker execution split + honest effective-rate savings estimate.
@@ -3306,12 +3480,23 @@ function renderReview(){
 }
 function renderReconcile(){
   const el=$('reconcile');
-  if(activeTab==='diag' || (hlPnl.all==null && hlPnl.perp==null)){ el.classList.add('hide'); return; }
   const all=hlPnl.all, perp=hlPnl.perp, spot=(all!=null&&perp!=null)?all-perp:null;
   // all-time reconstructed sums (incl. open positions' realized) for apples-to-apples deltas
   const recPerp=allTrades.filter(t=>t.market==='perp').reduce((s,t)=>s+t.net,0);
   const recSpot=allTrades.filter(t=>t.market==='spot').reduce((s,t)=>s+t.net,0);
   const recAll=recPerp+recSpot;
+  // integrity banner: perp reconstruction vs Hyperliquid's verified figure, on EVERY tab.
+  // Perp-only on purpose: spot gaps are expected (unknown cost basis on transfers/airdrops).
+  const wEl=$('reconWarn');
+  if(wEl){
+    const pd=(perp!=null)?recPerp-perp:null;
+    const material=pd!=null && Math.abs(pd)>Math.max(50,Math.abs(perp)*0.01);
+    if(material){
+      wEl.classList.remove('hide');
+      wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`;
+    } else wEl.classList.add('hide');
+  }
+  if(activeTab==='diag' || (hlPnl.all==null && hlPnl.perp==null)){ el.classList.add('hide'); return; }
   const delta=(hl,rec)=>{ if(hl==null)return ''; const d=rec-hl; const mat=Math.abs(d)>Math.max(50,Math.abs(hl)*0.01);
     return `<span style="font-size:10.5px;color:${mat?'var(--gold)':'var(--faint)'}" data-tip="Reconstructed-from-fills total minus Hyperliquid's figure. Small gaps are normal for spot (cost basis on transferred/airdropped tokens can't be rebuilt from fills). A large gap means some trades' PnL isn't captured — trust the Verified number.">recon ${d>=0?'+':''}${fmtUsd(d)}</span>`; };
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;

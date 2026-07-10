@@ -68,6 +68,34 @@ function createApp(opts) {
     fs.writeFileSync(tmp, JSON.stringify(obj));
     try { if (fs.existsSync(dataFile)) fs.copyFileSync(dataFile, dataFile + '.bak'); } catch (e) {}
     fs.renameSync(tmp, dataFile);
+    snapshotDaily(obj);
+  };
+  // Rotating daily snapshots: one file per calendar day (UTC), overwritten within the day,
+  // pruned to the newest SNAP_KEEP. One bad sync or fat-fingered wipe is otherwise a single
+  // .bak away from permanent. Snapshot failures never fail the write itself.
+  const snapDir = path.join(dataDir, 'snapshots');
+  const SNAP_KEEP = 14;
+  const SNAP_RE = /^(\d{4}-\d{2}-\d{2})\.json$/;
+  const snapshotDaily = (obj) => {
+    try {
+      fs.mkdirSync(snapDir, { recursive: true });
+      const day = new Date().toISOString().slice(0, 10);
+      const tmp = path.join(snapDir, day + '.json.tmp');
+      fs.writeFileSync(tmp, JSON.stringify(obj));
+      fs.renameSync(tmp, path.join(snapDir, day + '.json'));
+      const days = fs.readdirSync(snapDir).filter(f => SNAP_RE.test(f)).sort();
+      while (days.length > SNAP_KEEP) fs.unlinkSync(path.join(snapDir, days.shift()));
+    } catch (e) { console.warn('[ledger] snapshot failed: ' + e.message); }
+  };
+  const listSnapshots = () => {
+    try {
+      return fs.readdirSync(snapDir).filter(f => SNAP_RE.test(f)).sort().reverse().map(f => {
+        const st = fs.statSync(path.join(snapDir, f));
+        let rev = null;
+        try { rev = JSON.parse(fs.readFileSync(path.join(snapDir, f), 'utf8')).rev; } catch (e) {}
+        return { date: f.slice(0, 10), bytes: st.size, rev };
+      });
+    } catch (e) { return []; }
   };
   const authOk = (req) => {
     if (!auth) return true;
@@ -133,6 +161,22 @@ function createApp(opts) {
     // --- health: unauthenticated so the client can detect the server and whether auth is on ---
     if (req.method === 'GET' && url === '/api/health') {
       return json(res, 200, { ok: true, auth: !!auth, appSyncCapable });
+    }
+
+    // --- snapshot history: list rotating daily snapshots, fetch one by date (auth) ---
+    if (url === '/api/snapshots') {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
+      return json(res, 200, { snapshots: listSnapshots() });
+    }
+    const snapM = url.match(/^\/api\/snapshots\/(\d{4}-\d{2}-\d{2})$/);
+    if (snapM) {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
+      try {
+        const d = JSON.parse(fs.readFileSync(path.join(snapDir, snapM[1] + '.json'), 'utf8'));
+        return json(res, 200, d);
+      } catch (e) { return json(res, 404, { error: 'no snapshot for ' + snapM[1] }); }
     }
 
     if (url === '/api/data') {
