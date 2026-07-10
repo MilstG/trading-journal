@@ -1,103 +1,129 @@
 # Ledger
 
-A self-contained, single-file trading journal and analytics tool for the [Hyperliquid](https://hyperliquid.xyz) DEX. Built for personal trade analysis — trade history, position tracking, statistical analysis, and tax export — with **zero backend dependencies**.
+A self-contained trading journal and analytics tool for [Hyperliquid](https://hyperliquid.xyz).
+One HTML file, no build step, no framework, no tracking. All analysis runs in your
+browser, talking directly to Hyperliquid's public API — your fills, journal, and
+statistics never touch a third party.
 
-Open `ledger.html` in a browser and it works. No server, no build step, no external network calls beyond the Hyperliquid API itself.
+Open `ledger.html` from disk and it works. Serve it with the included companion
+server and it gains cross-device persistence. Same file either way.
 
----
+## What it does
 
-## Design philosophy
+**Trade reconstruction.** Your on-chain history is a stream of fills; Ledger
+rebuilds it into positions — entries, adds, partial closes, flips (a single fill
+that closes a long and opens a short is split into its two legs), liquidations —
+across the main perp DEX, HIP-3 builder-deployed DEXes, and spot. Funding
+payments are attributed to the trades whose holding window they fall in, so every
+trade's net is price PnL − fees ± funding, not just the exchange's `closedPnl`.
 
-Ledger is deliberately client-only. Everything the app needs — Chart.js, all fonts, all logic — is inlined into a single HTML file. This keeps the tool fully offline-capable, self-hostable, and immune to dependency rot or supply-chain surprises. A strict CSP meta tag enforces this: the only outbound requests are to the Hyperliquid API.
+**Performance diagnostics.** Equity curve, drawdown, Sharpe with confidence
+bounds (a verdict grade tells you whether your edge is distinguishable from
+noise), win-rate and expectancy with Wilson intervals, bootstrap CIs on mean
+return, Monte-Carlo drawdown expectations, rolling 30-trade expectancy,
+change-point detection on the return series, size-dependence testing, and a
+monthly PnL decomposition (price vs funding vs fees) that shows whether a
+price-profitable strategy is quietly bleeding through costs.
 
-Server-backed architectures (continuous DB ingestion, pre-aggregated summaries) would allow handling larger fill counts, and that's why services like Hyperdash scale further. But that complexity isn't warranted for a personal tool, so it's been evaluated and intentionally rejected. The one place this constraint bites — main-thread freezing on heavy computation — has a client-only fix planned (see Roadmap).
+**Pattern miner.** Mines your closed trades for conditions under which you trade
+significantly better or worse — time of day, weekday, session, coin, direction,
+hold time, size bucket, behavioral states (after losses, revenge-window,
+overtrading), execution style (maker/taker), chased entries, journal tags, and
+excursion-derived features — as singles and cross-family pairs. Significance
+comes from permutation tests with Benjamini–Hochberg FDR correction, so it
+reports "survives multiple-comparison correction," not p-hacked trivia. Runs are
+deterministic: the RNG is seeded from the data selection, so identical data
+reproduces identical results (the seed is displayed).
 
----
+**Price excursions (MAE/MFE).** Fetches exchange candles to measure how far each
+trade ran against you and in your favor. Answers the two questions fills alone
+can't: are your stops sized to what winners actually endure ("90% of winners
+never drew down more than X% / Y R"), and how much peak open profit you give
+back ("you banked 59¢ of every $1"). Results appear as plain-English verdicts,
+per-trade lines in the journal, miner features, and a live open-position monitor
+that flags positions already "beyond winner territory." Candle retention is
+limited on the exchange side, so measurements are a **ratchet**: once a trade is
+measured it's persisted and never degrades — run it regularly and precision only
+accumulates.
 
-## Features
+**Journal.** Tags, setup labels, star ratings, mistake flags, planned risk (for
+R-multiples), free-text notes, and image attachments per trade. Everything
+journaled becomes minable.
 
-### Trade history & reconstruction
-- Fetches fill history from the Hyperliquid API with incremental, cached fetching backed by IndexedDB.
-- Reconstructs trades from raw fills, including correct handling of flip trades (positions that reverse direction in a single fill sequence).
-- Shift-click forces a full re-fetch, bypassing the local cache.
-
-### Position tracking (main DEX + HIP-3)
-Hyperliquid runs both a main validator-operated perpetuals DEX and HIP-3 builder-deployed perpetual markets, which live on **separate clearinghouses with independent margining**. Ledger surfaces positions from both.
-
-- The **Open Book** panel shows positions across the main DEX and every relevant HIP-3 clearinghouse.
-- HIP-3 dexes are discovered by scanning already-fetched fills (`hip3DexsFromFills()`) rather than making extra API calls — fills already carry `dex:COIN`-prefixed coin names, making them the natural discovery source.
-- Per-dex error isolation: one failing clearinghouse doesn't break the others.
-- Coin-name normalization handles both bare and `dex`-prefixed formats.
-- HIP-3 positions are tagged with a purple **`hip3`** pill.
-- Account value intentionally remains **main-dex-only**, with tooltips that make this explicit.
-
-### Statistical analysis
-- Deep-scan states panel with **Benjamini-Hochberg FDR correction** to control false-discovery rate across many simultaneous hypotheses.
-- Miner with proper out-of-sample behavior.
-- Unified, DST-safe timezone toggle: all time-of-day aggregation routes through a single layer, so the timezone switch is consistent everywhere.
-
-### API resilience
-- Exponential backoff with `Retry-After` header support.
-- Incremental fetching to avoid re-pulling the full history each session.
-
-### Tax export
-- Single, clean, rectangular **14-column CSV**.
-- Full wallet addresses, ISO-8601 timestamps, CRLF line endings.
-- Summaries live in the in-app status line, *not* mixed into the CSV — clean rectangular output is non-negotiable for downstream tax tooling, since mixing table formats, summary rows, and prose breaks any parser.
-
----
-
-## Getting started
-
-1. Open `ledger.html` (also distributed as `index.html`) in any modern browser.
-2. Enter the wallet address you want to analyze.
-3. Ledger fetches fills, reconstructs trades, and populates the panels.
-
-Cached fills persist in IndexedDB between sessions. Shift-click the fetch control to force a full re-fetch.
-
----
+**Utilities.** Multi-wallet with per-wallet incremental fill caching, tax CSV
+export, one-click self-contained HTML report export (charts embedded as images),
+full JSON backup/restore, and a unified local/UTC timezone toggle.
 
 ## Architecture
 
-| Concern        | Implementation                                              |
-|----------------|-------------------------------------------------------------|
-| App shell      | Single-file HTML (`ledger.html` / `index.html`)             |
-| Charting       | Chart.js 4.4.1 (inlined)                                     |
-| Fonts          | IBM Plex Mono, Barlow Condensed, Inter (all inlined)        |
-| Local storage  | IndexedDB (fill cache)                                       |
-| Data source    | Hyperliquid `clearinghouseState` (with `dex` param for HIP-3) + fill history endpoints |
-| Security       | Strict CSP meta tag                                          |
+```
+ledger.html    the entire app: UI, engine, Web Worker (built at runtime from a
+               Blob of the page's own functions), inlined Chart.js and fonts.
+               Strict CSP; the only network peer is api.hyperliquid.xyz.
+server.js      optional companion server (zero npm dependencies): serves the
+               HTML and persists one JSON blob with revision checks.
+package.json   start script; nothing to install.
+tests/         Node test suites + runner. Tests extract functions directly from
+               ledger.html, so they exercise exactly what ships.
+```
 
----
+Heavy work — reconstruction and the miner's permutation tests — runs in a Web
+Worker so large wallets don't freeze the tab; if worker construction fails, the
+same code runs synchronously on the main thread. Fills and candles cache in
+IndexedDB and refresh incrementally.
+
+## Running it
+
+**Standalone:** open `ledger.html` in a browser. Data persists in that browser;
+optionally link a data file (File System Access API) for a portable auto-saved
+JSON, or use *Backup all*.
+
+**Served with persistence:** `npm start` (or `node server.js`) and open
+`http://localhost:8080`. The app detects the server and auto-saves journal,
+wallets, settings, and excursion measurements to it — edits survive reboots and
+work across devices. Set `AUTH_TOKEN` to protect the API. For Railway
+deployment (volume setup, environment variables, verification steps), see
+[README-deploy.md](README-deploy.md) — the short version is: **attach a Volume
+at `/data` or nothing persists across redeploys.**
+
+Add a wallet address, hit *Load all*, and explore the Overview / Trades /
+Diagnostic views. The pattern miner and price excursions are on-demand buttons
+inside Diagnostic (both cache their work).
+
+## Data & privacy
+
+Everything stays between your browser, your storage, and Hyperliquid's public
+API. The companion server, if used, sees only the JSON blob you sync to it —
+run it on your own infrastructure. Wallet addresses and journal notes are
+sensitive; use `AUTH_TOKEN` on any deployment that has a public URL.
+
+What lives where: journal/wallets/settings/measurements sync to the server (or
+linked file); fill and candle caches stay in IndexedDB (re-fetchable); image
+attachments stay in the browser that uploaded them.
+
+## Limitations, stated honestly
+
+- The fills API paginates ~60 pages deep; wallets beyond ~120k fills can't be
+  fully backfilled (existing caches preserve older history — keep backups).
+- Exchange candle retention (~5,000 candles per interval) caps how precisely
+  old short trades can be measured; such trades are marked ≈ and excluded from
+  excursion statistics rather than allowed to distort them.
+- Excursions can't see intra-candle sequencing; values within one candle's
+  range are approximate by nature.
+- The miner is correlational and in-sample — validated patterns are hypotheses
+  to trade deliberately and re-test, not guarantees, and the UI says so.
+- Server sync is last-writer-wins with conflict detection (no silent clobber),
+  not field-level merge.
 
 ## Testing
 
-A Node.js test harness (`test-hip3.mjs`) extracts functions directly from the HTML source and runs against them. This keeps tests co-located with the single-file architecture instead of forking logic into a separate module.
-
-Current suite: **31 passing tests**, covering fill reconstruction, miner out-of-sample behavior, FDR correctness, and HIP-3 edge cases.
-
-```bash
-node test-hip3.mjs
+```
+npm test          # or: node tests/run-all.mjs
 ```
 
----
-
-## Known caveats
-
-- **HIP-3 payload shape unverified in-browser.** The exact format of real per-dex `clearinghouseState` responses (bare vs. `dex`-prefixed coin names) couldn't be confirmed from the Node test environment. The normalizer handles both formats, but the live payload shape still needs browser verification against a real account.
-
----
-
-## Roadmap
-
-Development works from an explicit audit list; items are *deferred*, not dropped.
-
-- **Web Worker offload** (audit item #6, deferred) — the correct fix for main-thread freezing during heavy reconstruction and miner permutation runs. This is the key remaining scalability item, and it fits the self-contained philosophy since it needs no backend. The bottleneck is main-thread blocking, not data volume per se.
-- **Range-fetching with cached reconstructed trades** — lower priority. Only becomes relevant if a wallet exceeds ~120k fills, the current hard ceiling from 60-page pagination.
-- Remaining unaddressed items from the original audit list.
-
----
-
-## License
-
-Personal project. Not a product.
+128 tests across five suites: engine logic (reconstruction, flips, funding
+attribution), the worker dispatcher exercised end-to-end with parity against the
+synchronous path, excursion math and the retention/ratchet behavior, miner
+families and determinism, and the server over real HTTP (auth, revision
+conflicts, restart survival). Suites read `ledger.html` and extract the shipped
+functions — there is no second copy of the code to drift.
