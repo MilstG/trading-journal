@@ -18,7 +18,14 @@ tests/          test suites (`npm test`)
 ## Railway setup (once)
 
 1. **New project → Deploy from GitHub repo** (or `railway up` from this folder).
-   Railway autodetects Node from `package.json` and runs `npm start`.
+   The included `railway.json` sets the start command to **`node server.js`**
+   (not `npm start`). This matters: when npm sits between Railway and node,
+   the SIGTERM Railway sends on every redeploy makes npm exit non-zero with
+   `npm error signal SIGTERM`, and the deployment gets flagged as failed even
+   though the server shut down cleanly. Running node directly lets the
+   graceful-shutdown handler in `server.js` receive the signal and exit 0.
+   If you ever override the start command in the Railway UI, keep it as
+   `node server.js`.
 
 2. **Attach a Volume — this is the persistence.** Service → Settings → Volumes →
    Add Volume, mount path **`/data`**. The server auto-detects `/data` and stores
