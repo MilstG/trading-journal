@@ -40,8 +40,8 @@ companion server and your journal persists across devices and reboots.
    each can be labeled.
 3. Click **Load all**. Ledger pages through your fill history, reconstructs
    trades, fetches funding history and open positions, and renders everything.
-4. Explore the three views in the top navigation: **Trades**, **Diagnostic**,
-   **Review**.
+4. Explore the views in the top navigation: **Trades**, **Diagnostic**,
+   **Review**, and **Project**.
 
 Subsequent loads are incremental: fills are cached in your browser (IndexedDB)
 and only new activity is fetched. **Shift-click Load all** to force a full
@@ -203,6 +203,30 @@ lowest-probability conditions pulled from your data, actionable ideas, and
 **Focus for next week** — a short list of concrete things your own numbers say
 to do differently.
 
+## The Project view
+
+Forward visualization of your current performance — explicitly a *what-if*,
+not a forecast. Pick a lookback window (30 days … all history) and a horizon
+(1 month … 2 years); Ledger builds your calendar-daily net series (flat days
+included) and bootstrap-resamples it forward 400 times with the same seeded
+PRNG the miner uses, so results are reproducible for a given data selection.
+
+You get:
+
+- **Your current pace** — avg per calendar day, trades/week, win rate,
+  expectancy per trade over the lookback.
+- **If you keep this up** — straight-line per-week / per-month / per-year
+  numbers off your average day.
+- **Simulated horizon outcomes** — median, 25th/75th/95th percentile paths and
+  the share of simulations that finish green.
+- **Milestones** — the next round-number realized-PnL targets and roughly when
+  the median simulated pace reaches them.
+- A **fan chart** of possible cumulative-PnL paths (median line, middle-50%
+  and middle-90% bands).
+
+The page says it plainly: markets don't owe anyone their past distribution.
+Treat it as positive visualization of staying the course, nothing more.
+
 ## Filters, periods, and settings
 
 - **Market toggle:** Perp / Spot / Combined — applies to every view.
@@ -223,6 +247,7 @@ to do differently.
 |---|---|
 | **Export CSV** | The trade table as CSV. |
 | **Tax CSV** | Clean 14-column, ISO-8601, CRLF file of realized results — importable into tax tooling. |
+| **Tax PDF** | Bank-statement-style PDF for your accountant: cover summary per tax year, monthly subtotals, and every realized trade with a running balance and page footers. Generated entirely client-side by a built-in dependency-free PDF writer (base-14 Courier fonts) — nothing leaves your machine, and the strict CSP stays intact. |
 | **Export journal** | Journal entries as JSON. |
 | **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
