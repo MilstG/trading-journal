@@ -198,7 +198,12 @@ t('replay chart renders candlestick bars and fill markers, not the old band/dip-
 });
 t('y-axis is pinned to the price range — bar datasets must not drag it to zero', () => {
   ok(html.includes('y:{min:ylo,max:yhi,beginAtZero:false'), 'explicit y min/max on the replay chart');
-  ok(html.includes('const ypad=(yhi-ylo)*0.08'), 'padded from the computed extremes');
+  ok(html.includes('const ypad=(yhi-ylo)*0.06'), 'padded from the computed extremes');
+});
+t('fill markers are candle flags, never buried at the raw fill price', () => {
+  ok(html.includes("(isFinite(k[2])?k[2]:e[1])-off*(0.6+0.9*n)"), 'entry/add flagged under the candle low, stacked');
+  ok(html.includes("(isFinite(k[1])?k[1]:e[1])+off*(0.6+0.9*n)"), 'close flagged over the candle high, stacked');
+  ok(html.includes("fpx(m.px)"), 'hover reports the exact fill price, not the flag position');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
