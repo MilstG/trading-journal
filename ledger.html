@@ -1033,7 +1033,8 @@ function isPerp(coin){ return !coin.includes('/') && !coin.startsWith('@'); }
 function newTrade(coin,f,dir,openSz,openNotional,fills){
   return {coin,dir,openTime:f.time,closeTime:f.time,openSz:openSz||0,openNotional:openNotional||0,
     closeSz:0,closeNotional:0,pnl:0,fees:0,fills:fills||0,maxSize:openSz||0,
-    makerFills:0,takerFills:0,makerFee:0,takerFee:0,makerNotional:0,takerNotional:0,liquidated:false,firstEntryPx:parseFloat(f.px)}; }
+    makerFills:0,takerFills:0,makerFee:0,takerFee:0,makerNotional:0,takerNotional:0,liquidated:false,firstEntryPx:parseFloat(f.px),
+    events:[]}; }   // events: compact [time,px,sz,k] per fill (k=+1 open/add, -1 close) — powers the replay chart's fill markers
 function tallyFill(t,f,fee){ const taker=!!f.crossed; const notl=Math.abs(parseFloat(f.sz||0))*parseFloat(f.px||0);
   if(taker){ t.takerFills++; t.takerFee+=fee; t.takerNotional+=notl; } else { t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
   if(f.liquidation || /liquidat/i.test(f.dir||'')) t.liquidated=true; }
@@ -1054,15 +1055,16 @@ function reconstructTrades(fills, addr, market){
       // one fill that closes the whole |before| position AND opens |after| the other way:
       // only the closing portion belongs to this trade; the opening portion seeds the next trade.
       t.closeSz+=Math.abs(before); t.closeNotional+=Math.abs(before)*px; t.maxSize=Math.max(t.maxSize,Math.abs(before));
-    } else if(Math.abs(after)>Math.abs(before)+EPS){ t.openSz+=sz; t.openNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(after)); }
-    else { t.closeSz+=sz; t.closeNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(before)); }
+      t.events.push([f.time,px,Math.abs(before),-1]);
+    } else if(Math.abs(after)>Math.abs(before)+EPS){ t.openSz+=sz; t.openNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(after)); t.events.push([f.time,px,sz,1]); }
+    else { t.closeSz+=sz; t.closeNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(before)); t.events.push([f.time,px,sz,-1]); }
     if(Math.abs(after)<EPS||flipped){
       t.avgEntry=t.openSz>0?t.openNotional/t.openSz:px;
       t.avgExit=t.closeSz>0?t.closeNotional/t.closeSz:px;
       t.durationMs=t.closeTime-t.openTime;
       trades.push(t); delete open[coin];
       if(Math.abs(after)>EPS){ const nt=newTrade(coin,f,after>0?'Long':'Short',Math.abs(after),Math.abs(after)*px,0);
-        nt.maxSize=Math.abs(after); nt.fills++; tallyFill(nt,f,0); open[coin]=nt; }
+        nt.maxSize=Math.abs(after); nt.fills++; tallyFill(nt,f,0); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
     }
   }
   for(const c in open){ const t=open[c]; t.isOpen=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
@@ -2811,14 +2813,16 @@ async function fetchCandles(coin,itvName,a,b){
   while(start<b&&pages<12){ // HL caps ~5000 candles per response; paginate if the range is bigger
     const rows=await hlPost({type:'candleSnapshot',req:{coin,interval:itvName,startTime:Math.floor(start),endTime:Math.floor(b)}});
     if(!Array.isArray(rows)||!rows.length)break;
-    for(const r of rows)out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c)]);
+    for(const r of rows)out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]); // open appended last so older [t,h,l,c] cache rows stay index-compatible
     const lastT=+rows[rows.length-1].t;
     if(rows.length<5000||lastT<=start)break;
     start=lastT+1; pages++; await sleep(120);
   }
   return out;
 }
-// candles: sorted [openTime, high, low]; a candle counts if it overlaps (openTime, closeTime).
+// candles: sorted [openTime, high, low, close, open?]; the open (index 4) exists only on rows fetched
+// after the replay-candlestick build — everything here uses indexes 1-3 so old cache rows are fine.
+// A candle counts if it overlaps (openTime, closeTime).
 // Also records WHEN the extremes happened: maeAt/mfeAt are fractions of the trade's duration
 // (0 = at entry, 1 = at exit, candle-midpoint resolution) — "winners dip early, peak late"
 // is a different exit prescription than "winners peak early, then bleed".
@@ -3066,6 +3070,13 @@ function wireExcursions(closed){
 
 /* ============================ trade replay (per-trade candle chart) ============================ */
 let _replayChart=null,_replayFor=null;
+// open price for candle i: the stored open when the cache row has one (5-element rows, new fetches),
+// else the previous candle's close (a perp trades continuously, so prev close IS the open),
+// else its own close/midpoint. Old 4-element cache rows are handled honestly, never fabricated flat.
+function candleOpen(candles,i){ const k=candles[i];
+  if(isFinite(k[4]))return k[4];
+  if(i>0&&isFinite(candles[i-1][3]))return candles[i-1][3];
+  return isFinite(k[3])?k[3]:(k[1]+k[2])/2; }
 async function ensureTradeCandles(t){
   // fetch (cache-aware) candles for one trade's window, falling back coarser like the main scan
   const now=Date.now();
@@ -3098,32 +3109,52 @@ async function openReplay(id,btn){
   if(!got){ box.innerHTML='<p class="lead" style="font-size:12px">No candles available for this trade (coin unsupported or beyond retention).</p>'; return; }
   const {candles,itv}=got;
   const closeT=t.isOpen?Date.now():t.closeTime;
-  const ex=computeExcursion({...t,isOpen:false,closeTime:closeT},candles,itv.ms);
-  const px=c=>isFinite(c[3])?c[3]:(c[1]+c[2])/2; // close, else midpoint (older cached candles lack close)
-  const line=candles.map(c=>({x:c[0],y:px(c)}));
-  const hiB=candles.map(c=>({x:c[0],y:c[1]})), loB=candles.map(c=>({x:c[0],y:c[2]}));
-  const marks=[];
-  if(ex&&ex.maeAt!=null)marks.push({x:t.openTime+ex.maeAt*(closeT-t.openTime),y:t.dir==='Short'?Math.max(...candles.map(c=>c[1])):Math.min(...candles.map(c=>c[2])),lbl:'worst dip'});
-  if(ex&&ex.mfeAt!=null)marks.push({x:t.openTime+ex.mfeAt*(closeT-t.openTime),y:t.dir==='Short'?Math.min(...candles.map(c=>c[2])):Math.max(...candles.map(c=>c[1])),lbl:'peak'});
-  const hline=(y,color,dash)=>({type:'line',data:[{x:candles[0][0],y},{x:candles[candles.length-1][0],y}],borderColor:color,borderWidth:1.2,borderDash:dash,pointRadius:0,fill:false});
+  // candlesticks as two overlaid floating-bar datasets (thin wick low..high, thick body open..close),
+  // per-candle up/down colors; open derived via candleOpen so pre-open cache rows still render.
+  const wick=[],wickBg=[],body=[],bodyBg=[],meta=[];
+  for(let i=0;i<candles.length;i++){ const k=candles[i];
+    const o=candleOpen(candles,i), c=isFinite(k[3])?k[3]:(k[1]+k[2])/2, up=c>=o;
+    const a=up?'rgba(47,208,140,':'rgba(244,88,106,';
+    wick.push({x:k[0],y:[k[2],k[1]]}); wickBg.push(a+'.85)');
+    body.push({x:k[0],y:[Math.min(o,c),Math.max(o,c)]}); bodyBg.push(a+(up?'.8)':'.85)'));
+    meta.push({o,c}); }
+  // fill markers: every entry/add (gold triangle up) and every partial/final close (green triangle down),
+  // at the actual fill time and price, from the trade's event log.
+  const evs=(t.events||[]).filter(e=>e[0]>=t.openTime-itv.ms&&e[0]<=closeT+itv.ms);
+  const marks=evs.map((e,i)=>({x:e[0],y:e[1],k:e[3],sz:e[2],
+    lbl:e[3]>0?(i===0?'entry':'add'):((!t.isOpen&&i===evs.length-1)?'exit':'partial close')}));
+  const xmin=candles[0][0]-itv.ms/2, xmax=candles[candles.length-1][0]+itv.ms/2;
+  const hline=(y,color,dash)=>({type:'line',data:[{x:xmin,y},{x:xmax,y}],borderColor:color,borderWidth:1.2,borderDash:dash,pointRadius:0,fill:false});
   const dsets=[
-    {type:'line',data:hiB,borderColor:'transparent',backgroundColor:'rgba(139,147,255,.10)',pointRadius:0,fill:'+1',tension:0},
-    {type:'line',data:loB,borderColor:'transparent',pointRadius:0,fill:false,tension:0},
-    {type:'line',data:line,borderColor:'rgba(139,147,255,.9)',borderWidth:1.4,pointRadius:0,fill:false,tension:0},
+    {type:'bar',data:wick,backgroundColor:wickBg,grouped:false,barThickness:1,borderWidth:0,minBarLength:1,order:4},
+    {type:'bar',data:body,backgroundColor:bodyBg,grouped:false,barPercentage:0.82,categoryPercentage:1,maxBarThickness:14,borderWidth:0,minBarLength:2,order:3},
     hline(t.avgEntry,'rgba(230,180,80,.8)',[4,3]),
   ];
   if(!t.isOpen&&t.avgExit>0)dsets.push(hline(t.avgExit,'rgba(47,208,140,.8)',[4,3]));
-  if(marks.length)dsets.push({type:'scatter',data:marks,pointRadius:5,pointStyle:'rectRot',
-    backgroundColor:marks.map(m=>m.lbl==='peak'?'rgba(47,208,140,.95)':'rgba(240,97,109,.95)')});
+  const MDS=dsets.length;
+  if(marks.length)dsets.push({type:'scatter',data:marks,order:1,
+    pointStyle:'triangle',rotation:marks.map(m=>m.k>0?0:180),
+    pointRadius:6,pointHoverRadius:7,borderColor:'rgba(10,14,24,.9)',borderWidth:1,
+    backgroundColor:marks.map(m=>m.k>0?'rgba(230,180,80,.95)':'rgba(47,208,140,.95)')});
   box.innerHTML='<div class="chart-box" style="height:260px;margin:8px 0"><canvas id="rp-'+id.replace(/[^a-zA-Z0-9_-]/g,'_')+'"></canvas></div>'
-    +'<p class="lead" style="font-size:11.5px;color:var(--faint);margin:2px 0 8px">'+itv.name+' candles · shaded band = candle high/low range · gold dash = entry'+(!t.isOpen&&t.avgExit>0?' · green dash = exit':'')+(marks.length?' · markers = worst dip / peak moments':'')+'</p>';
+    +'<p class="lead" style="font-size:11.5px;color:var(--faint);margin:2px 0 8px">'+itv.name+' candles · \u25b2 = entry / add fill · \u25bc = close fill · gold dash = avg entry'+(!t.isOpen&&t.avgExit>0?' · green dash = avg exit':'')+' · hover a candle for OHLC, a marker for the fill</p>';
   const cv=box.querySelector('canvas');
   if(_replayChart)_replayChart.destroy();
   _replayFor=id;
+  const fpx=v=>{const a=Math.abs(v);return v.toLocaleString(undefined,{maximumFractionDigits:a>=1000?2:a>=1?4:6});};
+  const szf=v=>v.toLocaleString(undefined,{maximumFractionDigits:6});
   _replayChart=new Chart(cv,{data:{datasets:dsets},options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:false},tooltip:{filter:i=>i.datasetIndex===2||i.datasetIndex===dsets.length-1&&marks.length,
-      callbacks:{label:c=>c.raw.lbl?(' '+c.raw.lbl+' · '+c.parsed.y):(' '+new Date(c.parsed.x).toLocaleString()+' · '+c.parsed.y)}}},
-    scales:{x:{type:'linear',min:candles[0][0],max:candles[candles.length-1][0],grid:{color:GRID,drawTicks:false},border:{display:false},
+    plugins:{legend:{display:false},tooltip:{
+      filter:i=>i.datasetIndex===1||(marks.length&&i.datasetIndex===MDS),
+      callbacks:{title:()=>'',label:c=>{
+        if(marks.length&&c.datasetIndex===MDS){ const m=c.raw;
+          return ' '+m.lbl+' · '+szf(m.sz)+' @ '+fpx(m.y)+' · '+new Date(m.x).toLocaleString(); }
+        const i=c.dataIndex,k=candles[i],m=meta[i];
+        const chg=m.o>0?(m.c/m.o-1)*100:null;
+        return [' '+new Date(k[0]).toLocaleString(),
+          ' O '+fpx(m.o)+'  H '+fpx(k[1])+'  L '+fpx(k[2])+'  C '+fpx(m.c)+(chg!=null?'  ('+(chg>=0?'+':'')+chg.toFixed(2)+'%)':'')];
+      }}}},
+    scales:{x:{type:'linear',min:xmin,max:xmax,grid:{color:GRID,drawTicks:false},border:{display:false},
       ticks:{maxTicksLimit:7,callback:v=>{const d=new Date(v);return (closeT-t.openTime>3*86400e3)?(d.getMonth()+1)+'/'+d.getDate():d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');}}},
       y:{grid:{color:GRID,drawTicks:false},border:{display:false}}},
     interaction:{intersect:false,mode:'nearest'}}});
@@ -3637,7 +3668,7 @@ function journalRow(t,j,R){
     <div class="field"><label>Screenshots / attachments <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— stored in this browser (IndexedDB), not in the JSON backup</span></label>
       <div class="attgrid" id="att-${t.id}"><span style="color:var(--faint);font-size:11.5px">Loading…</span></div>
       <label class="btn ghost attbtn">+ Add image<input type="file" data-att="${t.id}" accept="image/*" multiple hidden></label>
-      <button class="btn ghost attbtn" data-replay="${t.id}" data-tip="Candle chart of this trade: price path with entry/exit lines and the worst-dip / peak moments marked. Uses the locally cached candles where possible.">📈 Price chart</button></div>
+      <button class="btn ghost attbtn" data-replay="${t.id}" data-tip="Candlestick chart of this trade: real OHLC candles with every entry/add fill (▲) and close fill (▼) marked at its actual time and price, plus avg entry/exit lines. Uses the locally cached candles where possible.">📈 Price chart</button></div>
     <div id="replay-${t.id}"></div>
     <div class="jsave"><span class="saved-tag" id="saved-${t.id}">Saved ✓</span>
       <button class="btn" data-save="${t.id}">Save journal</button></div>
