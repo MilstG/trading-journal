@@ -3124,6 +3124,14 @@ async function openReplay(id,btn){
   const marks=evs.map((e,i)=>({x:e[0],y:e[1],k:e[3],sz:e[2],
     lbl:e[3]>0?(i===0?'entry':'add'):((!t.isOpen&&i===evs.length-1)?'exit':'partial close')}));
   const xmin=candles[0][0]-itv.ms/2, xmax=candles[candles.length-1][0]+itv.ms/2;
+  // bar datasets default the value axis to beginAtZero, which squashes a tight price range
+  // against 0 — pin the y range to the actual extremes (candles + fill prices + avg lines).
+  let ylo=Infinity,yhi=-Infinity;
+  for(const k of candles){ if(isFinite(k[2])&&k[2]<ylo)ylo=k[2]; if(isFinite(k[1])&&k[1]>yhi)yhi=k[1]; }
+  for(const m of marks){ if(m.y<ylo)ylo=m.y; if(m.y>yhi)yhi=m.y; }
+  if(isFinite(t.avgEntry)&&t.avgEntry>0){ ylo=Math.min(ylo,t.avgEntry); yhi=Math.max(yhi,t.avgEntry); }
+  if(!t.isOpen&&t.avgExit>0){ ylo=Math.min(ylo,t.avgExit); yhi=Math.max(yhi,t.avgExit); }
+  const ypad=(yhi-ylo)*0.08||Math.abs(yhi)*0.002||1; ylo-=ypad; yhi+=ypad;
   const hline=(y,color,dash)=>({type:'line',data:[{x:xmin,y},{x:xmax,y}],borderColor:color,borderWidth:1.2,borderDash:dash,pointRadius:0,fill:false});
   const dsets=[
     {type:'bar',data:wick,backgroundColor:wickBg,grouped:false,barThickness:1,borderWidth:0,minBarLength:1,order:4},
@@ -3156,7 +3164,8 @@ async function openReplay(id,btn){
       }}}},
     scales:{x:{type:'linear',min:xmin,max:xmax,grid:{color:GRID,drawTicks:false},border:{display:false},
       ticks:{maxTicksLimit:7,callback:v=>{const d=new Date(v);return (closeT-t.openTime>3*86400e3)?(d.getMonth()+1)+'/'+d.getDate():d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');}}},
-      y:{grid:{color:GRID,drawTicks:false},border:{display:false}}},
+      y:{min:ylo,max:yhi,beginAtZero:false,grid:{color:GRID,drawTicks:false},border:{display:false},
+        ticks:{callback:v=>{const a=Math.abs(v);return v.toLocaleString(undefined,{maximumFractionDigits:a>=1000?2:a>=1?4:6});}}}},
     interaction:{intersect:false,mode:'nearest'}}});
 }
 
