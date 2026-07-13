@@ -21,10 +21,15 @@ const src = [
   extractFn('computeExcursion'),
   extractFn('excSummary'),
   extractFn('excVerdict'),
-  'export { computeExcursion, excSummary, excVerdict };',
+  extractFn('isPerp'),
+  extractFn('newTrade'),
+  extractFn('tallyFill'),
+  extractFn('reconstructTrades'),
+  extractFn('candleOpen'),
+  'export { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen };',
 ].join('\n');
 const mod = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-const { computeExcursion, excSummary, excVerdict } = mod;
+const { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen } = mod;
 
 let pass = 0, fail = 0;
 function t(name, fn){
@@ -86,9 +91,9 @@ t('timing persists through the ratchet and reuse path', () => {
 });
 
 console.log('\nTrade replay (#1)');
-t('candles now carry close; replay falls back to midpoint for old cache rows', () => {
-  ok(html.includes('out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c)]);'));
-  ok(html.includes('const px=c=>isFinite(c[3])?c[3]:(c[1]+c[2])/2;'));
+t('candles now carry close AND open; midpoint fallback lives in candleOpen', () => {
+  ok(html.includes('out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]);'));
+  ok(html.includes('function candleOpen(candles,i)'));
 });
 t('replay button, container, delegate, and toggle-off present', () => {
   ok(html.includes('data-replay="${t.id}"'));
@@ -137,6 +142,59 @@ t('attachments sync up on add/remove and down on empty-local open', () => {
   ok(html.includes('loadAttachments(id); syncAttUp(id); }'));
   ok(html.includes('const dl=await syncAttDown(id); if(dl)arr=dl;'));
   ok(html.includes("srvFetch('/api/att/'+_attKey(id)"));
+});
+
+console.log('\nReplay candlesticks: fill events + candle opens (#1)');
+const mkFill = (time, side, sz, startPosition, px) => ({ time, side, sz: String(sz),
+  startPosition: String(startPosition), px: String(px), fee: '0', closedPnl: '0', coin: 'ETH', crossed: true });
+t('entry / add / partial close / exit fills are logged with time, px, size and side', () => {
+  const fills = [
+    mkFill(T0 + 0 * MIN, 'B', 2, 0, 100),   // entry long 2
+    mkFill(T0 + 1 * MIN, 'B', 1, 2, 101),   // add 1
+    mkFill(T0 + 2 * MIN, 'A', 1, 3, 103),   // partial close 1
+    mkFill(T0 + 3 * MIN, 'A', 2, 2, 104),   // final close 2
+  ];
+  const [tr] = reconstructTrades(fills, 'addr', 'perp');
+  eq(tr.events, [
+    [T0 + 0 * MIN, 100, 2, 1],
+    [T0 + 1 * MIN, 101, 1, 1],
+    [T0 + 2 * MIN, 103, 1, -1],
+    [T0 + 3 * MIN, 104, 2, -1],
+  ]);
+  ok(!tr.isOpen, 'trade closed');
+});
+t('a flip fill logs the closing portion on the old trade and the opening portion on the new one', () => {
+  const fills = [
+    mkFill(T0 + 0 * MIN, 'B', 2, 0, 100),    // long 2
+    mkFill(T0 + 1 * MIN, 'A', 5, 2, 102),    // sell 5: closes 2, opens short 3
+    mkFill(T0 + 2 * MIN, 'B', 3, -3, 101),   // buy back 3
+  ];
+  const trades = reconstructTrades(fills, 'addr', 'perp').sort((a, b) => a.openTime - b.openTime);
+  eq(trades[0].events, [[T0, 100, 2, 1], [T0 + MIN, 102, 2, -1]], 'long: entry 2, close 2');
+  eq(trades[1].events, [[T0 + MIN, 102, 3, 1], [T0 + 2 * MIN, 101, 3, -1]], 'short seeded by the flip remainder');
+});
+t('open trades keep their event log too', () => {
+  const fills = [mkFill(T0, 'B', 2, 0, 100), mkFill(T0 + MIN, 'B', 1, 2, 101)];
+  const [tr] = reconstructTrades(fills, 'addr', 'perp');
+  ok(tr.isOpen);
+  eq(tr.events, [[T0, 100, 2, 1], [T0 + MIN, 101, 1, 1]]);
+});
+t('candleOpen: stored open wins, prev close backfills old rows, first row falls back to its own close', () => {
+  const cs = [
+    [T0, 105, 95, 100],            // old 4-element cache row, no open
+    [T0 + MIN, 106, 99, 104],      // old row -> open = prev close 100
+    [T0 + 2 * MIN, 107, 103, 106, 104.5], // new 5-element row -> stored open
+  ];
+  near(candleOpen(cs, 0), 100, 1e-12, 'first row: own close');
+  near(candleOpen(cs, 1), 100, 1e-12, 'prev close is the open on a continuous perp');
+  near(candleOpen(cs, 2), 104.5, 1e-12, 'stored open used when present');
+});
+t('replay chart renders candlestick bars and fill markers, not the old band/dip-peak', () => {
+  ok(html.includes("wick.push({x:k[0],y:[k[2],k[1]]})"), 'wick dataset built from low..high');
+  ok(html.includes("body.push({x:k[0],y:[Math.min(o,c),Math.max(o,c)]})"), 'body dataset built from open..close');
+  ok(html.includes("pointStyle:'triangle'"), 'fill markers are triangles');
+  ok(!html.includes("lbl:'worst dip'"), 'dip/peak markers removed from the replay chart');
+  ok(html.includes('\\u25b2 = entry / add fill'), 'caption documents the new markers');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
