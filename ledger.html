@@ -3118,20 +3118,32 @@ async function openReplay(id,btn){
     wick.push({x:k[0],y:[k[2],k[1]]}); wickBg.push(a+'.85)');
     body.push({x:k[0],y:[Math.min(o,c),Math.max(o,c)]}); bodyBg.push(a+(up?'.8)':'.85)'));
     meta.push({o,c}); }
-  // fill markers: every entry/add (gold triangle up) and every partial/final close (green triangle down),
-  // at the actual fill time and price, from the trade's event log.
+  // price range from the candles + avg lines first — marker flag offsets are sized from it.
+  let plo=Infinity,phi=-Infinity;
+  for(const k of candles){ if(isFinite(k[2])&&k[2]<plo)plo=k[2]; if(isFinite(k[1])&&k[1]>phi)phi=k[1]; }
+  if(isFinite(t.avgEntry)&&t.avgEntry>0){ plo=Math.min(plo,t.avgEntry); phi=Math.max(phi,t.avgEntry); }
+  if(!t.isOpen&&t.avgExit>0){ plo=Math.min(plo,t.avgExit); phi=Math.max(phi,t.avgExit); }
+  // fill markers: every entry/add (gold triangle up) and every partial/final close (green triangle
+  // down). Drawn as flags UNDER (entry/add) or OVER (close) the candle that holds the fill — never
+  // at the raw fill price, which buries the marker inside the candle body. Several fills on the
+  // same side of one candle stack outward. The exact fill price/size/time lives in the hover.
   const evs=(t.events||[]).filter(e=>e[0]>=t.openTime-itv.ms&&e[0]<=closeT+itv.ms);
-  const marks=evs.map((e,i)=>({x:e[0],y:e[1],k:e[3],sz:e[2],
-    lbl:e[3]>0?(i===0?'entry':'add'):((!t.isOpen&&i===evs.length-1)?'exit':'partial close')}));
+  const cIdx=ts=>{ let lo=0,hi=candles.length-1,best=0;
+    while(lo<=hi){ const m=(lo+hi)>>1; if(candles[m][0]<=ts){best=m;lo=m+1;} else hi=m-1; } return best; };
+  const off=(phi-plo)*0.045||Math.abs(phi)*0.002||1;
+  const stacked={};
+  const marks=evs.map((e,i)=>{ const ci=cIdx(e[0]), k=candles[ci], key=ci+':'+(e[3]>0?'b':'s');
+    const n=stacked[key]=(stacked[key]||0)+1;
+    const y=e[3]>0 ? (isFinite(k[2])?k[2]:e[1])-off*(0.6+0.9*n)
+                   : (isFinite(k[1])?k[1]:e[1])+off*(0.6+0.9*n);
+    return {x:k[0],y,px:e[1],k:e[3],sz:e[2],
+      lbl:e[3]>0?(i===0?'entry':'add'):((!t.isOpen&&i===evs.length-1)?'exit':'partial close')}; });
   const xmin=candles[0][0]-itv.ms/2, xmax=candles[candles.length-1][0]+itv.ms/2;
   // bar datasets default the value axis to beginAtZero, which squashes a tight price range
-  // against 0 — pin the y range to the actual extremes (candles + fill prices + avg lines).
-  let ylo=Infinity,yhi=-Infinity;
-  for(const k of candles){ if(isFinite(k[2])&&k[2]<ylo)ylo=k[2]; if(isFinite(k[1])&&k[1]>yhi)yhi=k[1]; }
+  // against 0 — pin the y range to the actual extremes (candles + marker flags + avg lines).
+  let ylo=plo,yhi=phi;
   for(const m of marks){ if(m.y<ylo)ylo=m.y; if(m.y>yhi)yhi=m.y; }
-  if(isFinite(t.avgEntry)&&t.avgEntry>0){ ylo=Math.min(ylo,t.avgEntry); yhi=Math.max(yhi,t.avgEntry); }
-  if(!t.isOpen&&t.avgExit>0){ ylo=Math.min(ylo,t.avgExit); yhi=Math.max(yhi,t.avgExit); }
-  const ypad=(yhi-ylo)*0.08||Math.abs(yhi)*0.002||1; ylo-=ypad; yhi+=ypad;
+  const ypad=(yhi-ylo)*0.06||Math.abs(yhi)*0.002||1; ylo-=ypad; yhi+=ypad;
   const hline=(y,color,dash)=>({type:'line',data:[{x:xmin,y},{x:xmax,y}],borderColor:color,borderWidth:1.2,borderDash:dash,pointRadius:0,fill:false});
   const dsets=[
     {type:'bar',data:wick,backgroundColor:wickBg,grouped:false,barThickness:1,borderWidth:0,minBarLength:1,order:4},
@@ -3156,7 +3168,7 @@ async function openReplay(id,btn){
       filter:i=>i.datasetIndex===1||(marks.length&&i.datasetIndex===MDS),
       callbacks:{title:()=>'',label:c=>{
         if(marks.length&&c.datasetIndex===MDS){ const m=c.raw;
-          return ' '+m.lbl+' · '+szf(m.sz)+' @ '+fpx(m.y)+' · '+new Date(m.x).toLocaleString(); }
+          return ' '+m.lbl+' · '+szf(m.sz)+' @ '+fpx(m.px)+' · '+new Date(m.x).toLocaleString(); }
         const i=c.dataIndex,k=candles[i],m=meta[i];
         const chg=m.o>0?(m.c/m.o-1)*100:null;
         return [' '+new Date(k[0]).toLocaleString(),
