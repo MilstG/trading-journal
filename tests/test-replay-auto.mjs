@@ -196,6 +196,10 @@ t('replay chart renders candlestick bars and fill markers, not the old band/dip-
   ok(!html.includes("lbl:'worst dip'"), 'dip/peak markers removed from the replay chart');
   ok(html.includes('\\u25b2 = entry / add fill'), 'caption documents the new markers');
 });
+t('y-axis is pinned to the price range — bar datasets must not drag it to zero', () => {
+  ok(html.includes('y:{min:ylo,max:yhi,beginAtZero:false'), 'explicit y min/max on the replay chart');
+  ok(html.includes('const ypad=(yhi-ylo)*0.08'), 'padded from the computed extremes');
+});
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
