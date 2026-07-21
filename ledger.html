@@ -2657,6 +2657,23 @@ function sizeDependence(closed){
 function _wilson(w,n){ if(!n)return null; const z=1.96, p=w/n, z2=z*z;
   const den=1+z2/n, ctr=(p+z2/(2*n))/den, half=(z*Math.sqrt(p*(1-p)/n+z2/(4*n*n)))/den;
   return {p, lo:Math.max(0,ctr-half), hi:Math.min(1,ctr+half)}; }
+function partitionConditions(rows){
+  // Fix for the old top-5/bottom-5 overlap (both lists sliced the same rows, and "worst"
+  // sorted by the UPPER Wilson bound, dragging well-sampled winners into the loser panel).
+  // Now: classify each condition once, then partition so it appears on exactly one side.
+  // Money decides the split (break-even at 0, in the selected basis); the win-rate Wilson
+  // floor vs a coin flip decides edge-vs-fragile. No size weighting. Deterministic ties.
+  const cmpKey=(a,b)=>a.name<b.name?-1:a.name>b.name?1:0;
+  for(const x of rows){
+    x.state = x.exp<=0 ? 'losing' : (x.lo<0.5 ? 'fragile' : 'edge');
+    x.tone  = x.state==='edge' ? 'ok' : (x.state==='fragile' ? 'mid' : 'no');
+    x.note  = x.state==='fragile' ? (x.n<25 ? 'small sample \u00b7 n='+x.n : 'win-rate floor '+(x.lo*100).toFixed(0)+'% < 50%')
+            : x.state==='losing'  ? 'loses money' : '';
+  }
+  const best =rows.filter(x=>x.state==='edge').sort((a,b)=>(b.exp-a.exp)||(b.lo-a.lo)||cmpKey(a,b));
+  const worst=rows.filter(x=>x.state!=='edge').sort((a,b)=>(a.exp-b.exp)||(a.lo-b.lo)||cmpKey(a,b));
+  return {best, worst};
+}
 function probabilityScan(closed,V){ V=V||(t=>t.net);
   if(closed.length<40)return null;
   const ST=tradeStates(closed);
@@ -2675,9 +2692,8 @@ function probabilityScan(closed,V){ V=V||(t=>t.net);
     rows.push({name,fam:f,n:dec.length,w,wr:wl.p,lo:wl.lo,hi:wl.hi,exp:_avg(inC.map(V))});
   }
   if(!rows.length)return null;
-  const best=[...rows].sort((a,b)=>b.lo-a.lo).slice(0,5);
-  const worst=[...rows].sort((a,b)=>a.hi-b.hi).slice(0,5);
-  return {overall:{wr:overall.p,lo:overall.lo,hi:overall.hi,n:decisiveAll.length}, best, worst};
+  const part=partitionConditions(rows);
+  return {overall:{wr:overall.p,lo:overall.lo,hi:overall.hi,n:decisiveAll.length}, best:part.best.slice(0,8), worst:part.worst.slice(0,8)};
 }
 function deepScan(closed,V){
   return {states:stateAnalysis(closed,V), cp:changePoint(closed,V), sz:sizeDependence(closed), prob:probabilityScan(closed,V)};
@@ -2693,7 +2709,7 @@ function deepScan(closed,V){
 const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_wilson,_maxSplitT,retPct,dcoin,dispMarket,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
-  changePoint,sizeDependence,probabilityScan,minerFams,mineInsights,deepScan});
+  changePoint,sizeDependence,probabilityScan,partitionConditions,minerFams,mineInsights,deepScan});
 const _WORKER_PRELUDE="let settings={tz:'local'}, journal={}, _excM={}, spotMaps={nameByCoin:{}}, _be=50, _rng=Math.random, _progress=null;";
 const _WORKER_DISPATCH="onmessage=function(e){var d=e.data;"+
  "try{var out;"+
@@ -3330,15 +3346,19 @@ function renderMinerResults(r,deep,basis){ basis=basis||'usd';
   let probHtml='';
   if(deep&&deep.prob){
     const P=deep.prob;
-    const prow=(x,goodSide)=>{ const ci=(x.lo*100).toFixed(0)+'\u2013'+(x.hi*100).toFixed(0)+'%';
-      return `<div class="metric-row" data-tip="Win rate among decisive trades (break-even scratches excluded), with a 95% Wilson confidence interval. Ranked by the ${goodSide?'LOWER':'UPPER'} bound so small hot/cold streaks can't top the list. Expectancy shown because probability \u2260 profitability."><span class="ml">${esc(x.name)} \u00b7 ${x.n} trades</span><span class="mv">${(x.wr*100).toFixed(0)}% win <span style="color:var(--faint);font-weight:400">(${ci})</span> \u00b7 ${fmtA(x.exp)}/trade</span></div>`; };
+    const TAGTXT={ok:'edge',mid:'fragile',no:'loses'};
+    const prow=(x)=>{ const ci=(x.lo*100).toFixed(0)+'\u2013'+(x.hi*100).toFixed(0)+'%';
+      const ec=x.exp>0?'var(--profit)':x.exp<0?'var(--loss)':'var(--muted)';
+      const nt=x.note?`<span style="color:var(--faint);font-weight:400"> \u00b7 ${x.note}</span>`:'';
+      return `<div class="metric-row" data-tip="Split by money then reliability: an edge clears break-even AND its 95% Wilson win-rate floor sits above 50%; fragile is profitable but the floor dips under a coin flip (often just a small sample); loses is negative expectancy. One spine \u2014 sorted by %/trade. Every condition appears on exactly one side."><span class="ml"><span class="badge ${x.tone}">${TAGTXT[x.tone]}</span>${esc(x.name)} \u00b7 ${x.n} trades${nt}</span><span class="mv">${(x.wr*100).toFixed(0)}% <span style="color:var(--faint);font-weight:400">(${ci})</span> \u00b7 <span style="color:${ec}">${fmtA(x.exp)}/trade</span></span></div>`; };
+    const emptyRow=(t)=>`<div class="metric-row"><span class="ml" style="color:var(--faint)">${t}</span></div>`;
     probHtml=`<div class="diag-grid" style="margin-top:14px">
-      <div class="diag-card"><h3 data-tip="Conditions where your probability of a winning trade is most credibly high \u2014 ranked by the lower bound of a 95% Wilson interval, so a 4-for-4 fluke can't outrank a proven 65% over 100 trades. Your overall decisive win rate is ${(P.overall.wr*100).toFixed(0)}% (${(P.overall.lo*100).toFixed(0)}\u2013${(P.overall.hi*100).toFixed(0)}%, n=${P.overall.n}).">Where you win most reliably</h3>${P.best.map(x=>prow(x,true)).join('')}</div>
-      <div class="diag-card"><h3 data-tip="Conditions where your probability of winning is most credibly LOW \u2014 ranked by the upper bound of the interval, so a 0-for-4 cold snap can't outrank a proven leak. High expectancy can still coexist with low win rate (few big winners) \u2014 check the $/trade column.">Where you win least reliably</h3>${P.worst.map(x=>prow(x,false)).join('')}</div>
+      <div class="diag-card"><h3 data-tip="Conditions worth leaning into: positive expectancy in your selected basis AND a 95% Wilson win-rate floor above 50%, so a 4-for-4 fluke can't outrank a proven edge. Sorted by %/trade. Your overall decisive win rate is ${(P.overall.wr*100).toFixed(0)}% (${(P.overall.lo*100).toFixed(0)}\u2013${(P.overall.hi*100).toFixed(0)}%, n=${P.overall.n}).">Lean in \u00b7 your edges</h3>${P.best.length?P.best.map(prow).join(''):emptyRow('no confirmed edges yet')}</div>
+      <div class="diag-card"><h3 data-tip="Ease off \u2014 leaks and fragile spots. Losing conditions (negative expectancy) first, then profitable-but-unconfirmed ones whose win-rate floor is under a coin flip. A high %/trade with a low floor is usually a small sample, not a clean edge \u2014 re-test before trusting it.">Ease off \u00b7 leaks &amp; fragile</h3>${P.worst.length?P.worst.map(prow).join(''):emptyRow('nothing dragging \u2014 clean run')}</div>
     </div>`;
     const topB=P.best[0], topW=P.worst[0];
-    if(topB&&topB.lo>Math.max(0.55,P.overall.wr)) ideas.push({w:400+topB.n,txt:`Your most reliable condition is <b>${esc(topB.name)}</b>: ${(topB.wr*100).toFixed(0)}% win rate over ${topB.n} decisive trades (\u2265${(topB.lo*100).toFixed(0)}% with 95% confidence). When probability matters more than payoff \u2014 sizing up, rebuilding confidence after a drawdown \u2014 this is the well to draw from.`});
-    if(topW&&topW.hi<Math.min(0.45,P.overall.wr)) ideas.push({w:380+topW.n,txt:`Your least reliable condition is <b>${esc(topW.name)}</b>: ${(topW.wr*100).toFixed(0)}% over ${topW.n} decisive trades (\u2264${(topW.hi*100).toFixed(0)}% with 95% confidence). Unless its winners are huge (check $/t), these are coin-flips-or-worse dressed as trades.`});
+    if(topB&&topB.state==='edge') ideas.push({w:400+topB.n,txt:`Your strongest edge is <b>${esc(topB.name)}</b>: ${fmtA(topB.exp)}/trade over ${topB.n} decisive trades, ${(topB.wr*100).toFixed(0)}% win (\u2265${(topB.lo*100).toFixed(0)}% at 95%). Lean in when this state holds.`});
+    if(topW&&topW.state==='losing') ideas.push({w:380+topW.n,txt:`<b>${esc(topW.name)}</b> loses money: ${fmtA(topW.exp)}/trade over ${topW.n} decisive trades (${(topW.wr*100).toFixed(0)}% win). This is the one to cut or rework \u2014 not size down.`});
   }
   if(r.validated[0]){ const v=r.validated[0];
     const oos = !r.split ? ' (in-sample only — confirm forward)'
