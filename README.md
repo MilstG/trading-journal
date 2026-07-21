@@ -26,9 +26,10 @@ companion server and your journal persists across devices and reboots.
 10. [Exports and backups](#exports-and-backups)
 11. [Persistence: three modes](#persistence-three-modes)
 12. [Deploying with the companion server](#deploying-with-the-companion-server)
-13. [Concepts and definitions](#concepts-and-definitions)
-14. [Limitations, stated honestly](#limitations-stated-honestly)
-15. [Development and testing](#development-and-testing)
+13. [The analytics API](#the-analytics-api-apiv1)
+14. [Concepts and definitions](#concepts-and-definitions)
+15. [Limitations, stated honestly](#limitations-stated-honestly)
+16. [Development and testing](#development-and-testing)
 
 ---
 
@@ -296,15 +297,93 @@ In all modes, image attachments and the fill/candle caches stay in the browser
 npm start        # serves ledger.html + persistence API on :8080
 ```
 
-`server.js` has **zero npm dependencies** and does exactly two things: serve
+`server.js` has **zero npm dependencies**. Its core duties are unchanged: serve
 the HTML and persist one JSON blob with atomic writes, a `.bak` of the previous
-revision, and bearer-token auth. All analytics remain in your browser.
+revision, and bearer-token auth. All in-app analytics remain in your browser.
+It additionally exposes an optional **read-only analytics API** — see the next
+section.
 
 For **Railway** specifically, see [README-deploy.md](README-deploy.md). The two
 things you must not skip: **attach a Volume at `/data`** (Railway's filesystem
 is wiped on redeploy — no volume, no persistence) and **set `AUTH_TOKEN`**
 (your journal contains wallet addresses and notes; don't leave the API open on
 a public URL). The app asks for the token once per browser.
+
+## The analytics API (`/api/v1`)
+
+The companion server exposes a **read-only** HTTP API over your trading data,
+for scripts, dashboards, or anything else that wants programmatic access. It
+never writes user data: journal, wallets and settings can only change through
+the app's own sync (`PUT /api/data`).
+
+**The engine is the app itself.** At boot the server extracts the pure
+functions (`reconstructTrades`, `computeStats`, `projectForward`,
+`kellyFromTrades`, `openRiskModel`, `spotFifoLots`, …) from the very
+`ledger.html` it serves and evaluates them in an isolated `node:vm` context —
+the same single-source-of-truth trick the test harness uses. No math is
+reimplemented; when the app's logic changes, the API's answers change with it
+on the next deploy. If the served HTML predates a function the API needs,
+analytics return `503` naming what's missing while the app and persistence run
+untouched.
+
+**Feeding it data.** The API computes from server-side caches
+(`DATA_DIR/fills/`, `DATA_DIR/funding/`, `DATA_DIR/market.json`), populated by:
+
+```
+POST /api/v1/refresh          # body: {wallets?:[...], full?:true, force?:true}
+```
+
+which fetches fills (incrementally, same dedupe key as the app), funding,
+positions (HIP-3 dexs included, derived from fills), spot balances and
+portfolio PnL from Hyperliquid. Refreshes are mutexed and rate-limited to one
+per 15 s unless `force`. Wallets default to the ones saved in the app.
+
+**Endpoints.** `GET /api/v1` returns a machine-readable index of everything
+below, including auth mode and filter docs.
+
+| Endpoint | What it returns |
+| --- | --- |
+| `GET /api/v1/meta` | data revision, per-wallet cache freshness, engine status, trade counts |
+| `GET /api/v1/trades` | filtered/sorted/paginated trades, journal-enriched, with per-trade R |
+| `GET /api/v1/trades/:id` | one trade incl. fill events |
+| `GET /api/v1/stats` | full `computeStats` output over the filtered set + the 1R basis used |
+| `GET /api/v1/equity` | cumulative equity points, calendar daily series, current/underwater/shuffle drawdown |
+| `GET /api/v1/calendar` | net PnL per calendar day (tz-aware) |
+| `GET /api/v1/breakdown?by=` | grouped stats by `coin, dir, market, wallet, tag, dow, hour` |
+| `GET /api/v1/projection` | Monte Carlo fan (`horizon, paths, block, seed, lookback`) — same deterministic seeding contract as the Project tab |
+| `GET /api/v1/kelly` | Kelly sizing from the filtered closed set (`null` under 10 decisive trades) |
+| `GET /api/v1/risk` | open-position risk model: liquidation distances, concentration, danger list |
+| `GET /api/v1/positions` | cached positions/spot/account snapshot; `?live=1` refetches (full token) |
+| `GET /api/v1/spot/lots` | FIFO 8949-style spot cost-basis lots |
+| `GET /api/v1/whatif` | counterfactual replay removing trades matching `field/op/value` |
+| `GET /api/v1/journal`, `/journal/:id`, `/tags` | read-only journal views |
+| `GET /api/v1/export/trades.csv` | flat CSV of the filtered trades |
+
+**Filters** (shared by trades/stats/equity/calendar/breakdown/projection/
+kelly/whatif/export): `market=perp|spot|combined`, `wallet`, `coin` (matches
+raw coin or resolved spot symbol), `dir`, `status=open|closed|all`,
+`outcome=win|loss|be` (uses your saved break-even band), `tag`, `q` (notes
+substring), `from`/`to` (ms epoch or ISO), `tz=utc|local`. Note `local` is the
+*server's* timezone — API consumers should prefer `utc`. The 1R basis for R
+multiples is pinned to the filtered closed set, mirroring the app's period
+behavior.
+
+**Access control.** Three layers, weakest wins nothing it shouldn't:
+
+- `AUTH_TOKEN` — everything, unchanged.
+- `READ_TOKEN` (optional) — may `GET /api/v1/*` and **nothing else**: it cannot
+  read or write `/api/data`, trigger refreshes, fetch live positions, or touch
+  attachments/snapshots. Safe to hand to a script or a friend's dashboard.
+- `CORS_ORIGIN` (optional, exact origin) — lets a browser app on another
+  origin call `/api/*`. Off by default.
+
+```bash
+# examples
+curl -H "Authorization: Bearer $READ_TOKEN" 'https://your.app/api/v1/stats?market=perp'
+curl -H "Authorization: Bearer $READ_TOKEN" 'https://your.app/api/v1/breakdown?by=tag'
+curl -H "Authorization: Bearer $AUTH_TOKEN" -X POST 'https://your.app/api/v1/refresh'
+curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/v1/export/trades.csv?status=closed'
+```
 
 ## Concepts and definitions
 
