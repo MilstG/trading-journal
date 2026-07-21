@@ -11,14 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const { createApp } = require(join(here, '..', 'server.js'));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
 
-let pass = 0, fail = 0;
-async function t(name, fn){
-  try { await fn(); pass++; console.log('  ✓ ' + name); }
-  catch (e) { fail++; console.error('  ✗ ' + name + '\n    ' + e.message); }
-}
-const eq = (a, b, m) => { const ja = JSON.stringify(a), jb = JSON.stringify(b);
-  if (ja !== jb) throw new Error((m || 'not equal') + '\n    got:  ' + ja + '\n    want: ' + jb); };
-const ok = (v, m) => { if (!v) throw new Error(m || 'expected truthy'); };
+import { t, ok, eq, near, report } from './harness.mjs';
 
 function listen(app){ return new Promise(res => app.listen(0, () => res('http://127.0.0.1:' + app.address().port))); }
 function makeServer(auth){
@@ -269,5 +262,4 @@ await t('server exits 0 on SIGTERM (graceful redeploy)', async () => {
   ok(code === 0, `expected exit 0, got ${code}`);
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();

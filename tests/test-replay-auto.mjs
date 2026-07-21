@@ -7,39 +7,12 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
 
-function extractFn(name){
-  const m = new RegExp('function ' + name + '\\(').exec(html);
-  if (!m) throw new Error('fn not found: ' + name);
-  let j = html.indexOf('{', m.index), depth = 0;
-  for (let k = j; k < html.length; k++) {
-    if (html[k] === '{') depth++;
-    else if (html[k] === '}' && --depth === 0) return html.slice(m.index, k + 1);
-  }
-  throw new Error('unbalanced: ' + name);
-}
-const src = [
-  extractFn('computeExcursion'),
-  extractFn('excSummary'),
-  extractFn('excVerdict'),
-  extractFn('isPerp'),
-  extractFn('newTrade'),
-  extractFn('tallyFill'),
-  extractFn('reconstructTrades'),
-  extractFn('candleOpen'),
-  'export { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen };',
-].join('\n');
-const mod = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-const { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen } = mod;
-
-let pass = 0, fail = 0;
-function t(name, fn){
-  try { fn(); pass++; console.log('  ✓ ' + name); }
-  catch (e) { fail++; console.error('  ✗ ' + name + '\n    ' + e.message); }
-}
-const eq = (a, b, m) => { const ja = JSON.stringify(a), jb = JSON.stringify(b);
-  if (ja !== jb) throw new Error((m || 'ne') + '\n    got: ' + ja + '\n    want: ' + jb); };
-const ok = (v, m) => { if (!v) throw new Error(m || 'falsy'); };
-const near = (a, b, eps, m) => { if (Math.abs(a - b) > (eps ?? 1e-9)) throw new Error((m||'not near')+': '+a+' vs '+b); };
+import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
+const { evalModule } = makeExtractor(html);
+const { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen } =
+  await evalModule(
+    ['computeExcursion','excSummary','excVerdict','isPerp','newTrade','tallyFill','reconstructTrades','candleOpen'],
+    ['computeExcursion','excSummary','excVerdict','reconstructTrades','candleOpen']);
 
 const MIN = 60e3, T0 = 1700000000000;
 
@@ -206,5 +179,4 @@ t('fill markers are candle flags, never buried at the raw fill price', () => {
   ok(html.includes("fpx(m.px)"), 'hover reports the exact fill price, not the flag position');
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();

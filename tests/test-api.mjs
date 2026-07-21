@@ -12,15 +12,7 @@ const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const { createApp } = require(join(here, '..', 'server.js'));
 
-let pass = 0, fail = 0;
-async function t(name, fn){
-  try { await fn(); pass++; console.log('  ✓ ' + name); }
-  catch (e) { fail++; console.error('  ✗ ' + name + '\n    ' + (e && e.stack || e)); }
-}
-const ok = (v, m) => { if (!v) throw new Error(m || 'expected truthy'); };
-const eq = (a, b, m) => { const ja = JSON.stringify(a), jb = JSON.stringify(b);
-  if (ja !== jb) throw new Error((m || 'not equal') + '\n    got:  ' + ja + '\n    want: ' + jb); };
-const near = (a, b, eps = 1e-6) => ok(Math.abs(a - b) < eps, `${a} !~ ${b}`);
+import { t, ok, eq, near, report } from './harness.mjs';
 
 /* ---------------- fixture: one wallet, 7 fills ---------------- */
 const ADDR = '0x' + 'a'.repeat(40);
@@ -333,5 +325,4 @@ await t('stale ledger.html: persistence works, v1 analytics 503 with the missing
 });
 
 await new Promise(res => app.close(res));
-console.log(`\napi: ${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();

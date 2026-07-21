@@ -1,35 +1,16 @@
-// Tests for the scanner condition split (#fix): partitionConditions() + _wilson().
+// Tests for the scanner condition split: partitionConditions() + _wilson().
 // The old panel sliced top-5/bottom-5 from the same rows and sorted "worst" by the UPPER
 // Wilson bound, so conditions appeared in both lists and well-sampled winners landed in the
 // loser panel. These lock the corrected contract: classify once, partition disjointly,
-// one expectancy spine, deterministic order.
-// Functions are extracted from ledger.html itself so the tests exercise exactly what ships.
+// one expectancy spine, deterministic order. Functions are extracted from ledger.html.
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
-
-let pass = 0, fail = 0;
-function t(name, fn){
-  try { fn(); console.log('  \u2713 ' + name); pass++; }
-  catch (e) { console.log('  \u2717 ' + name + ' \u2014 ' + e.message); fail++; }
-}
-const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
-const near = (a, b, eps = 0.01) => ok(Math.abs(a - b) < eps, `${a} !~ ${b}`);
-const eqArr = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), (m || 'array mismatch') + `: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
-
-function grabBlock(header){
-  const i = html.indexOf(header);
-  ok(i >= 0, header + ' not found');
-  let d = 0, k = html.indexOf('{', i);
-  for (let p = k; p < html.length; p++){
-    if (html[p] === '{') d++;
-    if (html[p] === '}'){ d--; if (!d) return html.slice(i, p + 1); }
-  }
-}
-const evalFn = name => (0, eval)('(' + grabBlock('function ' + name + '(') + ')');
+const { evalFn } = makeExtractor(html);
 
 const _wilson = evalFn('_wilson');
 const partitionConditions = evalFn('partitionConditions');
@@ -53,9 +34,9 @@ const REAL = () => [
 ];
 
 console.log('\nWilson interval (reproduces the displayed CIs)');
-t('n=29,k=21 -> ~54-85%', () => { const w = _wilson(21, 29); near(w.lo, 0.543); near(w.hi, 0.853); });
-t('n=47,k=32 -> ~54-80%', () => { const w = _wilson(32, 47); near(w.lo, 0.538); near(w.hi, 0.796); });
-t('n=19,k=9 -> ~27-68%',  () => { const w = _wilson(9, 19);  near(w.lo, 0.273); near(w.hi, 0.683); });
+t('n=29,k=21 -> ~54-85%', () => { const w = _wilson(21, 29); near(w.lo, 0.543, 0.01); near(w.hi, 0.853, 0.01); });
+t('n=47,k=32 -> ~54-80%', () => { const w = _wilson(32, 47); near(w.lo, 0.538, 0.01); near(w.hi, 0.796, 0.01); });
+t('n=19,k=9 -> ~27-68%',  () => { const w = _wilson(9, 19);  near(w.lo, 0.273, 0.01); near(w.hi, 0.683, 0.01); });
 t('n=0 returns null (guarded)', () => ok(_wilson(0, 0) === null));
 
 console.log('\nClassification rules');
@@ -108,13 +89,13 @@ t('ease-off sorted ascending, loser floats to top', () => {
 console.log('\nDeterminism');
 t('equal expectancy breaks on Wilson floor (tighter CI first)', () => {
   const { best } = partitionConditions([ mk('wide', 45, 0.70, 0.30), mk('tight', 100, 0.70, 0.30) ]);
-  eqArr(names(best), ['tight', 'wide']);
+  eq(names(best), ['tight', 'wide']);
 });
 t('stable under input shuffle', () => {
   const a = partitionConditions(REAL());
   const b = partitionConditions([...REAL()].reverse());
-  eqArr(names(a.best), names(b.best));
-  eqArr(names(a.worst), names(b.worst));
+  eq(names(a.best), names(b.best));
+  eq(names(a.worst), names(b.worst));
 });
 
 console.log('\nSnapshot (real conditions)');
@@ -122,8 +103,7 @@ t('3 edges / 4 to ease off', () => {
   const { best, worst } = partitionConditions(REAL());
   ok(best.length === 3 && worst.length === 4, `${best.length}/${worst.length}`);
 });
-t('lean-in order', () => eqArr(names(partitionConditions(REAL()).best), ['08-16h local', 'Long trades', 'Weekdays']));
-t('ease-off order', () => eqArr(names(partitionConditions(REAL()).worst), ['16-24h local', 'Chased entries', 'After 2+ wins', '4th-or-later']));
+t('lean-in order', () => eq(names(partitionConditions(REAL()).best), ['08-16h local', 'Long trades', 'Weekdays']));
+t('ease-off order', () => eq(names(partitionConditions(REAL()).worst), ['16-24h local', 'Chased entries', 'After 2+ wins', '4th-or-later']));
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();

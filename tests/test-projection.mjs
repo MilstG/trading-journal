@@ -7,31 +7,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
 
-let pass = 0, fail = 0;
-async function t(name, fn){
-  try { await fn(); console.log('  \u2713 ' + name); pass++; }
-  catch (e) { console.log('  \u2717 ' + name + ' \u2014 ' + e.message); fail++; }
-}
-const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
-const near = (a, b, eps = 1e-6) => ok(Math.abs(a - b) < eps, `${a} !~ ${b}`);
-
-// --- extraction helpers ---
-function grabBlock(header){
-  const i = html.indexOf(header);
-  ok(i >= 0, header + ' not found');
-  let d = 0, k = html.indexOf('{', i);
-  for (let p = k; p < html.length; p++){
-    if (html[p] === '{') d++;
-    if (html[p] === '}'){ d--; if (!d) return html.slice(i, p + 1); }
-  }
-}
-function grabFn(name){
-  let i = html.indexOf('async function ' + name + '(');
-  const header = i >= 0 ? 'async function ' + name + '(' : 'function ' + name + '(';
-  return grabBlock(header);
-}
-const evalFn = name => (0, eval)('(' + grabFn(name) + ')');
-const evalClass = name => (0, eval)('(' + grabBlock('class ' + name + '{') + ')');
+import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
+const { grabBlock, grabFn, evalFn, evalClass } = makeExtractor(html);
 
 // globals the extracted functions expect
 globalThis._rng = Math.random;
@@ -238,5 +215,4 @@ await t('large histories paginate and repeat the detail header', () => {
   ok((out.match(/\(BALANCE\)/g) || []).length >= pages - 1, 'detail header not repeated across pages');
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();

@@ -7,25 +7,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
 
-let pass = 0, fail = 0;
-async function t(name, fn){
-  try { await fn(); console.log('  \u2713 ' + name); pass++; }
-  catch (e) { console.log('  \u2717 ' + name + ' \u2014 ' + e.message); fail++; }
-}
-const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
-
-// --- extraction helpers ---
-function grabFn(name){
-  let i = html.indexOf('async function ' + name + '(');
-  if (i < 0) i = html.indexOf('function ' + name + '(');
-  ok(i >= 0, name + ' not found');
-  let d = 0, k = html.indexOf('{', i);
-  for (let p = k; p < html.length; p++){
-    if (html[p] === '{') d++;
-    if (html[p] === '}'){ d--; if (!d) return html.slice(i, p + 1); }
-  }
-}
-function evalFn(name){ return (0, eval)('(' + grabFn(name) + ')'); }
+import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
+const { grabBlock, grabFn, evalFn, evalClass } = makeExtractor(html);
 
 // globals the extracted functions expect
 globalThis.settings = { tz: 'local', pins: [] };
@@ -174,5 +157,4 @@ await t('mineInsights output survives structuredClone and carries pid + famParam
   }
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+report();
