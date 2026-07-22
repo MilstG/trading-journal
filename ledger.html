@@ -971,13 +971,14 @@ function mapClearinghouse(s,dex){
   });
 }
 async function fetchPositions(addr, hip3Dexs){
-  let positions=[], accountValue=null;
+  let positions=[], accountValue=null, withdrawable=null;
   try{
     const s=await hlPost({type:'clearinghouseState',user:addr});
     positions=mapClearinghouse(s,'');
     // main-dex USDC equity only; HIP-3 margin is siloed per dex and may be non-USDC collateral,
     // so it is deliberately NOT summed into account value.
     accountValue=s.marginSummary?parseFloat(s.marginSummary.accountValue):null;
+    if(s.withdrawable!=null)withdrawable=parseFloat(s.withdrawable); // free collateral (not posted as margin)
   }catch(e){}
   for(const dex of (hip3Dexs||[])){
     try{
@@ -995,7 +996,7 @@ async function fetchPositions(addr, hip3Dexs){
       positions=positions.concat(mapClearinghouse(s,dex));
     }catch(e){} // a dead/renamed dex shouldn't sink the whole load
   }
-  return {positions,accountValue};
+  return {positions,accountValue,withdrawable};
 }
 // Pure builder so the mapping logic is testable. Fill coins name spot pairs "@N" where N is
 // the pair's own `index` field in the registry — NOT its position in the universe array.
@@ -1092,7 +1093,7 @@ function attributeFunding(trades,fundingRows){
 }
 
 /* ============================ state ============================ */
-let allTrades=[], fundingRows=[], fundingTotal=0, openPositions=[], accountValue=null;
+let allTrades=[], fundingRows=[], fundingTotal=0, openPositions=[], accountValue=null, accountFree=null;
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
 let hlPnl={all:null,perp:null};
 let ledgerUpdates=[];
@@ -4055,7 +4056,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
   if(!settings.wallets.length){ setErr('Add at least one wallet address first.'); return; }
   $('loadAll').disabled=true;
-  let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], totalFills=0, failed=[], ledgerAll=[];
+  let trades=[], positions=[], accVals=[], freeVals=[], spotHold=[], spotAccVals=[], totalFills=0, failed=[], ledgerAll=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false;
   let truncated=[], newFills=0, cachedN=0;
   try{
@@ -4082,7 +4083,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
         try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){}
         const hip3=hip3DexsFromFills(fills);
         const [frows,ch,sbal,port,ledg]=await Promise.all([fetchFunding(w.address),fetchPositions(w.address,hip3),fetchSpotState(w.address),fetchPortfolio(w.address),fetchLedgerUpdates(w.address)]);
-        (ledg||[]).forEach(u=>ledgerAll.push({time:u.time,delta:u.delta,wallet:w.label||walletShort(w.address)}));
+        (ledg||[]).forEach(u=>ledgerAll.push({time:u.time,delta:u.delta,addr:w.address.toLowerCase(),wallet:w.label||walletShort(w.address)}));
         totalFills+=fills.length;
         // reconstruction runs in the compute worker — large wallets no longer freeze the UI
         setStatus(`Reconstructing trades for ${labelFor(w)}…`,true);
@@ -4093,6 +4094,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
         ch.positions.forEach(p=>p.wallet={address:w.address,label:w.label});
         positions=positions.concat(ch.positions);
         if(ch.accountValue!=null)accVals.push(ch.accountValue);
+        if(ch.withdrawable!=null)freeVals.push(ch.withdrawable);
         if(port.all!=null){portAll+=port.all;portAllHas=true;}
         if(port.perp!=null){portPerp+=port.perp;portPerpHas=true;}
         // spot holdings
@@ -4105,6 +4107,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
     ledgerUpdates=ledgerAll.sort((a,b)=>b.time-a.time);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
+    accountFree=freeVals.length?freeVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     fillsTruncated=truncated;
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
@@ -4127,7 +4130,7 @@ async function loadFromPaste(fills){
   spotTr.forEach(t=>t.symbol=spotMaps.nameByCoin[t.coin]||t.coin);
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
-  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; hlPnl={all:null,perp:null};
+  openPositions=[]; accountValue=null; accountFree=null; spotHoldings=[]; spotAccountValue=null; hlPnl={all:null,perp:null};
   fillsTruncated=[];
   $('empty').classList.add('hide'); $('app').classList.remove('hide'); render();
   setStatus(`Loaded ${fills.length} pasted fills → ${perpTr.length} perp + ${spotTr.length} spot trades.`);
@@ -4752,21 +4755,40 @@ async function fetchLedgerUpdates(addr){
 }
 // Classify one delta. ext=true means it changes external capital (real deposits/withdrawals);
 // everything else is money moving *within* Hyperliquid (spot<->perp, vaults, transfers).
-function classifyLedgerDelta(d){
+// Classify one ledger delta relative to the wallet it belongs to (`self`) and the full set of
+// tracked wallet addresses (`tracked`, lowercased). flow ∈ ext_in | ext_out | internal | vault_in
+// | vault_out | ignore. The key correction: a transfer is only *internal* (nets to zero) when the
+// counterparty is another wallet you track; a transfer from/to an outside address is real capital
+// in/out. deposit/withdraw are always the bridge boundary. Signs are from the account's POV.
+function classifyLedgerDelta(d, self, tracked){
   if(!d||!d.type)return null;
   const num=x=>{ const v=parseFloat(x); return isFinite(v)?v:0; };
+  const S=self?String(self).toLowerCase():null;
+  const has=a=>!!(a&&tracked&&tracked.has(String(a).toLowerCase()));
+  // directional transfer: + if this wallet received, - if it sent; internal iff counterparty tracked
+  const xfer=(kind, amt)=>{
+    const from=d.user, dest=d.destination; let dir=0;
+    if(S){ if(dest&&String(dest).toLowerCase()===S)dir=1; else if(from&&String(from).toLowerCase()===S)dir=-1; }
+    if(dir===0)dir=1; // unknown POV: assume inflow rather than silently dropping capital
+    const counter=dir>0?from:dest;
+    return {kind, flow: has(counter)?'internal':(dir>0?'ext_in':'ext_out'), usdc: dir*Math.abs(amt)};
+  };
   switch(d.type){
-    case 'deposit':               return {kind:'deposit',      ext:true,  usdc:num(d.usdc)};
-    case 'withdraw':              return {kind:'withdraw',     ext:true,  usdc:-num(d.usdc)};
-    case 'accountClassTransfer':  return {kind:'perp\u2194spot',ext:false, usdc:num(d.usdc)*(d.toPerp?1:-1)};
-    case 'internalTransfer':      return {kind:'internal xfer',ext:false, usdc:num(d.usdc)};
-    case 'subAccountTransfer':    return {kind:'subaccount',   ext:false, usdc:num(d.usdc)};
-    case 'spotTransfer':          return {kind:'spot xfer',    ext:false, usdc:num(d.usdcValue!=null?d.usdcValue:d.usdc)};
-    case 'vaultDeposit':          return {kind:'vault in',     ext:false, usdc:-num(d.usdc)};
-    case 'vaultCreate':           return {kind:'vault create', ext:false, usdc:-num(d.usdc)};
+    case 'deposit':               return {kind:'deposit',        flow:'ext_in',   usdc:num(d.usdc)};
+    case 'withdraw':              return {kind:'withdraw',       flow:'ext_out',  usdc:-num(d.usdc)};
+    case 'accountClassTransfer':  return {kind:'perp\u2194spot', flow:'internal', usdc:num(d.usdc)*(d.toPerp?1:-1)};
+    case 'internalTransfer':      return xfer('internal xfer',   num(d.usdc));
+    case 'subAccountTransfer':    return xfer('subaccount xfer', num(d.usdc));
+    case 'spotTransfer':          return xfer('spot xfer',       num(d.usdcValue!=null?d.usdcValue:d.amount));
+    case 'vaultCreate':
+    case 'vaultDeposit':          return {kind:'vault deposit',  flow:'vault_out',usdc:-num(d.usdc)};
     case 'vaultWithdraw':
-    case 'vaultDistribution':     return {kind:'vault out',    ext:false, usdc:num(d.usdc)};
-    default:                      return {kind:d.type,         ext:false, usdc:num(d.usdc)};
+    case 'vaultDelta':
+    case 'vaultDistribution':     return {kind:'vault withdraw', flow:'vault_in', usdc:num(d.usdc!=null?d.usdc:d.netWithdrawnUsd)};
+    case 'liquidation':           return {kind:'liquidation',    flow:'ignore',   usdc:0};
+    case 'rewardsClaim':          return {kind:'rewards',        flow:'ignore',   usdc:0};
+    case 'spotGenesis':           return {kind:'spot genesis',   flow:'ignore',   usdc:0};
+    default:                      return {kind:d.type,           flow:'ignore',   usdc:num(d.usdc)};
   }
 }
 // Deterministic money-weighted return (annualized XIRR) via bisection on NPV.
@@ -4785,51 +4807,81 @@ function nfXirr(flows){
   return (lo+hi)/2;
 }
 // Build the capital picture from ledger rows + current measured equity + verified lifetime PnL.
-function cashFlowModel(updates, equity, pnl){
+// `tracked` is the Set of your wallet addresses so own-wallet transfers net out. Each update row
+// must carry `addr` (which wallet it came from) for direction; falls back gracefully if absent.
+function cashFlowModel(updates, equity, pnl, tracked){
   const rows=[];
   for(const u of (updates||[])){
-    const c=classifyLedgerDelta(u&&u.delta); if(!c)continue;
-    rows.push({time:u.time, kind:c.kind, ext:c.ext, usdc:c.usdc, wallet:u.wallet||null});
+    const c=classifyLedgerDelta(u&&u.delta, u&&u.addr, tracked); if(!c)continue;
+    rows.push({time:u.time, kind:c.kind, flow:c.flow, usdc:c.usdc, wallet:u.wallet||null, type:(u.delta&&u.delta.type)||c.kind});
   }
   rows.sort((a,b)=>b.time-a.time);
-  let deposits=0, withdrawals=0;
-  for(const r of rows){ if(!r.ext)continue; if(r.usdc>=0)deposits+=r.usdc; else withdrawals+=-r.usdc; }
+  let deposits=0, withdrawals=0, vaultNet=0;
+  for(const r of rows){
+    if(r.flow==='ext_in')      deposits+=r.usdc;
+    else if(r.flow==='ext_out')withdrawals+=-r.usdc;
+    else if(r.flow==='vault_in'||r.flow==='vault_out') vaultNet+=r.usdc;
+  }
   const netExternal=deposits-withdrawals;
+  // XIRR: external flows are the investor's cashflows (money in = negative, out/terminal = positive)
   const flows=[];
-  for(const r of rows) if(r.ext) flows.push({t:r.time, amt:-r.usdc}); // deposit(+usdc)->-, withdraw(-usdc)->+
+  for(const r of rows) if(r.flow==='ext_in'||r.flow==='ext_out') flows.push({t:r.time, amt:-r.usdc});
   if(equity!=null&&isFinite(equity)) flows.push({t:Date.now(), amt:equity});
   const xirr=flows.length>=2?nfXirr(flows):null;
   const simpleReturn=(netExternal>0&&pnl!=null)?pnl/netExternal:null;
-  return {rows, deposits, withdrawals, netExternal, equity:(equity!=null?equity:null),
-    pnl:(pnl!=null?pnl:null), xirr, simpleReturn, extCount:rows.filter(r=>r.ext).length};
+  // composition by raw delta.type so the classification is fully transparent / auditable
+  const FLOWLAB={ext_in:'external in',ext_out:'external out',internal:'internal (nets out)',vault_in:'vault in',vault_out:'vault out',ignore:'not counted'};
+  const byType={};
+  for(const r of rows){ const g=byType[r.type]=byType[r.type]||{type:r.type, n:0, usdc:0, flow:r.flow, flowLabel:FLOWLAB[r.flow]||r.flow}; g.n++; g.usdc+=r.usdc; }
+  const composition=Object.values(byType).sort((a,b)=>Math.abs(b.usdc)-Math.abs(a.usdc));
+  const extCount=rows.filter(r=>r.flow==='ext_in'||r.flow==='ext_out').length;
+  return {rows, deposits, withdrawals, vaultNet, netExternal, equity:(equity!=null?equity:null),
+    pnl:(pnl!=null?pnl:null), xirr, simpleReturn, extCount, composition};
 }
 function renderCapital(){
   const el=$('capitalView'); if(!el)return;
   if(!settings.wallets.length){ el.innerHTML='<div class="diag-section"><p class="lead">Add a wallet and Load all to see deposits, withdrawals and your return on capital.</p></div>'; return; }
   const equity=((accountValue||0)+(spotAccountValue||0))||null;
-  const m=cashFlowModel(ledgerUpdates, equity, hlPnl.all);
+  const free=(accountFree!=null)?accountFree:null;
+  const tracked=new Set(settings.wallets.map(w=>w.address.toLowerCase()));
+  const m=cashFlowModel(ledgerUpdates, equity, hlPnl.all, tracked);
+  // surface the actual ledger composition once, like the HIP-3 shape probe — makes any
+  // classification surprise visible instead of silent.
+  try{ if(ledgerUpdates.length) console.info('[ledger] cash-flow composition: '+m.composition.map(c=>c.type+'\u00d7'+c.n+' '+(c.usdc>=0?'+':'')+c.usdc.toFixed(2)+' ['+c.flowLabel+']').join('  |  ')); }catch(e){}
   const card=(l,v,tip,cl)=>`<div class="diag-card" style="min-width:0"><h3${tip?` data-tip="${esc(tip)}"`:''}>${l}</h3><div class="mv" style="font-size:22px;font-weight:700${cl?';color:var(--'+cl+')':''}">${v}</div></div>`;
   const cls2=n=>n==null?'':n>=0?'profit':'loss';
+  const marginInPos=(equity!=null&&free!=null)?Math.max(0,equity-free):null;
   const flowRows=m.rows.slice(0,60).map(r=>{
     const d=new Date(r.time), ds=d.toISOString().slice(0,10);
+    const ext=(r.flow==='ext_in'||r.flow==='ext_out');
     const amt=(r.usdc>=0?'+':'')+fmtUsd(r.usdc);
-    const cl=r.usdc>=0?'pos-t':'neg-t';
-    const tag=r.ext?`<span class="tagchip" style="color:var(--gold)">${esc(r.kind)}</span>`:`<span class="tagchip">${esc(r.kind)}</span>`;
-    const w=r.wallet?`<span style="color:var(--faint)"> · ${esc(r.wallet)}</span>`:'';
-    return `<tr><td style="white-space:nowrap;color:var(--muted)">${ds}</td><td>${tag}${w}</td><td class="r ${cl}" style="text-align:right;font-variant-numeric:tabular-nums">${amt}</td></tr>`;
+    const cl=r.usdc>0?'pos-t':r.usdc<0?'neg-t':'';
+    const tag=`<span class="tagchip"${ext?' style="color:var(--gold)"':''}>${esc(r.kind)}</span>`;
+    const w=r.wallet?`<span style="color:var(--faint)"> \u00b7 ${esc(r.wallet)}</span>`:'';
+    return `<tr><td style="white-space:nowrap;color:var(--muted)">${ds}</td><td>${tag}${w}</td><td style="text-align:right;font-variant-numeric:tabular-nums" class="${cl}">${r.usdc!==0?amt:'\u2014'}</td></tr>`;
   }).join('');
+  const compRows=m.composition.map(c=>`<tr><td class="l">${esc(c.type)}</td><td style="text-align:right">${c.n}</td>
+     <td style="text-align:right;font-variant-numeric:tabular-nums" class="${c.usdc>0?'pos-t':c.usdc<0?'neg-t':''}">${c.usdc!==0?((c.usdc>=0?'+':'')+fmtUsd(c.usdc)):'\u2014'}</td>
+     <td class="l" style="color:var(--faint)">${esc(c.flowLabel)}</td></tr>`).join('');
   el.innerHTML=`
    <div class="diag-section"><h2>Capital &amp; return</h2>
-     <p class="lead">Your real money in and out of Hyperliquid, and what you actually earned on it \u2014 distinct from summed trade PnL. External flows (deposits / withdrawals) drive the return math; internal moves (spot\u2194perp, vaults, transfers) are shown but excluded.</p>
+     <p class="lead">Your real money in and out of Hyperliquid, and what you actually earned on it \u2014 distinct from summed trade PnL. Only flows that cross the boundary of your tracked wallets count as external: bridge deposits/withdrawals, and transfers to/from addresses you don\u2019t track. Transfers between your own wallets and spot\u2194perp moves net out. The composition table below shows exactly how every event was classified.</p>
      <div class="diag-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-       ${card('Net external capital',fmtUsd(m.netExternal),'Total deposited minus total withdrawn \u2014 the money you actually put at risk.')}
-       ${card('Current equity',m.equity!=null?fmtUsd(m.equity):'\u2014','Live account value (main perp + spot). Excludes vault and HIP-3 margin, which are siloed \u2014 so returns here are for the measured account.')}
+       ${card('Net external capital',fmtUsd(m.netExternal),'External deposits minus external withdrawals \u2014 the money you actually brought to Hyperliquid across your tracked wallets. Own-wallet transfers are excluded.')}
+       ${card('Account equity',m.equity!=null?fmtUsd(m.equity):'\u2014','Total account value = free collateral + margin backing open positions + unrealized PnL (main perp + spot). This is the correct capital base for returns \u2014 open-position margin is still your money. Excludes vault + HIP-3 (siloed).')}
+       ${card('Free / withdrawable',free!=null?fmtUsd(free):'\u2014',marginInPos!=null?('Spendable USDC not posted as margin. ~'+fmtUsd(marginInPos)+' of your equity is currently backing open positions.'):'Spendable USDC not currently posted as margin.')}
        ${card('Lifetime PnL',m.pnl!=null?fmtUsd(m.pnl):'\u2014','Verified all-time PnL straight from Hyperliquid.',cls2(m.pnl))}
-       ${card('Return on capital',m.simpleReturn!=null?nfSignPct(m.simpleReturn):'\u2014','Lifetime PnL \u00f7 net external capital. Simple, unannualized.',cls2(m.simpleReturn))}
-       ${card('Money-weighted (ann.)',m.xirr!=null?nfSignPct(m.xirr):'\u2014','Annualized internal rate of return (XIRR) over your dated deposits, withdrawals and current equity \u2014 the timing-aware version of return on capital.',cls2(m.xirr))}
+       ${card('Return on capital',m.simpleReturn!=null?nfSignPct(m.simpleReturn):'\u2014','Lifetime PnL \u00f7 net external capital. Simple, unannualized. Shown only when net external capital is positive.',cls2(m.simpleReturn))}
+       ${card('Money-weighted (ann.)',m.xirr!=null?nfSignPct(m.xirr):'\u2014','Annualized internal rate of return (XIRR) over your dated external flows and current equity \u2014 the timing-aware version of return on capital.',cls2(m.xirr))}
      </div>
-     <p class="lead" style="font-size:11.5px;margin-top:4px">Deposits ${fmtUsd(m.deposits)} \u00b7 withdrawals ${fmtUsd(m.withdrawals)} \u00b7 ${m.extCount} external event${m.extCount===1?'':'s'}. Money-weighted return needs at least one deposit and current equity; it can be unstable with very short histories.</p>
+     <p class="lead" style="font-size:11.5px;margin-top:4px">External deposits ${fmtUsd(m.deposits)} \u00b7 external withdrawals ${fmtUsd(m.withdrawals)} \u00b7 ${m.extCount} external event${m.extCount===1?'':'s'}${m.vaultNet!==0?' \u00b7 vault net '+(m.vaultNet>=0?'+':'')+fmtUsd(m.vaultNet)+' (excluded \u2014 vault equity isn\u2019t in the figures above)':''}. ${m.netExternal<=0?'<b>Net external is \u2264 0</b> \u2014 either you\u2019ve withdrawn more than you deposited (running on profits), or a funding inflow was booked as a transfer/deposit type that isn\u2019t landing as external. Check the composition table.':'Money-weighted return can be unstable with very short histories.'}</p>
    </div>
+   <div class="diag-section"><h2>How each event was classified <span style="font-size:11px;color:var(--faint);font-weight:400">by ledger type</span></h2>
+     <div class="diag-card"><div class="tbl-wrap" style="overflow:auto">
+       <table class="trades" style="width:100%"><thead><tr><th class="l">Ledger type</th><th style="text-align:right">Events</th><th style="text-align:right">Net USDC</th><th class="l">Counts as</th></tr></thead>
+       <tbody>${compRows||'<tr><td colspan="4" class="lead" style="padding:12px">No ledger events returned by Hyperliquid for these wallets. Shift-click Load all to force a full re-fetch.</td></tr>'}</tbody></table></div>
+       <p class="mini-note">This is the raw <span class="mono">userNonFundingLedgerUpdates</span> breakdown. If your deposits are landing under <span class="mono">spotTransfer</span> / <span class="mono">internalTransfer</span> with an untracked counterparty, add that wallet under \u2699 so it nets correctly; if a real deposit shows as \u201cnot counted\u201d, tell me the type and I\u2019ll map it.</p>
+     </div></div>
    <div class="diag-section"><h2>Flow history <span style="font-size:11px;color:var(--faint);font-weight:400">most recent 60</span></h2>
      <div class="diag-card"><div class="tbl-wrap" style="max-height:420px;overflow:auto">
        <table class="trades" style="width:100%"><thead><tr><th class="l">Date</th><th class="l">Type</th><th style="text-align:right">Amount</th></tr></thead>

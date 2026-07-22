@@ -297,11 +297,12 @@ function createApp(opts) {
   async function fetchPositionsSrv(addr, hip3Dexs) {
     // Client fetchPositions carries browser-only HIP-3 diagnostics (IndexedDB, status bar);
     // this is the same call pattern minus those, built on the extracted hlPost/mapClearinghouse.
-    let positions = [], accountValue = null;
+    let positions = [], accountValue = null, withdrawable = null;
     try {
       const s = await E.hlPost({ type: 'clearinghouseState', user: addr });
       positions = E.mapClearinghouse(s, '');
       accountValue = s.marginSummary ? parseFloat(s.marginSummary.accountValue) : null;
+      if (s.withdrawable != null) withdrawable = parseFloat(s.withdrawable);
     } catch (e) {}
     for (const dex of (hip3Dexs || [])) {
       try {
@@ -309,7 +310,7 @@ function createApp(opts) {
         positions = positions.concat(E.mapClearinghouse(s, dex));
       } catch (e) {}                    // a dead/renamed dex shouldn't sink the whole load
     }
-    return { positions, accountValue };
+    return { positions, accountValue, withdrawable };
   }
 
   async function doRefresh(body) {
@@ -326,7 +327,7 @@ function createApp(opts) {
 
     const spotMaps = await E.fetchSpotMaps();
     const out = { wallets: [], startedAt: Date.now() };
-    let positions = [], accVals = [], spotHold = [], spotAccVals = [];
+    let positions = [], accVals = [], freeVals = [], spotHold = [], spotAccVals = [];
     let portAll = 0, portPerp = 0, portAllHas = false, portPerpHas = false;
 
     for (const w of wallets) {
@@ -361,6 +362,7 @@ function createApp(opts) {
         ch.positions.forEach(p => p.wallet = { address: w.address, label: w.label || '' });
         positions = positions.concat(ch.positions);
         if (ch.accountValue != null) accVals.push(ch.accountValue);
+        if (ch.withdrawable != null) freeVals.push(ch.withdrawable);
         if (port.all != null) { portAll += port.all; portAllHas = true; }
         if (port.perp != null) { portPerp += port.perp; portPerpHas = true; }
         let spotVal = 0;
@@ -380,6 +382,7 @@ function createApp(opts) {
       fetchedAt: Date.now(),
       positions,
       accountValue: accVals.length ? accVals.reduce((a, b) => a + b, 0) : null,
+      accountFree: freeVals.length ? freeVals.reduce((a, b) => a + b, 0) : null,
       spotHoldings: spotHold,
       spotAccountValue: spotAccVals.length ? spotAccVals.reduce((a, b) => a + b, 0) : null,
       hlPnl: { all: portAllHas ? portAll : null, perp: portPerpHas ? portPerp : null },
@@ -799,20 +802,21 @@ function createApp(opts) {
         const wallets = snapWallets(snap).slice();
         try { for (const f of fs.readdirSync(ledgerDir)) { const a = f.replace(/\.json\.gz$/, '');
           if (ADDR_RE.test(a) && !wallets.find(w => w.address.toLowerCase() === a)) wallets.push({ address: a, label: '' }); } } catch (e) {}
+        const tracked = new Set(wallets.map(w => w.address.toLowerCase()));
         let rows = [];
         for (const w of wallets) { const lc = readLedgerCache(w.address); if (!lc) continue;
           const lbl = w.label || (w.address.slice(0, 6) + '\u2026' + w.address.slice(-4));
-          for (const u of lc.rows) rows.push({ time: u.time, delta: u.delta, wallet: lbl }); }
+          for (const u of lc.rows) rows.push({ time: u.time, delta: u.delta, addr: w.address.toLowerCase(), wallet: lbl }); }
         rows.sort((a, b) => b.time - a.time);
         const market = readMarket();
         const equity = market ? ((market.accountValue || 0) + (market.spotAccountValue || 0)) || null : null;
         const pnl = market && market.hlPnl ? market.hlPnl.all : null;
-        const m = E.cashFlowModel(rows, equity, pnl);
-        // keep the payload lean: summary + capped flow list
+        const m = E.cashFlowModel(rows, equity, pnl, tracked);
         return send(200, { fetchedAt: market ? market.fetchedAt : null,
-          deposits: m.deposits, withdrawals: m.withdrawals, netExternal: m.netExternal,
-          equity: m.equity, pnl: m.pnl, simpleReturn: m.simpleReturn, xirr: m.xirr,
-          extCount: m.extCount, flows: m.rows.slice(0, 500) });
+          deposits: m.deposits, withdrawals: m.withdrawals, vaultNet: m.vaultNet, netExternal: m.netExternal,
+          equity: m.equity, free: market ? market.accountFree : null, pnl: m.pnl,
+          simpleReturn: m.simpleReturn, xirr: m.xirr, extCount: m.extCount,
+          composition: m.composition, flows: m.rows.slice(0, 500) });
       }
 
       if (url === '/api/v1/positions') {
