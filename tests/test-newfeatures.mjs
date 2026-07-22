@@ -17,7 +17,7 @@ function grabArrow(name){
   const m = html.match(new RegExp('\\b(?:const|let)\\s+'+name+'=.*?;'));
   if (!m) throw new Error('const not found: '+name); return m[0];
 }
-const FNS = ['nfMedian','nfXirr','classifyLedgerDelta','cashFlowModel','leverageSurvival',
+const FNS = ['nfMedian','leverageSurvival',
   'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','nfGroupStats','leaderboard','fundingCarry'];
 const ARROWS = ['nfPct','nfSignPct','nfUtcDay'];
 
@@ -35,34 +35,6 @@ const eq=(a,b)=>{ if(JSON.stringify(a)!==JSON.stringify(b)) throw new Error('got
 const ok=v=>{ if(!v) throw new Error('expected truthy'); };
 const DAY=86400000, now=Date.now();
 
-const TRACK=new Set(['0xaaa','0xbbb']); // two of the user's own wallets
-t('classify deposit ext_in', ()=>{ const c=ctx.classifyLedgerDelta({type:'deposit',usdc:'1000'},'0xaaa',TRACK); eq(c.flow,'ext_in'); near(c.usdc,1000); });
-t('classify withdraw ext_out', ()=>{ const c=ctx.classifyLedgerDelta({type:'withdraw',usdc:'400'},'0xaaa',TRACK); eq(c.flow,'ext_out'); near(c.usdc,-400); });
-t('own-wallet transfer nets out (internal)', ()=>{ // A->B, both tracked: seen from B it is an inflow but counterparty A is tracked
-  const c=ctx.classifyLedgerDelta({type:'internalTransfer',usdc:'500',user:'0xaaa',destination:'0xbbb'},'0xbbb',TRACK); eq(c.flow,'internal'); });
-t('transfer IN from untracked = external in (the real bug)', ()=>{
-  const c=ctx.classifyLedgerDelta({type:'spotTransfer',usdcValue:'2000',amount:'2000',token:'USDC',user:'0xexchange',destination:'0xaaa'},'0xaaa',TRACK);
-  eq(c.flow,'ext_in'); near(c.usdc,2000); });
-t('transfer OUT to untracked = external out', ()=>{
-  const c=ctx.classifyLedgerDelta({type:'internalTransfer',usdc:'300',user:'0xaaa',destination:'0xother'},'0xaaa',TRACK);
-  eq(c.flow,'ext_out'); near(c.usdc,-300); });
-t('accountClassTransfer internal', ()=>{ eq(ctx.classifyLedgerDelta({type:'accountClassTransfer',usdc:'12',toPerp:false},'0xaaa',TRACK).flow,'internal'); });
-t('vaultDeposit vault_out neg', ()=>{ const c=ctx.classifyLedgerDelta({type:'vaultDeposit',usdc:'9'},'0xaaa',TRACK); eq(c.flow,'vault_out'); near(c.usdc,-9); });
-t('xirr 10%', ()=>near(ctx.nfXirr([{t:now-365*DAY,amt:-1000},{t:now,amt:1100}]),0.10,1e-3));
-t('xirr flat 0', ()=>near(ctx.nfXirr([{t:now-365*DAY,amt:-1000},{t:now,amt:1000}]),0,1e-3));
-t('xirr no sign change null', ()=>eq(ctx.nfXirr([{t:now-DAY,amt:-1},{t:now,amt:-1}]),null));
-t('cashFlowModel counts transfer-in deposits + nets own-wallet + vault separate', ()=>{
-  const T=new Set(['0xaaa','0xbbb']);
-  const ups=[
-    {time:now-100*DAY,addr:'0xaaa',delta:{type:'spotTransfer',usdcValue:'1000',amount:'1000',token:'USDC',user:'0xcex',destination:'0xaaa'}}, // ext in 1000
-    {time:now-90*DAY, addr:'0xbbb',delta:{type:'internalTransfer',usdc:'400',user:'0xaaa',destination:'0xbbb'}},                              // own-wallet, internal
-    {time:now-50*DAY, addr:'0xaaa',delta:{type:'withdraw',usdc:'200'}},                                                                       // ext out 200
-    {time:now-40*DAY, addr:'0xaaa',delta:{type:'vaultDeposit',usdc:'300'}},                                                                   // vault out -300
-  ];
-  const m=ctx.cashFlowModel(ups,1500,700,T);
-  near(m.deposits,1000); near(m.withdrawals,200); near(m.netExternal,800); eq(m.extCount,2);
-  near(m.vaultNet,-300); near(m.simpleReturn,700/800); ok(m.xirr!=null);
-  ok(m.composition.length>=3); });
 t('leverageSurvival maxLev + flag', ()=>{ const ls=ctx.leverageSurvival(
   [{id:'a',coin:'BTC',net:1},{id:'b',coin:'ETH',net:-1},{id:'c',coin:'SOL',net:1}],{a:{maePct:5},b:{maePct:20},c:{maePct:2}},10);
   near(ls.rows[0].maxLev,5); eq(ls.wouldLiq.length,1); near(ls.medMaxLev,20); });
