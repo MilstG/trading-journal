@@ -103,7 +103,21 @@ t('3-minute visible-tab interval, persisted toggle, boot wiring', () => {
   ok(html.includes('},180000);'));
   ok(html.includes("document.visibilityState!=='visible'"));
   ok(html.includes('settings.autoRefresh=!(settings.autoRefresh!==false);'));
-  ok(html.includes('setupAutoRefresh();\n})();'));
+  ok(html.includes('setupAutoRefresh();'));
+});
+t('auto-load on boot: remembered wallets refresh without a manual Load all', () => {
+  ok(html.includes('if(settings.wallets.length) loadAll({auto:true});'));
+  // still guarded against overlap and re-entrancy by the _loading flag inside loadAll
+  ok(html.includes('if(_loading)return; _loading=true; try{'));
+  // no longer parks on a "hit Load all" prompt when wallets are remembered
+  ok(!html.includes('remembered — hit Load all to refresh.'));
+});
+t('pattern miner auto-runs on a fresh Diagnostic selection; button still re-scans', () => {
+  ok(html.includes('const runScan=async()=>{'));       // scan factored into a callable
+  ok(html.includes('runBtn.onclick=runScan;'));         // manual re-run preserved
+  ok(html.includes('else runScan();'));                 // auto-run when cache is cold
+  ok(html.includes('if(_minerCache.key===key){ renderMinerResults'));  // cache still short-circuits
+  ok(html.includes('const token=++_minerToken;'));      // stale-paint guard intact
 });
 
 console.log('\nPWA (#7) + attachment sync (#9)');
