@@ -2535,8 +2535,7 @@ function renderDiagnostic(closed, allv){
   if(runBtn){
     const basis=settings.anaBasis||'usd';
     const key=[view,period,customRange.from,customRange.to,closed.length,basis].join('|');
-    if(_minerCache.key===key){ renderMinerResults(_minerCache.res,_minerCache.deep,basis); }
-    else runBtn.onclick=async()=>{ runBtn.disabled=true; runBtn.textContent='Scanning…';
+    const runScan=async()=>{ runBtn.disabled=true; runBtn.textContent='Scanning…';
       const pool = basis==='pct' ? closed.filter(t=>retPct(t)!==null) : closed;
       const seed=_hashSeed('miner|'+key+'|'+pool.length);
       const token=++_minerToken;
@@ -2548,6 +2547,13 @@ function renderDiagnostic(closed, allv){
         if(token===_minerToken) renderMinerResults(res,deep,basis);
       }catch(e){ const mb=$('minerBox'); if(mb&&token===_minerToken)mb.innerHTML='<p class="lead">Scan error: '+esc(e.message)+'</p>'; }
     };
+    runBtn.onclick=runScan;
+    // auto-run: the miner starts itself when the Diagnostic opens on a selection it hasn't
+    // scanned yet. Same background worker as the manual button, so the UI never blocks; the
+    // cache short-circuits redundant re-runs and _minerToken suppresses stale paints. The
+    // button remains for a manual re-scan.
+    if(_minerCache.key===key){ renderMinerResults(_minerCache.res,_minerCache.deep,basis); }
+    else runScan();
   }
 }
 
@@ -5046,8 +5052,12 @@ function nfLeaderboardHtml(closed){
       else { renderDatafile('reconnect'); } }
     else renderDatafile();
   }catch(e){ renderDatafile(); }
-  if(settings.wallets.length) setStatus(settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' remembered — hit Load all to refresh.');
+  if(settings.wallets.length) setStatus(settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' remembered — refreshing…');
   setupAutoRefresh();
+  // auto-load on boot: rebuild from the cached fills and pull anything new, so reopening the
+  // app refreshes without a manual "Load all". Incremental and _loading-guarded; the 3-minute
+  // interval keeps it current from here. Errors surface the same way an auto-tick would.
+  if(settings.wallets.length) loadAll({auto:true});
 })();
 </script>
 </body>
