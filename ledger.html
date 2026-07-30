@@ -2227,6 +2227,37 @@ function syncDistControls(closed,shownBinW,isAuto){
     b.onclick=()=>{ _distState[b.dataset.k]=!_distState[b.dataset.k]; renderDistribution(closed); }; });
   $('distFill').checked=_distState.fill; $('distFill').onchange=e=>{ _distState.fill=e.target.checked; renderDistribution(closed); };
 }
+// Walk-forward per-block chart. Registered in _diagCharts so destroyDiagCharts() tears it down
+// on every re-render like every other chart here -- a leaked Chart instance on a reused canvas id
+// is what makes hover tooltips fire on stale data.
+function wireWalkForward(wf){
+  const el=$('wfChart'); if(!el||!wf||!wf.points||!wf.points.length)return;
+  const P=wf.points;
+  const labels=P.map(p=>fmtDate(p.t));
+  const realized=P.map(p=>p.osExp);
+  const predicted=P.map(p=>p.isExp);
+  const mean=wf.wfExp!=null?P.map(()=>wf.wfExp):null;
+  const ds=[{type:'bar',label:'realized (out-of-sample)',data:realized,
+      backgroundColor:signCol(realized),borderRadius:3,maxBarThickness:44,order:3},
+    {type:'line',label:'predicted by training window',data:predicted,borderColor:'#8a7bd8',
+      borderWidth:1.5,borderDash:[5,4],pointRadius:2,pointHoverRadius:4,tension:0,fill:false,order:1}];
+  if(mean) ds.push({type:'line',label:'walk-forward mean',data:mean,borderColor:TXT,
+      borderWidth:1,borderDash:[2,3],pointRadius:0,pointHitRadius:0,tension:0,fill:false,order:2});
+  _diagCharts.wf=new Chart(el,{data:{labels,datasets:ds},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},
+      plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
+        tooltip:{
+          filter:item=>item.dataset.label!=='walk-forward mean', // flat reference, identical every block
+          callbacks:{
+          title:items=>'Block '+(items[0].dataIndex+1)+' of '+P.length+' \u00b7 ends '+labels[items[0].dataIndex],
+          label:c=>' '+c.dataset.label+': '+fmtUsd(c.parsed.y)+'/trade',
+          footer:items=>{ const p=P[items[0].dataIndex]; const gap=p.isExp-p.osExp;
+            return p.n+' trade'+(p.n===1?'':'s')+' scored \u00b7 '
+              +(Math.abs(gap)<1e-9?'predicted exactly'
+                :gap>0?fmtUsd(gap)+'/trade worse than predicted'
+                      :fmtUsd(-gap)+'/trade better than predicted'); }}}},
+      scales:scales()}});
+}
 function destroyDiagCharts(){ Object.values(_diagCharts).forEach(c=>c&&c.destroy()); _diagCharts={}; }
 // Snapshot the whole Diagnostic view — including any miner/excursion results already on
 // screen — as one self-contained HTML file. Charts become embedded PNGs, interactive
@@ -2525,13 +2556,20 @@ function renderDiagnostic(closed, allv){
     const fA=x=>x==null?'—':(x>=0?'+':'')+fmtUsd(x);
     const wfCls=wf.wfExp>0?'ok':(wf.wfExp<0?'no':'mid');
     const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:'need ≥8 out-of-sample trades';
-    const retTxt=wf.retention!=null?`${(wf.retention*100).toFixed(0)}% of in-sample kept`:'—';
-    // inline SVG sparkline of realized out-of-sample expectancy per block (CSP-safe, no lib)
-    const vals=wf.points.map(p=>p.osExp), mx=Math.max(1e-9,...vals.map(v=>Math.abs(v)));
-    const W=Math.max(120,vals.length*16), H=42, bw=W/vals.length, mid=H/2;
-    const bars=vals.map((v,i)=>{ const h=Math.max(0.6,Math.abs(v)/mx*(H/2-3)); const y=v>=0?mid-h:mid;
-      return `<rect x="${(i*bw+1.5).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,bw-3).toFixed(1)}" height="${h.toFixed(1)}" fill="${v>=0?'var(--profit)':'var(--loss)'}"/>`; }).join('');
-    const spark=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;margin-top:6px"><line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--line)" stroke-width="1"/>${bars}</svg>`;
+    // retention = wfExp / fullIS, so a negative walk-forward expectancy against a positive
+    // in-sample one yields a negative ratio. "-62% of in-sample kept" is meaningless; say what
+    // actually happened instead.
+    const retTxt = wf.retention==null ? '\u2014'
+      : wf.retention<=0 ? '<span class="badge no">none \u2014 forward edge is negative</span>'
+      : `<span class="badge ${wf.retention>=0.6?'ok':'mid'}">${(wf.retention*100).toFixed(0)}% of in-sample kept</span>`;
+    // Per-block chart, wired after paint by wireWalkForward(). This replaced a hand-rolled inline
+    // SVG sparkline that used preserveAspectRatio="none" over a min-120 viewBox: with a handful of
+    // blocks that stretched x by ~10x and y by 1x, so bars rendered as 210px slabs and any block
+    // under ~5% of the max collapsed to a 0.6px hairline. It also showed only the realized number,
+    // which buries the actual argument -- the gap between what each trailing window PREDICTED and
+    // what the next block DELIVERED is the whole point, so both are plotted now.
+    const spark=`<div style="height:180px;margin-top:12px"><canvas id="wfChart"></canvas></div>
+      <p class="mini-note" style="margin-top:6px">Bars are what each out-of-sample block actually delivered; the dashed line is what its trailing training window predicted beforehand. The gap between them, block by block, is your in-sample optimism. The flat line is the walk-forward mean.</p>`;
     const verdict = wf.wfExp==null ? ''
       : wf.wfExp>0
         ? ((wf.retention!=null && wf.retention<0.6)
@@ -2544,7 +2582,14 @@ function renderDiagnostic(closed, allv){
       ${mrow('Walk-forward expectancy',`<span class="badge ${wfCls}">${fA(wf.wfExp)}/trade</span>`,'Mean net PnL across only the out-of-sample test blocks — trades the training window had not yet seen when their expectancy was set. The honest estimate of what the edge earns going forward.')}
       ${mrow('WF 95% CI (bootstrap)',ciTxt,'Distribution-free confidence interval on the walk-forward expectancy, resampling the out-of-sample trades. If it includes 0, forward edge is not yet established.')}
       ${mrow('Retention',retTxt,'Walk-forward expectancy as a share of in-sample. 100% means the edge carried forward intact; well under that is decay or overfitting. Only shown when in-sample is positive.')}
-      ${mrow('In-sample optimism',`${fA(wf.optimism)}/trade`,'Average gap between what each trailing window predicted and what the next block actually delivered. Positive means your in-sample stats systematically overstate forward performance.')}
+      ${mrow('In-sample optimism',(()=>{ const o=wf.optimism;
+        if(o==null) return '\u2014';
+        const near=Math.abs(o)<Math.abs(wf.fullIS||0)*0.1;
+        const tag=near?'<span class="badge ok">calibrated</span>'
+          :o>0?'<span class="badge no">in-sample overstates</span>'
+               :'<span class="badge ok">in-sample understates</span>';
+        return `${fA(o)}/trade ${tag}`; })(),
+        'Average gap between what each trailing window predicted and what the next block actually delivered (predicted minus realized). Positive means your in-sample stats systematically overstate forward performance, so size to the walk-forward number. Negative means the opposite \u2014 your recent blocks beat what the trailing window expected. Within 10% of in-sample expectancy either way is treated as calibrated.')}
       ${spark}
       <p class="mini-note">${verdict}</p>
     </div></div>`;
@@ -2692,6 +2737,7 @@ function renderDiagnostic(closed, allv){
   if(pdfBtn)pdfBtn.onclick=()=>{ try{ exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
   wireWhatIf(closed);
   wireAssetAttrib(closed);
+  wireWalkForward(wf);
   document.querySelectorAll('#anaBasisTog button').forEach(b=>{ b.classList.toggle('on',b.dataset.b===(settings.anaBasis||'usd'));
     b.onclick=async()=>{ settings.anaBasis=b.dataset.b; await Store.set(S_KEY,settings);
       document.querySelectorAll('#anaBasisTog button').forEach(x=>x.classList.toggle('on',x===b));
