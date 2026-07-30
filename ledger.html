@@ -1327,6 +1327,64 @@ function openRiskModel(positions){
   return {rows,coins,gross,skew,upnl,positions:rows.length,
     largestShare:(coins.length&&gross>0)?coins[0].gross/gross:0,danger};
 }
+// Correlation-aware concentration flag for the open-risk panel. openRiskModel sums per-position
+// risk as if the positions were independent; but perps move together (in risk-off, alts track
+// BTC), so same-direction exposure across several coins carries more real risk than the
+// arithmetic sum. Without a price-history correlation matrix we measure how one-sided the book
+// is by notional (|skew|/gross) and whether that lopsidedness is spread across multiple names
+// rather than one big position. A flagged book should be read as "combined risk larger than the
+// sum". Heuristic and labelled as such — no fabricated correlation numbers. Pure/Node-testable.
+function riskConcentration(model){
+  if(!model||!model.rows||!model.rows.length) return null;
+  const gross=model.gross||0; if(gross<=0) return null;
+  const net=model.skew||0;                       // signed notional: + long-heavy, − short-heavy
+  const dirRatio=Math.abs(net)/gross;            // 0 balanced/hedged … 1 fully one-directional
+  const longs=model.rows.filter(r=>r.side==='long').length;
+  const shorts=model.rows.filter(r=>r.side==='short').length;
+  const nPos=model.rows.length, sameSide=Math.max(longs,shorts);
+  const clustered = nPos>=2 && dirRatio>=0.6 && sameSide>=2;
+  return { dirRatio, net, gross, longs, shorts, positions:nPos,
+    side: net>=0?'long':'short', clustered };
+}
+// Autocorrelation-aware Kelly haircut. kellyFromTrades assumes independent bets; when trade PnL
+// is positively autocorrelated (streaks are real), effective variance is higher than the i.i.d.
+// formula assumes and full Kelly overstates the growth-optimal fraction — precisely when
+// oversizing does the most damage. Shrink the fraction by (1 − acf1), floored at 0.4 so even a
+// strong streak signal cuts at most 60% and never drives a positive-edge size to zero. Pure.
+function kellyHaircut(fraction, acf1){
+  if(fraction==null||!(fraction>0)) return {factor:1, adjusted:fraction, acf1:acf1!=null?acf1:null};
+  const a=(acf1!=null&&isFinite(acf1))?Math.max(0,acf1):0;
+  const factor=Math.max(0.4, 1-a);
+  return {factor, adjusted:fraction*factor, acf1:a};
+}
+// Rolling walk-forward expectancy — the honest counterpart to the app's in-sample stats. Sort
+// closed trades chronologically, train on a trailing window, SCORE the next non-overlapping
+// block strictly out-of-sample, then slide. The concatenated out-of-sample blocks tile the
+// post-warmup history with no look-ahead, so their mean is a genuine walk-forward expectancy.
+// Compare it to the naive full-sample in-sample expectancy: a large drop is edge decay or
+// overfitting, not noise. Pure given _avg / bootstrapMeanCI, so the harness can pin it exactly.
+function walkForward(closed, opts){
+  opts=opts||{};
+  const tr=(closed||[]).filter(t=>t&&!t.isOpen&&isFinite(t.net)).sort((a,b)=>a.closeTime-b.closeTime);
+  const N=tr.length; if(N<20) return null;
+  const train=Math.max(10, opts.train||Math.min(120, Math.round(N*0.4)));
+  const step =Math.max(5,  opts.step ||Math.max(5, Math.round(train/4)));
+  if(N < train+step) return null;
+  const points=[], oos=[];
+  for(let origin=train; origin+step<=N; origin+=step){
+    const trs=tr.slice(origin-train, origin), tes=tr.slice(origin, origin+step);
+    const isExp=_avg(trs.map(t=>t.net)), osExp=_avg(tes.map(t=>t.net));
+    for(const t of tes) oos.push(t.net);
+    points.push({ i:origin, t:tes[tes.length-1].closeTime, isExp, osExp, n:tes.length });
+  }
+  if(!points.length) return null;
+  const fullIS=_avg(tr.map(t=>t.net));
+  const wfExp=oos.length?_avg(oos):null;
+  const wfCI=oos.length>=8?bootstrapMeanCI(oos,800):null;
+  const optimism=_avg(points.map(p=>p.isExp-p.osExp)); // mean(in-sample − realized); >0 = IS overstates
+  return { train, step, blocks:points.length, oosN:oos.length, points, fullIS, wfExp, wfCI, optimism,
+    retention:(fullIS>0 && wfExp!=null)?wfExp/fullIS:null, holds:(wfExp!=null && wfExp>0) };
+}
 // "What if I stopped doing X": deterministic counterfactual replay. Takes the actual
 // chronological closed-trade sequence and removes the trades matching `pred`, then compares
 // the two resulting equity curves and headline stats. No resampling, no RNG — this is the
@@ -1674,10 +1732,12 @@ function renderRiskPanel(){
   }).join('');
   const coinBits=m.coins.slice(0,6).map(c=>`<span data-tip="Signed net notional for ${esc(c.coin)} across all wallets (gross ${fmtUsd(c.gross)}${c.wallets>1?', '+c.wallets+' wallets':''}); ${(c.share*100).toFixed(0)}% of your open book."><b>${esc(c.coin)}</b> <span class="${c.net>=0?'pos-t':'neg-t'}">${c.net>=0?'long':'short'} ${fmtUsd(Math.abs(c.net))}</span></span>`).join(' \u00b7 ');
   const danger=m.danger.length?`<div class="guard overtrading" style="margin-top:8px"><span class="gicon">\u26a0</span><span><b>${m.danger.length} position${m.danger.length===1?'':'s'} within 10% of liquidation</b>: ${m.danger.map(r=>esc(r.dex?r.coin.slice(r.dex.length+1):r.coin)+' ('+pctf(r.liqDist)+' away)').join(', ')}. One ordinary candle can force-close these \u2014 add margin, trim, or place the stop yourself before the exchange does.</span></div>`:'';
+  const conc=riskConcentration(m);
+  const concHtml=(conc&&conc.clustered)?`<div class="guard overtrading" style="margin-top:8px" data-tip="Perps move together \u2014 in risk-off, alts track BTC \u2014 so several positions on the same side carry more real risk than the sum of their individual liquidation distances suggests. This flags when your book is heavily one-directional (|net|/gross \u2265 60%) across multiple names. Heuristic: without a price-history correlation matrix it measures how one-sided you are, not exact correlations."><span class="gicon">\u26a0</span><span><b>Concentrated ${conc.side} book</b>: ${(conc.dirRatio*100).toFixed(0)}% of gross exposure is net ${conc.side} across ${conc.side==='long'?conc.longs:conc.shorts} of ${conc.positions} positions. Correlated names moving together means your real risk is larger than the per-position liquidation distances imply \u2014 a single regime move hits all of them at once. Size the cluster as one bet.</span></div>`:'';
   el.innerHTML=`<h3 data-tip="The open book summarized as RISK rather than a list: per-position distance to liquidation (nearest first), net directional exposure by coin netted across wallets (HIP-3 dexs included), and concentration. Live from Hyperliquid \u2014 refreshes with each load.">Open-position risk <span class="hint">${m.positions} position${m.positions===1?'':'s'} \u00b7 gross ${fmtUsd(m.gross)} \u00b7 net ${m.skew>=0?'long':'short'} ${fmtUsd(Math.abs(m.skew))} \u00b7 largest market ${(m.largestShare*100).toFixed(0)}% of book</span></h3>
     ${head}${rows}
     <div style="margin-top:8px;font-size:11.5px;color:var(--muted)">net by coin: ${coinBits||'\u2014'}</div>
-    ${danger}`;
+    ${danger}${concHtml}`;
 }
 function renderStats(s){
   const openN=allTrades.filter(t=>t.isOpen&&viewFilter(t)).length;
@@ -1854,9 +1914,11 @@ function edgeKeyFn(dim,trades){
 }
 function bucketize(trades,dim){
   const keyFn=edgeKeyFn(dim,trades), g={};
-  trades.forEach(t=>{ for(const k of keyFn(t)){ const b=g[k]||(g[k]={key:k,n:0,wins:0,losses:0,net:0,rs:[]});
-    b.n++; if(isWin(t.net))b.wins++; else if(isLoss(t.net))b.losses++; b.net+=t.net; const r=rFor(t); if(r!==null)b.rs.push(r); } });
-  return Object.values(g).map(b=>({key:b.key,n:b.n,wins:b.wins,losses:b.losses,net:b.net,winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,expectancy:b.net/b.n,avgR:b.rs.length?_avg(b.rs):null}));
+  trades.forEach(t=>{ for(const k of keyFn(t)){ const b=g[k]||(g[k]={key:k,n:0,wins:0,losses:0,net:0,sq:0,rs:[]});
+    b.n++; if(isWin(t.net))b.wins++; else if(isLoss(t.net))b.losses++; b.net+=t.net; b.sq+=t.net*t.net; const r=rFor(t); if(r!==null)b.rs.push(r); } });
+  return Object.values(g).map(b=>{ const mean=b.net/b.n;
+    const sd=b.n>1?Math.sqrt(Math.max(0,(b.sq-b.n*mean*mean)/(b.n-1))):0;
+    return {key:b.key,n:b.n,wins:b.wins,losses:b.losses,net:b.net,sd,winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,expectancy:mean,avgR:b.rs.length?_avg(b.rs):null}; });
 }
 const edgeLabel=dim=>({dir:'Direction',market:'Market',dow:'Day of week',hour:'Hour block',hold:'Hold time',size:'Trade size',rating:'Rating',setup:'Setup',tag:'Tag',mistake:'Mistake flag'}[dim]||'Bucket');
 // plain-English phrase for a (dimension, bucket) pair — used in the edges/leaks lists so
@@ -1900,7 +1962,18 @@ function diagScan(closed){
   let all=[];
   dims.forEach(dim=>{ bucketize(closed,dim).forEach(b=>{ if(b.n>=MIN && !/^\((no|un)/.test(String(b.key)))
     all.push({dim,label:edgeLabel(dim),...b,score:b.expectancy*Math.sqrt(b.n)}); }); });
-  return { MIN,
+  // Significance: one-sample t of each bucket's mean net vs 0 (two-sided), then a
+  // Benjamini-Hochberg FDR gate across every bucket tested here — the same multiple-comparison
+  // discipline the miner uses, so a bucket that just sorts high on expectancy*sqrt(n) is no
+  // longer presented as an "edge" until it clears the noise floor. p from a normal approx of
+  // the t (fine at these n and avoids a t-CDF); sig=false where n<2 or sd==0.
+  all.forEach(b=>{ if(b.n>1 && b.sd>0){ b.t=b.expectancy/(b.sd/Math.sqrt(b.n));
+      b.p=2*(1-_normCdf(Math.abs(b.t))); } else { b.t=null; b.p=1; } });
+  const Q=0.10, M=all.length;
+  if(M){ const idx=all.map((b,i)=>i).sort((i,j)=>all[i].p-all[j].p);
+    let crit=-1; for(let r=0;r<M;r++){ if(all[idx[r]].p<=(r+1)/M*Q)crit=r; }
+    idx.forEach((i,r)=>{ all[i].sig = crit>=0 && r<=crit; }); }
+  return { MIN, fdrQ:Q,
     strong: all.filter(b=>b.expectancy>0).sort((a,b)=>b.score-a.score).slice(0,5),
     weak:   all.filter(b=>b.expectancy<0).sort((a,b)=>a.score-b.score).slice(0,5) };
 }
@@ -2329,7 +2402,8 @@ function renderDiagnostic(closed, allv){
 
   const li=(cls,mk,txt)=>`<li class="${cls}"><span class="mk">${mk}</span><span>${txt}</span></li>`;
   const sgn=n=>(n>=0?'+':'')+fmtUsd(n);
-  const diagRow=b=>`<b>${esc(humanBucket(b.dim,b.key))}</b> — ${b.n} trades, ${pct(b.winRate)} winners, averaging <b>${sgn(b.expectancy)} each</b> (${sgn(b.net)} total)`;
+  const sigTag=b=>b.sig?'<span class="badge ok" style="margin-left:6px" data-tip="Clears a Benjamini-Hochberg FDR gate (q<0.10) across every bucket scanned — significant after correcting for how many conditions were tested, not just a high sample-weighted score.">confirmed</span>':'<span class="sr-note" style="margin-left:6px" data-tip="Ranks high on expectancy×√n but does not clear the FDR gate once every scanned bucket is accounted for. Treat as a lead to re-test, not a proven edge — cross-check in the miner.">unconfirmed</span>';
+  const diagRow=b=>`<b>${esc(humanBucket(b.dim,b.key))}</b>${sigTag(b)} — ${b.n} trades, ${pct(b.winRate)} winners, averaging <b>${sgn(b.expectancy)} each</b> (${sgn(b.net)} total)`;
   const strongHtml = strong.length?strong.map(b=>li('good','▲',diagRow(b))).join(''):li('warn','·',`No pattern clears the ${MIN}-trade bar yet.`);
   const weakHtml = weak.length?weak.map(b=>li('bad','▼',diagRow(b))).join(''):li('warn','·',`No losing pattern clears the ${MIN}-trade bar — good sign.`);
 
@@ -2340,10 +2414,43 @@ function renderDiagnostic(closed, allv){
 
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const kellyTxt = kelly==null?'—':kelly<=0?'0% — no positive edge to size':`risk ~${pct(Math.max(0,kelly))} · half-Kelly ~${pct(Math.max(0,kelly)/2)}`;
+  // --- walk-forward reality: the honest out-of-sample counterpart to the in-sample verdict ---
+  _srand(_hashSeed('wf:'+closed.length));
+  const wf = walkForward(closed);
+  const wfHtml = (()=>{
+    if(!wf) return '';
+    const fA=x=>x==null?'—':(x>=0?'+':'')+fmtUsd(x);
+    const wfCls=wf.wfExp>0?'ok':(wf.wfExp<0?'no':'mid');
+    const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:'need ≥8 out-of-sample trades';
+    const retTxt=wf.retention!=null?`${(wf.retention*100).toFixed(0)}% of in-sample kept`:'—';
+    // inline SVG sparkline of realized out-of-sample expectancy per block (CSP-safe, no lib)
+    const vals=wf.points.map(p=>p.osExp), mx=Math.max(1e-9,...vals.map(v=>Math.abs(v)));
+    const W=Math.max(120,vals.length*16), H=42, bw=W/vals.length, mid=H/2;
+    const bars=vals.map((v,i)=>{ const h=Math.max(0.6,Math.abs(v)/mx*(H/2-3)); const y=v>=0?mid-h:mid;
+      return `<rect x="${(i*bw+1.5).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,bw-3).toFixed(1)}" height="${h.toFixed(1)}" fill="${v>=0?'var(--profit)':'var(--loss)'}"/>`; }).join('');
+    const spark=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;margin-top:6px"><line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--line)" stroke-width="1"/>${bars}</svg>`;
+    const verdict = wf.wfExp==null ? ''
+      : wf.wfExp>0
+        ? ((wf.retention!=null && wf.retention<0.6)
+            ? 'Edge survives out-of-sample but at a fraction of its in-sample size — real, but decaying or partly overfit. Size to the walk-forward number, not the headline.'
+            : 'Edge holds out-of-sample: walk-forward expectancy stays positive and close to in-sample. This is the version worth trusting.')
+        : 'Out-of-sample the edge disappears — in-sample expectancy did not carry forward. Treat the headline as descriptive, not predictive, until this turns positive.';
+    return `<div class="diag-section"><div class="diag-card" data-tip="Trains on a trailing window of trades, scores the next block strictly out-of-sample, then slides — the concatenated test blocks tile your history with no look-ahead. Their mean is a genuine walk-forward expectancy; comparing it to the full-sample (in-sample) number shows how much of the edge is real going forward vs fitted to the past.">
+      <h3>Walk-forward reality <span style="color:var(--faint)">· ${wf.blocks} out-of-sample blocks · ${wf.train}-trade train / ${wf.step}-trade test · ${wf.oosN} trades scored</span></h3>
+      ${mrow('In-sample expectancy',`${fmtUsd(wf.fullIS)}/trade`,'Naive mean net PnL over every closed trade in this view — the number the headline verdict is built on. In-sample: it has seen all the data it is scored against.')}
+      ${mrow('Walk-forward expectancy',`<span class="badge ${wfCls}">${fA(wf.wfExp)}/trade</span>`,'Mean net PnL across only the out-of-sample test blocks — trades the training window had not yet seen when their expectancy was set. The honest estimate of what the edge earns going forward.')}
+      ${mrow('WF 95% CI (bootstrap)',ciTxt,'Distribution-free confidence interval on the walk-forward expectancy, resampling the out-of-sample trades. If it includes 0, forward edge is not yet established.')}
+      ${mrow('Retention',retTxt,'Walk-forward expectancy as a share of in-sample. 100% means the edge carried forward intact; well under that is decay or overfitting. Only shown when in-sample is positive.')}
+      ${mrow('In-sample optimism',`${fA(wf.optimism)}/trade`,'Average gap between what each trailing window predicted and what the next block actually delivered. Positive means your in-sample stats systematically overstate forward performance.')}
+      ${spark}
+      <p class="mini-note">${verdict}</p>
+    </div></div>`;
+  })();
   el.innerHTML = `
    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:-6px"><button class="btn ghost" id="exportDiagPdf" data-tip="Print-grade PDF of this Diagnostic — headline stats, every visible chart embedded as an image, and the recommendations — that your accountant or backers can open anywhere. Generated entirely in the browser.">Export PDF</button><button class="btn ghost" id="exportReport" data-tip="Snapshot this entire Diagnostic — stats, charts (as images), miner results and excursions if you've run them — as a single self-contained HTML file for archiving monthly reviews.">Export report</button></div>
    <div class="verdict" data-tip="Overall grade from three things: are you net profitable, is your Sharpe's lower confidence bound above 0 (edge distinguishable from noise), and do you have ≥100 completed trades.">
      <div class="grade">${grade}</div><p>${verdictText}</p></div>
+   ${wfHtml}
    <div class="diag-section">
      <div class="diag-grid">
        <div class="diag-card"><h3 data-tip="How much you can trust the numbers: sample size, the Sharpe with its confidence band, cost drag, and whether recent performance matches earlier performance.">Statistical reliability</h3>
@@ -3961,10 +4068,21 @@ function renderProjection(){
           const acct2=(accountValue||0)+(spotAccountValue||0);
           const pctv=x=>(x*100).toFixed(1)+'%';
           const dollar=x=>acct2>0?' \u00b7 '+fmtUsd(acct2*x):'';
+          const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime).map(t=>t.net);
+          const acf1=_autocorr1(chron);
+          const hc=kellyHaircut(kel.quarter,acf1);
+          const streaky=acf1!=null&&acf1>0.15&&kel.quarter!=null&&kel.quarter>0;
+          const streakRow=streaky
+            ? mrow('Streak-adjusted (suggested)',pctv(hc.adjusted)+dollar(hc.adjusted)+` <span style="color:var(--faint)">\u00b7 \u00d7${hc.factor.toFixed(2)} for +${acf1.toFixed(2)} autocorr</span>`,'Your trade results are positively autocorrelated \u2014 streaks are real, so effective variance is higher than Kelly\u2019s independent-bet assumption and full/quarter-Kelly overstate the safe size. This shrinks quarter-Kelly by (1\u2212autocorrelation), floored at \u00d70.4. Lean on this over plain quarter-Kelly while the clustering persists.')
+            : '';
+          const note=streaky
+            ? `Pairs with the pace cards. Your results cluster (autocorrelation ${acf1.toFixed(2)}), so the streak-adjusted line is the one to trust \u2014 plain Kelly assumes independent bets. Edges drift; re-check as the sample grows.`
+            : 'Pairs with the pace cards: this is how large you can rationally bet <i>if</i> you keep trading exactly like this. Edges drift; re-check as the sample grows.';
           return mrow('Win rate \u00b7 payoff',(kel.p*100).toFixed(0)+'% \u00b7 '+(kel.b===Infinity?'\u221e':kel.b.toFixed(2)),'Decisive win rate and average win \u00f7 average loss over the projection basis trades.')
             + mrow('Full-Kelly risk / trade',kel.kelly!=null?(kel.kelly<=0?'0% \u2014 no positive edge':pctv(kel.kelly)+dollar(kel.kelly)):'\u2014','Growth-optimal fraction of account to risk per trade at this edge. A ceiling, not a target.')
             + mrow('Quarter-Kelly (suggested)',kel.quarter!=null?(kel.quarter<=0?'\u2014':pctv(kel.quarter)+dollar(kel.quarter)):'\u2014','A quarter of Kelly keeps most of the growth with a fraction of the drawdown pain \u2014 the usual practitioner default.')
-            + '<p class="mini-note">Pairs with the pace cards: this is how large you can rationally bet <i>if</i> you keep trading exactly like this. Edges drift; re-check as the sample grows.</p>';
+            + streakRow
+            + '<p class="mini-note">'+note+'</p>';
         })()}
       </div>
       <div class="diag-card"><h3>Milestones <span style="color:var(--faint)">from ${esc(fmtUsd(startBal))} realized</span></h3>

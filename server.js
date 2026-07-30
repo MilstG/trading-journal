@@ -88,11 +88,9 @@ const ENGINE_FNS = [
   // projection / risk / counterfactuals
   '_srand', '_hashSeed', 'bootstrapMeanCI', 'mcMaxDD', 'projBaseline', 'projectForward',
   'projMilestones', 'currentDD', 'underwaterStats', 'fwdMaxDD', 'kellyFromTrades',
-  'openRiskModel', 'whatIfStats', 'whatIfModel',
-  // capital / cash-flow
-  'classifyLedgerDelta', 'nfXirr', 'cashFlowModel',
+  'openRiskModel', 'whatIfStats', 'whatIfModel', 'walkForward', 'riskConcentration',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
-  'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio', 'fetchLedgerUpdates',
+  'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio',
 ];
 // Trivial one-line consts the extracted functions lean on. Consts aren't brace-extractable,
 // so — exactly like the test suites — they are re-declared here. Keep in sync with ledger.html.
@@ -198,13 +196,11 @@ function createApp(opts) {
   const attDir = path.join(dataDir, 'att');
   const fillsDir = path.join(dataDir, 'fills');
   const fundingDir = path.join(dataDir, 'funding');
-  const ledgerDir = path.join(dataDir, 'ledger');
   const marketFile = path.join(dataDir, 'market.json');
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(attDir, { recursive: true });
   fs.mkdirSync(fillsDir, { recursive: true });
   fs.mkdirSync(fundingDir, { recursive: true });
-  fs.mkdirSync(ledgerDir, { recursive: true });
   const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
   const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
 
@@ -279,8 +275,6 @@ function createApp(opts) {
   const fundingFile = a => path.join(fundingDir, a.toLowerCase() + '.json.gz');
   const readFillCache = a => { const c = gzRead(fillsFile(a)); return (c && c.v === 1 && Array.isArray(c.fills)) ? c : null; };
   const readFundingCache = a => { const c = gzRead(fundingFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
-  const ledgerFile = a => path.join(ledgerDir, a.toLowerCase() + '.json.gz');
-  const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
 
   const currentSnapshot = () => {
@@ -349,9 +343,6 @@ function createApp(opts) {
         // funding: full refetch each refresh — matches the client, keeps semantics identical
         const frows = await E.fetchFunding(w.address);
         gzWrite(fundingFile(w.address), { v: 1, savedAt: Date.now(), rows: frows });
-        // non-fill ledger (deposits/withdrawals/transfers) for the Capital view — full refetch, matches client
-        try { const ledg = await E.fetchLedgerUpdates(w.address);
-          gzWrite(ledgerFile(w.address), { v: 1, savedAt: Date.now(), rows: ledg }); } catch (e) {}
 
         const hip3 = E.hip3DexsFromFills(fills);
         const [ch, sbal, port] = await Promise.all([
@@ -574,8 +565,8 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/breakdown', auth: 'read', desc: 'grouped stats; by=coin|dir|market|wallet|tag|dow|hour; filters' },
     { method: 'GET',  path: '/api/v1/projection', auth: 'read', desc: 'Monte Carlo forward sim; horizon (days, default 90), paths (<=2000, default 400), block, seed, lookback (days); filters' },
     { method: 'GET',  path: '/api/v1/kelly', auth: 'read', desc: 'Kelly sizing from filtered closed trades' },
+    { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
-    { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'cash-flow ledger (deposits/withdrawals/transfers) + return on capital: simple + money-weighted XIRR' },
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
     { method: 'GET',  path: '/api/v1/spot/lots', auth: 'read', desc: 'FIFO 8949-style spot cost-basis lots; wallet= optional' },
     { method: 'GET',  path: '/api/v1/whatif', auth: 'read', desc: 'counterfactual replay removing trades matching field/op/value (op: eq|ne|lt|lte|gt|gte|in); filters' },
@@ -786,37 +777,28 @@ function createApp(opts) {
         return send(200, { n: closed.length, kelly: E.kellyFromTrades(closed) });
       }
 
+      if (url === '/api/v1/walkforward') {
+        const { closed } = prepare(query);
+        const opts = {};
+        const tr = parseInt(query.train, 10); if (Number.isFinite(tr) && tr > 0) opts.train = tr;
+        const st = parseInt(query.step, 10);  if (Number.isFinite(st) && st > 0) opts.step = st;
+        // seed the shared PRNG so the bootstrap CI is reproducible per identical request
+        const seed = query.seed != null && query.seed !== '' && query.seed !== 'auto'
+          ? (parseInt(query.seed, 10) >>> 0) : E._hashSeed('wf:' + closed.length);
+        E._srand(seed);
+        const wf = E.walkForward(closed, opts);
+        if (!wf) return send(200, { walkforward: null, note: 'need ≥20 closed trades (and ≥ train+step) in the selected view' });
+        return send(200, { seed, walkforward: wf });
+      }
+
       if (url === '/api/v1/risk') {
         setEngineState(query);
         if (!engine.ok) throw { code: 503, msg: 'analytics engine unavailable' };
         const market = readMarket();
         if (!market) return send(409, { error: 'no market snapshot yet — POST /api/v1/refresh first' });
+        const risk = E.openRiskModel(market.positions || []);
         return send(200, { fetchedAt: market.fetchedAt, accountValue: market.accountValue,
-          risk: E.openRiskModel(market.positions || []) });
-      }
-
-      if (url === '/api/v1/capital') {
-        setEngineState(query);
-        if (!engine.ok) throw { code: 503, msg: 'analytics engine unavailable' };
-        const snap = currentSnapshot();
-        const wallets = snapWallets(snap).slice();
-        try { for (const f of fs.readdirSync(ledgerDir)) { const a = f.replace(/\.json\.gz$/, '');
-          if (ADDR_RE.test(a) && !wallets.find(w => w.address.toLowerCase() === a)) wallets.push({ address: a, label: '' }); } } catch (e) {}
-        const tracked = new Set(wallets.map(w => w.address.toLowerCase()));
-        let rows = [];
-        for (const w of wallets) { const lc = readLedgerCache(w.address); if (!lc) continue;
-          const lbl = w.label || (w.address.slice(0, 6) + '\u2026' + w.address.slice(-4));
-          for (const u of lc.rows) rows.push({ time: u.time, delta: u.delta, addr: w.address.toLowerCase(), wallet: lbl }); }
-        rows.sort((a, b) => b.time - a.time);
-        const market = readMarket();
-        const equity = market ? ((market.accountValue || 0) + (market.spotAccountValue || 0)) || null : null;
-        const pnl = market && market.hlPnl ? market.hlPnl.all : null;
-        const m = E.cashFlowModel(rows, equity, pnl, tracked);
-        return send(200, { fetchedAt: market ? market.fetchedAt : null,
-          deposits: m.deposits, withdrawals: m.withdrawals, vaultNet: m.vaultNet, netExternal: m.netExternal,
-          equity: m.equity, free: market ? market.accountFree : null, pnl: m.pnl,
-          simpleReturn: m.simpleReturn, xirr: m.xirr, extCount: m.extCount,
-          composition: m.composition, flows: m.rows.slice(0, 500) });
+          risk, concentration: risk ? E.riskConcentration(risk) : null });
       }
 
       if (url === '/api/v1/positions') {
