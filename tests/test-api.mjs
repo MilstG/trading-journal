@@ -95,6 +95,7 @@ await t('GET /api/v1 index is open and self-describing', async () => {
   ok(body.engine.ok);
   ok(Array.isArray(body.endpoints) && body.endpoints.length >= 15);
   ok(body.endpoints.some(e => e.path === '/api/v1/projection'));
+  ok(body.endpoints.some(e => e.path === '/api/v1/walkforward'));
 });
 await t('analytics before any refresh: empty but well-formed', async () => {
   const { status, body } = await jget('/api/v1/trades');
@@ -249,6 +250,16 @@ await t('risk: liquidation distance from cached positions', async () => {
   eq(r.coin, 'BTC'); eq(r.side, 'long');
   near(r.mark, 32000); near(r.liqDist, 7000 / 32000);
   near(body.accountValue, 5000);
+  ok('concentration' in body, 'risk response carries the concentration flag');
+});
+await t('walkforward: wired, read-scoped, honest-empty on a tiny set', async () => {
+  const { status, body } = await jget('/api/v1/walkforward');
+  eq(status, 200);
+  ok('walkforward' in body, 'walkforward key present');
+  eq(body.walkforward, null, 'too few closed trades in the mock -> null, not fabricated');
+  ok(typeof body.note === 'string');
+  eq((await jget('/api/v1/walkforward', {})).status, 401, 'no token -> 401');
+  eq((await jget('/api/v1/walkforward', READ)).status, 200, 'read token allowed');
 });
 await t('positions: cached snapshot incl. spot holdings and hlPnl', async () => {
   const { body } = await jget('/api/v1/positions');

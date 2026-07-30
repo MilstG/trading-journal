@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const html = readFileSync(new URL('./ledger.html', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../ledger.html', import.meta.url), 'utf8');
 function grab(name){
   for (const hdr of ['async function '+name+'(', 'function '+name+'(']) {
     const i = html.indexOf(hdr); if (i < 0) continue;
