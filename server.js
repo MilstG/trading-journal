@@ -40,7 +40,7 @@
 //   GET  /api/v1/stats                 computeStats over the filtered set
 //   GET  /api/v1/equity                cumulative equity points + drawdown diagnostics
 //   GET  /api/v1/calendar              net PnL per calendar day
-//   GET  /api/v1/breakdown?by=coin|dir|market|wallet|tag|dow|hour
+//   GET  /api/v1/breakdown?by=…&basis=usd|pct&top=N   grouped stats + contribution shares
 //   GET  /api/v1/projection            Monte Carlo forward simulation (projectForward)
 //   GET  /api/v1/kelly                 Kelly sizing from the filtered closed set
 //   GET  /api/v1/risk                  open-position risk model (openRiskModel)
@@ -562,7 +562,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/stats', auth: 'read', desc: 'computeStats over the filtered set; filters as above' },
     { method: 'GET',  path: '/api/v1/equity', auth: 'read', desc: 'cumulative equity points, daily series, drawdown diagnostics; filters' },
     { method: 'GET',  path: '/api/v1/calendar', auth: 'read', desc: 'net PnL per calendar day (tz-aware); filters' },
-    { method: 'GET',  path: '/api/v1/breakdown', auth: 'read', desc: 'grouped stats; by=coin|dir|market|wallet|tag|dow|hour; filters' },
+    { method: 'GET',  path: '/api/v1/breakdown', auth: 'read', desc: 'grouped stats + per-group contribution shares; by=coin|dir|market|wallet|tag|dow|hour; basis=usd|pct ranks by dollars or summed return points; top=N (default 5) sizes the best/worst lists; filters' },
     { method: 'GET',  path: '/api/v1/projection', auth: 'read', desc: 'Monte Carlo forward sim; horizon (days, default 90), paths (<=2000, default 400), block, seed, lookback (days); filters' },
     { method: 'GET',  path: '/api/v1/kelly', auth: 'read', desc: 'Kelly sizing from filtered closed trades' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
@@ -728,6 +728,8 @@ function createApp(opts) {
       if (url === '/api/v1/breakdown') {
         const { closed } = prepare(query);
         const by = String(query.by || 'coin').toLowerCase();
+        const basis = String(query.basis || 'usd').toLowerCase() === 'pct' ? 'pct' : 'usd';
+        const top = Math.max(1, Math.min(50, Math.floor(qnum(query.top, 5))));
         const keyFn = {
           coin: t => t.symbol || t.coin, dir: t => t.dir, market: t => t.market,
           wallet: t => (t.wallet && (t.wallet.label || t.wallet.address)) || '?',
@@ -746,11 +748,48 @@ function createApp(opts) {
         }
         const out = Object.entries(groups).map(([key, ts]) => {
           const s = E.computeStats(ts, ts);
+          const rets = ts.map(t => E.retPct(t)).filter(r => r !== null);
+          const sumRet = rets.reduce((a, r) => a + r, 0);
           return { key, n: s.n, net: s.net, fees: s.fees, winRate: s.winRate,
             profitFactor: s.profitFactor === Infinity ? null : s.profitFactor,
-            expectancy: s.expectancy, avgR: s.avgR, avgHold: s.avgHold, maxDD: s.maxDD };
+            expectancy: s.expectancy, avgR: s.avgR, avgHold: s.avgHold, maxDD: s.maxDD,
+            sumRet, meanRet: rets.length ? sumRet / rets.length : null,
+            v: basis === 'pct' ? sumRet : s.net };
         }).sort((a, b) => b.net - a.net);
-        return send(200, { by, groups: out });
+        // Contribution shares, mirroring assetContribution() in ledger.html. The primary
+        // denominator is the summed contribution of the groups on the SAME side, so shares total
+        // exactly 1 within a side and "these five produced 84% of the profit" is literally true.
+        // shareNet divides by the bottom line instead: the honest answer to "how much of my result
+        // is this", but winners and losers offset, so it can exceed 1 or go negative and is flagged
+        // via netMeaningful when the net is small next to the gross sides.
+        // by=tag is NOT a partition (a two-tag trade is counted twice), so partition=false warns
+        // consumers that the side totals are inflated by double-counting.
+        const pos = out.reduce((a, r) => a + (r.v > 0 ? r.v : 0), 0);
+        const neg = out.reduce((a, r) => a + (r.v < 0 ? -r.v : 0), 0);
+        const total = out.reduce((a, r) => a + r.v, 0);
+        for (const r of out) {
+          const d = r.v > 0 ? pos : neg;
+          r.share = d > 0 ? Math.abs(r.v) / d : 0;
+          r.shareNet = total !== 0 ? r.v / Math.abs(total) : null;
+        }
+        const ranked = [...out].sort((a, b) => b.v - a.v || String(a.key).localeCompare(String(b.key)));
+        const best = ranked.filter(r => r.v > 0).slice(0, top);
+        const worst = ranked.filter(r => r.v < 0).slice(-top).reverse();
+        // netMeaningful gates shareNet on both the cause (net small vs gross) and the symptom
+        // (any single group's share of net being absurd). At 5% of gross a group can report
+        // "704% of net" — correct, useless. Mirrors assetContribution() in ledger.html.
+        const maxNetShare = Math.max(0, ...out.map(r => r.shareNet == null ? 0 : Math.abs(r.shareNet)));
+        const contribution = {
+          basis, top, pos, neg, total, maxNetShare,
+          netMeaningful: (pos + neg) > 0 && Math.abs(total) >= 0.1 * (pos + neg) && maxNetShare <= 3,
+          partition: by !== 'tag',
+          groups: out.length,
+          others: Math.max(0, out.length - best.length - worst.length),
+          bestShare: pos > 0 ? best.reduce((a, r) => a + r.v, 0) / pos : 0,
+          worstShare: neg > 0 ? worst.reduce((a, r) => a - r.v, 0) / neg : 0,
+          best: best.map(r => r.key), worst: worst.map(r => r.key),
+        };
+        return send(200, { by, basis, groups: basis === 'pct' ? ranked : out, contribution });
       }
 
       if (url === '/api/v1/projection') {

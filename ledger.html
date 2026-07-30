@@ -1920,6 +1920,103 @@ function bucketize(trades,dim){
     const sd=b.n>1?Math.sqrt(Math.max(0,(b.sq-b.n*mean*mean)/(b.n-1))):0;
     return {key:b.key,n:b.n,wins:b.wins,losses:b.losses,net:b.net,sd,winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,expectancy:mean,avgR:b.rs.length?_avg(b.rs):null}; });
 }
+/* ============================ asset attribution ============================ */
+// Ranked per-market contribution to the period result. Two denominators, because "% of my PnL"
+// is ambiguous and the naive version is wrong:
+//   pos / neg — summed contribution of the markets that MADE / LOST money. Shares within each
+//     side total exactly 1, so "these five produced 84% of the profit" is literally true. Primary.
+//   total     — the bottom line. Shares against it can exceed 100% and go negative because
+//     winners and losers offset, so it is a secondary read and is suppressed entirely when the
+//     net is small next to the gross sides (netMeaningful), where the ratio is noise.
+// basis 'usd' attributes dollars (where the money came from -- correct for "cutting X saves $Y").
+// basis 'pct' attributes summed per-trade return points: additive and size-neutral, so a small
+// well-traded market can outrank a big frequently-traded one.
+// best/worst are partitioned by sign, never sliced from a shared list, so a market cannot appear
+// in both -- the same contract test-edge-map locks in for partitionConditions. Ties break on key
+// so the order is deterministic across renders.
+function assetContribution(trades,basis,k){
+  basis=basis==='pct'?'pct':'usd'; k=k||5;
+  const g={};
+  for(const t of trades){ const key=dcoin(t);
+    const b=g[key]||(g[key]={key,n:0,wins:0,losses:0,net:0,sumRet:0,retN:0});
+    b.n++; if(isWin(t.net))b.wins++; else if(isLoss(t.net))b.losses++;
+    b.net+=t.net; const r=retPct(t); if(r!==null){ b.sumRet+=r; b.retN++; } }
+  const rows=Object.values(g).map(b=>({key:b.key,n:b.n,wins:b.wins,losses:b.losses,
+    net:b.net,sumRet:b.sumRet,meanRet:b.retN?b.sumRet/b.retN:null,
+    winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,
+    expectancy:b.net/b.n,
+    v:basis==='pct'?b.sumRet:b.net}));
+  const pos=rows.reduce((a,r)=>a+(r.v>0?r.v:0),0);
+  const neg=rows.reduce((a,r)=>a+(r.v<0?-r.v:0),0);
+  const total=rows.reduce((a,r)=>a+r.v,0);
+  rows.forEach(r=>{ const d=r.v>0?pos:neg;
+    r.share=d>0?Math.abs(r.v)/d:0;
+    r.shareNet=total!==0?r.v/Math.abs(total):null; });
+  const sorted=[...rows].sort((a,b)=>b.v-a.v||String(a.key).localeCompare(String(b.key)));
+  const best=sorted.filter(r=>r.v>0).slice(0,k);
+  const worst=sorted.filter(r=>r.v<0).slice(-k).reverse();
+  const gross=pos+neg;
+  // "% of net" is only worth showing when the net is a real fraction of the gross AND no single
+  // market's share of it is absurd. The second half matters: at 5% of gross a market can print
+  // "704% of net", which is arithmetically correct and completely useless. Gate on the symptom,
+  // not just the cause.
+  const maxNetShare=Math.max(0,...sorted.map(r=>r.shareNet==null?0:Math.abs(r.shareNet)));
+  return {basis,k,rows:sorted,best,worst,pos,neg,total,maxNetShare,
+    netMeaningful:gross>0&&Math.abs(total)>=0.1*gross&&maxNetShare<=3,
+    bestShare:pos>0?best.reduce((a,r)=>a+r.v,0)/pos:0,
+    worstShare:neg>0?worst.reduce((a,r)=>a-r.v,0)/neg:0,
+    markets:rows.length,others:Math.max(0,rows.length-best.length-worst.length)};
+}
+function assetAttribHtml(closed,basis){
+  const A=assetContribution(closed,basis,5);
+  if(A.markets<2) return '<p class="lead">Only one market traded in this view \u2014 nothing to rank.</p>';
+  const pctB=A.basis==='pct';
+  const fV=n=>pctB?((n>=0?'+':'\u2212')+Math.abs(n).toFixed(1)+' pts'):fmtUsd(n);
+  const p1=x=>(x*100).toFixed(1)+'%';
+  const maxAbs=Math.max(1e-9,...A.rows.map(r=>Math.abs(r.v)));
+  const sideN=pos=>A.rows.filter(r=>pos?r.v>0:r.v<0).length;
+  const row=(r,i,pos)=>{
+    const w=(Math.abs(r.v)/maxAbs*100).toFixed(1);
+    const mr=r.meanRet!=null?(r.meanRet>=0?'+':'')+r.meanRet.toFixed(2)+'%':'\u2014';
+    const ofNet=(A.netMeaningful&&r.shareNet!=null)?' \u00b7 '+(r.shareNet<0?'\u2212':'')+Math.abs(r.shareNet*100).toFixed(0)+'% of net':'';
+    return `<div class="state-row" data-tip="${esc(dispMarket(r.key))}: ${r.n} trades, ${r.wins}W/${r.losses}L, net ${fmtUsd(r.net)}, mean return ${mr} of notional per trade. The percentage is this market's share of the total ${pos?'profit':'loss'} across every ${pos?'profitable':'losing'} market in this view.">
+      <div class="sr-top"><span class="sr-name"><span style="color:var(--faint);font-size:10.5px">${i+1}</span> ${esc(dispMarket(r.key))}</span><span class="${pos?'pos-t':'neg-t'}" style="white-space:nowrap"><b>${p1(r.share)}</b> \u00b7 ${fV(r.v)}</span></div>
+      <div class="sr-sub">${r.n} trade${r.n===1?'':'s'} \u00b7 ${(r.winRate*100).toFixed(0)}% WR \u00b7 ${fmtUsd(r.expectancy)}/trade \u00b7 mean ${mr}${ofNet}</div>
+      <span style="display:block;height:6px;border-radius:3px;background:rgba(127,127,127,.16);overflow:hidden;margin-top:6px"><span style="display:block;height:6px;width:${w}%;border-radius:3px;background:var(--${pos?'profit':'loss'})"></span></span>
+    </div>`;
+  };
+  const list=(rs,pos,none)=>rs.length?rs.map((r,i)=>row(r,i,pos)).join(''):`<p class="lead">${none}</p>`;
+  const tip=pos=>`Share of the total ${pos?'profit':'loss'} produced by every ${pos?'profitable':'losing'} market in this view (${fV(pos?A.pos:-A.neg)} across ${sideN(pos)} market${sideN(pos)===1?'':'s'}). Because the denominator is one side only, these shares sum to exactly 100% within the side \u2014 which is why they are the primary number. The &quot;of net&quot; figure divides by your bottom line instead: it is the honest answer to &quot;how much of my result is this market&quot;, but winners and losers offset, so that column can exceed 100% and is hidden whenever your net is small next to the gross sides.`;
+  return `<div class="diag-grid">
+      <div class="diag-card"><h3 data-tip="${tip(true)}">Best 5 markets <span class="hint">${p1(A.bestShare)} of all profit</span></h3>${list(A.best,true,'No profitable market in this view.')}</div>
+      <div class="diag-card"><h3 data-tip="${tip(false)}">Worst 5 markets <span class="hint">${p1(A.worstShare)} of all loss</span></h3>${list(A.worst,false,'No losing market in this view.')}</div>
+    </div>
+    <p class="mini-note">${A.markets} market${A.markets===1?'':'s'} traded \u00b7 ${A.others} outside these two lists \u00b7 ${fV(A.pos)} made against ${fV(-A.neg)} lost \u00b7 net ${fV(A.total)}${A.netMeaningful?'':' \u2014 net is small next to the gross sides, so per-market \u201c% of net\u201d is suppressed as meaningless here'}${pctB?' \u00b7 return points are per-trade % of position notional, summed \u2014 size-neutral, so a small well-traded market can outrank a large one':' \u00b7 dollars reward size and frequency; switch to % for size-neutral quality'}.</p>`;
+}
+function assetAttribSection(closed){
+  const b=settings.attribBasis==='pct'?'pct':'usd';
+  return `<div class="diag-section">
+     <h2>Where the money came from <span style="font-size:11px;color:var(--faint);font-weight:400">per-market attribution \u00b7 ranked</span></h2>
+     <p class="lead">Your best and worst five markets, and what share of this period's result each one is responsible for. This is <b>attribution, not edge quality</b> \u2014 a market can top the list purely because you traded it big and often, which is exactly why the % basis exists.</p>
+     <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
+       <div class="viewtog" id="attribBasisTog" data-tip="Attribution basis. $ = dollars contributed (where the money actually came from; rewards size and frequency, and is the right basis for &quot;cutting this market saves $Y&quot;). % = summed per-trade return on position notional (size-neutral decision quality, so a small market traded well can outrank a big one). Both are additive, so the shares stay interpretable either way.">
+         <button data-b="usd"${b==='usd'?' class="on"':''}>attribute in $</button><button data-b="pct"${b==='pct'?' class="on"':''}>attribute in %</button>
+       </div>
+     </div>
+     <div id="attribBox">${assetAttribHtml(closed,b)}</div>
+   </div>`;
+}
+// Own toggle, own re-render, own persisted setting: repainting just #attribBox leaves the miner
+// cache and any on-screen scan results untouched, which a full renderDiagnostic would discard.
+function wireAssetAttrib(closed){
+  document.querySelectorAll('#attribBasisTog button').forEach(btn=>{
+    btn.onclick=async()=>{
+      settings.attribBasis=btn.dataset.b; await Store.set(S_KEY,settings);
+      document.querySelectorAll('#attribBasisTog button').forEach(x=>x.classList.toggle('on',x===btn));
+      const box=$('attribBox'); if(box)box.innerHTML=assetAttribHtml(closed,btn.dataset.b);
+    };
+  });
+}
 const edgeLabel=dim=>({dir:'Direction',market:'Market',dow:'Day of week',hour:'Hour block',hold:'Hold time',size:'Trade size',rating:'Rating',setup:'Setup',tag:'Tag',mistake:'Mistake flag'}[dim]||'Bucket');
 // plain-English phrase for a (dimension, bucket) pair — used in the edges/leaks lists so
 // rows read as conditions ("Fridays", "Your largest 25% of trades by $ size") instead of raw keys.
@@ -2374,6 +2471,12 @@ function renderDiagnostic(closed, allv){
   if(mistakeCost!=null && mistakeCost>0) recs.push(`Flagged-mistake trades cost ${fmtUsd(mistakeCost)}/trade vs clean ones. Removing just the flagged setups would lift expectancy noticeably.`);
   if(ratingMono===false) recs.push(`Your self-ratings don't track outcomes — higher-rated trades aren't more profitable. Recalibrate what counts as an A-setup using the edge breakdown.`);
   if(conc>0.6 && topMkt && topMkt.net>0) recs.push(`${pct(conc)} of your net comes from ${esc(dispMarket(topMkt.key))} alone. Confirm that's repeatable edge, not one hot run — it's concentration risk.`);
+  (function(){ const A=assetContribution(closed,'usd',5);
+    if(A.worst.length&&A.neg>0){ const w=A.worst[0];
+      if(w.share>=0.25&&Math.abs(w.net)>Math.abs(s.expectancy)*5)
+        recs.push(`<b>${esc(dispMarket(w.key))}</b> alone caused ${pct(w.share)} of every dollar you lost this period (${fmtUsd(w.net)} across ${w.n} trades, ${(w.winRate*100).toFixed(0)}% win rate). Before assuming the setup is broken, check the % basis in “Where the money came from” — if the per-trade return is fine, this is a sizing problem, not a market to drop.`); }
+    if(A.best.length&&A.bestShare>=0.8&&A.markets>=8)
+      recs.push(`Just ${A.best.length} of your ${A.markets} markets produced ${pct(A.bestShare)} of all your profit. That is where your attention and size belong; the long tail is mostly noise you are paying fees to collect.`); })();
   if(s.maxDD<0) recs.push(`Max drawdown was ${fmtUsd(s.maxDD)} and your longest losing streak ${s.longL} trades. A hard daily/weekly loss limit would cap the tail.`);
   if(disposition) recs.push(`Disposition effect: you hold losers ${(avgLHold/avgWHold).toFixed(1)}× longer than winners (${fmtDur(avgLHold)} vs ${fmtDur(avgWHold)}). You're cutting winners early and letting losers run — the opposite of what you want. Set exits in advance.`);
   if(tilt) recs.push(`Tilt signal: your ${afterLoss.length} trades opened within an hour of a loss average ${fmtUsd(afterLossExp)}/trade vs ${fmtUsd(s.expectancy)} overall. Step away after a red trade before re-entering.`);
@@ -2509,6 +2612,7 @@ function renderDiagnostic(closed, allv){
        <div class="diag-card"><h3 data-tip="Your most costly conditions, same sample-weighted ranking. Cut these or redefine the setup.">Avoid / fix these — your leaks</h3><ul class="diag-list">${weakHtml}</ul></div>
      </div>
    </div>
+   ${assetAttribSection(closed)}
    <div class="diag-section">
      <h2>Equity &amp; edge over time</h2>
      <div class="diag-grid">
@@ -2587,6 +2691,7 @@ function renderDiagnostic(closed, allv){
   const pdfBtn=$('exportDiagPdf');
   if(pdfBtn)pdfBtn.onclick=()=>{ try{ exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
   wireWhatIf(closed);
+  wireAssetAttrib(closed);
   document.querySelectorAll('#anaBasisTog button').forEach(b=>{ b.classList.toggle('on',b.dataset.b===(settings.anaBasis||'usd'));
     b.onclick=async()=>{ settings.anaBasis=b.dataset.b; await Store.set(S_KEY,settings);
       document.querySelectorAll('#anaBasisTog button').forEach(x=>x.classList.toggle('on',x===b));

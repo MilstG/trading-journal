@@ -118,6 +118,19 @@ The statistician's view of your trading. Sections top to bottom:
   price-profitable strategy is quietly bleeding through costs.
 - **Regime — when your edge changed** — permutation-tested change-point
   detection on your return series ("your edge shifted around March 14").
+- **Where the money came from** — your best and worst five markets, ranked by
+  what share of the period's result each is responsible for. The primary
+  percentage is share of one side: a market's profit as a fraction of the total
+  profit made by *every* profitable market (so the column sums to exactly 100%
+  within a side, and "these five produced 84% of my profit" is literally true).
+  A secondary "% of net" figure divides by your bottom line instead — the direct
+  answer to "how much of my result is this market" — but winners and losers
+  offset, so it can exceed 100% and is hidden whenever net is small next to the
+  gross sides. Its own **$ / % toggle**: dollars reward size and frequency and
+  answer "cutting this market saves $Y"; percent sums per-trade return on
+  notional, which is additive and size-neutral, so a small market traded well
+  can outrank a big one you churn. This is attribution, not edge quality — the
+  Edge breakdown below is the per-market expectancy view.
 - **Result distribution** — histogram of outcomes in $, %, or R, with
   configurable binning and a breakeven threshold; win/loss shape, profit
   quality, best & worst.
@@ -349,7 +362,7 @@ below, including auth mode and filter docs.
 | `GET /api/v1/stats` | full `computeStats` output over the filtered set + the 1R basis used |
 | `GET /api/v1/equity` | cumulative equity points, calendar daily series, current/underwater/shuffle drawdown |
 | `GET /api/v1/calendar` | net PnL per calendar day (tz-aware) |
-| `GET /api/v1/breakdown?by=` | grouped stats by `coin, dir, market, wallet, tag, dow, hour` |
+| `GET /api/v1/breakdown?by=` | grouped stats by `coin, dir, market, wallet, tag, dow, hour`, plus per-group contribution shares and a ranked best/worst `contribution` block (`basis=usd|pct`, `top=N`) |
 | `GET /api/v1/projection` | Monte Carlo fan (`horizon, paths, block, seed, lookback`) — same deterministic seeding contract as the Project tab |
 | `GET /api/v1/kelly` | Kelly sizing from the filtered closed set (`null` under 10 decisive trades) |
 | `GET /api/v1/risk` | open-position risk model: liquidation distances, concentration, danger list |
