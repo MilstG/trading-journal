@@ -1920,103 +1920,6 @@ function bucketize(trades,dim){
     const sd=b.n>1?Math.sqrt(Math.max(0,(b.sq-b.n*mean*mean)/(b.n-1))):0;
     return {key:b.key,n:b.n,wins:b.wins,losses:b.losses,net:b.net,sd,winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,expectancy:mean,avgR:b.rs.length?_avg(b.rs):null}; });
 }
-/* ============================ asset attribution ============================ */
-// Ranked per-market contribution to the period result. Two denominators, because "% of my PnL"
-// is ambiguous and the naive version is wrong:
-//   pos / neg — summed contribution of the markets that MADE / LOST money. Shares within each
-//     side total exactly 1, so "these five produced 84% of the profit" is literally true. Primary.
-//   total     — the bottom line. Shares against it can exceed 100% and go negative because
-//     winners and losers offset, so it is a secondary read and is suppressed entirely when the
-//     net is small next to the gross sides (netMeaningful), where the ratio is noise.
-// basis 'usd' attributes dollars (where the money came from -- correct for "cutting X saves $Y").
-// basis 'pct' attributes summed per-trade return points: additive and size-neutral, so a small
-// well-traded market can outrank a big frequently-traded one.
-// best/worst are partitioned by sign, never sliced from a shared list, so a market cannot appear
-// in both -- the same contract test-edge-map locks in for partitionConditions. Ties break on key
-// so the order is deterministic across renders.
-function assetContribution(trades,basis,k){
-  basis=basis==='pct'?'pct':'usd'; k=k||5;
-  const g={};
-  for(const t of trades){ const key=dcoin(t);
-    const b=g[key]||(g[key]={key,n:0,wins:0,losses:0,net:0,sumRet:0,retN:0});
-    b.n++; if(isWin(t.net))b.wins++; else if(isLoss(t.net))b.losses++;
-    b.net+=t.net; const r=retPct(t); if(r!==null){ b.sumRet+=r; b.retN++; } }
-  const rows=Object.values(g).map(b=>({key:b.key,n:b.n,wins:b.wins,losses:b.losses,
-    net:b.net,sumRet:b.sumRet,meanRet:b.retN?b.sumRet/b.retN:null,
-    winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,
-    expectancy:b.net/b.n,
-    v:basis==='pct'?b.sumRet:b.net}));
-  const pos=rows.reduce((a,r)=>a+(r.v>0?r.v:0),0);
-  const neg=rows.reduce((a,r)=>a+(r.v<0?-r.v:0),0);
-  const total=rows.reduce((a,r)=>a+r.v,0);
-  rows.forEach(r=>{ const d=r.v>0?pos:neg;
-    r.share=d>0?Math.abs(r.v)/d:0;
-    r.shareNet=total!==0?r.v/Math.abs(total):null; });
-  const sorted=[...rows].sort((a,b)=>b.v-a.v||String(a.key).localeCompare(String(b.key)));
-  const best=sorted.filter(r=>r.v>0).slice(0,k);
-  const worst=sorted.filter(r=>r.v<0).slice(-k).reverse();
-  const gross=pos+neg;
-  // "% of net" is only worth showing when the net is a real fraction of the gross AND no single
-  // market's share of it is absurd. The second half matters: at 5% of gross a market can print
-  // "704% of net", which is arithmetically correct and completely useless. Gate on the symptom,
-  // not just the cause.
-  const maxNetShare=Math.max(0,...sorted.map(r=>r.shareNet==null?0:Math.abs(r.shareNet)));
-  return {basis,k,rows:sorted,best,worst,pos,neg,total,maxNetShare,
-    netMeaningful:gross>0&&Math.abs(total)>=0.1*gross&&maxNetShare<=3,
-    bestShare:pos>0?best.reduce((a,r)=>a+r.v,0)/pos:0,
-    worstShare:neg>0?worst.reduce((a,r)=>a-r.v,0)/neg:0,
-    markets:rows.length,others:Math.max(0,rows.length-best.length-worst.length)};
-}
-function assetAttribHtml(closed,basis){
-  const A=assetContribution(closed,basis,5);
-  if(A.markets<2) return '<p class="lead">Only one market traded in this view \u2014 nothing to rank.</p>';
-  const pctB=A.basis==='pct';
-  const fV=n=>pctB?((n>=0?'+':'\u2212')+Math.abs(n).toFixed(1)+' pts'):fmtUsd(n);
-  const p1=x=>(x*100).toFixed(1)+'%';
-  const maxAbs=Math.max(1e-9,...A.rows.map(r=>Math.abs(r.v)));
-  const sideN=pos=>A.rows.filter(r=>pos?r.v>0:r.v<0).length;
-  const row=(r,i,pos)=>{
-    const w=(Math.abs(r.v)/maxAbs*100).toFixed(1);
-    const mr=r.meanRet!=null?(r.meanRet>=0?'+':'')+r.meanRet.toFixed(2)+'%':'\u2014';
-    const ofNet=(A.netMeaningful&&r.shareNet!=null)?' \u00b7 '+(r.shareNet<0?'\u2212':'')+Math.abs(r.shareNet*100).toFixed(0)+'% of net':'';
-    return `<div class="state-row" data-tip="${esc(dispMarket(r.key))}: ${r.n} trades, ${r.wins}W/${r.losses}L, net ${fmtUsd(r.net)}, mean return ${mr} of notional per trade. The percentage is this market's share of the total ${pos?'profit':'loss'} across every ${pos?'profitable':'losing'} market in this view.">
-      <div class="sr-top"><span class="sr-name"><span style="color:var(--faint);font-size:10.5px">${i+1}</span> ${esc(dispMarket(r.key))}</span><span class="${pos?'pos-t':'neg-t'}" style="white-space:nowrap"><b>${p1(r.share)}</b> \u00b7 ${fV(r.v)}</span></div>
-      <div class="sr-sub">${r.n} trade${r.n===1?'':'s'} \u00b7 ${(r.winRate*100).toFixed(0)}% WR \u00b7 ${fmtUsd(r.expectancy)}/trade \u00b7 mean ${mr}${ofNet}</div>
-      <span style="display:block;height:6px;border-radius:3px;background:rgba(127,127,127,.16);overflow:hidden;margin-top:6px"><span style="display:block;height:6px;width:${w}%;border-radius:3px;background:var(--${pos?'profit':'loss'})"></span></span>
-    </div>`;
-  };
-  const list=(rs,pos,none)=>rs.length?rs.map((r,i)=>row(r,i,pos)).join(''):`<p class="lead">${none}</p>`;
-  const tip=pos=>`Share of the total ${pos?'profit':'loss'} produced by every ${pos?'profitable':'losing'} market in this view (${fV(pos?A.pos:-A.neg)} across ${sideN(pos)} market${sideN(pos)===1?'':'s'}). Because the denominator is one side only, these shares sum to exactly 100% within the side \u2014 which is why they are the primary number. The &quot;of net&quot; figure divides by your bottom line instead: it is the honest answer to &quot;how much of my result is this market&quot;, but winners and losers offset, so that column can exceed 100% and is hidden whenever your net is small next to the gross sides.`;
-  return `<div class="diag-grid">
-      <div class="diag-card"><h3 data-tip="${tip(true)}">Best 5 markets <span class="hint">${p1(A.bestShare)} of all profit</span></h3>${list(A.best,true,'No profitable market in this view.')}</div>
-      <div class="diag-card"><h3 data-tip="${tip(false)}">Worst 5 markets <span class="hint">${p1(A.worstShare)} of all loss</span></h3>${list(A.worst,false,'No losing market in this view.')}</div>
-    </div>
-    <p class="mini-note">${A.markets} market${A.markets===1?'':'s'} traded \u00b7 ${A.others} outside these two lists \u00b7 ${fV(A.pos)} made against ${fV(-A.neg)} lost \u00b7 net ${fV(A.total)}${A.netMeaningful?'':' \u2014 net is small next to the gross sides, so per-market \u201c% of net\u201d is suppressed as meaningless here'}${pctB?' \u00b7 return points are per-trade % of position notional, summed \u2014 size-neutral, so a small well-traded market can outrank a large one':' \u00b7 dollars reward size and frequency; switch to % for size-neutral quality'}.</p>`;
-}
-function assetAttribSection(closed){
-  const b=settings.attribBasis==='pct'?'pct':'usd';
-  return `<div class="diag-section">
-     <h2>Where the money came from <span style="font-size:11px;color:var(--faint);font-weight:400">per-market attribution \u00b7 ranked</span></h2>
-     <p class="lead">Your best and worst five markets, and what share of this period's result each one is responsible for. This is <b>attribution, not edge quality</b> \u2014 a market can top the list purely because you traded it big and often, which is exactly why the % basis exists.</p>
-     <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
-       <div class="viewtog" id="attribBasisTog" data-tip="Attribution basis. $ = dollars contributed (where the money actually came from; rewards size and frequency, and is the right basis for &quot;cutting this market saves $Y&quot;). % = summed per-trade return on position notional (size-neutral decision quality, so a small market traded well can outrank a big one). Both are additive, so the shares stay interpretable either way.">
-         <button data-b="usd"${b==='usd'?' class="on"':''}>attribute in $</button><button data-b="pct"${b==='pct'?' class="on"':''}>attribute in %</button>
-       </div>
-     </div>
-     <div id="attribBox">${assetAttribHtml(closed,b)}</div>
-   </div>`;
-}
-// Own toggle, own re-render, own persisted setting: repainting just #attribBox leaves the miner
-// cache and any on-screen scan results untouched, which a full renderDiagnostic would discard.
-function wireAssetAttrib(closed){
-  document.querySelectorAll('#attribBasisTog button').forEach(btn=>{
-    btn.onclick=async()=>{
-      settings.attribBasis=btn.dataset.b; await Store.set(S_KEY,settings);
-      document.querySelectorAll('#attribBasisTog button').forEach(x=>x.classList.toggle('on',x===btn));
-      const box=$('attribBox'); if(box)box.innerHTML=assetAttribHtml(closed,btn.dataset.b);
-    };
-  });
-}
 const edgeLabel=dim=>({dir:'Direction',market:'Market',dow:'Day of week',hour:'Hour block',hold:'Hold time',size:'Trade size',rating:'Rating',setup:'Setup',tag:'Tag',mistake:'Mistake flag'}[dim]||'Bucket');
 // plain-English phrase for a (dimension, bucket) pair — used in the edges/leaks lists so
 // rows read as conditions ("Fridays", "Your largest 25% of trades by $ size") instead of raw keys.
@@ -2226,37 +2129,6 @@ function syncDistControls(closed,shownBinW,isAuto){
   document.querySelectorAll('.dtgt').forEach(b=>{ b.classList.toggle('on',_distState[b.dataset.k]);
     b.onclick=()=>{ _distState[b.dataset.k]=!_distState[b.dataset.k]; renderDistribution(closed); }; });
   $('distFill').checked=_distState.fill; $('distFill').onchange=e=>{ _distState.fill=e.target.checked; renderDistribution(closed); };
-}
-// Walk-forward per-block chart. Registered in _diagCharts so destroyDiagCharts() tears it down
-// on every re-render like every other chart here -- a leaked Chart instance on a reused canvas id
-// is what makes hover tooltips fire on stale data.
-function wireWalkForward(wf){
-  const el=$('wfChart'); if(!el||!wf||!wf.points||!wf.points.length)return;
-  const P=wf.points;
-  const labels=P.map(p=>fmtDate(p.t));
-  const realized=P.map(p=>p.osExp);
-  const predicted=P.map(p=>p.isExp);
-  const mean=wf.wfExp!=null?P.map(()=>wf.wfExp):null;
-  const ds=[{type:'bar',label:'realized (out-of-sample)',data:realized,
-      backgroundColor:signCol(realized),borderRadius:3,maxBarThickness:44,order:3},
-    {type:'line',label:'predicted by training window',data:predicted,borderColor:'#8a7bd8',
-      borderWidth:1.5,borderDash:[5,4],pointRadius:2,pointHoverRadius:4,tension:0,fill:false,order:1}];
-  if(mean) ds.push({type:'line',label:'walk-forward mean',data:mean,borderColor:TXT,
-      borderWidth:1,borderDash:[2,3],pointRadius:0,pointHitRadius:0,tension:0,fill:false,order:2});
-  _diagCharts.wf=new Chart(el,{data:{labels,datasets:ds},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},
-      plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
-        tooltip:{
-          filter:item=>item.dataset.label!=='walk-forward mean', // flat reference, identical every block
-          callbacks:{
-          title:items=>'Block '+(items[0].dataIndex+1)+' of '+P.length+' \u00b7 ends '+labels[items[0].dataIndex],
-          label:c=>' '+c.dataset.label+': '+fmtUsd(c.parsed.y)+'/trade',
-          footer:items=>{ const p=P[items[0].dataIndex]; const gap=p.isExp-p.osExp;
-            return p.n+' trade'+(p.n===1?'':'s')+' scored \u00b7 '
-              +(Math.abs(gap)<1e-9?'predicted exactly'
-                :gap>0?fmtUsd(gap)+'/trade worse than predicted'
-                      :fmtUsd(-gap)+'/trade better than predicted'); }}}},
-      scales:scales()}});
 }
 function destroyDiagCharts(){ Object.values(_diagCharts).forEach(c=>c&&c.destroy()); _diagCharts={}; }
 // Snapshot the whole Diagnostic view — including any miner/excursion results already on
@@ -2502,12 +2374,6 @@ function renderDiagnostic(closed, allv){
   if(mistakeCost!=null && mistakeCost>0) recs.push(`Flagged-mistake trades cost ${fmtUsd(mistakeCost)}/trade vs clean ones. Removing just the flagged setups would lift expectancy noticeably.`);
   if(ratingMono===false) recs.push(`Your self-ratings don't track outcomes — higher-rated trades aren't more profitable. Recalibrate what counts as an A-setup using the edge breakdown.`);
   if(conc>0.6 && topMkt && topMkt.net>0) recs.push(`${pct(conc)} of your net comes from ${esc(dispMarket(topMkt.key))} alone. Confirm that's repeatable edge, not one hot run — it's concentration risk.`);
-  (function(){ const A=assetContribution(closed,'usd',5);
-    if(A.worst.length&&A.neg>0){ const w=A.worst[0];
-      if(w.share>=0.25&&Math.abs(w.net)>Math.abs(s.expectancy)*5)
-        recs.push(`<b>${esc(dispMarket(w.key))}</b> alone caused ${pct(w.share)} of every dollar you lost this period (${fmtUsd(w.net)} across ${w.n} trades, ${(w.winRate*100).toFixed(0)}% win rate). Before assuming the setup is broken, check the % basis in “Where the money came from” — if the per-trade return is fine, this is a sizing problem, not a market to drop.`); }
-    if(A.best.length&&A.bestShare>=0.8&&A.markets>=8)
-      recs.push(`Just ${A.best.length} of your ${A.markets} markets produced ${pct(A.bestShare)} of all your profit. That is where your attention and size belong; the long tail is mostly noise you are paying fees to collect.`); })();
   if(s.maxDD<0) recs.push(`Max drawdown was ${fmtUsd(s.maxDD)} and your longest losing streak ${s.longL} trades. A hard daily/weekly loss limit would cap the tail.`);
   if(disposition) recs.push(`Disposition effect: you hold losers ${(avgLHold/avgWHold).toFixed(1)}× longer than winners (${fmtDur(avgLHold)} vs ${fmtDur(avgWHold)}). You're cutting winners early and letting losers run — the opposite of what you want. Set exits in advance.`);
   if(tilt) recs.push(`Tilt signal: your ${afterLoss.length} trades opened within an hour of a loss average ${fmtUsd(afterLossExp)}/trade vs ${fmtUsd(s.expectancy)} overall. Step away after a red trade before re-entering.`);
@@ -2556,20 +2422,13 @@ function renderDiagnostic(closed, allv){
     const fA=x=>x==null?'—':(x>=0?'+':'')+fmtUsd(x);
     const wfCls=wf.wfExp>0?'ok':(wf.wfExp<0?'no':'mid');
     const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:'need ≥8 out-of-sample trades';
-    // retention = wfExp / fullIS, so a negative walk-forward expectancy against a positive
-    // in-sample one yields a negative ratio. "-62% of in-sample kept" is meaningless; say what
-    // actually happened instead.
-    const retTxt = wf.retention==null ? '\u2014'
-      : wf.retention<=0 ? '<span class="badge no">none \u2014 forward edge is negative</span>'
-      : `<span class="badge ${wf.retention>=0.6?'ok':'mid'}">${(wf.retention*100).toFixed(0)}% of in-sample kept</span>`;
-    // Per-block chart, wired after paint by wireWalkForward(). This replaced a hand-rolled inline
-    // SVG sparkline that used preserveAspectRatio="none" over a min-120 viewBox: with a handful of
-    // blocks that stretched x by ~10x and y by 1x, so bars rendered as 210px slabs and any block
-    // under ~5% of the max collapsed to a 0.6px hairline. It also showed only the realized number,
-    // which buries the actual argument -- the gap between what each trailing window PREDICTED and
-    // what the next block DELIVERED is the whole point, so both are plotted now.
-    const spark=`<div style="height:180px;margin-top:12px"><canvas id="wfChart"></canvas></div>
-      <p class="mini-note" style="margin-top:6px">Bars are what each out-of-sample block actually delivered; the dashed line is what its trailing training window predicted beforehand. The gap between them, block by block, is your in-sample optimism. The flat line is the walk-forward mean.</p>`;
+    const retTxt=wf.retention!=null?`${(wf.retention*100).toFixed(0)}% of in-sample kept`:'—';
+    // inline SVG sparkline of realized out-of-sample expectancy per block (CSP-safe, no lib)
+    const vals=wf.points.map(p=>p.osExp), mx=Math.max(1e-9,...vals.map(v=>Math.abs(v)));
+    const W=Math.max(120,vals.length*16), H=42, bw=W/vals.length, mid=H/2;
+    const bars=vals.map((v,i)=>{ const h=Math.max(0.6,Math.abs(v)/mx*(H/2-3)); const y=v>=0?mid-h:mid;
+      return `<rect x="${(i*bw+1.5).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,bw-3).toFixed(1)}" height="${h.toFixed(1)}" fill="${v>=0?'var(--profit)':'var(--loss)'}"/>`; }).join('');
+    const spark=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;margin-top:6px"><line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--line)" stroke-width="1"/>${bars}</svg>`;
     const verdict = wf.wfExp==null ? ''
       : wf.wfExp>0
         ? ((wf.retention!=null && wf.retention<0.6)
@@ -2582,14 +2441,7 @@ function renderDiagnostic(closed, allv){
       ${mrow('Walk-forward expectancy',`<span class="badge ${wfCls}">${fA(wf.wfExp)}/trade</span>`,'Mean net PnL across only the out-of-sample test blocks — trades the training window had not yet seen when their expectancy was set. The honest estimate of what the edge earns going forward.')}
       ${mrow('WF 95% CI (bootstrap)',ciTxt,'Distribution-free confidence interval on the walk-forward expectancy, resampling the out-of-sample trades. If it includes 0, forward edge is not yet established.')}
       ${mrow('Retention',retTxt,'Walk-forward expectancy as a share of in-sample. 100% means the edge carried forward intact; well under that is decay or overfitting. Only shown when in-sample is positive.')}
-      ${mrow('In-sample optimism',(()=>{ const o=wf.optimism;
-        if(o==null) return '\u2014';
-        const near=Math.abs(o)<Math.abs(wf.fullIS||0)*0.1;
-        const tag=near?'<span class="badge ok">calibrated</span>'
-          :o>0?'<span class="badge no">in-sample overstates</span>'
-               :'<span class="badge ok">in-sample understates</span>';
-        return `${fA(o)}/trade ${tag}`; })(),
-        'Average gap between what each trailing window predicted and what the next block actually delivered (predicted minus realized). Positive means your in-sample stats systematically overstate forward performance, so size to the walk-forward number. Negative means the opposite \u2014 your recent blocks beat what the trailing window expected. Within 10% of in-sample expectancy either way is treated as calibrated.')}
+      ${mrow('In-sample optimism',`${fA(wf.optimism)}/trade`,'Average gap between what each trailing window predicted and what the next block actually delivered. Positive means your in-sample stats systematically overstate forward performance.')}
       ${spark}
       <p class="mini-note">${verdict}</p>
     </div></div>`;
@@ -2657,7 +2509,6 @@ function renderDiagnostic(closed, allv){
        <div class="diag-card"><h3 data-tip="Your most costly conditions, same sample-weighted ranking. Cut these or redefine the setup.">Avoid / fix these — your leaks</h3><ul class="diag-list">${weakHtml}</ul></div>
      </div>
    </div>
-   ${assetAttribSection(closed)}
    <div class="diag-section">
      <h2>Equity &amp; edge over time</h2>
      <div class="diag-grid">
@@ -2736,8 +2587,6 @@ function renderDiagnostic(closed, allv){
   const pdfBtn=$('exportDiagPdf');
   if(pdfBtn)pdfBtn.onclick=()=>{ try{ exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
   wireWhatIf(closed);
-  wireAssetAttrib(closed);
-  wireWalkForward(wf);
   document.querySelectorAll('#anaBasisTog button').forEach(b=>{ b.classList.toggle('on',b.dataset.b===(settings.anaBasis||'usd'));
     b.onclick=async()=>{ settings.anaBasis=b.dataset.b; await Store.set(S_KEY,settings);
       document.querySelectorAll('#anaBasisTog button').forEach(x=>x.classList.toggle('on',x===b));
@@ -4094,169 +3943,61 @@ function renderPulse(){
   el.classList.remove('hide');
   el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
-/* ===================== Review · plain-English commentary ===================== */
-// One-sided two-proportion z-test: probability group rate is no better than baseline
-// (i.e. the observed underperformance is chance). Uses the same _normCdf the miner does.
-// Returns a p-value in [0,1], or null when either sample is too thin to speak.
-function revTwoProp(w1,n1,w0,n0){
-  if(n1<5||n0<20) return null;
-  const p1=w1/n1, p0=w0/n0, p=(w1+w0)/(n1+n0);
-  const se=Math.sqrt(p*(1-p)*(1/n1+1/n0));
-  if(!(se>0)) return null;
-  const z=(p1-p0)/se;              // negative when group underperforms
-  return _normCdf(z);              // P(rate <= observed) under the baseline
-}
-// Post-loss re-entries inside `cur`, defined exactly as the Diagnostic tilt panel:
-// a trade opened within 1h of the most recent prior *loss* (looked up across allClosed).
-function revAfterLoss(cur, allClosed){
-  const TILT_WIN=60*60000;
-  const byClose=[...allClosed].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
-  const ct=byClose.map(p=>p.closeTime);
-  const priorClose=t=>{ let lo=0,hi=ct.length-1,idx=-1;
-    while(lo<=hi){ const m=(lo+hi)>>1; if(ct[m]<=t.openTime){idx=m;lo=m+1;} else hi=m-1; }
-    while(idx>=0){ if(byClose[idx].id!==t.id) return byClose[idx]; idx--; } return null; };
-  const inCur=new Set(cur.map(t=>t.id));
-  return cur.filter(t=>{ if(!inCur.has(t.id))return false; const p=priorClose(t);
-    return p&&isLoss(p.net)&&(t.openTime-p.closeTime)<=TILT_WIN; });
-}
-// Resolve the tab's window to whatever range the user has selected (custom range,
-// period chip, or all-history), plus the equal-length window immediately before it.
-// Derive the commentary signals. Each finding carries whether it maps to an enforceable
-// rule, its dollar impact on the window, and whether it cleared the significance bar.
-function revSignals(cur, allClosed, baseWR, baseExp){
-  const sum=a=>a.reduce((s,t)=>s+t.net,0);
-  const wins=a=>a.filter(t=>isWin(t.net)).length;
-  const decisive=a=>a.filter(t=>isWin(t.net)||isLoss(t.net)).length;
-  const baseW=wins(allClosed), baseDec=decisive(allClosed);
-  const bled=[], carried=[], watch=[], focus=[];
-
-  // --- bled: post-loss re-entry (enforceable: cooldown) ---
-  const al=revAfterLoss(cur, allClosed);
-  if(al.length>=5){
-    const alW=wins(al), alDec=decisive(al), alWR=alDec?alW/alDec:null;
-    const p = (alWR!=null)? revTwoProp(alW,alDec,baseW,baseDec) : null;
-    const impact=sum(al); // what these trades did to the window
-    const real = (p!=null)? p<0.10 : (alDec>=8 && baseWR!=null && alWR<baseWR-0.10);
-    if(alWR!=null && baseWR!=null && alWR<baseWR && (real||impact<0)){
-      const odds = p!=null ? `roughly ${Math.max(1,Math.round(p*100))}-in-100 this is chance` : 'a small sample, so read it as a lean not a verdict';
-      bled.push({rule:true, sig:real, impact,
-        text:`<b>Post-loss re-entry.</b> ${al.length} trades opened within an hour of closing a loser won ${(alWR*100).toFixed(0)}% vs your ${(baseWR*100).toFixed(0)}% baseline — ${odds}.${impact<0?` These netted <span class="neg-t">${fmtUsd(impact)}</span> over the window.`:''}`,
-        action:`<b>Cooldown after losses.</b> No new position for ~1h after closing red. ${impact<0?`Skipping these re-entries would have moved the window <b>${fmtUsd(Math.abs(impact))}</b>.`:'It is a rule, not a judgment call.'}`});
-    }
-  }
-
-  // --- bled: oversizing into losers (enforceable: hard size cap) ---
-  const notion=t=>t.maxSize*t.avgEntry;
-  const ns=cur.map(t=>notion(t)).filter(x=>x>0).sort((a,b)=>a-b);
-  if(ns.length>=8){
-    const med=ns[Math.floor(ns.length*0.5)];
-    const losers=cur.filter(t=>isLoss(t.net)), winners=cur.filter(t=>isWin(t.net));
-    const meanSz=a=>{const v=a.map(notion).filter(x=>x>0); return v.length?_avg(v):0;};
-    const mL=meanSz(losers), mW=meanSz(winners);
-    const big=losers.filter(t=>notion(t)>=1.4*med);
-    if(big.length>=3 && mW>0 && mL>mW*1.15){
-      const impact=sum(big);
-      bled.push({rule:true, sig:true, impact,
-        text:`<b>You size up into losers.</b> Your losing trades ran ${(mL/mW).toFixed(1)}× the size of your winners this window; the ${big.length} biggest-sized losers alone netted <span class="neg-t">${fmtUsd(impact)}</span>.`,
-        action:`<b>Hard size cap near ${fmtUsd(1.3*med)}.</b> Caps the tail without giving up your normal-sized edge.`});
-    }
-  }
-
-  // --- carried: best hold-time bucket (protect, not a fix) ---
-  const buckets={};
-  cur.forEach(t=>{ if(!(t.durationMs>0))return; const k=holdBucket(t.durationMs); (buckets[k]=buckets[k]||[]).push(t); });
-  let bestB=null;
-  Object.keys(buckets).forEach(k=>{ const a=buckets[k]; const dec=decisive(a); if(dec<5)return;
-    const wr=wins(a)/dec, net=sum(a);
-    if(net>0 && (baseWR==null||wr>=baseWR) && (!bestB||net>bestB.net)) bestB={k,wr,net,n:a.length}; });
-  if(bestB){
-    carried.push(`Your <b>${bestB.k}</b> holds carried the window — ${(bestB.wr*100).toFixed(0)}% win rate over ${bestB.n} trades for <span class="pos-t">${fmtUsd(bestB.net)}</span>. This is the edge; protect it.`);
-    focus.push({rule:false, sig:false, impact:0,
-      text:`<b>Keep feeding the ${bestB.k} bucket.</b> It is your steadiest slice — don't let a hot streak pull you back into faster scalps.`});
-  }
-
-  // --- watch: fast scalps underperforming (not yet actionable) ---
-  const scalps=cur.filter(t=>t.durationMs>0 && t.durationMs<5*60000);
-  if(scalps.length>=5){
-    const sDec=decisive(scalps), sWR=sDec?wins(scalps)/sDec:null;
-    if(sWR!=null && baseWR!=null && sWR<baseWR-0.08 && sDec<15){
-      watch.push(`Your under-5-minute scalps won ${(sWR*100).toFixed(0)}% vs ${(baseWR*100).toFixed(0)}% baseline — real enough to note, too few to act on. One more window decides it.`);
-    }
-  }
-
-  return {bled, carried, watch, focus};
-}
 function renderReview(){
   const el=$('reviewView'); if(!el)return;
-  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  if(!allClosed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
+  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  if(!closed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
   const now=Date.now(), DAY=86400000;
-  const winTr=(from,to)=>allClosed.filter(t=>t.closeTime>=from&&t.closeTime<to);
-  const cur=winTr(now-7*DAY,now+1), prior=winTr(now-14*DAY,now-7*DAY); // trailing 7 days vs the prior 7
-
+  const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
+  const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY);
+  const mo=win(now-30*DAY,now+1), pmo=win(now-60*DAY,now-30*DAY);
   const sumNet=a=>a.reduce((s,t)=>s+t.net,0);
   const wr=a=>{const w=a.filter(t=>isWin(t.net)).length,l=a.filter(t=>isLoss(t.net)).length;return (w+l)?w/(w+l):null;};
   const exp=a=>a.length?sumNet(a)/a.length:null;
-  const pf=a=>{const gp=a.filter(t=>t.net>0).reduce((s,t)=>s+t.net,0),gl=Math.abs(a.filter(t=>t.net<0).reduce((s,t)=>s+t.net,0));return gl>0?gp/gl:(gp>0?Infinity:null);};
-  const baseExp=exp(allClosed), baseWR=wr(allClosed); // all-time reference for the significance tests
-  const pct=x=>x==null?'—':(x*100).toFixed(0)+'%';
+  const baseExp=exp(closed), baseWR=wr(closed);
+  const weeklyCounts=(()=>{ const m={}; closed.forEach(t=>{const k=Math.floor(t.closeTime/(7*DAY));m[k]=(m[k]||0)+1;}); const v=Object.values(m); return v.length?_avg(v):0; })();
+  const delta=(cur,prev,fmt,invert)=>{ if(cur==null||prev==null)return ''; const d=cur-prev; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
+    const good=invert?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
-  const delta=(c,p,fmt,inv)=>{ if(c==null||p==null)return ''; const d=c-p; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
-    const good=inv?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
-  const windowCard=(title,curW,prevW)=>{
-    const n=curW.length, net=sumNet(curW), w=wr(curW), e=exp(curW);
+  const pct=x=>x==null?'—':(x*100).toFixed(0)+'%';
+  const windowCard=(title,cur,prev)=>{
+    const n=cur.length, net=sumNet(cur), w=wr(cur), e=exp(cur);
     return `<div class="diag-card"><h3>${title}</h3>
-      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prevW),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
-      ${mrow('Trades',String(n)+delta(n,prevW.length,v=>v.toFixed(0)),'Closed trades in the window.')}
-      ${mrow('Win rate',pct(w)+delta(w,wr(prevW),v=>(v*100).toFixed(0)+'pt'),'Wins ÷ decisive trades (scratches excluded).')}
-      ${mrow('Expectancy / trade',(e!=null?'<span class="'+cls(e)+'">'+fmtUsd(e)+'</span>':'—')+delta(e,exp(prevW),v=>fmtUsd(v).replace('-','')),'Average net per trade. Baseline (all-time): '+(baseExp!=null?fmtUsd(baseExp):'—')+'.')}
+      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prev),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
+      ${mrow('Trades',String(n)+delta(n,prev.length,v=>v.toFixed(0)),'Closed trades in the window.')}
+      ${mrow('Win rate',pct(w)+delta(w,wr(prev),v=>(v*100).toFixed(0)+'pt'),'Wins ÷ decisive trades (scratches excluded).')}
+      ${mrow('Expectancy / trade',(e!=null?'<span class="'+cls(e)+'">'+fmtUsd(e)+'</span>':'—')+delta(e,exp(prev),v=>fmtUsd(v).replace('-','')),'Average net per trade. Baseline (all-time): '+(baseExp!=null?fmtUsd(baseExp):'—')+'.')}
     </div>`;
   };
-
-  // ---- plain-English commentary (trailing 7 days) ----
-  const commentaryHtml=(()=>{
-    if(!cur.length) return `<div class="diag-card"><p class="lead" style="margin:0">No closed trades in the last 7 days — nothing to write up yet.</p></div>`;
-    const net=sumNet(cur), w=wr(cur), e=exp(cur), factor=pf(cur);
-    const sig=revSignals(cur, allClosed, baseWR, baseExp);
-    const scorecard=`<p class="lead" style="margin:0 0 10px">Over the <b>last 7 days</b> you took <b>${cur.length}</b> trades for a net of <span class="${cls(net)}">${fmtUsd(net)}</span>${delta(net,sumNet(prior),v=>fmtUsd(v).replace('-',''))}. Win rate <b>${pct(w)}</b>${delta(w,wr(prior),v=>(v*100).toFixed(0)+'pt')}, profit factor <b>${factor==null?'—':(factor===Infinity?'∞':factor.toFixed(2))}</b>. All-time baseline: ${baseExp!=null?fmtUsd(baseExp):'—'}/trade at ${pct(baseWR)}.</p>`;
-    const carried = sig.carried.length ? `<p style="margin:0 0 8px"><b>What carried.</b> ${sig.carried.join(' ')}</p>` : '';
-    const bled = sig.bled.length
-      ? `<p style="margin:0 0 4px"><b>What bled.</b></p><ul class="recs" style="margin-top:0">${sig.bled.map(b=>`<li>${b.text}</li>`).join('')}</ul>`
-      : `<p style="margin:0 0 8px"><b>What bled.</b> Nothing cleared the significance bar this week — no guardrail tripped. Read the P&L and move on.</p>`;
-    const watch = sig.watch.length ? `<p style="margin:8px 0 0;color:var(--faint)"><b>Watch, don't act yet.</b> ${sig.watch.join(' ')}</p>` : '';
-    const focus=[...sig.bled.map(b=>({rule:b.rule,sig:b.sig,impact:b.impact,text:b.action})), ...sig.focus];
-    focus.sort((a,b)=> a.rule===b.rule ? Math.abs(b.impact)-Math.abs(a.impact) : (a.rule?-1:1));
-    const journaledC=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
-    const jpctC=cur.length?journaledC/cur.length:0;
-    if(cur.length>=5 && jpctC<0.5) focus.push({rule:false,sig:false,impact:0,text:`<b>Journal more of these.</b> Only ${Math.round(jpctC*100)}% of this week is logged — notes and setups are what sharpen the miner and mistake tracking.`});
-    if(!focus.length) focus.push({rule:false,sig:false,impact:0,text:`Steady week — keep executing your process.`});
-    return `<div class="diag-card">${scorecard}${carried}${bled}${watch}</div>
-      <div class="diag-section" style="margin-top:14px"><h2>Focus for next week</h2>
-        <p class="lead" style="margin-top:-6px">Ranked with enforceable rules first — a cooldown or size cap you can hold to beats a judgment call — then by dollar impact.</p>
-        <ol class="recs">${focus.map(f=>`<li>${f.text}${f.rule?' <span class="badge ok">rule</span>':''}</li>`).join('')}</ol></div>`;
-  })();
-
-  // best / worst this week; journaling completeness (7 days)
-  const ms=[...cur].sort((a,b)=>b.net-a.net); const best=ms[0], worst=ms[ms.length-1];
+  // best / worst this month
+  const ms=[...mo].sort((a,b)=>b.net-a.net); const best=ms[0], worst=ms[ms.length-1];
   const tradeLine=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span> · ${fmtDate(t.closeTime)}`:'—';
-  const journaled=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
-  const jpct=cur.length?journaled/cur.length:0;
+  // journaling completeness (month)
+  const journaled=mo.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
+  const jpct=mo.length?journaled/mo.length:0;
+  // focus points
+  const focus=[];
+  if(exp(wk)!=null&&exp(wk)<0&&(baseExp==null||exp(wk)<baseExp)) focus.push(`Expectancy this week (${fmtUsd(exp(wk))}) is below your baseline (${baseExp!=null?fmtUsd(baseExp):'—'}). Tighten trade selection before pressing size.`);
+  if(mo.length>=5&&jpct<0.5) focus.push(`Only ${Math.round(jpct*100)}% of this month's trades are journaled. Logging setups and notes is what makes the Diagnostic's pattern miner and mistake tracking work.`);
+  if(wk.length>weeklyCounts*1.5&&wk.length>=6) focus.push(`You traded ${wk.length} times this week vs a ~${weeklyCounts.toFixed(0)}/week norm. Watch for overtrading — check the Day×hour heatmap for a leaky slot.`);
+  if(worst&&Math.abs(worst.net)>Math.abs(sumNet(mo))*0.5&&worst.net<0) focus.push(`One trade (${dispMarket(dcoin(worst))}, ${fmtUsd(worst.net)}) drove an outsized share of this month's damage. A per-trade stop or size cap would blunt tails like it.`);
+  if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
 
-  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Trailing 7-day digest for the ${view} view. Every window on this tab is the last 7 days; "vs prior" compares the 7 days before that. The all-time baseline is the reference the written read tests against.</p></div>
-   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',cur,prior)}</div></div>
-   <div class="diag-section"><h2>In plain English</h2>${commentaryHtml}</div>
-   <div class="diag-section"><h2>Highlights · last 7 days</h2><div class="diag-grid">
+  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
+   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
+   <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
        ${mrow('Best trade',tradeLine(best))}
        ${mrow('Worst trade',tradeLine(worst))}
-       ${mrow('Week net','<span class="'+cls(sumNet(cur))+'">'+fmtUsd(sumNet(cur))+'</span>')}
+       ${mrow('Month net','<span class="'+cls(sumNet(mo))+'">'+fmtUsd(sumNet(mo))+'</span>')}
      </div>
-     <div class="diag-card"><h3 data-tip="Share of the last 7 days' closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
-       ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+cur.length+')')}
-       <p class="mini-note">Well-journaled weeks make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
+     <div class="diag-card"><h3 data-tip="Share of this month's closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
+       ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+mo.length+')')}
+       <p class="mini-note">Well-journaled months make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
      </div>
    </div></div>
-   ${nfLeaderboardHtml(cur.filter(t=>!t.isOpen))}`;
+   <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>
+   ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
 }
 /* ============================ Project tab ============================ */
 let _proj={look:90,hor:182,block:0}; let _projChart=null;
