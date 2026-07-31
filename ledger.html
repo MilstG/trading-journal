@@ -4121,26 +4121,6 @@ function revAfterLoss(cur, allClosed){
 }
 // Resolve the tab's window to whatever range the user has selected (custom range,
 // period chip, or all-history), plus the equal-length window immediately before it.
-function revWindow(){
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  const cur=periodTrades(); // already view + (customRange || period) filtered
-  let from,to;
-  if(rangeActive()){
-    to = customRange.to!=null ? customRange.to : (cur.length?Math.max(...cur.map(t=>t.closeTime)):Date.now());
-    from = customRange.from!=null ? customRange.from : (cur.length?Math.min(...cur.map(t=>t.closeTime)):to);
-  } else if(period>0){
-    to=Date.now(); from=to-period*86400000;
-  } else { from=null; to=null; } // all history — no equal-length prior
-  let prior=[], spanDays=null, label;
-  if(from!=null&&to!=null){
-    const span=Math.max(1,to-from); spanDays=span/86400000;
-    prior=closed.filter(t=>t.closeTime>=from-span && t.closeTime<from);
-    label = rangeActive()
-      ? ('selected range'+(customRange.from?' from '+fmtDate(customRange.from):'')+(customRange.to?' to '+fmtDate(customRange.to):''))
-      : ('last '+period+' days');
-  } else { label='all history'; }
-  return {cur, prior, spanDays, from, to, label};
-}
 // Derive the commentary signals. Each finding carries whether it maps to an enforceable
 // rule, its dollar impact on the window, and whether it cleared the significance bar.
 function revSignals(cur, allClosed, baseWR, baseExp){
@@ -4210,63 +4190,73 @@ function renderReview(){
   const el=$('reviewView'); if(!el)return;
   const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
   if(!allClosed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
-  const {cur, prior, label}=revWindow();
-  if(!cur.length){ el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">No closed trades in the ${esc(label)}. Widen the range or clear the date filter.</p></div>`; return; }
+  const now=Date.now(), DAY=86400000;
+  const winTr=(from,to)=>allClosed.filter(t=>t.closeTime>=from&&t.closeTime<to);
+  const cur=winTr(now-7*DAY,now+1), prior=winTr(now-14*DAY,now-7*DAY); // trailing 7 days vs the prior 7
 
   const sumNet=a=>a.reduce((s,t)=>s+t.net,0);
   const wr=a=>{const w=a.filter(t=>isWin(t.net)).length,l=a.filter(t=>isLoss(t.net)).length;return (w+l)?w/(w+l):null;};
   const exp=a=>a.length?sumNet(a)/a.length:null;
   const pf=a=>{const gp=a.filter(t=>t.net>0).reduce((s,t)=>s+t.net,0),gl=Math.abs(a.filter(t=>t.net<0).reduce((s,t)=>s+t.net,0));return gl>0?gp/gl:(gp>0?Infinity:null);};
-  const baseExp=exp(allClosed), baseWR=wr(allClosed);
+  const baseExp=exp(allClosed), baseWR=wr(allClosed); // all-time reference for the significance tests
   const pct=x=>x==null?'—':(x*100).toFixed(0)+'%';
-  const dlt=(c,p,fmt,inv)=>{ if(c==null||p==null||!prior.length)return ''; const d=c-p; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
+  const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+  const delta=(c,p,fmt,inv)=>{ if(c==null||p==null)return ''; const d=c-p; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
     const good=inv?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
+  const windowCard=(title,curW,prevW)=>{
+    const n=curW.length, net=sumNet(curW), w=wr(curW), e=exp(curW);
+    return `<div class="diag-card"><h3>${title}</h3>
+      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prevW),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
+      ${mrow('Trades',String(n)+delta(n,prevW.length,v=>v.toFixed(0)),'Closed trades in the window.')}
+      ${mrow('Win rate',pct(w)+delta(w,wr(prevW),v=>(v*100).toFixed(0)+'pt'),'Wins ÷ decisive trades (scratches excluded).')}
+      ${mrow('Expectancy / trade',(e!=null?'<span class="'+cls(e)+'">'+fmtUsd(e)+'</span>':'—')+delta(e,exp(prevW),v=>fmtUsd(v).replace('-','')),'Average net per trade. Baseline (all-time): '+(baseExp!=null?fmtUsd(baseExp):'—')+'.')}
+    </div>`;
+  };
 
-  const net=sumNet(cur), w=wr(cur), e=exp(cur), factor=pf(cur);
-  const sig=revSignals(cur, allClosed, baseWR, baseExp);
+  // ---- plain-English commentary (trailing 7 days) ----
+  const commentaryHtml=(()=>{
+    if(!cur.length) return `<div class="diag-card"><p class="lead" style="margin:0">No closed trades in the last 7 days — nothing to write up yet.</p></div>`;
+    const net=sumNet(cur), w=wr(cur), e=exp(cur), factor=pf(cur);
+    const sig=revSignals(cur, allClosed, baseWR, baseExp);
+    const scorecard=`<p class="lead" style="margin:0 0 10px">Over the <b>last 7 days</b> you took <b>${cur.length}</b> trades for a net of <span class="${cls(net)}">${fmtUsd(net)}</span>${delta(net,sumNet(prior),v=>fmtUsd(v).replace('-',''))}. Win rate <b>${pct(w)}</b>${delta(w,wr(prior),v=>(v*100).toFixed(0)+'pt')}, profit factor <b>${factor==null?'—':(factor===Infinity?'∞':factor.toFixed(2))}</b>. All-time baseline: ${baseExp!=null?fmtUsd(baseExp):'—'}/trade at ${pct(baseWR)}.</p>`;
+    const carried = sig.carried.length ? `<p style="margin:0 0 8px"><b>What carried.</b> ${sig.carried.join(' ')}</p>` : '';
+    const bled = sig.bled.length
+      ? `<p style="margin:0 0 4px"><b>What bled.</b></p><ul class="recs" style="margin-top:0">${sig.bled.map(b=>`<li>${b.text}</li>`).join('')}</ul>`
+      : `<p style="margin:0 0 8px"><b>What bled.</b> Nothing cleared the significance bar this week — no guardrail tripped. Read the P&L and move on.</p>`;
+    const watch = sig.watch.length ? `<p style="margin:8px 0 0;color:var(--faint)"><b>Watch, don't act yet.</b> ${sig.watch.join(' ')}</p>` : '';
+    const focus=[...sig.bled.map(b=>({rule:b.rule,sig:b.sig,impact:b.impact,text:b.action})), ...sig.focus];
+    focus.sort((a,b)=> a.rule===b.rule ? Math.abs(b.impact)-Math.abs(a.impact) : (a.rule?-1:1));
+    const journaledC=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
+    const jpctC=cur.length?journaledC/cur.length:0;
+    if(cur.length>=5 && jpctC<0.5) focus.push({rule:false,sig:false,impact:0,text:`<b>Journal more of these.</b> Only ${Math.round(jpctC*100)}% of this week is logged — notes and setups are what sharpen the miner and mistake tracking.`});
+    if(!focus.length) focus.push({rule:false,sig:false,impact:0,text:`Steady week — keep executing your process.`});
+    return `<div class="diag-card">${scorecard}${carried}${bled}${watch}</div>
+      <div class="diag-section" style="margin-top:14px"><h2>Focus for next week</h2>
+        <p class="lead" style="margin-top:-6px">Ranked with enforceable rules first — a cooldown or size cap you can hold to beats a judgment call — then by dollar impact.</p>
+        <ol class="recs">${focus.map(f=>`<li>${f.text}${f.rule?' <span class="badge ok">rule</span>':''}</li>`).join('')}</ol></div>`;
+  })();
 
-  // scorecard sentence
-  const scorecard=`<p class="lead" style="margin:0 0 10px">Over the <b>${esc(label)}</b> you took <b>${cur.length}</b> trades for a net of <span class="${cls(net)}">${fmtUsd(net)}</span>${dlt(net,sumNet(prior),v=>fmtUsd(v).replace('-',''))}. Win rate <b>${pct(w)}</b>${dlt(w,wr(prior),v=>(v*100).toFixed(0)+'pt')}, profit factor <b>${factor==null?'—':(factor===Infinity?'∞':factor.toFixed(2))}</b>. Your all-time baseline is ${baseExp!=null?fmtUsd(baseExp):'—'}/trade at ${pct(baseWR)}.</p>`;
-
-  const carried = sig.carried.length ? `<p style="margin:0 0 8px"><b>What carried.</b> ${sig.carried.join(' ')}</p>` : '';
-  const bled = sig.bled.length
-    ? `<p style="margin:0 0 4px"><b>What bled.</b></p><ul class="recs" style="margin-top:0">${sig.bled.map(b=>`<li>${b.text}</li>`).join('')}</ul>`
-    : `<p style="margin:0 0 8px"><b>What bled.</b> Nothing cleared the significance bar this window — no guardrail tripped. Read the P&L and move on.</p>`;
-  const watch = sig.watch.length ? `<p style="margin:8px 0 0;color:var(--faint)"><b>Watch, don't act yet.</b> ${sig.watch.join(' ')}</p>` : '';
-
-  // ranked focus: enforceable rules first, then by dollar impact
-  const focus=[...sig.bled.map(b=>({rule:b.rule,sig:b.sig,impact:b.impact,text:b.action})), ...sig.focus];
-  focus.sort((a,b)=> a.rule===b.rule ? Math.abs(b.impact)-Math.abs(a.impact) : (a.rule?-1:1));
-  // journaling nudge (discretionary, always last)
-  const journaled=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
-  const jpct=cur.length?journaled/cur.length:0;
-  if(cur.length>=5 && jpct<0.5) focus.push({rule:false,sig:false,impact:0,text:`<b>Journal more of these.</b> Only ${Math.round(jpct*100)}% of the window is logged — notes and setups are what sharpen the miner and mistake tracking.`});
-  if(!focus.length) focus.push({rule:false,sig:false,impact:0,text:`Steady window — keep executing your process.`});
-
-  // best / worst over the window
+  // best / worst this week; journaling completeness (7 days)
   const ms=[...cur].sort((a,b)=>b.net-a.net); const best=ms[0], worst=ms[ms.length-1];
   const tradeLine=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span> · ${fmtDate(t.closeTime)}`:'—';
-  const mrow=(l,v)=>`<div class="metric-row"><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+  const journaled=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
+  const jpct=cur.length?journaled/cur.length:0;
 
-  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2>
-     <p class="lead">Plain-English read of the range you have selected (${esc(label)}). Windows follow the period chips and custom date range; "vs prior" compares the equal-length window immediately before it.</p></div>
-   <div class="diag-section"><h2>In plain English</h2>
-     <div class="diag-card">${scorecard}${carried}${bled}${watch}</div></div>
-   <div class="diag-section"><h2>Focus for next</h2>
-     <p class="lead" style="margin-top:-6px">Ranked with enforceable rules first — a cooldown or size cap you can hold to beats a judgment call — then by dollar impact.</p>
-     <ol class="recs">${focus.map(f=>`<li>${f.text}${f.rule?' <span class="badge ok">rule</span>':''}</li>`).join('')}</ol></div>
-   <div class="diag-section"><h2>Highlights · ${esc(label)}</h2><div class="diag-grid">
+  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Trailing 7-day digest for the ${view} view. Every window on this tab is the last 7 days; "vs prior" compares the 7 days before that. The all-time baseline is the reference the written read tests against.</p></div>
+   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',cur,prior)}</div></div>
+   <div class="diag-section"><h2>In plain English</h2>${commentaryHtml}</div>
+   <div class="diag-section"><h2>Highlights · last 7 days</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
        ${mrow('Best trade',tradeLine(best))}
        ${mrow('Worst trade',tradeLine(worst))}
-       ${mrow('Window net','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>')}
+       ${mrow('Week net','<span class="'+cls(sumNet(cur))+'">'+fmtUsd(sumNet(cur))+'</span>')}
      </div>
-     <div class="diag-card"><h3 data-tip="Share of the selected range's closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
+     <div class="diag-card"><h3 data-tip="Share of the last 7 days' closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
        ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+cur.length+')')}
-       <p class="mini-note">Well-journaled ranges make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
+       <p class="mini-note">Well-journaled weeks make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
      </div>
    </div></div>
-   ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
+   ${nfLeaderboardHtml(cur.filter(t=>!t.isOpen))}`;
 }
 /* ============================ Project tab ============================ */
 let _proj={look:90,hor:182,block:0}; let _projChart=null;
