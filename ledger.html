@@ -4094,60 +4094,178 @@ function renderPulse(){
   el.classList.remove('hide');
   el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
+/* ===================== Review · plain-English commentary ===================== */
+// One-sided two-proportion z-test: probability group rate is no better than baseline
+// (i.e. the observed underperformance is chance). Uses the same _normCdf the miner does.
+// Returns a p-value in [0,1], or null when either sample is too thin to speak.
+function revTwoProp(w1,n1,w0,n0){
+  if(n1<5||n0<20) return null;
+  const p1=w1/n1, p0=w0/n0, p=(w1+w0)/(n1+n0);
+  const se=Math.sqrt(p*(1-p)*(1/n1+1/n0));
+  if(!(se>0)) return null;
+  const z=(p1-p0)/se;              // negative when group underperforms
+  return _normCdf(z);              // P(rate <= observed) under the baseline
+}
+// Post-loss re-entries inside `cur`, defined exactly as the Diagnostic tilt panel:
+// a trade opened within 1h of the most recent prior *loss* (looked up across allClosed).
+function revAfterLoss(cur, allClosed){
+  const TILT_WIN=60*60000;
+  const byClose=[...allClosed].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
+  const ct=byClose.map(p=>p.closeTime);
+  const priorClose=t=>{ let lo=0,hi=ct.length-1,idx=-1;
+    while(lo<=hi){ const m=(lo+hi)>>1; if(ct[m]<=t.openTime){idx=m;lo=m+1;} else hi=m-1; }
+    while(idx>=0){ if(byClose[idx].id!==t.id) return byClose[idx]; idx--; } return null; };
+  const inCur=new Set(cur.map(t=>t.id));
+  return cur.filter(t=>{ if(!inCur.has(t.id))return false; const p=priorClose(t);
+    return p&&isLoss(p.net)&&(t.openTime-p.closeTime)<=TILT_WIN; });
+}
+// Resolve the tab's window to whatever range the user has selected (custom range,
+// period chip, or all-history), plus the equal-length window immediately before it.
+function revWindow(){
+  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const cur=periodTrades(); // already view + (customRange || period) filtered
+  let from,to;
+  if(rangeActive()){
+    to = customRange.to!=null ? customRange.to : (cur.length?Math.max(...cur.map(t=>t.closeTime)):Date.now());
+    from = customRange.from!=null ? customRange.from : (cur.length?Math.min(...cur.map(t=>t.closeTime)):to);
+  } else if(period>0){
+    to=Date.now(); from=to-period*86400000;
+  } else { from=null; to=null; } // all history — no equal-length prior
+  let prior=[], spanDays=null, label;
+  if(from!=null&&to!=null){
+    const span=Math.max(1,to-from); spanDays=span/86400000;
+    prior=closed.filter(t=>t.closeTime>=from-span && t.closeTime<from);
+    label = rangeActive()
+      ? ('selected range'+(customRange.from?' from '+fmtDate(customRange.from):'')+(customRange.to?' to '+fmtDate(customRange.to):''))
+      : ('last '+period+' days');
+  } else { label='all history'; }
+  return {cur, prior, spanDays, from, to, label};
+}
+// Derive the commentary signals. Each finding carries whether it maps to an enforceable
+// rule, its dollar impact on the window, and whether it cleared the significance bar.
+function revSignals(cur, allClosed, baseWR, baseExp){
+  const sum=a=>a.reduce((s,t)=>s+t.net,0);
+  const wins=a=>a.filter(t=>isWin(t.net)).length;
+  const decisive=a=>a.filter(t=>isWin(t.net)||isLoss(t.net)).length;
+  const baseW=wins(allClosed), baseDec=decisive(allClosed);
+  const bled=[], carried=[], watch=[], focus=[];
+
+  // --- bled: post-loss re-entry (enforceable: cooldown) ---
+  const al=revAfterLoss(cur, allClosed);
+  if(al.length>=5){
+    const alW=wins(al), alDec=decisive(al), alWR=alDec?alW/alDec:null;
+    const p = (alWR!=null)? revTwoProp(alW,alDec,baseW,baseDec) : null;
+    const impact=sum(al); // what these trades did to the window
+    const real = (p!=null)? p<0.10 : (alDec>=8 && baseWR!=null && alWR<baseWR-0.10);
+    if(alWR!=null && baseWR!=null && alWR<baseWR && (real||impact<0)){
+      const odds = p!=null ? `roughly ${Math.max(1,Math.round(p*100))}-in-100 this is chance` : 'a small sample, so read it as a lean not a verdict';
+      bled.push({rule:true, sig:real, impact,
+        text:`<b>Post-loss re-entry.</b> ${al.length} trades opened within an hour of closing a loser won ${(alWR*100).toFixed(0)}% vs your ${(baseWR*100).toFixed(0)}% baseline — ${odds}.${impact<0?` These netted <span class="neg-t">${fmtUsd(impact)}</span> over the window.`:''}`,
+        action:`<b>Cooldown after losses.</b> No new position for ~1h after closing red. ${impact<0?`Skipping these re-entries would have moved the window <b>${fmtUsd(Math.abs(impact))}</b>.`:'It is a rule, not a judgment call.'}`});
+    }
+  }
+
+  // --- bled: oversizing into losers (enforceable: hard size cap) ---
+  const notion=t=>t.maxSize*t.avgEntry;
+  const ns=cur.map(t=>notion(t)).filter(x=>x>0).sort((a,b)=>a-b);
+  if(ns.length>=8){
+    const med=ns[Math.floor(ns.length*0.5)];
+    const losers=cur.filter(t=>isLoss(t.net)), winners=cur.filter(t=>isWin(t.net));
+    const meanSz=a=>{const v=a.map(notion).filter(x=>x>0); return v.length?_avg(v):0;};
+    const mL=meanSz(losers), mW=meanSz(winners);
+    const big=losers.filter(t=>notion(t)>=1.4*med);
+    if(big.length>=3 && mW>0 && mL>mW*1.15){
+      const impact=sum(big);
+      bled.push({rule:true, sig:true, impact,
+        text:`<b>You size up into losers.</b> Your losing trades ran ${(mL/mW).toFixed(1)}× the size of your winners this window; the ${big.length} biggest-sized losers alone netted <span class="neg-t">${fmtUsd(impact)}</span>.`,
+        action:`<b>Hard size cap near ${fmtUsd(1.3*med)}.</b> Caps the tail without giving up your normal-sized edge.`});
+    }
+  }
+
+  // --- carried: best hold-time bucket (protect, not a fix) ---
+  const buckets={};
+  cur.forEach(t=>{ if(!(t.durationMs>0))return; const k=holdBucket(t.durationMs); (buckets[k]=buckets[k]||[]).push(t); });
+  let bestB=null;
+  Object.keys(buckets).forEach(k=>{ const a=buckets[k]; const dec=decisive(a); if(dec<5)return;
+    const wr=wins(a)/dec, net=sum(a);
+    if(net>0 && (baseWR==null||wr>=baseWR) && (!bestB||net>bestB.net)) bestB={k,wr,net,n:a.length}; });
+  if(bestB){
+    carried.push(`Your <b>${bestB.k}</b> holds carried the window — ${(bestB.wr*100).toFixed(0)}% win rate over ${bestB.n} trades for <span class="pos-t">${fmtUsd(bestB.net)}</span>. This is the edge; protect it.`);
+    focus.push({rule:false, sig:false, impact:0,
+      text:`<b>Keep feeding the ${bestB.k} bucket.</b> It is your steadiest slice — don't let a hot streak pull you back into faster scalps.`});
+  }
+
+  // --- watch: fast scalps underperforming (not yet actionable) ---
+  const scalps=cur.filter(t=>t.durationMs>0 && t.durationMs<5*60000);
+  if(scalps.length>=5){
+    const sDec=decisive(scalps), sWR=sDec?wins(scalps)/sDec:null;
+    if(sWR!=null && baseWR!=null && sWR<baseWR-0.08 && sDec<15){
+      watch.push(`Your under-5-minute scalps won ${(sWR*100).toFixed(0)}% vs ${(baseWR*100).toFixed(0)}% baseline — real enough to note, too few to act on. One more window decides it.`);
+    }
+  }
+
+  return {bled, carried, watch, focus};
+}
 function renderReview(){
   const el=$('reviewView'); if(!el)return;
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  if(!closed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
-  const now=Date.now(), DAY=86400000;
-  const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
-  const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY);
-  const mo=win(now-30*DAY,now+1), pmo=win(now-60*DAY,now-30*DAY);
+  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  if(!allClosed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
+  const {cur, prior, label}=revWindow();
+  if(!cur.length){ el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">No closed trades in the ${esc(label)}. Widen the range or clear the date filter.</p></div>`; return; }
+
   const sumNet=a=>a.reduce((s,t)=>s+t.net,0);
   const wr=a=>{const w=a.filter(t=>isWin(t.net)).length,l=a.filter(t=>isLoss(t.net)).length;return (w+l)?w/(w+l):null;};
   const exp=a=>a.length?sumNet(a)/a.length:null;
-  const baseExp=exp(closed), baseWR=wr(closed);
-  const weeklyCounts=(()=>{ const m={}; closed.forEach(t=>{const k=Math.floor(t.closeTime/(7*DAY));m[k]=(m[k]||0)+1;}); const v=Object.values(m); return v.length?_avg(v):0; })();
-  const delta=(cur,prev,fmt,invert)=>{ if(cur==null||prev==null)return ''; const d=cur-prev; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
-    const good=invert?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
-  const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+  const pf=a=>{const gp=a.filter(t=>t.net>0).reduce((s,t)=>s+t.net,0),gl=Math.abs(a.filter(t=>t.net<0).reduce((s,t)=>s+t.net,0));return gl>0?gp/gl:(gp>0?Infinity:null);};
+  const baseExp=exp(allClosed), baseWR=wr(allClosed);
   const pct=x=>x==null?'—':(x*100).toFixed(0)+'%';
-  const windowCard=(title,cur,prev)=>{
-    const n=cur.length, net=sumNet(cur), w=wr(cur), e=exp(cur);
-    return `<div class="diag-card"><h3>${title}</h3>
-      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prev),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
-      ${mrow('Trades',String(n)+delta(n,prev.length,v=>v.toFixed(0)),'Closed trades in the window.')}
-      ${mrow('Win rate',pct(w)+delta(w,wr(prev),v=>(v*100).toFixed(0)+'pt'),'Wins ÷ decisive trades (scratches excluded).')}
-      ${mrow('Expectancy / trade',(e!=null?'<span class="'+cls(e)+'">'+fmtUsd(e)+'</span>':'—')+delta(e,exp(prev),v=>fmtUsd(v).replace('-','')),'Average net per trade. Baseline (all-time): '+(baseExp!=null?fmtUsd(baseExp):'—')+'.')}
-    </div>`;
-  };
-  // best / worst this month
-  const ms=[...mo].sort((a,b)=>b.net-a.net); const best=ms[0], worst=ms[ms.length-1];
-  const tradeLine=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span> · ${fmtDate(t.closeTime)}`:'—';
-  // journaling completeness (month)
-  const journaled=mo.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
-  const jpct=mo.length?journaled/mo.length:0;
-  // focus points
-  const focus=[];
-  if(exp(wk)!=null&&exp(wk)<0&&(baseExp==null||exp(wk)<baseExp)) focus.push(`Expectancy this week (${fmtUsd(exp(wk))}) is below your baseline (${baseExp!=null?fmtUsd(baseExp):'—'}). Tighten trade selection before pressing size.`);
-  if(mo.length>=5&&jpct<0.5) focus.push(`Only ${Math.round(jpct*100)}% of this month's trades are journaled. Logging setups and notes is what makes the Diagnostic's pattern miner and mistake tracking work.`);
-  if(wk.length>weeklyCounts*1.5&&wk.length>=6) focus.push(`You traded ${wk.length} times this week vs a ~${weeklyCounts.toFixed(0)}/week norm. Watch for overtrading — check the Day×hour heatmap for a leaky slot.`);
-  if(worst&&Math.abs(worst.net)>Math.abs(sumNet(mo))*0.5&&worst.net<0) focus.push(`One trade (${dispMarket(dcoin(worst))}, ${fmtUsd(worst.net)}) drove an outsized share of this month's damage. A per-trade stop or size cap would blunt tails like it.`);
-  if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
+  const dlt=(c,p,fmt,inv)=>{ if(c==null||p==null||!prior.length)return ''; const d=c-p; if(Math.abs(d)<1e-9)return ' <span style="color:var(--faint)">flat</span>';
+    const good=inv?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
 
-  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
-   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
-   <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
+  const net=sumNet(cur), w=wr(cur), e=exp(cur), factor=pf(cur);
+  const sig=revSignals(cur, allClosed, baseWR, baseExp);
+
+  // scorecard sentence
+  const scorecard=`<p class="lead" style="margin:0 0 10px">Over the <b>${esc(label)}</b> you took <b>${cur.length}</b> trades for a net of <span class="${cls(net)}">${fmtUsd(net)}</span>${dlt(net,sumNet(prior),v=>fmtUsd(v).replace('-',''))}. Win rate <b>${pct(w)}</b>${dlt(w,wr(prior),v=>(v*100).toFixed(0)+'pt')}, profit factor <b>${factor==null?'—':(factor===Infinity?'∞':factor.toFixed(2))}</b>. Your all-time baseline is ${baseExp!=null?fmtUsd(baseExp):'—'}/trade at ${pct(baseWR)}.</p>`;
+
+  const carried = sig.carried.length ? `<p style="margin:0 0 8px"><b>What carried.</b> ${sig.carried.join(' ')}</p>` : '';
+  const bled = sig.bled.length
+    ? `<p style="margin:0 0 4px"><b>What bled.</b></p><ul class="recs" style="margin-top:0">${sig.bled.map(b=>`<li>${b.text}</li>`).join('')}</ul>`
+    : `<p style="margin:0 0 8px"><b>What bled.</b> Nothing cleared the significance bar this window — no guardrail tripped. Read the P&L and move on.</p>`;
+  const watch = sig.watch.length ? `<p style="margin:8px 0 0;color:var(--faint)"><b>Watch, don't act yet.</b> ${sig.watch.join(' ')}</p>` : '';
+
+  // ranked focus: enforceable rules first, then by dollar impact
+  const focus=[...sig.bled.map(b=>({rule:b.rule,sig:b.sig,impact:b.impact,text:b.action})), ...sig.focus];
+  focus.sort((a,b)=> a.rule===b.rule ? Math.abs(b.impact)-Math.abs(a.impact) : (a.rule?-1:1));
+  // journaling nudge (discretionary, always last)
+  const journaled=cur.filter(t=>{const j=journal[t.id]||{};return j.notes||j.setup||(j.tags&&j.tags.length)||j.rating;}).length;
+  const jpct=cur.length?journaled/cur.length:0;
+  if(cur.length>=5 && jpct<0.5) focus.push({rule:false,sig:false,impact:0,text:`<b>Journal more of these.</b> Only ${Math.round(jpct*100)}% of the window is logged — notes and setups are what sharpen the miner and mistake tracking.`});
+  if(!focus.length) focus.push({rule:false,sig:false,impact:0,text:`Steady window — keep executing your process.`});
+
+  // best / worst over the window
+  const ms=[...cur].sort((a,b)=>b.net-a.net); const best=ms[0], worst=ms[ms.length-1];
+  const tradeLine=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span> · ${fmtDate(t.closeTime)}`:'—';
+  const mrow=(l,v)=>`<div class="metric-row"><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+
+  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2>
+     <p class="lead">Plain-English read of the range you have selected (${esc(label)}). Windows follow the period chips and custom date range; "vs prior" compares the equal-length window immediately before it.</p></div>
+   <div class="diag-section"><h2>In plain English</h2>
+     <div class="diag-card">${scorecard}${carried}${bled}${watch}</div></div>
+   <div class="diag-section"><h2>Focus for next</h2>
+     <p class="lead" style="margin-top:-6px">Ranked with enforceable rules first — a cooldown or size cap you can hold to beats a judgment call — then by dollar impact.</p>
+     <ol class="recs">${focus.map(f=>`<li>${f.text}${f.rule?' <span class="badge ok">rule</span>':''}</li>`).join('')}</ol></div>
+   <div class="diag-section"><h2>Highlights · ${esc(label)}</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
        ${mrow('Best trade',tradeLine(best))}
        ${mrow('Worst trade',tradeLine(worst))}
-       ${mrow('Month net','<span class="'+cls(sumNet(mo))+'">'+fmtUsd(sumNet(mo))+'</span>')}
+       ${mrow('Window net','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>')}
      </div>
-     <div class="diag-card"><h3 data-tip="Share of this month's closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
-       ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+mo.length+')')}
-       <p class="mini-note">Well-journaled months make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
+     <div class="diag-card"><h3 data-tip="Share of the selected range's closed trades that have a note, setup, tag, or rating.">Journaling completeness</h3>
+       ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+cur.length+')')}
+       <p class="mini-note">Well-journaled ranges make the Diagnostic's pattern miner and mistake analytics far sharper.</p>
      </div>
    </div></div>
-   <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>
    ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
 }
 /* ============================ Project tab ============================ */
