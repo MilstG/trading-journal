@@ -144,6 +144,9 @@ body.bb .btn{border-color:#3A3A32} body.bb .btn:hover{border-color:var(--lbl)}
 .viewtog button.on,.periods button.on{background:var(--panel2);border-color:#223049;color:var(--text)}
 body.bb .viewtog button:not(.on),body.bb .periods button:not(.on){color:#B27414}
 body.bb .viewtog button.on,body.bb .periods button.on{border-color:#7A5510;color:#FFD79A;background:#141008}
+#dexchips{display:inline-flex;gap:4px;align-items:center}
+#dexchips button{background:none;border:1px solid #3A2A52;color:#C9A2F0;border-radius:999px;font-family:var(--cond);letter-spacing:.1em;text-transform:uppercase;font-weight:600;font-size:10.5px;padding:3px 10px;opacity:.55}
+#dexchips button.on{opacity:1;background:rgba(201,162,240,.08)}
 .daterange{gap:8px;font-size:11px;color:var(--faint)}
 .daterange .dash{color:var(--faint)}
 .daterange input[type=date]{width:122px;padding:4px 6px;font-size:10.5px;color:var(--muted)}
@@ -470,6 +473,12 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
         <button data-v="spot">Spot</button>
         <button data-v="combined">Combined</button>
       </div>
+      <div class="viewtog hide" id="dextog" data-tip="Filter by market source: Hyperliquid's main perp dex, HIP-3 builder-deployed dexes, or both. Applies to every view — stats, charts, miner, diagnostics.">
+        <button data-x="all" class="on">All</button>
+        <button data-x="main">Main dex</button>
+        <button data-x="hip3">Builder</button>
+      </div>
+      <span class="hide" id="dexchips"></span>
       <div class="periods" id="periods">
         <button data-d="7">7D</button><button data-d="30">30D</button>
         <button data-d="90">90D</button><button data-d="365">1Y</button>
@@ -713,13 +722,13 @@ async function unpackFillCache(c){
   return null;
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
-  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules}, journal}; }
+  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules}, journal}; }
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object') journal=data.journal;
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -1614,7 +1623,20 @@ function computeOneR(closed){
 }
 
 /* ============================ analytics ============================ */
-function viewFilter(t){ return view==='combined' ? true : t.market===view; }
+/* dex-source filter: '' = main dex, otherwise the HIP-3 builder dex name (fills name HIP-3 assets "dex:COIN") */
+let dexView='all', dexSel=new Set();
+function tradeDex(t){ const c=t&&t.coin; if(typeof c!=='string')return '';
+  const i=c.indexOf(':'); return (i>0 && !c.includes('/') && !c.startsWith('@'))?c.slice(0,i):''; }
+function dexOk(d){ if(dexView==='main')return !d;
+  if(dexView==='hip3')return !!d && (dexSel.size?dexSel.has(d):true);
+  return true; }
+function dexFilter(t){ return dexOk(tradeDex(t)); }
+function knownDexes(){ const s=new Set();
+  for(const t of allTrades){ const d=tradeDex(t); if(d)s.add(d); }
+  for(const p of openPositions){ if(p.dex)s.add(p.dex); }
+  return [...s].sort(); }
+function dexPositions(){ return dexView==='all'?openPositions:openPositions.filter(p=>dexOk(p.dex||'')); }
+function viewFilter(t){ return (view==='combined' ? true : t.market===view) && dexFilter(t); }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
 function inRange(t){ if(customRange.from!=null&&t.closeTime<customRange.from)return false; if(customRange.to!=null&&t.closeTime>customRange.to)return false; return true; }
@@ -1691,11 +1713,11 @@ function spotCard(h,multi){
 }
 function renderPositions(){
   const strip=$('posStrip'), multi=settings.wallets.length>1; let cards=[];
-  if(view==='perp'||view==='combined') cards=cards.concat(openPositions.map(p=>perpCard(p,multi)));
+  if(view==='perp'||view==='combined') cards=cards.concat(dexPositions().map(p=>perpCard(p,multi)));
   if(view==='spot'||view==='combined') cards=cards.concat(spotHoldings.map(h=>spotCard(h,multi)));
   if(!cards.length){ strip.classList.add('hide'); strip.innerHTML=''; renderRiskPanel(); return; }
   // totals: unrealized, gross exposure, perp net direction skew
-  const perpsIn=(view!=='spot')?openPositions:[], spotsIn=(view!=='perp')?spotHoldings:[];
+  const perpsIn=(view!=='spot')?dexPositions():[], spotsIn=(view!=='perp')?spotHoldings:[];
   const uTot=perpsIn.reduce((s,p)=>s+(p.uPnl||0),0)+spotsIn.reduce((s,h)=>s+(h.uPnl||0),0);
   const gross=perpsIn.reduce((s,p)=>s+(p.value||0),0)+spotsIn.reduce((s,h)=>s+(h.value||0),0);
   if(gross<1 && Math.abs(uTot)<1){ strip.classList.remove('hide'); strip.innerHTML=cards.join(''); return; }
@@ -1718,7 +1740,7 @@ function renderPositions(){
 // 10% of its liquidation price. Perp-only by design: spot holdings have no liq price.
 function renderRiskPanel(){
   const el=$('riskPanel'); if(!el)return;
-  const m=(view!=='spot')?openRiskModel(openPositions):null;
+  const m=(view!=='spot')?openRiskModel(dexPositions()):null;
   if(!m){ el.classList.add('hide'); el.innerHTML=''; return; }
   el.classList.remove('hide');
   const pctf=x=>x==null?'\u2014':(x*100).toFixed(1)+'%';
@@ -1741,7 +1763,7 @@ function renderRiskPanel(){
 }
 function renderStats(s){
   const openN=allTrades.filter(t=>t.isOpen&&viewFilter(t)).length;
-  const posList = view==='spot'?spotHoldings : view==='perp'?openPositions : openPositions.concat(spotHoldings);
+  const posList = view==='spot'?spotHoldings : view==='perp'?dexPositions() : dexPositions().concat(spotHoldings);
   const uPnl=posList.reduce((a,p)=>a+(p.uPnl||0),0);
   const acct = view==='spot'?spotAccountValue : view==='perp'?accountValue
     : ((accountValue==null&&spotAccountValue==null)?null:((accountValue||0)+(spotAccountValue||0)));
@@ -3743,7 +3765,7 @@ function feeDragByMonth(closed){
 }
 // Net directional exposure by coin across all open perps (nets long vs short across wallets).
 function netExposureByCoin(){
-  const g={}; for(const p of openPositions){ const notional=(p.value||0)*(p.szi<0?-1:1);
+  const g={}; for(const p of dexPositions()){ const notional=(p.value||0)*(p.szi<0?-1:1);
     (g[p.coin]=g[p.coin]||{coin:p.coin,net:0,gross:0,wallets:new Set()}); g[p.coin].net+=notional; g[p.coin].gross+=Math.abs(p.value||0);
     if(p.wallet)g[p.coin].wallets.add(p.wallet.address); }
   return Object.values(g).map(x=>({coin:x.coin,net:x.net,gross:x.gross,wallets:x.wallets.size}))
@@ -4046,6 +4068,7 @@ function refreshTagFilter(){
 
 /* ============================ render all ============================ */
 function render(){
+  syncDexTog();
   const pt=periodTrades(); const ptAll=periodTradesAll();
   _be=(settings.beThreshold!=null?settings.beThreshold:50);
   _oneR=computeOneR(pt);
@@ -4460,6 +4483,30 @@ $('viewtog').addEventListener('click',async e=>{ const b=e.target.closest('butto
   settings.view=view; await Store.set(S_KEY,settings);
   $('fCoin').value=''; $('fSide').value='';
   if(allTrades.length||openPositions.length||spotHoldings.length)render(); });
+function syncDexTog(){
+  const dexes=knownDexes(), tog=$('dextog'), chips=$('dexchips');
+  if(!tog)return;
+  tog.classList.toggle('hide',!dexes.length);            // invisible until a HIP-3 fill exists
+  if(!dexes.length){ chips.classList.add('hide'); if(dexView!=='all'){dexView='all';} return; }
+  tog.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.x===dexView));
+  const showChips=dexView==='hip3'&&dexes.length>1;
+  chips.classList.toggle('hide',!showChips);
+  if(showChips){
+    dexSel.forEach(d=>{ if(!dexes.includes(d))dexSel.delete(d); });
+    chips.innerHTML=dexes.map(d=>`<button data-c="${esc(d)}" class="${(!dexSel.size||dexSel.has(d))?'on':''}">${esc(d)}</button>`).join('');
+  } else chips.innerHTML='';
+}
+$('dextog').addEventListener('click',async e=>{ const b=e.target.closest('button'); if(!b)return;
+  dexView=b.dataset.x; settings.dexView=dexView; await Store.set(S_KEY,settings);
+  _minerCache={key:null,res:null,deep:null};             // trade universe changed → mined patterns stale
+  if(allTrades.length||openPositions.length||spotHoldings.length)render(); });
+$('dexchips').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
+  const d=b.dataset.c, dexes=knownDexes();
+  if(!dexSel.size)dexes.forEach(x=>dexSel.add(x));       // "all on" is the implicit default; first click narrows
+  dexSel.has(d)?dexSel.delete(d):dexSel.add(d);
+  if(dexSel.size===dexes.length||!dexSel.size)dexSel.clear();
+  _minerCache={key:null,res:null,deep:null};
+  if(allTrades.length||openPositions.length||spotHoldings.length)render(); });
 ['fWallet','fCoin','fSide','fOut','fTag'].forEach(id=>$(id).addEventListener('change',renderTable));
 ['fFrom','fTo','fRating','fFlag'].forEach(id=>$(id).addEventListener('change',renderTable));
 $('fSearch').addEventListener('input',renderTable);
@@ -4544,9 +4591,9 @@ $('modalLoad').onclick=async()=>{
     if(data.journal||data.wallets||data.settings){ // full backup
       if(data.journal)journal=data.journal;
       if(Array.isArray(data.wallets))settings.wallets=data.wallets;
-      if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault; if(data.settings.view)settings.view=data.settings.view; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
+      if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault; if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
       await Store.set(J_KEY,journal); await Store.set(S_KEY,settings);
-      view=settings.view||view; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
+      view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
       document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
       renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
       setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries. Hit Load all to refresh trades.'); return;
@@ -5290,7 +5337,7 @@ function nfLeaderboardHtml(closed){
     await Store.set(S_KEY,settings);
   }
   if(!Array.isArray(settings.wallets))settings.wallets=[];
-  view=settings.view||'perp';
+  view=settings.view||'perp'; dexView=settings.dexView||'all';
   document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
   settings.rBasis=settings.rBasis||'avgloss';
   $('rBasis').value=settings.rBasis;
