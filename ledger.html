@@ -551,6 +551,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <div class="card"><h3 data-tip="Net PnL by calendar month (last 12 with activity). The zoomed-out view of consistency: how many months are green, and how lumpy the good ones are.">Net PnL by month</h3><div class="chart-box"><canvas id="byMonth"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL summed by weekday the trade closed. Reveals which days you trade well or poorly.">Net PnL by day of week</h3><div class="chart-box"><canvas id="byDow"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL summed by hour of day (your local time) the trade closed. Surfaces your best and worst trading hours.">Net PnL by hour (local)</h3><div class="chart-box"><canvas id="byHour"></canvas></div></div>
+      <div class="card"><h3 data-tip="Net PnL grouped by market session, bucketed by the local-clock hour the trade closed: Asia 21–05, London 05–10, London/NY overlap 10–13, NY 13–18, late NY 18–21. Overlap is split out since perp volume concentrates there.">Net PnL by session</h3><div class="chart-box"><canvas id="bySession"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL split by trade direction. In Combined view, spot appears as its own bar.">Long vs short</h3><div class="chart-box"><canvas id="bySide"></canvas></div></div>
       <div class="card"><h3 data-tip="Count of winning, losing, and break-even trades.">Win / loss</h3><div class="chart-box"><canvas id="dist"></canvas></div></div>
       <div class="card"><h3 data-tip="How many trades fell into each R-multiple range. A right-shifted shape means your winners are large relative to your risk.">R-multiple distribution</h3><div class="chart-box"><canvas id="rdist"></canvas><div id="rdistEmpty" class="chart-empty hide">Set a risk-per-trade above (or per trade in the journal) to unlock R-multiples.</div></div></div>
@@ -1888,6 +1889,11 @@ function renderCharts(closed, allv){
   charts.dow=bar('byDow',DOW,dow);
   const hrs=Array(24).fill(0); allv.forEach(t=>hrs[tzHour(t.closeTime)]+=t.net);
   charts.hour=bar('byHour',hrs.map((_,i)=>i),hrs,{tip:{callbacks:{title:c=>c[0].label+':00',label:c=>' '+fmtUsd(c.parsed.y)}}});
+  const SESS=[['Asia',21,5],['London',5,10],['Overlap',10,13],['NY',13,18],['Late NY',18,21]];
+  const sessIdx=h=>SESS.findIndex(([,a,b])=>a<b?(h>=a&&h<b):(h>=a||h<b));
+  const sess=Array(SESS.length).fill(0); allv.forEach(t=>sess[sessIdx(tzHour(t.closeTime))]+=t.net);
+  charts.sess=bar('bySession',SESS.map(([n,a,b])=>[n,String(a).padStart(2,'0')+'–'+String(b).padStart(2,'0')]),sess,
+    {ds:{maxBarThickness:60},x:{ticks:{maxRotation:0,autoSkip:false}}});
   const sides={}; allv.forEach(t=>sides[t.dir]=(sides[t.dir]||0)+t.net);
   const sideLabels=['Long','Short','Spot'].filter(k=>k in sides);
   charts.side=bar('bySide',sideLabels,sideLabels.map(k=>sides[k]),{ds:{barThickness:60}});
