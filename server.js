@@ -89,6 +89,7 @@ const ENGINE_FNS = [
   '_srand', '_hashSeed', 'bootstrapMeanCI', 'mcMaxDD', 'projBaseline', 'projectForward',
   'projMilestones', 'currentDD', 'underwaterStats', 'fwdMaxDD', 'kellyFromTrades',
   'openRiskModel', 'whatIfStats', 'whatIfModel', 'walkForward', 'riskConcentration',
+  'cusumDrift', 'decayAssess',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
   'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio',
 ];

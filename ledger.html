@@ -1468,6 +1468,46 @@ function edgeSignificance(nets){ const m=_avg(nets),sd=_std(nets),N=nets.length;
   const d=sd>0?m/sd:null; const needN=(d&&d>0)?Math.ceil((1.645/d)**2):null;
   return {t,p,needN,d}; }
 
+/* ============================ edge decay ============================ */
+// One-sided CUSUM on the sign-adjusted deviation of forward per-trade results from the
+// discovery expectancy. Standardized by the forward sample sd (fallback |refExp|), drift
+// allowance k=0.5, trip threshold h=4 — catches slow decay a point comparison misses.
+// Pure given _std. sign=+1 tracks a positive edge fading; sign=-1 tracks a leak healing.
+function cusumDrift(nets, refExp, sign){
+  sign = sign>=0 ? 1 : -1;
+  const sd = _std(nets) || Math.abs(refExp) || 1;
+  let c=0, max=0, trip=false; const series=[];
+  for(const x of nets){ const z=(sign*(refExp-x))/sd; c=Math.max(0,c+z-0.5); series.push(c); if(c>max)max=c; if(c>=4)trip=true; }
+  return {stat:c, max, trip, series};
+}
+// Three-state decay verdict for a pinned pattern, scored on forward-only trades (closed
+// after pinnedAt — the caller guarantees that filter). Pure given _avg/_std/cusumDrift.
+// disc={exp,n,ci:[lo,hi]|null}. Direction-aware: a pinned leak (exp<0) "holds" by staying
+// negative, so everything is judged in sign-adjusted units. Detectors:
+//   band  — trailing-window rolling mean vs the lower edge of the discovery CI (or half
+//           the discovered edge when the pin predates CI capture); trips after breachK
+//           consecutive breaches ending at the latest trade, so recovery heals it.
+//   cusum — cumulative drift below discovery expectancy (see cusumDrift).
+// dead requires both detectors, or an outright adverse forward expectancy with n>=15.
+function decayAssess(fwdNets, disc, opts){
+  opts=opts||{};
+  const minN=opts.minN||8, W=opts.window||20, K=opts.breachK||4;
+  const n=fwdNets.length, sign=(disc.exp<0)?-1:1;
+  const roll=[]; for(let i=0;i<n;i++) roll.push(_avg(fwdNets.slice(Math.max(0,i-W+1),i+1)));
+  const lo=(disc.ci && isFinite(disc.ci[0]) && isFinite(disc.ci[1]))
+    ? (sign>0?disc.ci[0]:-disc.ci[1])
+    : Math.abs(disc.exp)*0.5;
+  const bandLo=sign>0?lo:-lo;
+  if(n<minN) return {status:'collecting', n, fwdExp:n?_avg(fwdNets):null, roll, bandLo, trailing:0, cusum:null};
+  const fwdExp=_avg(fwdNets);
+  let trailing=0; for(let i=n-1;i>=minN-1;i--){ if(sign*roll[i]<lo)trailing++; else break; }
+  const cusum=cusumDrift(fwdNets, disc.exp, sign);
+  const bandTrip=trailing>=K, adverse=sign*fwdExp<=0;
+  const status=(bandTrip&&cusum.trip)||(adverse&&n>=15) ? 'dead'
+    : (bandTrip||cusum.trip||sign*fwdExp<lo) ? 'degrading' : 'healthy';
+  return {status, n, fwdExp, roll, bandLo, trailing, cusum:{stat:cusum.stat,max:cusum.max,trip:cusum.trip}};
+}
+
 /* ============================ pattern miner ============================ */
 // Mines single conditions AND pairwise interactions over trade features (+journal metadata),
 // tests each with a permutation test, controls false discoveries with Benjamini–Hochberg (FDR 10%),
@@ -2405,17 +2445,33 @@ async function addPin(v,basis,famParams){
   const pins=pinsList();
   if(pins.some(p=>p.pid===v.pid&&p.basis===basis))return false;
   pins.push({pid:v.pid,name:v.name,basis,params:famParams||{},pinnedAt:Date.now(),
-    disc:{exp:v.exp,n:v.n,uplift:v.uplift}});
+    disc:{exp:v.exp,n:v.n,uplift:v.uplift,ci:(v.ci&&isFinite(v.ci[0])&&isFinite(v.ci[1]))?[v.ci[0],v.ci[1]]:null}});
   settings.pins=pins; await Store.set(S_KEY,settings); return true;
+}
+// Tiny inline SVG sparkline of the forward rolling expectancy vs the discovery band floor.
+// No Chart.js instance — these rows re-render often and must not leak chart lifecycles.
+function decaySparkSvg(roll, bandLo, healthy){
+  if(!roll||roll.length<2)return '';
+  const W=220,H=26,P=2;
+  const vals=roll.concat([bandLo]).filter(v=>isFinite(v));
+  let mn=Math.min(...vals), mx=Math.max(...vals);
+  if(mx-mn<1e-9){mx+=1;mn-=1;}
+  const pad=(mx-mn)*0.12; mn-=pad; mx+=pad;
+  const X=i=>P+(W-2*P)*i/(roll.length-1), Y=v=>H-P-(H-2*P)*(v-mn)/(mx-mn);
+  const pts=roll.map((v,i)=>X(i).toFixed(1)+','+Y(v).toFixed(1)).join(' ');
+  const by=Y(bandLo).toFixed(1);
+  return '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" style="display:block;margin-top:5px" aria-hidden="true">'
+    +'<line x1="'+P+'" y1="'+by+'" x2="'+(W-P)+'" y2="'+by+'" stroke="var(--faint)" stroke-width="1" stroke-dasharray="3,3"/>'
+    +'<polyline points="'+pts+'" fill="none" stroke="'+(healthy?'var(--muted)':'var(--lbl)')+'" stroke-width="1.4"/></svg>';
 }
 function trackedSectionHtml(closed){
   const pins=pinsList(); if(!pins.length)return '';
   const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   const ST=tradeStates(chron);
-  const rows=pins.map((pin,i)=>{
+  const rowOf=(pin,i)=>{
     const pred=resolvePinPred(pin,chron,ST);
     const fA=pin.basis==='pct'?(x=>(x>=0?'+':'')+x.toFixed(2)+'%'):(x=>(x>=0?'+':'')+fmtUsd(x));
-    let body,badge;
+    let body,badge,spark='',extraBtn='';
     if(!pred){ body='condition can\u2019t be resolved on the current data'; badge='<span class="sr-note">unresolved</span>'; }
     else{
       const fwd=chron.filter(t=>t.closeTime>pin.pinnedAt&&pred(t)&&(pin.basis!=='pct'||retPct(t)!==null));
@@ -2428,11 +2484,26 @@ function trackedSectionHtml(closed){
         const strong=same&&Math.abs(fe)>=Math.abs(pin.disc.exp)*0.5;
         badge=strong?'<span class="badge ok">holding forward</span>':same?'<span class="badge mid">weakening</span>':'<span class="badge no">not holding</span>';
         body=`<b>${n}</b> forward trades at <b>${fA(fe)}</b>/trade, vs <b>${fA(pin.disc.exp)}</b>/trade when discovered (${pin.disc.n} trades)`;
+        // decay layer: rolling-band + CUSUM verdict on the same forward trades
+        const dz=decayAssess(fwd.map(Vv), pin.disc);
+        if(dz.status!=='collecting'){
+          const dTip={healthy:'Rolling forward expectancy sits inside the discovery band and cumulative drift (CUSUM) is quiet \u2014 the pinned edge is behaving as discovered.',
+            degrading:'Either the trailing rolling expectancy has slipped below the discovery band floor for '+dz.trailing+' straight trades, or CUSUM drift vs the discovered per-trade edge has tripped (stat '+dz.cusum.stat.toFixed(2)+', trip at 4). One detector alone \u2014 watch, size down, or re-test.',
+            dead:'Both the rolling band and CUSUM drift have tripped (or the forward edge outright flipped over \u226515 trades). The pinned hypothesis is not paying anymore \u2014 archive it or re-run the miner on recent data.'}[dz.status];
+          badge+=' <span class="badge '+(dz.status==='healthy'?'ok':dz.status==='degrading'?'mid':'no')+'" data-tip="'+dTip+'">'+dz.status+'</span>';
+          body+=` \u00b7 CUSUM ${dz.cusum.stat.toFixed(2)}${dz.trailing?` \u00b7 ${dz.trailing} below band`:''}`;
+          spark=decaySparkSvg(dz.roll, dz.bandLo, dz.status==='healthy');
+          if(dz.status==='dead')extraBtn=`<button class="btn ghost pin-arch" data-pi="${i}" style="font-size:10px;padding:1px 7px;margin-left:6px" data-tip="Keeps the pin and its history, but moves it out of the active list. Nothing is deleted.">archive</button>`;
+        }
       }
     }
-    return `<div class="state-row"><div class="sr-top"><span class="sr-name">${esc(pin.name)} <span style="color:var(--faint);font-size:10.5px">judged in ${pin.basis==='pct'?'%':'$'}</span></span><span style="white-space:nowrap">${badge} <button class="btn ghost unpin" data-pi="${i}" style="font-size:10px;padding:1px 7px;margin-left:6px">unpin</button></span></div><div class="sr-sub">pinned ${fmtDate(pin.pinnedAt)} \u00b7 ${body}</div></div>`;
-  }).join('');
-  return `<div class="diag-section"><div class="diag-card" id="trackedCard"><h3 data-tip="Patterns you pinned from the miner, re-measured on ONLY the trades closed after you pinned them \u2014 a rolling out-of-sample test. Thresholds (size quartiles, hold cutoffs, MAE bands) are frozen at pin time so you keep testing the exact hypothesis you pinned. \u2018Holding\u2019 = same direction and at least half the discovered edge; verdicts start at 8 forward trades and sharpen as more arrive.">Tracked patterns \u2014 forward test</h3>${rows}</div></div>`;
+    if(pin.archived)extraBtn=`<button class="btn ghost pin-arch" data-pi="${i}" style="font-size:10px;padding:1px 7px;margin-left:6px">restore</button>`;
+    return `<div class="state-row"${pin.archived?' style="opacity:.55"':''}><div class="sr-top"><span class="sr-name">${esc(pin.name)} <span style="color:var(--faint);font-size:10.5px">judged in ${pin.basis==='pct'?'%':'$'}</span></span><span style="white-space:nowrap">${badge}${extraBtn} <button class="btn ghost unpin" data-pi="${i}" style="font-size:10px;padding:1px 7px;margin-left:6px">unpin</button></span></div><div class="sr-sub">pinned ${fmtDate(pin.pinnedAt)} \u00b7 ${body}</div>${spark}</div>`;
+  };
+  const rows=pins.map((pin,i)=>pin.archived?'':rowOf(pin,i)).join('');
+  const archRows=pins.map((pin,i)=>pin.archived?rowOf(pin,i):'').join('');
+  const archHtml=archRows?`<h3 style="margin-top:14px" data-tip="Pins archived after going dead. Kept for the audit trail; restore to resume forward scoring in the active list.">Archived patterns</h3>${archRows}`:'';
+  return `<div class="diag-section"><div class="diag-card" id="trackedCard"><h3 data-tip="Patterns you pinned from the miner, re-measured on ONLY the trades closed after you pinned them \u2014 a rolling out-of-sample test. Thresholds (size quartiles, hold cutoffs, MAE bands) are frozen at pin time so you keep testing the exact hypothesis you pinned. \u2018Holding\u2019 = same direction and at least half the discovered edge; verdicts start at 8 forward trades and sharpen as more arrive. The second badge is the decay verdict: rolling forward expectancy vs the frozen discovery confidence band, plus a CUSUM drift statistic \u2014 healthy / degrading / dead.">Tracked patterns \u2014 forward test</h3>${rows}${archHtml}</div></div>`;
 }
 function renderDiagnostic(closed, allv){
   destroyDiagCharts();
@@ -2757,6 +2828,11 @@ function renderDiagnostic(closed, allv){
   document.querySelectorAll('#trackedCard .unpin').forEach(b=>{ b.onclick=async()=>{
     const i=+b.dataset.pi; const pins=Array.isArray(settings.pins)?settings.pins:[];
     pins.splice(i,1); settings.pins=pins; await Store.set(S_KEY,settings);
+    renderDiagnostic(periodTrades(),periodTradesAll()); }; });
+  document.querySelectorAll('#trackedCard .pin-arch').forEach(b=>{ b.onclick=async()=>{
+    const i=+b.dataset.pi; const pins=Array.isArray(settings.pins)?settings.pins:[];
+    if(pins[i])pins[i].archived=!pins[i].archived;
+    settings.pins=pins; await Store.set(S_KEY,settings);
     renderDiagnostic(periodTrades(),periodTradesAll()); }; });
   const runBtn=$('runMiner');
   const repBtn=$('exportReport');
