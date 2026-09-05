@@ -499,7 +499,7 @@ function createApp(opts) {
       entryDrift: t.entryDrift, pnl: t.pnl, fees: t.fees, funding: t.funding || 0,
       net: t.net, r: E.rFor(t), retPct: E.retPct(t),
       fills: t.fills, makerFills: t.makerFills, takerFills: t.takerFills,
-      liquidated: !!t.liquidated,
+      liquidated: !!t.liquidated, partialHistory: !!t.partialHistory,
       journal: j,
       ...(withEvents ? { events: t.events || [] } : {}),
     };

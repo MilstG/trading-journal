@@ -551,7 +551,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <div class="card"><h3 data-tip="Net PnL by calendar month (last 12 with activity). The zoomed-out view of consistency: how many months are green, and how lumpy the good ones are.">Net PnL by month</h3><div class="chart-box"><canvas id="byMonth"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL summed by weekday the trade closed. Reveals which days you trade well or poorly.">Net PnL by day of week</h3><div class="chart-box"><canvas id="byDow"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL summed by hour of day (your local time) the trade closed. Surfaces your best and worst trading hours.">Net PnL by hour (local)</h3><div class="chart-box"><canvas id="byHour"></canvas></div></div>
-      <div class="card"><h3 data-tip="Net PnL grouped by market session, bucketed by the local-clock hour the trade closed: Asia 21–05, London 05–10, London/NY overlap 10–13, NY 13–18, late NY 18–21. Overlap is split out since perp volume concentrates there.">Net PnL by session</h3><div class="chart-box"><canvas id="bySession"></canvas></div></div>
+      <div class="card"><h3 data-tip="Net PnL grouped by market session, bucketed by the UTC hour the trade closed (sessions are market-clock concepts, so the timezone toggle does not move them): Asia 00–08, London 08–13, London/NY overlap 13–16, NY 16–21, late NY 21–24 UTC. Overlap is split out since perp volume concentrates there.">Net PnL by session</h3><div class="chart-box"><canvas id="bySession"></canvas></div></div>
       <div class="card"><h3 data-tip="Net PnL split by trade direction. In Combined view, spot appears as its own bar.">Long vs short</h3><div class="chart-box"><canvas id="bySide"></canvas></div></div>
       <div class="card"><h3 data-tip="Count of winning, losing, and break-even trades.">Win / loss</h3><div class="chart-box"><canvas id="dist"></canvas></div></div>
       <div class="card"><h3 data-tip="How many trades fell into each R-multiple range. A right-shifted shape means your winners are large relative to your risk.">R-multiple distribution</h3><div class="chart-box"><canvas id="rdist"></canvas><div id="rdistEmpty" class="chart-empty hide">Set a risk-per-trade above (or per trade in the journal) to unlock R-multiples.</div></div></div>
@@ -734,13 +734,14 @@ async function unpackFillCache(c){
   return null;
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
-  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules}, journal}; }
+  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,
+    pins:settings.pins}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object') journal=data.journal;
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -776,6 +777,10 @@ let _srvTimer=null;
 // note typed on this device isn't silently replaced by another device's older state.
 const _dirtyJ=new Set();
 let _srvWriting=false,_srvAgain=false;
+// Journal edit counter — part of the miner cache key, since tags/setups/mistakes/ratings
+// change miner inputs without changing the trade count.
+let _jrev=0;
+function markJEdit(id){ _dirtyJ.add(id); _jrev++; }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); }
 function scheduleServerWrite(){ if(!SRV.enabled||_applying)return; clearTimeout(_srvTimer); _srvTimer=setTimeout(writeServer,800); }
 function srvFetch(p,o){ o=o||{}; o.headers=Object.assign({},o.headers);
@@ -850,7 +855,7 @@ async function toggleSnapHistory(){
     const j=await r.json(); const snaps=j.snapshots||[];
     if(!snaps.length){ p.innerHTML='<span>No snapshots yet \u2014 one is written per day on the first save of that day.</span>'; return; }
     p.innerHTML='<span data-tip="One snapshot per day (UTC), kept for 14 days, written automatically on the first save of each day. Restoring loads that day\u2019s data and saves it as the newest revision \u2014 nothing is deleted, and today\u2019s pre-restore state is itself in today\u2019s snapshot.">Server snapshots \u2014 restore a previous day:</span> '+
-      snaps.map(s=>`<button class="df-btn snapRestore" data-d="${s.date}">${s.date}${s.rev!=null?' \u00b7 rev '+s.rev:''} \u00b7 ${(s.bytes/1024).toFixed(0)}kB</button>`).join(' ');
+      snaps.map(s=>`<button class="df-btn snapRestore" data-d="${esc(s.date)}">${esc(s.date)}${s.rev!=null?' \u00b7 rev '+esc(s.rev):''} \u00b7 ${(s.bytes/1024).toFixed(0)}kB</button>`).join(' '); // server JSON is still an external input \u2014 escape like every other sink
     p.querySelectorAll('.snapRestore').forEach(b=>{ b.onclick=async()=>{
       if(!confirm('Restore the '+b.dataset.d+' snapshot? Your current data will be replaced (it stays recoverable from today\u2019s snapshot).'))return;
       b.disabled=true; b.textContent='restoring\u2026';
@@ -1122,6 +1127,10 @@ function reconstructTrades(fills, addr, market){
     } else if(Math.abs(after)>Math.abs(before)+EPS){ t.openSz+=sz; t.openNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(after)); t.events.push([f.time,px,sz,1]); }
     else { t.closeSz+=sz; t.closeNotional+=sz*px; t.maxSize=Math.max(t.maxSize,Math.abs(before)); t.events.push([f.time,px,sz,-1]); }
     if(Math.abs(after)<EPS||flipped){
+      // openSz===0: the entry predates the observed fill history (page cap / cache boundary).
+      // The exit-price fallback keeps PnL right (closedPnl comes from the API), but
+      // entry-derived stats would be fiction — flag it; retPct/entryDrift go null below.
+      if(!(t.openSz>0)) t.partialHistory=true;
       t.avgEntry=t.openSz>0?t.openNotional/t.openSz:px;
       t.avgExit=t.closeSz>0?t.closeNotional/t.closeSz:px;
       t.durationMs=t.closeTime-t.openTime;
@@ -1130,11 +1139,11 @@ function reconstructTrades(fills, addr, market){
         nt.maxSize=Math.abs(after); nt.fills++; tallyFill(nt,f,0); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
     }
   }
-  for(const c in open){ const t=open[c]; t.isOpen=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
+  for(const c in open){ const t=open[c]; t.isOpen=true; if(!(t.openSz>0))t.partialHistory=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
     t.avgExit=null; t.durationMs=Date.now()-t.openTime; trades.push(t); }
   trades.forEach(t=>{ t.market=market; if(market==='spot')t.dir='Spot';
     // entry drift: how far your size-weighted entry landed from your first fill, in the adverse direction
-    t.entryDrift=(t.firstEntryPx>0&&t.avgEntry>0)
+    t.entryDrift=(!t.partialHistory&&t.firstEntryPx>0&&t.avgEntry>0)
       ? (t.dir==='Short' ? t.firstEntryPx/t.avgEntry-1 : t.avgEntry/t.firstEntryPx-1) : null;
     t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+t.openTime; });
   return trades.sort((a,b)=>b.openTime-a.openTime);
@@ -1172,6 +1181,10 @@ function setStatus(m,busy){ const s=$('status'); s.className='';
   if(busy){ const d=document.createElement('span'); d.className='dot'; s.prepend(d); }
   clearTimeout(_stTimer); if(!busy&&m) _stTimer=setTimeout(()=>{ if(s.className==='')s.textContent=''; },8000); }
 function setErr(m){ const s=$('status'); s.className='err'; s.textContent=m; }
+// One download path for every export. The object URL is revoked after a grace period —
+// before this, every export leaked its blob for the life of the tab.
+function dlBlob(blob,name){ const a=document.createElement('a'); const u=URL.createObjectURL(blob);
+  a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),10000); }
 
 /* ============================ format ============================ */
 const fmtUsd=(n,dp=2)=>{ if(n===null||n===undefined||isNaN(n))return '—'; const s=n<0?'-':'';
@@ -1208,7 +1221,7 @@ function riskFor(t){ const j=journal[t.id]||{}; const r=parseFloat(j.risk);
 function rFor(t){ const r=riskFor(t); return r?t.net/r:null; }
 const _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
 const _std=a=>{ if(a.length<2)return 0; const m=_avg(a); return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1)); };
-function retPct(t){ const notional=t.maxSize*t.avgEntry; return notional>0? t.net/notional*100 : null; }
+function retPct(t){ if(t.partialHistory)return null; const notional=t.maxSize*t.avgEntry; return notional>0? t.net/notional*100 : null; } // partial-history trades have a fabricated entry — no honest % exists
 function dailyPnl(trades){ const m={}; trades.forEach(t=>{const k=dayKey(t.closeTime); m[k]=(m[k]||0)+t.net;}); return m; }
 function dailySeriesCalendar(trades){
   if(!trades.length)return [];
@@ -1237,6 +1250,30 @@ function _erf(x){ const t=1/(1+0.3275911*Math.abs(x));
   const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);
   return x>=0?y:-y; }
 const _normCdf=z=>0.5*(1+_erf(z/Math.SQRT2));
+// Student-t CDF for the small-sample significance tests. The normal approximation is
+// anti-conservative at exactly the n=5-15 subgroup sizes the FDR gates police (a |t|=2.1
+// at df=9 is p=.065, not the .036 the normal claims). Lanczos log-gamma + regularized
+// incomplete beta (Lentz continued fraction), accurate to ~1e-10 across the df range here.
+function _lgamma(z){ const g=[676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+  if(z<0.5)return Math.log(Math.PI/Math.sin(Math.PI*z))-_lgamma(1-z);
+  z-=1; let x=0.99999999999980993; for(let i=0;i<8;i++)x+=g[i]/(z+i+1);
+  const t=z+7.5; return 0.5*Math.log(2*Math.PI)+(z+0.5)*Math.log(t)-t+Math.log(x); }
+function _ibetaReg(x,a,b){
+  if(x<=0)return 0; if(x>=1)return 1;
+  if(x>(a+1)/(a+b+2))return 1-_ibetaReg(1-x,b,a); // symmetry: keep the fraction convergent
+  const front=Math.exp(a*Math.log(x)+b*Math.log(1-x)-(_lgamma(a)+_lgamma(b)-_lgamma(a+b)))/a;
+  let f=1,c=1,d=0;
+  for(let i=0;i<=300;i++){ const m=i>>1; let num;
+    if(i===0)num=1;
+    else if(i%2===0)num=m*(b-m)*x/((a+2*m-1)*(a+2*m));
+    else num=-(a+m)*(a+b+m)*x/((a+2*m)*(a+2*m+1));
+    d=1+num*d; if(Math.abs(d)<1e-30)d=1e-30; d=1/d;
+    c=1+num/c; if(Math.abs(c)<1e-30)c=1e-30;
+    const cd=c*d; f*=cd; if(Math.abs(1-cd)<1e-10)break; }
+  return front*(f-1); }
+function _tCdf(t,df){ if(!isFinite(t))return t>0?1:0; if(!(df>0)||!isFinite(df))return _normCdf(t);
+  const p=1-0.5*_ibetaReg(df/(df+t*t),df/2,0.5);
+  return t>=0?p:1-p; }
 /* seedable PRNG (mulberry32). All stochastic analytics (bootstraps, permutation tests, MC
    shuffles) draw from _rng, seeded deterministically from the data selection — so the same
    trades always produce identical p-values/CIs run-to-run, and the Node harness can pin
@@ -1491,7 +1528,10 @@ function spotFifoLots(fills, nameByCoin){
     const baseFee=(f.feeToken&&f.feeToken!=='USDC');
     const L=lots[s]=lots[s]||[];
     if(f.side==='B'){
-      const recv=baseFee?Math.max(q-fee,EPS):q;
+      const recv=baseFee?q-fee:q;
+      // fee >= quantity (dust/malformed fill): received ~nothing — skipping is honest,
+      // clamping to EPS manufactured a near-infinite unit cost in the tax export
+      if(!(recv>EPS))continue;
       const basis=q*px + (baseFee?0:fee);
       L.push({qty:recv, unitCost:basis/recv, time:f.time});
     } else {
@@ -1520,7 +1560,7 @@ function spotFifoLots(fills, nameByCoin){
   return {rows, open, byYear, unknownQty};
 }
 function edgeSignificance(nets){ const m=_avg(nets),sd=_std(nets),N=nets.length;
-  const t=(sd>0&&N>1)?m/(sd/Math.sqrt(N)):null; const p=t!=null?1-_normCdf(t):null;
+  const t=(sd>0&&N>1)?m/(sd/Math.sqrt(N)):null; const p=t!=null?1-_tCdf(t,N-1):null;
   const d=sd>0?m/sd:null; const needN=(d&&d>0)?Math.ceil((1.645/d)**2):null;
   return {t,p,needN,d}; }
 
@@ -1689,7 +1729,10 @@ function mineInsights(closed,V){ V=V||(t=>t.net);
   const drop=new Set();
   for(let i=0;i<validated.length;i++)for(let j=i+1;j<validated.length;j++){
     const a=validated[i],b=validated[j];
-    if(a.fams.length===1&&b.fams.length===1&&a.fams[0]===b.fams[0]&&a.n+b.n===Nd&&Math.abs(a.uplift+b.uplift)<1e-6)
+    if(a.fams.length===1&&b.fams.length===1&&a.fams[0]===b.fams[0]&&a.n+b.n===Nd
+       // relative tolerance: uplifts are dollar sums, and float accumulation order makes exact
+       // complements miss an absolute 1e-6 on large accounts — letting both eat result slots
+       &&Math.abs(a.uplift+b.uplift)<1e-6*Math.max(1,Math.abs(a.uplift),Math.abs(b.uplift)))
       drop.add(Math.abs(a.exp-mAll)>=Math.abs(b.exp-mAll)?b.name:a.name); }
   validated=validated.filter(v=>!drop.has(v.name));
   validated.sort((a,b)=>Math.abs(b.uplift)-Math.abs(a.uplift));
@@ -1985,9 +2028,12 @@ function renderCharts(closed, allv){
   charts.dow=bar('byDow',DOW,dow);
   const hrs=Array(24).fill(0); allv.forEach(t=>hrs[tzHour(t.closeTime)]+=t.net);
   charts.hour=bar('byHour',hrs.map((_,i)=>i),hrs,{tip:{callbacks:{title:c=>c[0].label+':00',label:c=>' '+fmtUsd(c.parsed.y)}}});
-  const SESS=[['Asia',21,5],['London',5,10],['Overlap',10,13],['NY',13,18],['Late NY',18,21]];
+  // Sessions are market-clock concepts, pinned to UTC regardless of the tz toggle —
+  // bucketing them by the toggled hour mislabeled every session for non-UTC viewers.
+  const SESS=[['Asia',0,8],['London',8,13],['Overlap',13,16],['NY',16,21],['Late NY',21,24]];
+  const utcH=ms=>new Date(ms).getUTCHours();
   const sessIdx=h=>SESS.findIndex(([,a,b])=>a<b?(h>=a&&h<b):(h>=a||h<b));
-  const sess=Array(SESS.length).fill(0); allv.forEach(t=>sess[sessIdx(tzHour(t.closeTime))]+=t.net);
+  const sess=Array(SESS.length).fill(0); allv.forEach(t=>sess[sessIdx(utcH(t.closeTime))]+=t.net);
   charts.sess=bar('bySession',SESS.map(([n,a,b])=>[n,String(a).padStart(2,'0')+'–'+String(b).padStart(2,'0')]),sess,
     {ds:{maxBarThickness:60},x:{ticks:{maxRotation:0,autoSkip:false}}});
   const sides={}; allv.forEach(t=>sides[t.dir]=(sides[t.dir]||0)+t.net);
@@ -2186,10 +2232,11 @@ function diagScan(closed){
   // Significance: one-sample t of each bucket's mean net vs 0 (two-sided), then a
   // Benjamini-Hochberg FDR gate across every bucket tested here — the same multiple-comparison
   // discipline the miner uses, so a bucket that just sorts high on expectancy*sqrt(n) is no
-  // longer presented as an "edge" until it clears the noise floor. p from a normal approx of
-  // the t (fine at these n and avoids a t-CDF); sig=false where n<2 or sd==0.
+  // longer presented as an "edge" until it clears the noise floor. Student-t at df=n-1
+  // (buckets go as small as n=5, where the normal approximation is anti-conservative);
+  // sig=false where n<2 or sd==0.
   all.forEach(b=>{ if(b.n>1 && b.sd>0){ b.t=b.expectancy/(b.sd/Math.sqrt(b.n));
-      b.p=2*(1-_normCdf(Math.abs(b.t))); } else { b.t=null; b.p=1; } });
+      b.p=2*(1-_tCdf(Math.abs(b.t),b.n-1)); } else { b.t=null; b.p=1; } });
   const Q=0.10, M=all.length;
   if(M){ const idx=all.map((b,i)=>i).sort((i,j)=>all[i].p-all[j].p);
     let crit=-1; for(let r=0;r<M;r++){ if(all[idx[r]].p<=(r+1)/M*Q)crit=r; }
@@ -2408,8 +2455,7 @@ function exportReport(){
     +'<style>'+css+'</style></head><body class="'+esc(document.body.className)+'" style="padding:28px;max-width:1100px;margin:0 auto">'
     +header+clone.innerHTML+'</body></html>';
   const blob=new Blob([doc],{type:'text/html'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='ledger-report-'+new Date().toISOString().slice(0,10)+'.html'; a.click();
+  dlBlob(blob,'ledger-report-'+new Date().toISOString().slice(0,10)+'.html');
   setStatus('Report exported ('+(blob.size/1024/1024).toFixed(1)+' MB). Run the miner / excursions first if you want them included.');
 }
 /* ============================ what-if counterfactual UI ============================ */
@@ -2952,7 +2998,7 @@ function renderDiagnostic(closed, allv){
   } else if($('diagRoll')){ $('diagRoll').style.display='none'; $('diagRollEmpty').classList.remove('hide'); }
   if(runBtn){
     const basis=settings.anaBasis||'usd';
-    const key=[view,period,customRange.from,customRange.to,closed.length,basis].join('|');
+    const key=[view,period,customRange.from,customRange.to,closed.length,basis,dexView,_jrev].join('|'); // dex filter + journal edits change miner inputs without changing trade count
     const runScan=async()=>{ runBtn.disabled=true; runBtn.textContent='Scanning…';
       const pool = basis==='pct' ? closed.filter(t=>retPct(t)!==null) : closed;
       const seed=_hashSeed('miner|'+key+'|'+pool.length);
@@ -3017,8 +3063,11 @@ function stateAnalysis(closed,V){ V=V||(t=>t.net);
     if(n<10 || n>closed.length-10) return {name,n,skip:true};
     const sub=inS.map(V), rest=closed.filter(t=>!fn(t)).map(V);
     const m=_avg(sub), sd=_std(sub), mr=_avg(rest), sr=_std(rest);
-    const se=Math.sqrt(sd*sd/n + sr*sr/rest.length);
-    const tt=se>0?(m-mr)/se:0, p=2*(1-_normCdf(Math.abs(tt)));
+    const v1=sd*sd/n, v2=sr*sr/rest.length, se=Math.sqrt(v1+v2);
+    // Welch t with Welch-Satterthwaite df — subgroups here go as small as n=10, where the
+    // old normal CDF was anti-conservative in exactly the regime the FDR gate polices
+    const df=se>0?(v1+v2)*(v1+v2)/((v1*v1)/(n-1)+(v2*v2)/(rest.length-1)):1;
+    const tt=se>0?(m-mr)/se:0, p=2*(1-_tCdf(Math.abs(tt),df));
     return {name,n,exp:m,delta:m-mAll,vsRest:m-mr,impact:(m-mAll)*n,p,sig:false};
   });
   // Benjamini–Hochberg across the states actually tested — without it, ~1 in 20 states
@@ -3132,7 +3181,7 @@ function deepScan(closed,V){
 // Everything shipped into the worker is pure modulo the globals in _WORKER_PRELUDE, which are
 // re-sent with each request. If Worker construction or execution fails for any reason, the
 // wrappers fall back to the original synchronous code path — identical results, just blocking.
-const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_wilson,_maxSplitT,retPct,dcoin,dispMarket,
+const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,dcoin,dispMarket,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,minerFams,mineInsights,deepScan});
@@ -3168,8 +3217,25 @@ function computeWorker(){
 function runInWorker(kind,payload,onProgress){
   return new Promise((resolve,reject)=>{ let w;
     try{ w=computeWorker(); }catch(e){ return reject(e); }
-    const id=++_wSeq; _wPending.set(id,{resolve,reject,onProgress});
-    try{ w.postMessage({id,kind,payload}); }catch(e){ _wPending.delete(id); reject(e); } });
+    const id=++_wSeq;
+    // Watchdog: a crashed worker rejects via onerror, but a HUNG one used to leave this
+    // promise pending forever ("Scanning…" with no recovery short of a reload). Progress
+    // messages reset the clock, so long legitimate scans never trip it — only true stalls,
+    // which reject (falling back to the sync path) and rebuild the worker on next use.
+    let timer=null;
+    const arm=()=>{ clearTimeout(timer); timer=setTimeout(()=>{
+      _wPending.delete(id);
+      try{w.terminate();}catch(e){} _worker=null;
+      for(const [,q] of _wPending)q.reject(new Error('worker stalled'));
+      _wPending.clear();
+      reject(new Error('worker stalled (no progress for 120s)'));
+    },120000); };
+    _wPending.set(id,{
+      resolve:v=>{ clearTimeout(timer); resolve(v); },
+      reject:e=>{ clearTimeout(timer); reject(e); },
+      onProgress:(d,t)=>{ arm(); if(onProgress)try{onProgress(d,t);}catch(e){} } });
+    arm();
+    try{ w.postMessage({id,kind,payload}); }catch(e){ clearTimeout(timer); _wPending.delete(id); reject(e); } });
 }
 // journal subset for the pool only — keeps the message small and ships no unrelated entries
 function _journalSubset(trades){ const j={}; for(const t of trades)if(journal[t.id])j[t.id]=journal[t.id]; return j; }
@@ -3299,7 +3365,9 @@ function excSummary(rows){
     return s.length%2?s[m]:(s[m-1]+s[m])/2; };
   const q=(a,p)=>{ if(!a.length)return null; const s=[...a].sort((x,y)=>x-y);
     return s[Math.min(s.length-1,Math.floor(p*s.length))]; };
-  const W=use.filter(r=>r.net>0),L=use.filter(r=>r.net<=0);
+  // isWin/isLoss, not net>0: scratch trades inside the break-even band are neither — counting
+  // them as winners skewed the stop/capture statistics that everything else calls B/E.
+  const W=use.filter(r=>isWin(r.net)),L=use.filter(r=>isLoss(r.net));
   const mfe$=r=>r.mfePct/100*r.notional;
   const capDen=W.reduce((s,r)=>s+mfe$(r),0);
   const capture=capDen>0?W.reduce((s,r)=>s+r.net,0)/capDen:null;
@@ -3496,7 +3564,7 @@ function renderExcResults(c){
 }
 function wireExcursions(closed){
   const box=$('excBox'); if(!box)return;
-  const key=[view,period,customRange.from,customRange.to,closed.length].join('|');
+  const key=[view,period,customRange.from,customRange.to,closed.length,dexView].join('|'); // dex filter can change the universe at identical length
   if(_excCache.key===key&&_excCache.rows){ renderExcResults(_excCache); return; }
   const btn=$('runExc'); if(!btn)return;
   btn.onclick=async()=>{ btn.disabled=true; btn.textContent='Fetching candles…';
@@ -3676,6 +3744,7 @@ async function renderBenchmark(closed){
 
 /* ============================ auto-refresh + automatic MAE/MFE ratchet ============================ */
 let _loading=false,_excBusy=false;
+const _ratchetTried=new Set(); // attempted this session but unmeasurable (no candles / retention) — don't replan + refetch them on every 3-minute auto-refresh
 async function autoRatchet(){
   // silently lock in precise MAE/MFE for recently closed trades after each data load —
   // the ratchet then maintains itself without ever pressing the excursions button
@@ -3685,10 +3754,12 @@ async function autoRatchet(){
     let persisted=null; try{ persisted=await idbGet('excRows'); }catch(e){}
     const have=(persisted&&persisted.v===1&&persisted.rows)||{};
     const recent=allTrades.filter(t=>!t.isOpen&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0
-      &&t.closeTime>now-21*86400e3&&!have[t.id]);
+      &&t.closeTime>now-21*86400e3&&!have[t.id]&&!_ratchetTried.has(t.id));
     if(!recent.length)return;
     setStatus('Locking in MAE/MFE for '+recent.length+' recent trade'+(recent.length===1?'':'s')+'…',true);
     const out=await runExcursions(recent,[]);
+    const got=new Set(out.rows.map(r=>r.id));
+    for(const t of recent)if(!got.has(t.id))_ratchetTried.add(t.id);
     for(const r of out.rows)_excM[r.id]=r;
     schedulePersist();
     setStatus('MAE/MFE locked in for '+out.rows.length+' recent trade'+(out.rows.length===1?'':'s')+'.');
@@ -3936,7 +4007,12 @@ function guardrailSignals(){
   return out;
 }
 // Kelly-based position sizing suggestion from the current view's stats.
-function sizingFromStats(s){
+// One Kelly, one source: derive the Diagnostic sizing card from the same kellyFromTrades
+// the Projection tab uses. Two parallel implementations (this one used view-stats
+// payoff/winRate) could show a trader two different "suggested" risk numbers.
+function sizingFromStats(s,closed){
+  const kt=closed?kellyFromTrades(closed):null;
+  if(kt&&kt.kelly!=null) return {kelly:kt.kelly, half:kt.kelly/2, payoff:kt.b, winRate:kt.p};
   const kelly=(s.payoff>0&&s.payoff!==Infinity&&s.winRate>0)?(s.winRate-(1-s.winRate)/s.payoff):null;
   return {kelly:kelly!=null?Math.max(0,kelly):null, half:kelly!=null?Math.max(0,kelly)/2:null,
     payoff:s.payoff, winRate:s.winRate};
@@ -3945,7 +4021,7 @@ function sizingFromStats(s){
 function extraDiagHtml(closed,allv,s){
   const mt=makerTakerStats(closed), ex=executionStats(closed), liq=liqStats(closed);
   const dd=drawdownEpisodes(closed), wls=worstLossStreakDepth(closed);
-  const sizing=sizingFromStats(s); const acct=(accountValue||0)+(spotAccountValue||0);
+  const sizing=sizingFromStats(s,closed); const acct=(accountValue||0)+(spotAccountValue||0);
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const bps=x=>x==null?'—':(x*10000).toFixed(1)+' bps';
   const signPct=x=>x==null?'—':((x>=0?'+':'')+(x*100).toFixed(2)+'%');
@@ -4194,7 +4270,7 @@ async function removeAttachment(id,idx){ let arr=(await idbGet('att:'+id))||[]; 
   if(arr.length)await idbSet('att:'+id,arr); else await idbDel('att:'+id); loadAttachments(id); syncAttUp(id); }
 function ensureJ(id){ if(!journal[id])journal[id]={notes:'',tags:[],setup:'',rating:0,mistakes:[],risk:null,plan:null}; return journal[id]; }
 async function saveJournal(id){
-  const j=ensureJ(id); _dirtyJ.add(id);
+  const j=ensureJ(id); markJEdit(id);
   const g=s=>document.querySelector(`[data-j="${s}"][data-id="${id}"]`);
   if(g('notes'))j.notes=g('notes').value;
   if(g('setup'))j.setup=g('setup').value;
@@ -4492,7 +4568,7 @@ async function removeWallet(i){
   if(allTrades.length||openPositions.length||spotHoldings.length){ render(); } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); }
   setStatus('Removed '+labelFor(w)+(settings.wallets.length?'':' · list empty'));
 }
-async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
+async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!opts.auto;
   if(_loading)return; _loading=true; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
   if(!settings.wallets.length){ setErr('Add at least one wallet address first.'); return; }
@@ -4546,19 +4622,28 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
         if(sbal.length)spotAccVals.push(spotVal);
       }catch(e){ failed.push(labelFor(w)); }
     }
+    if(!trades.length && !positions.length && !spotHold.length){
+      // check BEFORE clobbering globals: an auto-refresh where every wallet failed
+      // (offline laptop) must keep the current view instead of blanking the dashboard
+      if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' (failed: '+failed.join(', ')+')':'')+' — keeping the current view.'); return; }
+      allTrades=[]; openPositions=[]; spotHoldings=[];
+      setErr('No activity found'+(failed.length?' · failed: '+failed.join(', '):'')+'.'); return; }
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     fillsTruncated=truncated;
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
-    if(!allTrades.length && !positions.length && !spotHold.length){ setErr('No activity found'+(failed.length?' · failed: '+failed.join(', '):'')+'.'); return; }
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
     const perpN=allTrades.filter(t=>!t.isOpen&&t.market==='perp').length, spotN=allTrades.filter(t=>!t.isOpen&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
     const hipNote=_hip3Notes.length?' · HIP-3 verified live: '+_hip3Notes.splice(0).map(x=>`${x.dex} returns ${x.shape} coin names`).join(', ')+' (normalizer confirmed)':'';
     setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${hipNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
-  }catch(e){ console.error(e); setErr('Couldn\u2019t reach Hyperliquid from the browser ('+e.message+'). Use “Paste data” instead.'); }
+  }catch(e){ console.error(e);
+    // a background refresh failing (offline laptop, transient outage) is not banner-worthy —
+    // it retries in 3 minutes; only a user-initiated load earns the error treatment
+    if(auto) setStatus('Auto-refresh failed ('+e.message+') — retrying on the next cycle.');
+    else setErr('Couldn\u2019t reach Hyperliquid from the browser ('+e.message+'). Use “Paste data” instead.'); }
   finally{ $('loadAll').disabled=false; }
 
   } finally { _loading=false; }
@@ -4712,12 +4797,12 @@ $('tbody').addEventListener('click',e=>{
   const star=e.target.closest('.star'); if(star){ setStar(star); return; }
   const chk=e.target.closest('.chk'); if(chk){ const id=chk.parentElement.dataset.id,m=chk.querySelector('input').dataset.m;
     const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);
-      _dirtyJ.add(id); Store.set(J_KEY,journal); },0); return; } // persist immediately — a toggle is an edit, not a draft
+      markJEdit(id); Store.set(J_KEY,journal); },0); return; } // persist immediately — a toggle is an edit, not a draft
   if(e.target.closest('textarea,input,.rating,.mistakes,.jsave,.attgrid,.attbtn'))return;
   const row=e.target.closest('.trow'); if(row){ const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable(); }
 });
 function setStar(star){ const id=star.parentElement.dataset.id, r=+star.dataset.r; ensureJ(id).rating=r;
-  _dirtyJ.add(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
+  markJEdit(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
   star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); }); }
 // keyboard: expand rows with Enter/Space; set star ratings with Enter/Space/Arrows
 $('tbody').addEventListener('keydown',e=>{
@@ -4774,7 +4859,7 @@ $('exportCsv').onclick=()=>{
       t.wallet?labelFor(t.wallet):''].map(q).join(','));
   }
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-trades-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+  dlBlob(blob,'ledger-trades-'+new Date().toISOString().slice(0,10)+'.csv');
   setStatus('Exported '+rows.length+' trades (current filters) to CSV.');
 };
 /* ============================ tax statement PDF ============================ */
@@ -5035,7 +5120,8 @@ function renderDiagPdfDoc(model){
   // ---- charts ----
   for(const ch of (model.charts||[])){
     const idx=pdf.image(ch.img); if(idx<0)continue;
-    const sz=pdf.imgSize(idx); const w=CW; const h=Math.min(300,w*sz.h/sz.w);
+    const sz=pdf.imgSize(idx); let w=CW, h=w*sz.h/sz.w;
+    if(h>300){ w=w*300/h; h=300; } // clamp height by shrinking BOTH axes — stretching tall charts distorted them
     ensure(h+26);
     pdf.text(Mg,y,ch.title.toUpperCase(),{size:8,bold:true,color:dark}); y-=6;
     pdf.drawImage(idx,Mg,y-h,w,h); y-=h+16;
@@ -5096,8 +5182,7 @@ function exportDiagPdf(){
     view, periodDesc, tz:tzLabel(), stats, charts, recs };
   let pdf; try{ pdf=renderDiagPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the diagnostic PDF ('+e.message+').'); return; }
   const blob=new Blob([pdf.outputBytes()],{type:'application/pdf'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='ledger-diagnostic-'+new Date().toISOString().slice(0,10)+'.pdf'; a.click();
+  dlBlob(blob,'ledger-diagnostic-'+new Date().toISOString().slice(0,10)+'.pdf');
   setStatus('Diagnostic PDF exported ('+(blob.size/1024/1024).toFixed(1)+' MB, '+charts.length+' chart'+(charts.length===1?'':'s')+'). Run the miner / excursions first if you want their charts included.');
 }
 $('exportTaxPdf').onclick=()=>{
@@ -5105,7 +5190,7 @@ $('exportTaxPdf').onclick=()=>{
   if(!model){ setStatus('No closed trades to export.'); return; }
   let doc; try{ doc=renderTaxPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the PDF ('+e.message+').'); return; }
   const blob=new Blob([doc],{type:'application/pdf'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-statement-'+new Date().toISOString().slice(0,10)+'.pdf'; a.click();
+  dlBlob(blob,'ledger-statement-'+new Date().toISOString().slice(0,10)+'.pdf');
   setStatus(`Exported statement PDF: ${model.grand.n} realized trades across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
 };
 $('exportTax').onclick=()=>{
@@ -5124,7 +5209,7 @@ $('exportTax').onclick=()=>{
       t.pnl.toFixed(2),(-t.fees).toFixed(2),(t.funding||0).toFixed(2),t.net.toFixed(2),lbl,addr].map(q).join(','));
     const b=byYear[yr]||(byYear[yr]={n:0,net:0}); b.n++; b.net+=t.net; }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-tax-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+  dlBlob(blob,'ledger-tax-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();
   const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} trade${byYear[y].n===1?'':'s'})`).join(' · ');
   setStatus(`Exported ${rows.length} realized trades → ${summary}. Realized PnL only (no unrealized or transferred cost basis) — not tax advice.`);
@@ -5155,13 +5240,13 @@ $('exportSpotLots').onclick=async()=>{
   }
   if(!totalRows){ setStatus('No spot disposals found in the cached fills. If you have traded spot, hit Load all first (Shift-click for a full re-fetch).'); return; }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-spot-lots-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+  dlBlob(blob,'ledger-spot-lots-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();
   const summary=yrs.map(y=>`${y}: ${byYear[y].n} lot${byYear[y].n===1?'':'s'}, gain ${fmtUsd(byYear[y].gain)}`).join(' \u00b7 ');
   setStatus(`Exported ${totalRows} FIFO lot rows \u2192 ${summary}${unknown?` \u00b7 \u26a0 ${unknown} row${unknown===1?'':'s'} with UNKNOWN basis (tokens acquired off-exchange, zero cost assumed \u2014 your accountant must resolve these)`:''}${openLots?` \u00b7 ${openLots} lot${openLots===1?'':'s'} still open (not in the file)`:''}. FIFO, from cached fills \u2014 not tax advice.`);
 };
 $('exportJ').onclick=()=>{ const blob=new Blob([JSON.stringify(journal,null,2)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='hl-journal-'+new Date().toISOString().slice(0,10)+'.json'; a.click(); };
+  dlBlob(blob,'hl-journal-'+new Date().toISOString().slice(0,10)+'.json'); };
 $('backupAll').onclick=async()=>{
   // Full backup = snapshot (journal + wallets + settings) + per-wallet fill caches.
   // Caches make the backup restorable past the API's 60-page history cap, and are
@@ -5171,7 +5256,7 @@ $('backupAll').onclick=async()=>{
     if(validFillCache(w.address,c)) data.fillCaches[w.address]=c; }catch(e){} }
   try{ const p=await idbGet('excRows'); if(p&&p.v===1&&p.rows)data.excRows=p; }catch(e){}
   const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ledger-backup-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+  dlBlob(blob,'ledger-backup-'+new Date().toISOString().slice(0,10)+'.json');
   const nc=Object.keys(data.fillCaches).length;
   setStatus('Backup exported ('+(blob.size/1024/1024).toFixed(1)+' MB)'+(nc?' incl. fill cache for '+nc+' wallet'+(nc===1?'':'s')+' — restoring it preserves history beyond the 60-page API cap':'')+'.'); };
 $('clearCandles').onclick=async()=>{
@@ -5486,6 +5571,9 @@ function nfLeaderboardHtml(closed){
 
 /* ============================ boot ============================ */
 (async function(){
+  // Ask the browser to exempt our storage from automatic eviction — the fill cache is the
+  // only copy of history beyond the API's page cap, so best-effort eviction is not okay.
+  try{ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{}); }catch(e){}
   // server sync first: if the companion server answers, its snapshot is applied before
   // any local reads, so journal/settings/excursion hydration below see the synced data
   try{ await initServerSync(); }catch(e){}

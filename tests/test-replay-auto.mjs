@@ -12,7 +12,8 @@ const { evalModule } = makeExtractor(html);
 const { computeExcursion, excSummary, excVerdict, reconstructTrades, candleOpen } =
   await evalModule(
     ['computeExcursion','excSummary','excVerdict','isPerp','newTrade','tallyFill','reconstructTrades','candleOpen'],
-    ['computeExcursion','excSummary','excVerdict','reconstructTrades','candleOpen']);
+    ['computeExcursion','excSummary','excVerdict','reconstructTrades','candleOpen'],
+    'const _be=50; const isWin=n=>n>_be; const isLoss=n=>n<-_be;'); // excSummary splits winners by the BE band now
 
 const MIN = 60e3, T0 = 1700000000000;
 
@@ -43,8 +44,10 @@ t('zero excursion on one side → null timing for that side', () => {
 });
 t('summary medians + verdict timing sentence (≥10 timed winners required)', () => {
   const rows = [];
-  for (let i = 0; i < 12; i++) rows.push({ net: 10, maePct: 1, mfePct: 3, notional: 1000, maeAt: 0.2, mfeAt: 0.8 });
-  rows.push({ net: -5, maePct: 4, mfePct: 1, notional: 1000, maeAt: 0.5, mfeAt: 0.1 });
+  // nets must clear the ±$50 break-even band: excSummary now splits winners/losers by
+  // isWin/isLoss, and scratch trades belong to neither side
+  for (let i = 0; i < 12; i++) rows.push({ net: 100, maePct: 1, mfePct: 3, notional: 1000, maeAt: 0.2, mfeAt: 0.8 });
+  rows.push({ net: -80, maePct: 4, mfePct: 1, notional: 1000, maeAt: 0.5, mfeAt: 0.1 });
   const s = excSummary(rows);
   near(s.medMaeAtW, 0.2); near(s.medMfeAtW, 0.8); eq(s.timedN, 12);
   const v = excVerdict(s).join('|');
