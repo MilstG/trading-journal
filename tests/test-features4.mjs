@@ -62,6 +62,70 @@ t('capped at 6 setups, ranked by |net|', () => {
   eq(cards.length, 6); eq(cards[0].name, 'setup7'); // biggest |net| first
 });
 
+const { coinCorrelations, exposureClusters, scenarioShock } = await evalModule(
+  ['coinCorrelations', 'exposureClusters', 'scenarioShock'],
+  ['coinCorrelations', 'exposureClusters', 'scenarioShock'], PRELUDE);
+
+console.log('\ncorrelation clusters');
+// 30 days of candles: A and B move in lockstep, C is independent noise
+const mkCandles = (seed, follow) => {
+  let px = 100; const rows = [[T0, 0, 0, px, 0]];
+  let s = seed;
+  for (let i = 1; i <= 30; i++) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const r = follow ? follow[i] : ((s / 0x7fffffff) - 0.5) * 0.04;
+    px *= 1 + r; rows.push([T0 + i * DAY, 0, 0, px, 0]);
+  }
+  return rows;
+};
+const drift = []; { let s = 7; for (let i = 0; i <= 30; i++) { s = (s * 48271) % 2147483647; drift.push(((s / 2147483647) - 0.5) * 0.05); } }
+const A = mkCandles(1, drift), B = mkCandles(2, drift.map(r => r * 1.1)), C = mkCandles(3, null);
+t('lockstep coins report high rho; independent one does not cluster', () => {
+  const corr = coinCorrelations({ A, B, C });
+  ok(corr['A|B'] > 0.95, 'A|B rho=' + corr['A|B']);
+  ok(Math.abs(corr['A|C']) < 0.6, 'A|C rho=' + corr['A|C']);
+});
+t('pairs need 20 overlapping days', () => {
+  const corr = coinCorrelations({ A, D: A.slice(0, 10) });
+  eq(corr['A|D'], undefined);
+});
+t('exposureClusters nets within a cluster and reports the diversification gap', () => {
+  const corr = { 'A|B': 0.9, 'A|C': 0.1, 'B|C': 0.05 };
+  const res = exposureClusters([
+    { coin: 'A', net: 10000 }, { coin: 'B', net: -4000 }, { coin: 'C', net: 3000 },
+  ], corr, 0.7);
+  eq(res.clusters.length, 1);
+  eq(res.clusters[0].coins.sort(), ['A', 'B']);
+  near(res.clusters[0].net, 6000); near(res.clusters[0].gross, 14000);
+  near(res.naiveDirectional, 17000);   // 10k + 4k + 3k independently
+  near(res.effectiveDirectional, 9000); // |10k-4k| + 3k
+});
+t('no strong pairs → no clusters, both totals equal', () => {
+  const res = exposureClusters([{ coin: 'A', net: 5000 }, { coin: 'B', net: 5000 }], { 'A|B': 0.2 }, 0.7);
+  eq(res.clusters.length, 0);
+  near(res.naiveDirectional, res.effectiveDirectional);
+});
+
+console.log('\nscenario shock');
+const BOOK = [
+  { coin: 'BTC', side: 'long',  notional: 10000, mark: 100, liq: 85 },
+  { coin: 'ETH', side: 'short', notional: 5000,  mark: 50,  liq: 58 },
+];
+t('signed PnL: -10% hurts longs, helps shorts', () => {
+  const sc = scenarioShock(BOOK, 20000, -10);
+  near(sc.pnl, -10000 * 0.1 + 5000 * 0.1); // -1000 + 500
+  near(sc.acctPct, -500 / 20000, 1e-9);
+  eq(sc.liqs.length, 0); // BTC shocked to 90, liq 85 — survives
+});
+t('a deep enough shock crosses liquidation', () => {
+  const sc = scenarioShock(BOOK, 20000, -20);
+  eq(sc.liqs.length, 1); eq(sc.liqs[0].coin, 'BTC'); // 100→80 ≤ 85
+});
+t('upside shock can liquidate the short', () => {
+  const sc = scenarioShock(BOOK, 20000, 20);
+  eq(sc.liqs.length, 1); eq(sc.liqs[0].coin, 'ETH'); // 50→60 ≥ 58
+});
+
 console.log('\ngeneric CSV fill import');
 t('csvParseRows: quotes, doubled quotes, CRLF', () => {
   eq(csvParseRows('a,b\r\n"x,1","he said ""hi"""\n'), [['a', 'b'], ['x,1', 'he said "hi"']]);
