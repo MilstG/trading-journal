@@ -2910,7 +2910,7 @@ function capitalSectionHtml(){
         ${mrow('Return on avg capital','<span class="'+cls(m.roc||0)+'">'+pctS(m.roc)+'</span>','Realized net ÷ time-weighted average capital.')}
         ${mrow('Annualized',m.rocAnnual!=null?'<span class="'+cls(m.rocAnnual)+'">'+pctS(m.rocAnnual)+'</span>':'—','Geometric annualization of the same figure. Shown only once the span exceeds ~18 days; in-sample, edges drift.')}
         ${mrow('Max drawdown vs capital',m.maxDDpctCap!=null?'<span class="loss">'+pctS(m.maxDDpctCap)+'</span>':'—','Worst realized peak-to-trough dip as a share of the capital present at the trough ('+fmtUsd(m.maxDD$)+'). The % your account actually felt, not % of notional.')}
-        ${m.impliedPnl!=null?mrow('Implied all-time PnL','<span class="'+cls(m.impliedPnl)+'">'+fmtUsd(m.impliedPnl)+'</span>','Live equity ('+fmtUsd(m.equityNow)+') minus net deposited — the account\\'s own all-time accounting, unrealized and untracked history included. If this diverges far from realized net, history beyond the fill cache or unrealized PnL is the difference.'):''}
+        ${m.impliedPnl!=null?mrow('Implied all-time PnL','<span class="'+cls(m.impliedPnl)+'">'+fmtUsd(m.impliedPnl)+'</span>','Live equity ('+fmtUsd(m.equityNow)+') minus net deposited — the account’s own all-time accounting, unrealized and untracked history included. If this diverges far from realized net, history beyond the fill cache or unrealized PnL is the difference.'):''}
       </div>
     </div>
   </div>`;
@@ -4781,7 +4781,7 @@ function goalsSectionHtml(){
       if(m.projected!=null)rows.push(mrow('Projected month-end','<span class="'+cls(m.projected)+'">'+fmtUsd(m.projected)+'</span>','Straight-line projection of the current pace across the whole month. Day '+m.dayOf+' of '+m.daysIn+'.'));
       if(m.paceNeeded!=null&&m.net<m.target)rows.push(mrow('Needed per remaining day',fmtUsd(m.paceNeeded),'What the rest of the month must average per calendar day to hit the target.'));
     }
-    if(m.maxDD!=null)rows.push(mrow('Intramonth drawdown',(m.intraDD<0?'<span class="'+(-m.intraDD>=m.maxDD?'loss':'')+'">'+fmtUsd(m.intraDD)+'</span>':'—')+' / cap '+fmtUsd(-m.maxDD),'Worst peak-to-trough dip of this month\\'s cumulative net vs the max you said you would tolerate.'+(-m.intraDD>=m.maxDD?' CAP EXCEEDED — the plan says stop and review.':'')));
+    if(m.maxDD!=null)rows.push(mrow('Intramonth drawdown',(m.intraDD<0?'<span class="'+(-m.intraDD>=m.maxDD?'loss':'')+'">'+fmtUsd(m.intraDD)+'</span>':'—')+' / cap '+fmtUsd(-m.maxDD),'Worst peak-to-trough dip of this month’s cumulative net vs the max you said you would tolerate.'+(-m.intraDD>=m.maxDD?' CAP EXCEEDED — the plan says stop and review.':'')));
     if(m.maxTradesWeek!=null)rows.push(mrow('Trades / week',(m.tradesPerWeek).toFixed(1)+' / cap '+m.maxTradesWeek,'Average weekly trade count this month vs your cap.'+(m.tradesPerWeek>m.maxTradesWeek?' Over — overtrading is the leak most journals find first.':'')));
     rows.push(mrow('Trades this month',String(m.n)));
     progress=rows.join('');
