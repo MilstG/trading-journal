@@ -124,6 +124,9 @@ function grabFn(html, name) {
 // Builds an isolated context holding the app's pure functions. Mutable knobs the app keeps
 // as globals (settings, journal, _be, _oneR, _rng) live as context properties so the server
 // can set them per request; all per-request compute is synchronous, so this is race-free.
+// CAREFUL: doRefresh awaits network between E.* calls while GETs may run — that stays safe
+// only because the refresh path (hlPost/fetch*/mapClearinghouse/hip3DexsFromFills) never
+// reads those mutable knobs. Don't add settings/_be/_oneR dependence to fetch-path functions.
 function buildEngine(htmlPath, fetchImpl) {
   let html;
   try { html = fs.readFileSync(htmlPath, 'utf8'); }
@@ -177,7 +180,11 @@ const parseTime = (v) => {
 const qnum = (v, dflt) => { const n = parseFloat(v); return isFinite(n) ? n : dflt; };
 const csvCell = (v) => {
   if (v == null) return '';
-  const s = String(v);
+  let s = String(v);
+  // Formula-injection guard: journal notes/tags flow into this CSV and open in Excel or
+  // Sheets, where a leading = @ (or a +/- that isn't a number) executes as a formula.
+  // Real negative numbers pass untouched.
+  if (/^[=@]/.test(s) || (/^[+-]/.test(s) && !isFinite(Number(s)))) s = "'" + s;
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
@@ -204,6 +211,11 @@ function createApp(opts) {
   fs.mkdirSync(fundingDir, { recursive: true });
   const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
   const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
+  const MAX_ATT_TOTAL = 512 * 1024 * 1024;    // whole store — Railway volumes are small, and per-key caps alone allow unbounded growth
+  const attDirSize = () => {
+    try { let s = 0; for (const f of fs.readdirSync(attDir)) s += fs.statSync(path.join(attDir, f)).size; return s; }
+    catch (e) { return 0; }
+  };
 
   // Guard against the easy mistake of deploying server.js next to an older ledger.html:
   // the API would work while the app silently ran browser-only (no token prompt, no sync).
@@ -263,12 +275,19 @@ function createApp(opts) {
     || (!!readAuth && timingSafeEq(req.headers['authorization'] || '', 'Bearer ' + readAuth));
   const json = (res, code, obj) => {
     const body = JSON.stringify(obj);
-    res.writeHead(code, {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(body);
+    const write = () => {
+      res.writeHead(code, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.end(body);
+    };
+    // Flat 300ms on every 401: turns online brute-force of the bearer tokens from
+    // thousands of guesses/second into three per second, at zero cost to real clients
+    // (a legitimate client only ever sees 401 once, at token entry).
+    if (code === 401) setTimeout(write, 300);
+    else write();
   };
 
   /* ---------------- server-side data caches (per wallet, gzip JSON) ---------------- */
@@ -553,7 +572,7 @@ function createApp(opts) {
   }
 
   /* ---------------- v1 endpoint docs (served at GET /api/v1) ---------------- */
-  const FILTER_DOC = 'market, wallet, coin, dir, status=open|closed|all, outcome=win|loss|be, tag, q, from, to, tz=utc|local';
+  const FILTER_DOC = 'market, wallet, coin, dir, status=open|closed|all, outcome=win|loss|be, tag, q, from, to (from/to compare closeTime, which for an open trade is its last fill — same semantics as the app), tz=utc|local';
   const V1_DOCS = [
     { method: 'GET',  path: '/api/v1', auth: 'none', desc: 'this index' },
     { method: 'POST', path: '/api/v1/refresh', auth: 'full', desc: 'fetch fills/funding/positions from Hyperliquid into server caches; body {wallets?,full?,force?}; min interval 15s unless force' },
@@ -608,8 +627,19 @@ function createApp(opts) {
       if (!body.force && Date.now() - _lastRefreshAt < REFRESH_MIN_MS)
         return send(429, { error: 'refreshed ' + Math.round((Date.now() - _lastRefreshAt) / 1000) + 's ago — min interval 15s (pass force:true to override)', lastSummary: _lastRefreshSummary });
       _refreshing = true;
+      // Watchdog: hlPost retries but has no overall deadline, so a hung Hyperliquid fetch
+      // used to pin _refreshing=true forever — every later refresh 409'd until a restart.
+      // On timeout the zombie doRefresh may still finish its atomic cache writes in the
+      // background; that's harmless, and the mutex is released so refreshes work again.
+      let watchdog = null;
       try {
-        const summary = await doRefresh(body);
+        const summary = await Promise.race([
+          doRefresh(body),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() => reject({ code: 504, msg: 'refresh timed out after 5 minutes — Hyperliquid slow or unreachable; try again' }), 5 * 60000);
+            if (watchdog.unref) watchdog.unref();
+          }),
+        ]);
         _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
         const { trades } = ensureTrades();
         summary.trades = {
@@ -620,7 +650,7 @@ function createApp(opts) {
         };
         return send(200, summary);
       } catch (e) { return fail(e); }
-      finally { _refreshing = false; }
+      finally { clearTimeout(watchdog); _refreshing = false; }
     }
 
     // everything below is GET + read scope
@@ -1095,6 +1125,9 @@ function createApp(opts) {
           let arr; try { arr = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
           if (!Array.isArray(arr) || !arr.every(x => typeof x === 'string' && x.startsWith('data:image/')))
             return json(res, 400, { error: 'expected array of image data URLs' });
+          let existing = 0; try { existing = fs.statSync(file).size; } catch (e) {}
+          if (attDirSize() - existing + size > MAX_ATT_TOTAL)
+            return json(res, 507, { error: 'attachment store full (' + Math.round(MAX_ATT_TOTAL / 1024 / 1024) + ' MB cap) — delete attachments from old trades first' });
           try { fs.writeFileSync(file + '.tmp', JSON.stringify(arr)); fs.renameSync(file + '.tmp', file); }
           catch (e) { return json(res, 500, { error: 'write failed' }); }
           return json(res, 200, { ok: true, count: arr.length }); });
