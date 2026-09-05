@@ -90,6 +90,8 @@ const ENGINE_FNS = [
   'projMilestones', 'currentDD', 'underwaterStats', 'fwdMaxDD', 'kellyFromTrades',
   'openRiskModel', 'whatIfStats', 'whatIfModel', 'walkForward', 'riskConcentration',
   'cusumDrift', 'decayAssess',
+  // capital flows -> return on capital
+  'fetchLedgerUpdates', 'capitalFlows', 'capitalModel',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
   'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio',
 ];
@@ -204,11 +206,13 @@ function createApp(opts) {
   const attDir = path.join(dataDir, 'att');
   const fillsDir = path.join(dataDir, 'fills');
   const fundingDir = path.join(dataDir, 'funding');
+  const ledgerDir = path.join(dataDir, 'ledger');
   const marketFile = path.join(dataDir, 'market.json');
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(attDir, { recursive: true });
   fs.mkdirSync(fillsDir, { recursive: true });
   fs.mkdirSync(fundingDir, { recursive: true });
+  fs.mkdirSync(ledgerDir, { recursive: true });
   const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
   const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
   const MAX_ATT_TOTAL = 512 * 1024 * 1024;    // whole store — Railway volumes are small, and per-key caps alone allow unbounded growth
@@ -293,8 +297,10 @@ function createApp(opts) {
   /* ---------------- server-side data caches (per wallet, gzip JSON) ---------------- */
   const fillsFile = a => path.join(fillsDir, a.toLowerCase() + '.json.gz');
   const fundingFile = a => path.join(fundingDir, a.toLowerCase() + '.json.gz');
+  const ledgerFile = a => path.join(ledgerDir, a.toLowerCase() + '.json.gz');
   const readFillCache = a => { const c = gzRead(fillsFile(a)); return (c && c.v === 1 && Array.isArray(c.fills)) ? c : null; };
   const readFundingCache = a => { const c = gzRead(fundingFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
+  const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
 
   const currentSnapshot = () => {
@@ -363,6 +369,10 @@ function createApp(opts) {
         // funding: full refetch each refresh — matches the client, keeps semantics identical
         const frows = await E.fetchFunding(w.address);
         gzWrite(fundingFile(w.address), { v: 1, savedAt: Date.now(), rows: frows });
+
+        // capital flows (deposits/withdrawals/transfers) — small, full refetch like funding
+        const led = await E.fetchLedgerUpdates(w.address);
+        gzWrite(ledgerFile(w.address), { v: 1, savedAt: Date.now(), rows: led });
 
         const hip3 = E.hip3DexsFromFills(fills);
         const [ch, sbal, port] = await Promise.all([
@@ -585,6 +595,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/breakdown', auth: 'read', desc: 'grouped stats + per-group contribution shares; by=coin|dir|market|wallet|tag|dow|hour; basis=usd|pct ranks by dollars or summed return points; top=N (default 5) sizes the best/worst lists; filters' },
     { method: 'GET',  path: '/api/v1/projection', auth: 'read', desc: 'Monte Carlo forward sim; horizon (days, default 90), paths (<=2000, default 400), block, seed, lookback (days); filters' },
     { method: 'GET',  path: '/api/v1/kelly', auth: 'read', desc: 'Kelly sizing from filtered closed trades' },
+    { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model; account-wide — ignores filters; wallet= optional' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
@@ -845,6 +856,38 @@ function createApp(opts) {
       if (url === '/api/v1/kelly') {
         const { closed } = prepare(query);
         return send(200, { n: closed.length, kelly: E.kellyFromTrades(closed) });
+      }
+
+      if (url === '/api/v1/capital') {
+        setEngineState(query);
+        // capital is account-wide: all closed trades, no view/period filters (wallet= narrows
+        // both the flows and the trades to one address, which stays internally consistent)
+        const { trades } = ensureTrades();
+        const snap = currentSnapshot();
+        let wallets = snapWallets(snap);
+        if (query.wallet) {
+          if (!ADDR_RE.test(query.wallet)) throw { code: 400, msg: 'invalid wallet address' };
+          wallets = [{ address: query.wallet }];
+        }
+        let flows = [], skipped = 0, cachedAt = null;
+        for (const w of wallets) {
+          const lc = readLedgerCache(w.address);
+          if (!lc) continue;
+          if (cachedAt == null || lc.savedAt < cachedAt) cachedAt = lc.savedAt;
+          const cf = E.capitalFlows(lc.rows, w.address);
+          for (const f of cf.flows) flows.push({ ...f, wallet: w.address });
+          skipped += cf.skipped;
+        }
+        if (!flows.length) return send(409, { error: 'no capital-flow caches yet — POST /api/v1/refresh first' });
+        flows.sort((a, b) => a.time - b.time);
+        const wset = new Set(wallets.map(w => w.address.toLowerCase()));
+        const closedAll = trades.filter(t => !t.isOpen && t.closeTime
+          && (!query.wallet || (t.wallet && wset.has(t.wallet.address.toLowerCase()))));
+        const market = readMarket();
+        const equityNow = market && (market.accountValue != null || market.spotAccountValue != null)
+          ? (market.accountValue || 0) + (market.spotAccountValue || 0) : null;
+        return send(200, { flows: flows.length, skipped, cachedAt,
+          model: E.capitalModel(flows, closedAll, equityNow) });
       }
 
       if (url === '/api/v1/walkforward') {

@@ -1010,6 +1010,86 @@ async function fetchFunding(addr){
   if(partial) setStatus('⚠ Funding history fetch interrupted — funding attribution may be incomplete for this load.');
   return out;
 }
+// Capital flows — deposits, withdrawals, vault and cross-account transfers — from
+// userNonFundingLedgerUpdates. These are what turn PnL into a RETURN: without them every
+// percentage in the app is notional-based, because fills alone cannot see capital.
+async function fetchLedgerUpdates(addr){
+  const out=[]; const seen=new Set();
+  let start=0, pages=0;
+  try{
+    while(pages<120){
+      const rows=await hlPost({type:'userNonFundingLedgerUpdates',user:addr,startTime:start});
+      if(!Array.isArray(rows)||rows.length===0)break;
+      for(const r of rows){ const id=(r.hash||'')+'|'+r.time+'|'+((r.delta&&r.delta.type)||'');
+        if(!seen.has(id)){ seen.add(id); out.push(r); } }
+      if(rows.length<500)break;
+      const mx=Math.max(...rows.map(r=>r.time));
+      start=mx>start?mx:mx+1; pages++; await sleep(160);
+    }
+  }catch(e){ setStatus('⚠ Capital-flow history fetch interrupted — return-on-capital may be incomplete.'); }
+  return out;
+}
+// Classify raw ledger updates into signed capital flows for one wallet. Only types whose
+// direction is unambiguous count; everything else is tallied as `skipped` and surfaced,
+// never silently mixed in. accountClassTransfer (perp<->spot INSIDE the wallet) is
+// internal plumbing, deliberately not a capital flow.
+function capitalFlows(rows, addr){
+  const a=(addr||'').toLowerCase(); const flows=[]; let skipped=0;
+  for(const r of (rows||[])){ const d=r&&r.delta; if(!d||!r.time)continue;
+    const usdc=Math.abs(parseFloat(d.usdc)); const ty=d.type;
+    if(!(usdc>0)){ if(ty!=='accountClassTransfer')skipped++; continue; }
+    if(ty==='deposit') flows.push({time:r.time,usdc,type:ty});
+    else if(ty==='withdraw') flows.push({time:r.time,usdc:-usdc,type:ty});
+    else if(ty==='internalTransfer'||ty==='subAccountTransfer'){
+      const dest=(d.destination||'').toLowerCase();
+      flows.push({time:r.time,usdc:dest===a?usdc:-usdc,type:ty});
+    }
+    else if(ty==='vaultDeposit'||ty==='vaultCreate') flows.push({time:r.time,usdc:-usdc,type:ty}); // capital parked in a vault is off the trading account
+    else if(ty==='vaultWithdraw') flows.push({time:r.time,usdc,type:ty});
+    else if(ty==='accountClassTransfer'){ /* internal — ignore */ }
+    else skipped++;
+  }
+  flows.sort((x,y)=>x.time-y.time);
+  return {flows, skipped};
+}
+// Time-weighted capital + true-return model. Capital(t) is the running sum of flows;
+// avgCapital is its time-weighted mean over [first flow, now] — the honest denominator
+// for "return on capital" when deposits and withdrawals moved mid-history. Drawdown is
+// re-expressed as % of the capital actually present at the trough, not of notional.
+// Pure — extracted by the tests and the API server.
+function capitalModel(flows, closed, equityNow, now){
+  now=now||Date.now();
+  if(!flows||!flows.length)return null;
+  const chron=[...flows].sort((a,b)=>a.time-b.time);
+  let cap=0,totIn=0,totOut=0,maxCap=0,tw=0,prevT=chron[0].time,prevCap=0;
+  for(const f of chron){
+    tw+=prevCap*(f.time-prevT); prevT=f.time;
+    cap+=f.usdc; if(f.usdc>0)totIn+=f.usdc; else totOut-=f.usdc;
+    if(cap>maxCap)maxCap=cap; prevCap=cap;
+  }
+  tw+=prevCap*(now-prevT);
+  const spanMs=now-chron[0].time;
+  const avgCapital=spanMs>0?tw/spanMs:cap;
+  const closedIn=(closed||[]).filter(t=>!t.isOpen&&t.closeTime>=chron[0].time&&t.closeTime<=now)
+    .sort((x,y)=>x.closeTime-y.closeTime);
+  const realized=closedIn.reduce((s,t)=>s+t.net,0);
+  const roc=avgCapital>0?realized/avgCapital:null;
+  const years=spanMs/(365*86400000);
+  const rocAnnual=(roc!=null&&roc>-1&&years>=0.05)?(Math.pow(1+roc,1/years)-1):null; // annualize only past ~18 days
+  let cum=0,peak=0,worst$=0,worstPct=null,ci=0,capNow=0;
+  for(const t of closedIn){
+    while(ci<chron.length&&chron[ci].time<=t.closeTime){ capNow+=chron[ci].usdc; ci++; }
+    cum+=t.net; if(cum>peak)peak=cum;
+    const dd=cum-peak;
+    if(dd<worst$){ worst$=dd; const pct=capNow>0?dd/capNow:null;
+      if(pct!=null&&(worstPct==null||pct<worstPct))worstPct=pct; }
+  }
+  const implied=(equityNow!=null&&isFinite(equityNow))?equityNow-cap:null; // the account's own all-time accounting, unrealized included
+  return {n:chron.length, firstAt:chron[0].time, lastAt:chron[chron.length-1].time,
+    totIn, totOut, netDeposited:cap, maxCapital:maxCap, avgCapital,
+    realized, nTrades:closedIn.length, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
+    equityNow:equityNow!=null?equityNow:null, impliedPnl:implied};
+}
 // HIP-3 (builder-deployed) perps live on separate dexs with independent clearinghouses.
 // clearinghouseState with no `dex` param only returns the first (validator-operated) perp dex,
 // so open HIP-3 positions are invisible unless each dex is queried explicitly.
@@ -1168,6 +1248,7 @@ function attributeFunding(trades,fundingRows){
 
 /* ============================ state ============================ */
 let allTrades=[], fundingRows=[], fundingTotal=0, openPositions=[], accountValue=null;
+let ledFlows=[], ledSkipped=0; // classified capital flows (deposits/withdrawals/transfers) across loaded wallets
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
 let hlPnl={all:null,perp:null};
 let fillsTruncated=[];
@@ -2613,6 +2694,40 @@ function trackedSectionHtml(closed){
   const archHtml=archRows?`<h3 style="margin-top:14px" data-tip="Pins archived after going dead. Kept for the audit trail; restore to resume forward scoring in the active list.">Archived patterns</h3>${archRows}`:'';
   return `<div class="diag-section"><div class="diag-card" id="trackedCard"><h3 data-tip="Patterns you pinned from the miner, re-measured on ONLY the trades closed after you pinned them \u2014 a rolling out-of-sample test. Thresholds (size quartiles, hold cutoffs, MAE bands) are frozen at pin time so you keep testing the exact hypothesis you pinned. \u2018Holding\u2019 = same direction and at least half the discovered edge; verdicts start at 8 forward trades and sharpen as more arrive. The second badge is the decay verdict: rolling forward expectancy vs the frozen discovery confidence band, plus a CUSUM drift statistic \u2014 healthy / degrading / dead.">Tracked patterns \u2014 forward test</h3>${rows}${archHtml}</div></div>`;
 }
+// Capital & true return — deposits/withdrawals/transfers from the exchange ledger turn PnL
+// into a percentage that means something. Capital is account-wide, so this card always uses
+// ALL closed trades (every market, full history), independent of the view/period filters,
+// and says so. Renders nothing when no flows were fetched (pasted data, fetch failure).
+function capitalSectionHtml(){
+  if(!ledFlows.length)return '';
+  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime);
+  const equityNow=(accountValue!=null||spotAccountValue!=null)?((accountValue||0)+(spotAccountValue||0)):null;
+  const m=capitalModel(ledFlows,allClosed,equityNow);
+  if(!m)return '';
+  const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+  const pctS=x=>x==null?'—':((x>=0?'+':'')+(x*100).toFixed(1)+'%');
+  const cls=v=>v>=0?'pos-t':'loss';
+  return `<div class="diag-section">
+    <h2>Capital &amp; true return <span style="font-size:11px;color:var(--faint);font-weight:400">from the exchange ledger · all markets, full history</span></h2>
+    <p class="lead">Deposits, withdrawals and transfers from your on-exchange ledger. This is the missing denominator: PnL divided by the capital that was actually at risk, not by position notional. Account-wide by nature, so this card ignores the view/period filters.</p>
+    <div class="diag-grid">
+      <div class="diag-card"><h3 data-tip="What crossed the boundary of your trading account: external deposits and withdrawals, vault parks, and transfers between accounts. A transfer between two loaded wallets nets to zero here, as it should.">Capital flows</h3>
+        ${mrow('Net deposited',fmtUsd(m.netDeposited),'Deposits minus withdrawals to date — the capital currently attributable to the account(s).')}
+        ${mrow('Total in / out',fmtUsd(m.totIn)+' / '+fmtUsd(m.totOut),'Lifetime gross deposits and gross withdrawals.')}
+        ${mrow('Peak capital',fmtUsd(m.maxCapital),'Highest net-deposited level ever reached.')}
+        ${mrow('Avg capital employed',fmtUsd(m.avgCapital),'Time-weighted average of net deposits over the whole span — the honest denominator when capital moved mid-history.')}
+        ${mrow('Flows',m.n+(ledSkipped?' · <span class="loss">'+ledSkipped+' unclassified skipped</span>':''),'Ledger entries classified as capital flows. Unclassified entries (unknown types) are excluded and counted here rather than silently mixed in.')}
+      </div>
+      <div class="diag-card"><h3 data-tip="Realized net over the flow-covered span divided by time-weighted average capital. This is the number to compare against any other use of the same money.">Return on capital</h3>
+        ${mrow('Realized net (span)','<span class="'+cls(m.realized)+'">'+fmtUsd(m.realized)+'</span>',m.nTrades+' closed trades since the first recorded flow.')}
+        ${mrow('Return on avg capital','<span class="'+cls(m.roc||0)+'">'+pctS(m.roc)+'</span>','Realized net ÷ time-weighted average capital.')}
+        ${mrow('Annualized',m.rocAnnual!=null?'<span class="'+cls(m.rocAnnual)+'">'+pctS(m.rocAnnual)+'</span>':'—','Geometric annualization of the same figure. Shown only once the span exceeds ~18 days; in-sample, edges drift.')}
+        ${mrow('Max drawdown vs capital',m.maxDDpctCap!=null?'<span class="loss">'+pctS(m.maxDDpctCap)+'</span>':'—','Worst realized peak-to-trough dip as a share of the capital present at the trough ('+fmtUsd(m.maxDD$)+'). The % your account actually felt, not % of notional.')}
+        ${m.impliedPnl!=null?mrow('Implied all-time PnL','<span class="'+cls(m.impliedPnl)+'">'+fmtUsd(m.impliedPnl)+'</span>','Live equity ('+fmtUsd(m.equityNow)+') minus net deposited — the account\\'s own all-time accounting, unrealized and untracked history included. If this diverges far from realized net, history beyond the fill cache or unrealized PnL is the difference.'):''}
+      </div>
+    </div>
+  </div>`;
+}
 function renderDiagnostic(closed, allv){
   destroyDiagCharts();
   _srand(_hashSeed('diag|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:'')));
@@ -2865,6 +2980,7 @@ function renderDiagnostic(closed, allv){
      </div>
    </div>
    ${assetAttribSection(closed)}
+   ${capitalSectionHtml()}
    <div class="diag-section">
      <h2>Equity &amp; edge over time</h2>
      <div class="diag-grid">
@@ -4582,7 +4698,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], totalFills=0, failed=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false;
-  let truncated=[], newFills=0, cachedN=0;
+  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0;
   try{
     setStatus('Fetching spot metadata…',true);
     spotMaps=await fetchSpotMaps();
@@ -4609,7 +4725,12 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
         const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
         try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){}
         const hip3=hip3DexsFromFills(fills);
-        const [frows,ch,sbal,port]=await Promise.all([fetchFunding(w.address),fetchPositions(w.address,hip3),fetchSpotState(w.address),fetchPortfolio(w.address)]);
+        const [frows,ch,sbal,port,led]=await Promise.all([fetchFunding(w.address),fetchPositions(w.address,hip3),fetchSpotState(w.address),fetchPortfolio(w.address),fetchLedgerUpdates(w.address)]);
+        { const cf=capitalFlows(led,w.address);
+          // a transfer BETWEEN two loaded wallets appears as -X in one and +X in the other,
+          // which correctly nets to zero for combined capital
+          for(const f of cf.flows)flowsAcc.push({...f,wallet:w.address});
+          skippedAcc+=cf.skipped; }
         totalFills+=fills.length;
         // reconstruction runs in the compute worker — large wallets no longer freeze the UI
         setStatus(`Reconstructing trades for ${labelFor(w)}…`,true);
@@ -4639,6 +4760,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     fillsTruncated=truncated;
+    ledFlows=flowsAcc.sort((a,b)=>a.time-b.time); ledSkipped=skippedAcc;
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
