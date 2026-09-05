@@ -1309,6 +1309,25 @@ function rFor(t){ const r=riskFor(t); return r?t.net/r:null; }
 const _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
 const _std=a=>{ if(a.length<2)return 0; const m=_avg(a); return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1)); };
 function retPct(t){ if(t.partialHistory)return null; const notional=t.maxSize*t.avgEntry; return notional>0? t.net/notional*100 : null; } // partial-history trades have a fabricated entry — no honest % exists
+// Real add-to-loser detection from the per-fill event stream: an ADD executed at a price
+// materially worse (0.1%+) than the RUNNING average entry means the position was underwater
+// when it was sized up. entryDrift was only ever a proxy — it compares against the first
+// fill, so it also flags planned scale-ins into strength. Events are [time, px, sz, ±1].
+function addedToLoser(t){
+  if(!Array.isArray(t.events)||t.events.length<2)return false;
+  if(t.dir!=='Long'&&t.dir!=='Short')return false;
+  const short=t.dir==='Short', TOL=1e-3;
+  let sz=0,notional=0;
+  for(const ev of t.events){ const px=ev[1],q=ev[2],dirn=ev[3];
+    if(!(q>0)||!(px>0))continue;
+    if(dirn>0){
+      if(sz>0){ const avg=notional/sz;
+        if(short ? px>avg*(1+TOL) : px<avg*(1-TOL)) return true; }
+      sz+=q; notional+=q*px;
+    } else { const avg=sz>0?notional/sz:0; sz=Math.max(0,sz-q); notional=sz*avg; }
+  }
+  return false;
+}
 function dailyPnl(trades){ const m={}; trades.forEach(t=>{const k=dayKey(t.closeTime); m[k]=(m[k]||0)+t.net;}); return m; }
 function dailySeriesCalendar(trades){
   if(!trades.length)return [];
@@ -1740,7 +1759,8 @@ function minerFams(closed,ST,fz){
   // execution style: taker share of notional (fill-level truth, always available)
   const tk=t=>{const tot=(t.makerNotional||0)+(t.takerNotional||0);return tot>0?(t.takerNotional||0)/tot:null;};
   fams.exec=[['mostly market orders (\u226575% taker volume)',t=>{const x=tk(t);return x!=null&&x>=0.75;},'exec:taker'],
-             ['mostly limit orders (\u226425% taker volume)',t=>{const x=tk(t);return x!=null&&x<=0.25;},'exec:maker']];
+             ['mostly limit orders (\u226425% taker volume)',t=>{const x=tk(t);return x!=null&&x<=0.25;},'exec:maker'],
+             ['added to a losing position (real adds, from fills)',t=>addedToLoser(t),'exec:atl']];
   // entry drift: chased entries (scaled in at adverse prices), when drift is known for most trades
   const drifts=closed.map(t=>t.entryDrift).filter(x=>x!=null&&isFinite(x));
   if(fz.dq3!=null || drifts.length>=closed.length*0.5){ const dq3=fz.dq3!=null?fz.dq3:qv(drifts,0.75); _dq3=dq3;
@@ -3303,7 +3323,7 @@ function deepScan(closed,V){
 // Everything shipped into the worker is pure modulo the globals in _WORKER_PRELUDE, which are
 // re-sent with each request. If Worker construction or execution fails for any reason, the
 // wrappers fall back to the original synchronous code path — identical results, just blocking.
-const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,dcoin,dispMarket,
+const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,addedToLoser,dcoin,dispMarket,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,minerFams,mineInsights,deepScan});
@@ -4338,7 +4358,7 @@ function journalRow(t,j,R){
         <div class="num" style="color:var(--muted);font-size:12.5px;line-height:1.9">
           Realized ${fmtUsd(t.pnl)} · fees ${fmtUsd(-t.fees)} · funding <span class="${cls(t.funding||0)}">${fmtUsd(t.funding||0)}</span><br>
           <strong style="color:var(--text)">Net ${fmtUsd(t.net)}</strong>${retPct(t)!=null?' · <span class="'+cls(retPct(t))+'">'+(retPct(t)>=0?'+':'')+retPct(t).toFixed(2)+'%</span>':''}${R!=null?' · <span class="'+cls(R)+'">'+(R>=0?'+':'')+R.toFixed(2)+'R</span>':''} · ${t.fills} fills · held ${fmtDur(t.durationMs)}<br>
-          <span data-tip="Share of this trade's fills that were taker (crossed the spread) vs maker (resting). Taker fills pay the higher fee tier.">maker ${(t.makerFills||0)} · taker ${(t.takerFills||0)}${(t.takerFills+t.makerFills)?' ('+Math.round((t.takerFills/(t.takerFills+t.makerFills))*100)+'% taker)':''}</span>${t.entryDrift!=null?` · <span data-tip="How far your size-weighted entry drifted from your first fill, in the adverse direction. Positive = you scaled in at worse prices (chasing).">entry drift <span class="${t.entryDrift>0?'neg-t':t.entryDrift<0?'pos-t':''}">${(t.entryDrift>=0?'+':'')+(t.entryDrift*100).toFixed(2)}%</span></span>`:''}${t.liquidated?' · <span class="loss" data-tip="Contains a liquidation fill.">⚠ liquidated</span>':''}${excLine(t)}
+          <span data-tip="Share of this trade's fills that were taker (crossed the spread) vs maker (resting). Taker fills pay the higher fee tier.">maker ${(t.makerFills||0)} · taker ${(t.takerFills||0)}${(t.takerFills+t.makerFills)?' ('+Math.round((t.takerFills/(t.takerFills+t.makerFills))*100)+'% taker)':''}</span>${t.entryDrift!=null?` · <span data-tip="How far your size-weighted entry drifted from your first fill, in the adverse direction. Positive = you scaled in at worse prices (chasing).">entry drift <span class="${t.entryDrift>0?'neg-t':t.entryDrift<0?'pos-t':''}">${(t.entryDrift>=0?'+':'')+(t.entryDrift*100).toFixed(2)}%</span></span>`:''}${addedToLoser(t)?' · <span class="neg-t" data-tip="At least one add was executed while the position was underwater vs your running average entry (detected from the fill stream, not a proxy).">avg’d down</span>':''}${t.liquidated?' · <span class="loss" data-tip="Contains a liquidation fill.">⚠ liquidated</span>':''}${excLine(t)}
         </div></div>
     </div>
     <div class="field"><label>Screenshots / attachments <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— stored in this browser (IndexedDB), not in the JSON backup</span></label>
@@ -5537,7 +5557,10 @@ function evaluateRules(closed, rules){
         if(p.id!==t.id&&isLoss(p.net)){ viol.push(t); break; } } }
     out.push({rule:R.cooldownMin+'-min cooldown after a loss', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0)}); }
   if(R.noAddToLosers){
-    const viol=closed.filter(t=>t.entryDrift!=null&&t.entryDrift>0&&isLoss(t.net));
+    // real detection from per-fill events (an add while underwater vs the running average
+    // entry), not the old entry-drift proxy that also flagged planned scale-ins. Every
+    // violation counts, winners included — the rule was broken either way.
+    const viol=closed.filter(t=>addedToLoser(t));
     out.push({rule:'No adding to losers', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0)}); }
   if(R.dailyLossLimit>0){
     const byDay={}; for(const t of byClose){ const k=nfDayKey(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }

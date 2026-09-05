@@ -30,6 +30,7 @@ globalThis.fmtUsd = n => (n<0?'-':'')+'$'+Math.abs(n).toFixed(2);
 globalThis.Store = { set: async () => {} };
 globalThis.S_KEY = 'test_settings';
 globalThis._maxSplitT = evalFn('_maxSplitT') || null;
+globalThis.addedToLoser = evalFn('addedToLoser'); // exec:atl family needs the real detector
 
 globalThis.tradeStates = evalFn('tradeStates');
 globalThis.minerFams   = evalFn('minerFams');
