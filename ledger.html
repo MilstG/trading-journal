@@ -640,6 +640,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
   <div class="modal">
     <h2>Paste data manually</h2>
     <p>If the live pull is blocked by your browser (common when opening the file directly from disk), paste a raw <span class="mono">userFills</span> JSON array here. You can also paste a <b>journal export</b> or a full <b>backup</b> (wallets + settings + journal) to restore it — the type is auto-detected.</p>
+    <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
     <textarea id="pasteBox" placeholder='[ { "coin":"BTC", "px":"...", "sz":"...", "side":"B", "time":..., "startPosition":"...", "closedPnl":"...", "fee":"..." }, ... ]'></textarea>
     <div class="modal-actions">
       <button class="btn ghost" id="modalCancel">Cancel</button>
@@ -4896,6 +4897,91 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   } finally { _loading=false; }
   autoRatchet();
 }
+/* ============================ generic CSV fill import ============================ */
+// RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF.
+function csvParseRows(text){
+  const rows=[]; let row=[], cell='', q=false;
+  for(let i=0;i<text.length;i++){ const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){ cell+='"'; i++; } else q=false; } else cell+=ch; }
+    else if(ch==='"')q=true;
+    else if(ch===','){ row.push(cell); cell=''; }
+    else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n')i++;
+      row.push(cell); cell=''; if(row.length>1||row[0]!=='')rows.push(row); row=[]; }
+    else cell+=ch;
+  }
+  if(cell!==''||row.length){ row.push(cell); if(row.length>1||row[0]!=='')rows.push(row); }
+  return rows;
+}
+// Header-mapped CSV fills → HL-shaped fills for the exact reconstruction path exchange
+// data takes. Column names are matched loosely (case/punctuation-insensitive) against the
+// aliases below, so exports from other venues or a hand-built spreadsheet both work.
+// startPosition and closedPnl are derived (running position + average-cost realization)
+// when the CSV lacks them — exact when the file carries each coin's full history, and the
+// status line says when derivation was used. Throws with a specific message on bad input.
+function parseFillsCsv(text){
+  const rows=csvParseRows(text.trim());
+  if(rows.length<2)throw new Error('need a header row plus at least one data row');
+  const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+  const header=rows[0].map(norm);
+  const ALIAS={
+    time:['time','date','datetime','timestamp','ts','filledat','executedat','tradetime','createdat'],
+    coin:['coin','symbol','market','pair','asset','ticker','instrument','contract'],
+    side:['side','direction','buysell','type','action'],
+    px:['px','price','fillprice','avgprice','execprice','dealprice','filledprice'],
+    sz:['sz','size','qty','quantity','amount','filled','baseqty','executedqty','filledqty','vol','volume'],
+    fee:['fee','fees','commission','feepaid','tradingfee'],
+    closedPnl:['closedpnl','realizedpnl','pnl','realized','profit'],
+    startPosition:['startposition'],
+  };
+  const col={};
+  for(const k in ALIAS){ const i=header.findIndex(h=>ALIAS[k].includes(h)); if(i>=0)col[k]=i; }
+  const missing=['time','coin','side','px','sz'].filter(k=>col[k]==null);
+  if(missing.length)throw new Error('could not find column(s) for: '+missing.join(', ')
+    +' — headers seen: '+rows[0].join(', '));
+  const parseT=v=>{ if(/^\d+(\.\d+)?$/.test(v)){ const n=parseFloat(v); return n<1e12?Math.round(n*1000):Math.round(n); }
+    const t=Date.parse(v); return isNaN(t)?null:t; };
+  const sideOf=v=>{ const s=norm(v); if(['b','buy','long','open','bid'].includes(s))return 'B';
+    if(['a','s','sell','short','close','ask'].includes(s))return 'A'; return null; };
+  const fills=[]; let skipped=0;
+  for(let r=1;r<rows.length;r++){ const row=rows[r];
+    const time=parseT(String(row[col.time]||'').trim());
+    const coin=String(row[col.coin]||'').trim();
+    const side=sideOf(row[col.side]);
+    const px=parseFloat(row[col.px]), sz=Math.abs(parseFloat(row[col.sz]));
+    if(time==null||!coin||!side||!(px>0)||!(sz>0)){ skipped++; continue; }
+    const f={coin, side, time, px:String(px), sz:String(sz),
+      fee:col.fee!=null?String(parseFloat(row[col.fee])||0):'0',
+      tid:'csv'+r, oid:r, crossed:true, dir:''};
+    if(col.closedPnl!=null&&row[col.closedPnl]!==''&&isFinite(parseFloat(row[col.closedPnl])))f.closedPnl=String(parseFloat(row[col.closedPnl]));
+    if(col.startPosition!=null&&row[col.startPosition]!==''&&isFinite(parseFloat(row[col.startPosition])))f.startPosition=String(parseFloat(row[col.startPosition]));
+    fills.push(f);
+  }
+  if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped)');
+  fills.sort((a,b)=>a.time-b.time);
+  // derive startPosition and closedPnl per coin where absent: running position, and
+  // average-cost realization on the closing portion of each reducing fill
+  let derived=false;
+  const pos={}, avg={};
+  for(const f of fills){
+    const c=f.coin, q=parseFloat(f.sz), px=parseFloat(f.px);
+    const p=pos[c]||0, signed=f.side==='B'?q:-q;
+    if(f.startPosition==null){ f.startPosition=String(p); derived=true; }
+    const sameDir=p===0||(p>0)===(signed>0);
+    if(f.closedPnl==null){
+      if(sameDir)f.closedPnl='0';
+      else{ const closeQty=Math.min(Math.abs(p),q);
+        f.closedPnl=String(+(((px-(avg[c]||px))*closeQty*(p>0?1:-1))).toFixed(8)); derived=true; }
+    }
+    if(sameDir){ const tot=Math.abs(p)+q; avg[c]=tot>0?((Math.abs(p)*(avg[c]||px)+q*px)/tot):px; }
+    else if(q>Math.abs(p)){ avg[c]=px; } // flip: remainder opens at this price
+    pos[c]=p+signed;
+    if(Math.abs(pos[c])<1e-9){ pos[c]=0; avg[c]=0; }
+  }
+  const note=fills.length+' rows mapped ('+['time','coin','side','px','sz'].map(k=>k+'←'+rows[0][col[k]]).join(', ')
+    +(col.fee!=null?', fee←'+rows[0][col.fee]:', no fee column')
+    +(skipped?', '+skipped+' rows skipped':'')+')';
+  return {fills, note, derived, skipped};
+}
 async function loadFromPaste(fills){
   if(!fills.length){ setErr('No fills found in that data.'); return; }
   // resolve @N spot indices to real token names — the paste path used to skip this,
@@ -5076,7 +5162,18 @@ $('modalCancel').onclick=()=>$('modal').classList.remove('show');
 $('modal').addEventListener('click',e=>{ if(e.target===$('modal'))$('modal').classList.remove('show'); });
 $('modalLoad').onclick=async()=>{
   const raw=$('pasteBox').value.trim(); if(!raw)return; let data;
-  try{ data=JSON.parse(raw); }catch(e){ setErr('That isn\u2019t valid JSON.'); return; }
+  try{ data=JSON.parse(raw); }catch(e){
+    // not JSON \u2014 try the generic CSV importer (header-mapped fills from any venue)
+    let csv=null, csvErr=null;
+    try{ csv=parseFillsCsv(raw); }catch(e2){ csvErr=e2.message; }
+    if(csv&&csv.fills.length){
+      $('modal').classList.remove('show'); $('pasteBox').value='';
+      await loadFromPaste(csv.fills); // its status line is then extended with the mapping report
+      setStatus('CSV import: '+csv.note+(csv.derived?' \u00b7 position/PnL derived by average cost \u2014 exact only when the file holds each coin\u2019s full history':''));
+      return;
+    }
+    setErr('Not valid JSON'+(csvErr?'; CSV import failed: '+csvErr:' or CSV.')); return;
+  }
   $('modal').classList.remove('show'); $('pasteBox').value='';
   // !data.fills: a {fills:[...]} paste is fill data for reconstruction, not a journal —
   // without this guard it would fall through to the journal branch and overwrite it.
