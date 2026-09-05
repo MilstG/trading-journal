@@ -2714,6 +2714,47 @@ function trackedSectionHtml(closed){
   const archHtml=archRows?`<h3 style="margin-top:14px" data-tip="Pins archived after going dead. Kept for the audit trail; restore to resume forward scoring in the active list.">Archived patterns</h3>${archRows}`:'';
   return `<div class="diag-section"><div class="diag-card" id="trackedCard"><h3 data-tip="Patterns you pinned from the miner, re-measured on ONLY the trades closed after you pinned them \u2014 a rolling out-of-sample test. Thresholds (size quartiles, hold cutoffs, MAE bands) are frozen at pin time so you keep testing the exact hypothesis you pinned. \u2018Holding\u2019 = same direction and at least half the discovered edge; verdicts start at 8 forward trades and sharpen as more arrive. The second badge is the decay verdict: rolling forward expectancy vs the frozen discovery confidence band, plus a CUSUM drift statistic \u2014 healthy / degrading / dead.">Tracked patterns \u2014 forward test</h3>${rows}${archHtml}</div></div>`;
 }
+// Per-setup scorecards: is each named setup improving or rotting? The miner finds setups
+// that work; this is the follow-through on its own caveat ("trade deliberately and
+// re-test") — a per-setup equity curve plus an early-vs-recent expectancy split. Pure.
+function setupScorecards(closed, journalObj){
+  const by={};
+  for(const t of closed){ const s=(journalObj[t.id]||{}).setup; if(s)(by[s]=by[s]||[]).push(t); }
+  const cards=[];
+  for(const name in by){
+    const ts=by[name].sort((a,b)=>a.closeTime-b.closeTime);
+    if(ts.length<5)continue;
+    const nets=ts.map(t=>t.net);
+    let cum=0; const curve=nets.map(n=>+(cum+=n).toFixed(6));
+    const cut=Math.max(1,Math.floor(ts.length*2/3)); // discovery 2/3 vs recent 1/3
+    const early=nets.slice(0,cut), late=nets.slice(cut);
+    const eE=_avg(early), eL=late.length?_avg(late):null;
+    const wins=ts.filter(t=>isWin(t.net)).length, losses=ts.filter(t=>isLoss(t.net)).length;
+    cards.push({name, n:ts.length, net:+cum.toFixed(2), expectancy:_avg(nets),
+      winRate:(wins+losses)?wins/(wins+losses):null, earlyExp:eE, lateExp:eL,
+      trend: eL==null?null : (eL<0&&eE>=0)?'flipped' : eL>=eE?'improving':'fading',
+      curve, lastAt:ts[ts.length-1].closeTime});
+  }
+  return cards.sort((a,b)=>Math.abs(b.net)-Math.abs(a.net)).slice(0,6);
+}
+function setupSectionHtml(closed){
+  const cards=setupScorecards(closed,journal);
+  if(!cards.length)return '';
+  const badge=c=>c.trend==='improving'?'<span class="badge ok" data-tip="Average net per trade over the most recent third beats the earlier two-thirds.">improving</span>'
+    :c.trend==='fading'?'<span class="badge mid" data-tip="Recent-third expectancy is below the earlier two-thirds — still positive, but decaying. Re-test before sizing up.">fading</span>'
+    :c.trend==='flipped'?'<span class="badge no" data-tip="Recent-third expectancy went NEGATIVE after a positive start. Treat this setup as unproven again.">flipped negative</span>':'';
+  const row=c=>`<div class="metric-row"><span class="ml"><b>${esc(c.name)}</b> ${badge(c)}</span>
+    <span class="mv">${c.n} trades · <span class="${c.net>=0?'pos-t':'loss'}">${fmtUsd(c.net)}</span> · ${fmtUsd(c.expectancy)}/trade${c.winRate!=null?' · '+Math.round(c.winRate*100)+'% wr':''} · recent ${c.lateExp!=null?fmtUsd(c.lateExp):'—'} vs early ${fmtUsd(c.earlyExp)}</span></div>`;
+  return `<div class="diag-section">
+    <h2>Setup scorecards <span style="font-size:11px;color:var(--faint);font-weight:400">per-setup equity · early vs recent expectancy · needs journaled setups</span></h2>
+    <p class="lead">Every named setup from your journal, tracked as its own little strategy: cumulative equity per setup and whether the most recent third of its trades still performs like the two-thirds it was "discovered" on. This is the working answer to the miner's own caveat — validated patterns are hypotheses to re-test, and this card is the re-test.</p>
+    <div class="diag-card">
+      <div style="height:240px"><canvas id="setupCurves"></canvas></div>
+      <div style="margin-top:12px">${cards.map(row).join('')}</div>
+      <p class="mini-note">X-axis is each setup's own trade count, so young and old setups are comparable by shape. In-sample; a setup under ~20 trades is a sketch, not a track record.</p>
+    </div>
+  </div>`;
+}
 // Capital & true return — deposits/withdrawals/transfers from the exchange ledger turn PnL
 // into a percentage that means something. Capital is account-wide, so this card always uses
 // ALL closed trades (every market, full history), independent of the view/period filters,
@@ -3038,6 +3079,7 @@ function renderDiagnostic(closed, allv){
      </div>
    </div>
    ${trackedSectionHtml(closed)}
+   ${setupSectionHtml(closed)}
    <div class="diag-section">
      <h2>Pattern miner <span style="font-size:11px;color:var(--faint);font-weight:400">finds conditions where you reliably make or lose money · statistically tested</span></h2>
      <p class="lead">Scans single conditions <b>and pairwise combinations</b> (e.g. Short × weekend, BTC × after-a-loss) that one-dimensional breakdowns can't see. Every candidate is permutation-tested and the whole scan is corrected for multiple comparisons (Benjamini–Hochberg, 10% FDR) — so a pattern only appears here if it's unlikely to be luck <i>given how many things were tested</i>.</p>
@@ -3112,6 +3154,20 @@ function renderDiagnostic(closed, allv){
             footer:items=>{const o=by[items[0].label];return 'net '+fmtUsd(o.price+o.fund+o.fees);}}}},
         scales:{x:{stacked:true,grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:12}},
                 y:{stacked:true,grid:{color:GRID,drawTicks:false},border:{display:false}}}}});
+  })();
+  // --- per-setup equity curves ---
+  (function(){ const el=$('setupCurves'); if(!el)return;
+    const cards=setupScorecards(closed,journal); if(!cards.length)return;
+    const PAL=['#8b93ff','#2FD08C','#E6B450','#F0616D','#5BC8D8','#C792EA'];
+    _diagCharts.setups=new Chart(el,{type:'line',data:{datasets:cards.map((c,i)=>({
+      label:c.name, data:c.curve.map((y,x)=>({x:x+1,y})),
+      borderColor:PAL[i%PAL.length], borderWidth:1.5, pointRadius:0, pointHoverRadius:3, fill:false, tension:0 }))},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
+          tooltip:{callbacks:{label:c=>' '+c.dataset.label+' · trade '+c.parsed.x+' · cum '+fmtUsd(c.parsed.y)}}},
+        scales:{x:{type:'linear',grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{maxTicksLimit:8,precision:0}},
+                y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>'$'+Number(v).toLocaleString()}}},
+        interaction:{intersect:false,mode:'nearest'}}});
   })();
   // --- equity vs HWM chart ---
   const chronAll=[...allv].sort((a,b)=>a.closeTime-b.closeTime);
