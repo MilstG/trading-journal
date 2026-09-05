@@ -18,7 +18,7 @@ function grabArrow(name){
   if (!m) throw new Error('const not found: '+name); return m[0];
 }
 const FNS = ['nfMedian','leverageSurvival',
-  'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','nfGroupStats','leaderboard','fundingCarry'];
+  'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','nfGroupStats','leaderboard','fundingCarry','dayJKey'];
 const ARROWS = ['nfPct','nfSignPct','nfDayKey'];
 
 const ctx = { _be:50, journal:{}, settings:{rules:{},assumedLev:5}, spotMaps:{nameByCoin:{}}, Date, Math, console };
@@ -54,6 +54,16 @@ t('fundingCarry flip+dominant', ()=>{ ctx._be=50; const fc=ctx.fundingCarry([
 t('leaderboard groups', ()=>{ ctx.journal={s1:{setup:'breakout'},s2:{setup:'breakout'}};
   const lb=ctx.leaderboard([{id:'s1',isOpen:false,closeTime:now,net:300,wallet:{label:'main'}},{id:'s2',isOpen:false,closeTime:now-DAY,net:-100,wallet:{label:'alt'}}]);
   eq(lb.wallets[0].label,'main'); near(lb.setups[0].net,200); });
+
+t('day journal key: tz-derived, zero-padded, collision-free prefix', ()=>{
+  ctx.tzParts=ms=>({y:2026,mo:8,day:5,h:0,min:0,dow:6}); // September 5
+  eq(ctx.dayJKey(0),'day:2026-09-05');
+});
+t('day-journal wiring present: committed max loss overrides the daily rule', ()=>{
+  ok(html.includes("journal[dayJKey(Date.now())]"),'tripwire reads today\'s entry');
+  ok(html.includes('committed max loss for today'),'banner names the source');
+  ok(html.includes('dayJournalSectionHtml()'),'Review renders the section');
+});
 
 console.log((fail?'\u2717':'\u2713')+' new-features suite: '+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);

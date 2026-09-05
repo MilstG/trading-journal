@@ -4466,7 +4466,7 @@ function renderPulse(){
 function renderReview(){
   const el=$('reviewView'); if(!el)return;
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  if(!closed.length){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; return; }
+  if(!closed.length){ el.innerHTML=dayJournalSectionHtml()+'<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; wireDayJournal(); return; }
   const now=Date.now(), DAY=86400000;
   const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
   const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY);
@@ -4504,6 +4504,7 @@ function renderReview(){
   if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
 
   el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
+   ${dayJournalSectionHtml()}
    <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
    <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
@@ -4518,6 +4519,47 @@ function renderReview(){
    </div></div>
    <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>
    ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
+  wireDayJournal();
+}
+/* ============================ day-level journal ============================ */
+// Daily entries live INSIDE the trade journal under 'day:YYYY-MM-DD' keys (tz-toggle
+// dates), so they ride the existing persistence, server sync, conflict merge, and backup
+// machinery for free — trade ids are 'addr:COIN:time', so the keyspace can't collide.
+function dayJKey(ms){ const p=tzParts(ms); return 'day:'+p.y+'-'+String(p.mo+1).padStart(2,'0')+'-'+String(p.day).padStart(2,'0'); }
+function dayJournalSectionHtml(){
+  const k=dayJKey(Date.now()); const e=journal[k]||{};
+  const recent=[];
+  for(let i=1;i<=21&&recent.length<7;i++){ const rk=dayJKey(Date.now()-i*86400000); const d=journal[rk]; if(d)recent.push([rk,d]); }
+  const chip=(rk,d)=>`<div class="metric-row"><span class="ml">${esc(rk.slice(4))}${d.bias?' · '+esc(d.bias):''}${d.adherence?' · <span class="pos-t">plan followed</span>':''}</span><span class="mv" style="max-width:58%;text-align:right;white-space:normal;font-weight:400">${esc(d.review||d.plan||'')}</span></div>`;
+  return `<div class="diag-section"><h2>Day journal <span style="font-size:11px;color:var(--faint);font-weight:400">pre-market plan · end-of-day review</span></h2>
+    <div class="diag-grid">
+      <div class="diag-card"><h3 data-tip="Write the plan BEFORE the session: bias, what you'll trade, and the loss at which you stop. A committed max loss becomes today's tripwire threshold on the dashboard — a number you chose calmly, enforced when you aren't.">Today — ${esc(k.slice(4))}</h3>
+        <div class="field"><label>Bias / market read</label><input type="text" id="djBias" value="${esc(e.bias||'')}" placeholder="e.g. chop until CPI, long bias above break"></div>
+        <div class="field"><label>Plan</label><textarea id="djPlan" placeholder="What will you trade today — and what will you NOT do?">${esc(e.plan||'')}</textarea></div>
+        <div class="field"><label>Committed max loss ($)</label><input type="number" id="djMaxLoss" min="0" step="any" value="${e.maxLoss>0?esc(e.maxLoss):''}" placeholder="stop trading for the day at −$…"></div>
+        <div class="field"><label>End-of-day review</label><textarea id="djReview" placeholder="What actually happened? What would you repeat or change?">${esc(e.review||'')}</textarea></div>
+        <label class="dchk" style="display:inline-flex;margin-bottom:10px"><input type="checkbox" id="djAdh" ${e.adherence?'checked':''}> I followed the plan</label>
+        <div><button class="btn ghost" id="djSave">Save day</button> <span id="djSaved" style="color:var(--faint);font-size:11px"></span></div>
+      </div>
+      <div class="diag-card"><h3 data-tip="Your last journaled days. Trade journaling is graded below; this is the day-level habit that closes the loop between plan and review.">Recent days</h3>
+        ${recent.length?recent.map(([rk,d])=>chip(rk,d)).join(''):'<p class="lead">No day entries yet. The plan you write before the session is the one the review can hold you to.</p>'}
+      </div>
+    </div></div>`;
+}
+function wireDayJournal(){
+  const b=$('djSave'); if(!b)return;
+  b.onclick=()=>{
+    const k=dayJKey(Date.now());
+    const num=parseFloat($('djMaxLoss').value);
+    const e={bias:$('djBias').value.trim(), plan:$('djPlan').value.trim(),
+      maxLoss:num>0?num:null, review:$('djReview').value.trim(),
+      adherence:$('djAdh').checked||null};
+    if(!(e.bias||e.plan||e.review||e.maxLoss||e.adherence)) delete journal[k];
+    else journal[k]={...e,updatedAt:Date.now()};
+    markJEdit(k); Store.set(J_KEY,journal);
+    const s=$('djSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
+    renderTripwire(); // a committed max loss takes effect immediately
+  };
 }
 /* ============================ Project tab ============================ */
 let _proj={look:90,hor:182,block:0}; let _projChart=null;
@@ -5513,12 +5555,19 @@ function dailyLossToday(trades){
 }
 function renderTripwire(){
   const el=$('tripwire'); if(!el)return;
-  const R=nfRules(); if(!(R.dailyLossLimit>0)||!allTrades.length){ el.classList.add('hide'); return; }
+  const R=nfRules();
+  // today's committed max loss (day journal) overrides the standing rule \u2014 a number
+  // chosen calmly before the session beats a default when the session goes sideways
+  const dj=journal[dayJKey(Date.now())];
+  const committed=(dj&&dj.maxLoss>0)?dj.maxLoss:0;
+  const lim=committed||R.dailyLossLimit;
+  if(!(lim>0)||!allTrades.length){ el.classList.add('hide'); return; }
+  const src=committed?'your committed max loss for today':'your daily limit';
   const d=dailyLossToday(allTrades);
-  if(d.net<=-R.dailyLossLimit){ el.classList.remove('hide');
-    el.innerHTML=`\u26d4 <b>Daily loss limit hit.</b> Today's realized PnL is ${fmtUsd(d.net)} across ${d.n} trade${d.n===1?'':'s'} \u2014 past your ${fmtUsd(R.dailyLossLimit)} limit. Step away.`;
-  } else if(d.net<-R.dailyLossLimit*0.6){ el.classList.remove('hide');
-    el.innerHTML=`\u26a0 Approaching your daily loss limit: ${fmtUsd(d.net)} today vs a ${fmtUsd(R.dailyLossLimit)} cap.`;
+  if(d.net<=-lim){ el.classList.remove('hide');
+    el.innerHTML=`\u26d4 <b>Daily loss limit hit.</b> Today's realized PnL is ${fmtUsd(d.net)} across ${d.n} trade${d.n===1?'':'s'} \u2014 past ${src} (${fmtUsd(lim)}). Step away.`;
+  } else if(d.net<-lim*0.6){ el.classList.remove('hide');
+    el.innerHTML=`\u26a0 Approaching ${src}: ${fmtUsd(d.net)} today vs a ${fmtUsd(lim)} cap.`;
   } else el.classList.add('hide');
 }
 
