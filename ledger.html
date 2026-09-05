@@ -3868,7 +3868,9 @@ function renderExcResults(c){
     <div class="diag-grid">${stopsCard}${exitsCard}</div>
     <div style="margin-top:12px">${verdict}</div>${openHtml}
     <div class="chart-box" style="height:300px;margin-top:12px"><canvas id="excScatter"></canvas></div>
-    <p class="lead" style="font-size:12px;color:var(--faint);margin-top:8px">Each dot is one trade: how far it dipped (→) vs how it ended (↑). Green above the line at its dip = survived and won; the dashed line marks the 90% winner boundary — dots right of it are in loser-behavior territory. Measured from your size-weighted entry over candle highs/lows; intra-candle sequencing is invisible, so values within one candle\u2019s range are approximate. R uses planned risk (journal) or 1R fallback. Skipped trades have no candles at any interval. Candles and measurements are cached locally — re-runs only fetch what\u2019s new.</p>`;
+    <p class="lead" style="font-size:12px;color:var(--faint);margin-top:8px">Each dot is one trade: how far it dipped (→) vs how it ended (↑). Green above the line at its dip = survived and won; the dashed line marks the 90% winner boundary — dots right of it are in loser-behavior territory. Measured from your size-weighted entry over candle highs/lows; intra-candle sequencing is invisible, so values within one candle\u2019s range are approximate. R uses planned risk (journal) or 1R fallback. Skipped trades have no candles at any interval. Candles and measurements are cached locally — re-runs only fetch what\u2019s new.</p>
+    ${c.closedRef?'<div style="margin-top:8px"><button class="btn ghost" id="excRerun" data-tip="Re-measure now: closed trades load instantly from saved measurements; open positions are re-measured from entry to the current moment, so the monitor above keeps tracking a position while it is still open instead of going stale until something closes.">Update open positions</button></div>':''}`;
+  const rr=$('excRerun'); if(rr)rr.onclick=rerunExcursions;
   const plotRows=c.rows.filter(r=>!r.coarse).length?c.rows.filter(r=>!r.coarse):c.rows;
   const W=plotRows.filter(r=>r.net>0),L=plotRows.filter(r=>r.net<=0);
   if(_diagCharts.exc)_diagCharts.exc.destroy();
@@ -3886,6 +3888,22 @@ function renderExcResults(c){
       scales:scales({title:{display:true,text:'worst dip during the trade (% of entry)',color:'#8b93a7',font:{size:11}}}),
       interaction:{intersect:false,mode:'nearest'}}});
 }
+// Re-run on demand: closed trades reload from saved measurements (fast); open positions
+// get a fresh entry-to-now measurement — the monitor no longer goes stale while a
+// position's window keeps growing.
+async function rerunExcursions(){
+  const closed=_excCache.closedRef; if(!closed)return;
+  const btn=$('excRerun'); if(btn){ btn.disabled=true; btn.textContent='Updating…'; }
+  try{
+    const openT=allTrades.filter(t=>t.isOpen&&viewFilter(t));
+    const out=await runExcursions(closed,openT);
+    _excCache={..._excCache,...out};
+    for(const r of [...out.rows,...(out.openRows||[])])_excM[r.id]=r;
+    renderExcResults(_excCache);
+    setStatus('Excursions updated'+(out.openRows&&out.openRows.length?' · '+out.openRows.length+' open position'+(out.openRows.length===1?'':'s')+' re-measured':' · no open positions in this view')+'.');
+  }catch(e){ setStatus('Excursion update stopped: '+e.message);
+    const b=$('excRerun'); if(b){ b.disabled=false; b.textContent='Update open positions'; } }
+}
 function wireExcursions(closed){
   const box=$('excBox'); if(!box)return;
   const key=[view,period,customRange.from,customRange.to,closed.length,dexView].join('|'); // dex filter can change the universe at identical length
@@ -3894,7 +3912,7 @@ function wireExcursions(closed){
   btn.onclick=async()=>{ btn.disabled=true; btn.textContent='Fetching candles…';
     try{ const openT=allTrades.filter(t=>t.isOpen&&viewFilter(t));
       const out=await runExcursions(closed,openT);
-      _excCache={key,...out};
+      _excCache={key,...out,closedRef:closed}; // closedRef powers the update-open-positions re-run
       for(const r of [...out.rows,...(out.openRows||[])])_excM[r.id]=r;
       // fresh excursion data unlocks new miner families — invalidate any cached scan
       _minerCache={key:null,res:null,deep:null};
