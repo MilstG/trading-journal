@@ -741,14 +741,14 @@ async function unpackFillCache(c){
   return null;
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
-  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,
+  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
     pins:settings.pins}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object') journal=data.journal;
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -4668,7 +4668,7 @@ function renderPulse(){
 function renderReview(){
   const el=$('reviewView'); if(!el)return;
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  if(!closed.length){ el.innerHTML=dayJournalSectionHtml()+'<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; wireDayJournal(); return; }
+  if(!closed.length){ el.innerHTML=dayJournalSectionHtml()+goalsSectionHtml()+'<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; wireDayJournal(); wireGoals(); return; }
   const now=Date.now(), DAY=86400000;
   const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
   const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY);
@@ -4707,6 +4707,7 @@ function renderReview(){
 
   el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
    ${dayJournalSectionHtml()}
+   ${goalsSectionHtml()}
    <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
    <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
@@ -4721,7 +4722,72 @@ function renderReview(){
    </div></div>
    <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>
    ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
-  wireDayJournal();
+  wireDayJournal(); wireGoals();
+}
+/* ============================ monthly goals ============================ */
+// This-month progress vs self-set goals: realized net vs target (with straight-line pace
+// and projection), worst intramonth drawdown vs the acceptable max, trades/week vs the
+// cap. Calendar month on the tz toggle. Pure given tzParts/settings.
+function monthlyGoalModel(closed, goals, now){
+  now=now||Date.now();
+  if(!goals||!(goals.monthlyTarget>0||goals.maxDD>0||goals.maxTradesWeek>0))return null;
+  const p=tzParts(now);
+  const mStart=settings.tz==='utc'?Date.UTC(p.y,p.mo,1):new Date(p.y,p.mo,1).getTime();
+  const daysIn=new Date(Date.UTC(p.y,p.mo+1,0)).getUTCDate();
+  const dayOf=p.day;
+  const inMonth=closed.filter(t=>!t.isOpen&&t.closeTime>=mStart&&t.closeTime<=now).sort((a,b)=>a.closeTime-b.closeTime);
+  const net=inMonth.reduce((s,t)=>s+t.net,0);
+  let cum=0,peak=0,worst=0;
+  for(const t of inMonth){ cum+=t.net; if(cum>peak)peak=cum; if(cum-peak<worst)worst=cum-peak; }
+  const weeksElapsed=Math.max(1/7,(now-mStart)/(7*86400000));
+  return {mStart, daysIn, dayOf, n:inMonth.length, net, intraDD:worst,
+    tradesPerWeek:inMonth.length/weeksElapsed,
+    projected:dayOf>0?net/dayOf*daysIn:null,
+    paceNeeded:goals.monthlyTarget>0?(goals.monthlyTarget-net)/Math.max(1,daysIn-dayOf+1):null,
+    target:goals.monthlyTarget>0?goals.monthlyTarget:null,
+    maxDD:goals.maxDD>0?goals.maxDD:null,
+    maxTradesWeek:goals.maxTradesWeek>0?goals.maxTradesWeek:null};
+}
+function goalsSectionHtml(){
+  const g=settings.goals||{};
+  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const m=monthlyGoalModel(allClosed,g);
+  const inp=(id,val,ph,tip)=>`<div class="field"><label data-tip="${esc(tip)}">${ph}</label><input type="number" id="${id}" min="0" step="any" value="${val>0?esc(val):''}"></div>`;
+  let progress='<p class="lead">Set a goal to see this month tracked against it. Goals are commitments made calmly — the month holds you to them.</p>';
+  if(m){
+    const rows=[];
+    const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
+    if(m.target!=null){
+      const pct=Math.max(0,Math.min(1.5,m.net/m.target));
+      rows.push(mrow('Net vs target','<span class="'+cls(m.net)+'">'+fmtUsd(m.net)+'</span> / '+fmtUsd(m.target)+' ('+Math.round(pct*100)+'%)','Realized net this calendar month against your target.'));
+      if(m.projected!=null)rows.push(mrow('Projected month-end','<span class="'+cls(m.projected)+'">'+fmtUsd(m.projected)+'</span>','Straight-line projection of the current pace across the whole month. Day '+m.dayOf+' of '+m.daysIn+'.'));
+      if(m.paceNeeded!=null&&m.net<m.target)rows.push(mrow('Needed per remaining day',fmtUsd(m.paceNeeded),'What the rest of the month must average per calendar day to hit the target.'));
+    }
+    if(m.maxDD!=null)rows.push(mrow('Intramonth drawdown',(m.intraDD<0?'<span class="'+(-m.intraDD>=m.maxDD?'loss':'')+'">'+fmtUsd(m.intraDD)+'</span>':'—')+' / cap '+fmtUsd(-m.maxDD),'Worst peak-to-trough dip of this month\\'s cumulative net vs the max you said you would tolerate.'+(-m.intraDD>=m.maxDD?' CAP EXCEEDED — the plan says stop and review.':'')));
+    if(m.maxTradesWeek!=null)rows.push(mrow('Trades / week',(m.tradesPerWeek).toFixed(1)+' / cap '+m.maxTradesWeek,'Average weekly trade count this month vs your cap.'+(m.tradesPerWeek>m.maxTradesWeek?' Over — overtrading is the leak most journals find first.':'')));
+    rows.push(mrow('Trades this month',String(m.n)));
+    progress=rows.join('');
+  }
+  return `<div class="diag-section"><h2>Monthly goals <span style="font-size:11px;color:var(--faint);font-weight:400">this month vs the plan · current view</span></h2>
+    <div class="diag-grid">
+      <div class="diag-card"><h3 data-tip="Three commitments, all optional. They persist with your settings and sync across devices.">The plan</h3>
+        ${inp('goalTarget',g.monthlyTarget,'Monthly net target ($)','Realized net you are aiming for this month.')}
+        ${inp('goalDD',g.maxDD,'Max acceptable drawdown ($)','Worst intramonth peak-to-trough dip you will tolerate before stopping to review.')}
+        ${inp('goalTPW',g.maxTradesWeek,'Trades/week cap','Weekly trade-count ceiling — the anti-overtrading commitment.')}
+        <button class="btn ghost" id="goalSave">Save goals</button> <span id="goalSaved" style="color:var(--faint);font-size:11px"></span>
+      </div>
+      <div class="diag-card"><h3 data-tip="Where the month actually stands against each commitment.">This month</h3>${progress}</div>
+    </div></div>`;
+}
+function wireGoals(){
+  const b=$('goalSave'); if(!b)return;
+  b.onclick=async()=>{
+    const v=id=>{ const n=parseFloat($(id).value); return n>0?n:null; };
+    settings.goals={monthlyTarget:v('goalTarget'), maxDD:v('goalDD'), maxTradesWeek:v('goalTPW')};
+    await Store.set(S_KEY,settings);
+    const s=$('goalSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
+    renderReview();
+  };
 }
 /* ============================ day-level journal ============================ */
 // Daily entries live INSIDE the trade journal under 'day:YYYY-MM-DD' keys (tz-toggle

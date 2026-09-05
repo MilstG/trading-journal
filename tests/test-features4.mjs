@@ -106,6 +106,35 @@ t('no strong pairs → no clusters, both totals equal', () => {
   near(res.naiveDirectional, res.effectiveDirectional);
 });
 
+console.log('\nmonthly goals');
+{
+  const { monthlyGoalModel } = await evalModule(['monthlyGoalModel'], ['monthlyGoalModel'],
+    PRELUDE + "const settings={tz:'utc'}; const tzParts=ms=>{const d=new Date(ms);return {y:d.getUTCFullYear(),mo:d.getUTCMonth(),day:d.getUTCDate(),h:0,min:0,dow:d.getUTCDay()};};");
+  const NOW = Date.UTC(2026, 8, 15, 12); // Sep 15 2026 — day 15 of a 30-day month
+  const MSTART = Date.UTC(2026, 8, 1);
+  const tr = (net, day) => ({ isOpen: false, closeTime: Date.UTC(2026, 8, day, 6), net });
+  t('net, projection, and pace against the target', () => {
+    const m = monthlyGoalModel([tr(600, 3), tr(-100, 8), tr(500, 12), tr(1000, 33)], { monthlyTarget: 3000 }, NOW);
+    near(m.net, 1000);            // the day-33 trade is October's
+    eq(m.dayOf, 15); eq(m.daysIn, 30);
+    near(m.projected, 2000);      // 1000/15*30
+    near(m.paceNeeded, 2000 / 16); // (3000-1000) over the 16 remaining days
+    eq(m.mStart, MSTART);
+  });
+  t('intramonth drawdown is peak-to-trough of the month cum', () => {
+    const m = monthlyGoalModel([tr(500, 2), tr(-800, 5), tr(200, 9)], { maxDD: 500 }, NOW);
+    near(m.intraDD, -800);
+  });
+  t('trades/week vs cap', () => {
+    const m = monthlyGoalModel([tr(100, 2), tr(100, 3), tr(100, 4), tr(100, 5)], { maxTradesWeek: 1 }, NOW);
+    near(m.tradesPerWeek, 4 / (14.5 / 7), 0.01); // 4 trades over ~2.07 weeks
+  });
+  t('no goals set → null (section shows the prompt instead)', () => {
+    eq(monthlyGoalModel([tr(1, 1)], {}, NOW), null);
+    eq(monthlyGoalModel([tr(1, 1)], null, NOW), null);
+  });
+}
+
 console.log('\nscenario shock');
 const BOOK = [
   { coin: 'BTC', side: 'long',  notional: 10000, mark: 100, liq: 85 },
