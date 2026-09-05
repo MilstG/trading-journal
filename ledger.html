@@ -4051,7 +4051,8 @@ function extraDiagHtml(closed,allv,s){
     ? mrow('Drawdown episodes',String(dd.episodes),'Distinct peak-to-trough-to-recovery cycles in your cumulative-PnL curve.')+
       mrow('Median trades to recover',dd.medRecover!=null?String(dd.medRecover):'—','Typical number of trades to climb back to a prior high-water mark after a drawdown began.')+
       mrow('Longest recovery',dd.maxRecover!=null?dd.maxRecover+' trades':'—','Most trades it ever took to make a new high-water mark.')+
-      mrow('Currently underwater',dd.underwaterTrades?('<span class="loss">'+dd.underwaterTrades+' trades</span>'):'at/near highs','Trades since your last high-water mark. Long underwater stretches are where discipline slips.')
+      mrow('Currently underwater',dd.underwaterTrades?('<span class="loss">'+dd.underwaterTrades+' trades</span>'):'at/near highs','Trades since your last high-water mark. Long underwater stretches are where discipline slips.')+
+      mrow('Deepest episode',dd.deepest<0?('<span class="loss">'+fmtUsd(dd.deepest)+'</span>'):'—','Worst peak-to-trough dollar depth across completed drawdown episodes. Pair it with the recovery counts: depth is what tests sizing, length is what tests patience.')
     : '<p class="lead">Needs ≥2 completed trades.</p>';
   ddHtml += mrow('Worst losing streak',wls.count?('<span class="loss">'+fmtUsd(wls.depth)+' · '+wls.count+' trades</span>'):'—','Deepest cumulative dollar loss across an unbroken run of losing trades — the depth behind the count-based streak. Size so you can sit through this without breaking rules.');
 
@@ -4657,6 +4658,11 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
 }
 async function loadFromPaste(fills){
   if(!fills.length){ setErr('No fills found in that data.'); return; }
+  // resolve @N spot indices to real token names — the paste path used to skip this,
+  // leaving pasted spot trades labeled "@210" forever
+  if(!Object.keys(spotMaps.nameByCoin).length){
+    try{ setStatus('Fetching spot metadata…',true); spotMaps=await fetchSpotMaps(); }catch(e){}
+  }
   const {perp:perpTr,spot:spotTr}=await reconstructCompute(fills,[],'paste');
   spotTr.forEach(t=>t.symbol=spotMaps.nameByCoin[t.coin]||t.coin);
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
