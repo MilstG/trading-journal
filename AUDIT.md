@@ -1,5 +1,10 @@
 # Code audit — September 2026
 
+> **Status: addressed.** Every finding below (H1–H4, M1–M9, L1–L19, S1–S7) was fixed and
+> every suggested feature (1–12) built, in the commits following this document on the same
+> branch. The text below is preserved as the audit record; line numbers refer to the
+> revision that was audited.
+
 Scope: `ledger.html` (full app), `server.js`, test suites. All 257 tests pass at the
 audited revision. Line numbers refer to the current files. Findings are ordered by
 severity; each was verified against the actual code, not inferred.
