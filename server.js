@@ -190,6 +190,40 @@ const csvCell = (v) => {
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
+/* ---------------- alerts: pure derivation + webhook delivery ---------------- */
+// Derive alert lines from a plain state snapshot. Pure and exported so thresholds are
+// testable without a server, caches, or network. Keys dedupe repeats: liq alerts key per
+// position, day-scoped alerts re-arm next day, the drawdown alert re-arms after cooldown.
+function alertsFrom(state, cfg) {
+  const out = [];
+  const money = (n) => '$' + Math.abs(Math.round(n)).toLocaleString('en-US');
+  if (cfg.liqPct > 0) for (const r of (state.risk || [])) {
+    if (r.liqDist != null && r.liqDist * 100 <= cfg.liqPct)
+      out.push({ key: 'liq:' + r.coin + ':' + ((r.wallet && r.wallet.address) || ''),
+        text: '⚠ ' + r.coin + ' ' + r.side + ' is ' + (r.liqDist * 100).toFixed(1) + '% from liquidation (notional ' + money(r.notional) + ')' });
+  }
+  if (cfg.dailyLoss > 0 && state.todayNet <= -cfg.dailyLoss)
+    out.push({ key: 'dailyloss:' + state.todayKey,
+      text: '⛔ Daily loss limit: down ' + money(state.todayNet) + ' today (limit ' + money(cfg.dailyLoss) + '). Step away.' });
+  if (cfg.funding24h > 0 && state.funding24h <= -cfg.funding24h)
+    out.push({ key: 'funding:' + state.todayKey,
+      text: '💸 Funding bleed: ' + money(state.funding24h) + ' paid in the last 24h (threshold ' + money(cfg.funding24h) + ')' });
+  if (state.currentDD != null && state.ddP95 != null && -state.currentDD > state.ddP95)
+    out.push({ key: 'dd',
+      text: '📉 Drawdown ' + money(state.currentDD) + ' exceeds the 95th-percentile expectation (' + money(state.ddP95) + ') for your own shuffled return stream — statistically unusual for your strategy, not routine variance.' });
+  return out;
+}
+// Best-effort webhook post; shapes the body for the common receivers.
+async function postWebhook(url, text) {
+  let body, headers = { 'Content-Type': 'application/json' };
+  if (/discord\.com|discordapp\.com/.test(url)) body = JSON.stringify({ content: text });
+  else if (/hooks\.slack\.com/.test(url)) body = JSON.stringify({ text });
+  else if (/ntfy\.sh/.test(url)) { body = text; headers = { 'Content-Type': 'text/plain' }; }
+  else body = JSON.stringify({ text });
+  const res = await fetch(url, { method: 'POST', headers, body });
+  if (!res.ok) throw new Error('webhook HTTP ' + res.status);
+}
+
 function createApp(opts) {
   opts = opts || {};
   const dataDir = opts.dataDir
@@ -213,6 +247,8 @@ function createApp(opts) {
   fs.mkdirSync(fillsDir, { recursive: true });
   fs.mkdirSync(fundingDir, { recursive: true });
   fs.mkdirSync(ledgerDir, { recursive: true });
+  const reportsDir = path.join(dataDir, 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
   const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
   const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
   const MAX_ATT_TOTAL = 512 * 1024 * 1024;    // whole store — Railway volumes are small, and per-key caps alone allow unbounded growth
@@ -581,6 +617,133 @@ function createApp(opts) {
     }
   }
 
+  /* ---------------- scheduled refresh + webhook alerts ---------------- */
+  // REFRESH_INTERVAL_MIN=30 keeps the server-side caches fresh without anyone opening the
+  // app; ALERT_WEBHOOK (Discord/Slack/ntfy/generic-JSON) then gets pinged when something
+  // needs a human: a position near liquidation, the daily loss limit crossed, a drawdown
+  // beyond the Monte-Carlo p95 for this return stream, or heavy funding bleed. Alerting is
+  // the half of a journal that changes behavior DURING the session, not after it.
+  const refreshEveryMin = opts.refreshEveryMin !== undefined ? opts.refreshEveryMin
+    : parseFloat(process.env.REFRESH_INTERVAL_MIN || '0');
+  const alertCfg = Object.assign({
+    webhook: process.env.ALERT_WEBHOOK || '',
+    liqPct: parseFloat(process.env.ALERT_LIQ_PCT || '10'),        // % from liquidation
+    dailyLoss: parseFloat(process.env.ALERT_DAILY_LOSS || '0'),   // $; 0 = fall back to the app's saved daily-loss rule
+    funding24h: parseFloat(process.env.ALERT_FUNDING_24H || '0'), // $ paid per 24h; 0 = off
+    cooldownMs: 6 * 3600e3,
+  }, opts.alerts || {});
+  function gatherAlertState() {
+    if (!engine.ok) return null;
+    const snap = currentSnapshot();
+    setEngineState({});
+    const { trades } = ensureTrades();
+    const closed = trades.filter(t => !t.isOpen && t.closeTime).sort((a, b) => a.closeTime - b.closeTime);
+    const market = readMarket();
+    const risk = market ? E.openRiskModel(market.positions || []) : null;
+    const dayOf = (ms) => { const p = E.tzParts(ms); return p.y + '-' + (p.mo + 1) + '-' + p.day; };
+    const todayKey = dayOf(Date.now());
+    let todayNet = 0; for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
+    let funding24h = 0; const cut = Date.now() - 86400000;
+    for (const w of snapWallets(snap)) { const fc = readFundingCache(w.address);
+      if (fc) for (const r of fc.rows) if (r.time >= cut && isFinite(r.usdc)) funding24h += r.usdc; }
+    const nets = closed.map(t => t.net);
+    let currentDD = null, ddP95 = null;
+    if (nets.length >= 20) {
+      currentDD = E.currentDD(nets).dd;
+      E._srand(E._hashSeed('alerts|' + nets.length));
+      const mc = E.mcMaxDD(nets, 1000); if (mc) ddP95 = mc.p95;
+    }
+    return { risk: (risk && risk.rows) || [], todayKey, todayNet, funding24h, currentDD, ddP95,
+      rulesDailyLoss: (snap.settings && snap.settings.rules && parseFloat(snap.settings.rules.dailyLossLimit)) || 0 };
+  }
+  const _alertSent = new Map();
+  async function maybeAlert() {
+    if (!alertCfg.webhook) return;
+    let state; try { state = gatherAlertState(); } catch (e) { return; }
+    if (!state) return;
+    const cfg = { ...alertCfg, dailyLoss: alertCfg.dailyLoss > 0 ? alertCfg.dailyLoss : state.rulesDailyLoss };
+    const now = Date.now();
+    const due = alertsFrom(state, cfg).filter(a => now - (_alertSent.get(a.key) || 0) >= alertCfg.cooldownMs);
+    if (!due.length) return;
+    try {
+      await postWebhook(alertCfg.webhook, due.map(a => a.text).join('\n'));
+      for (const a of due) _alertSent.set(a.key, now);
+    } catch (e) { console.warn('[ledger] alert webhook failed: ' + e.message); }
+  }
+  async function runScheduledRefresh() {
+    if (_refreshing) return;
+    _refreshing = true;
+    let watchdog = null; // same 5-minute deadline as the POST route — a hang must not pin the mutex
+    try {
+      const summary = await Promise.race([
+        doRefresh({}),
+        new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('timed out')), 5 * 60000); if (watchdog.unref) watchdog.unref(); }),
+      ]);
+      _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
+    }
+    catch (e) { console.warn('[ledger] scheduled refresh failed: ' + ((e && (e.msg || e.message)) || e)); }
+    finally { clearTimeout(watchdog); _refreshing = false; }
+    maybeAlert();
+  }
+  /* ---------------- weekly digest ---------------- */
+  // Once per ISO week (first scheduled run after Monday 00:00 UTC) a digest of the PREVIOUS
+  // week lands in DATA_DIR/reports/ (kept: 26 weeks) and, when a webhook is configured, a
+  // one-paragraph summary is posted — the monthly-review habit, automated down to weekly.
+  function weeklyDigest() {
+    if (!engine.ok) return null;
+    const nowD = new Date();
+    const dow = (nowD.getUTCDay() + 6) % 7; // Monday=0
+    const monday = Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - dow);
+    const tag = new Date(monday).toISOString().slice(0, 10);
+    const file = path.join(reportsDir, 'weekly-' + tag + '.json');
+    if (fs.existsSync(file)) return null; // this week's digest already written
+    setEngineState({});
+    const { trades } = ensureTrades();
+    const WEEK = 7 * 86400000;
+    const win = (a, b) => trades.filter(t => !t.isOpen && t.closeTime >= a && t.closeTime < b);
+    const wk = win(monday - WEEK, monday), prev = win(monday - 2 * WEEK, monday - WEEK);
+    if (!wk.length && !prev.length) return null; // nothing to say — don't write empty reports
+    const sumNet = a => a.reduce((x, t) => x + t.net, 0);
+    E._oneR = E.computeOneR(wk);
+    const s = wk.length ? E.computeStats(wk, wk) : null;
+    const best = wk.length ? wk.reduce((m, t) => t.net > m.net ? t : m) : null;
+    const worst = wk.length ? wk.reduce((m, t) => t.net < m.net ? t : m) : null;
+    const digest = {
+      week: tag, from: monday - WEEK, to: monday, generatedAt: Date.now(),
+      n: wk.length, net: +sumNet(wk).toFixed(2), prevN: prev.length, prevNet: +sumNet(prev).toFixed(2),
+      stats: s, best: best ? { coin: best.symbol || best.coin, net: best.net } : null,
+      worst: worst ? { coin: worst.symbol || worst.coin, net: worst.net } : null,
+    };
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(digest, null, 2)); fs.renameSync(tmp, file);
+    try { // prune to the newest 26 weeks
+      const files = fs.readdirSync(reportsDir).filter(f => /^weekly-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+      while (files.length > 26) fs.unlinkSync(path.join(reportsDir, files.shift()));
+    } catch (e) {}
+    const money = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+    const text = '📒 Week ending ' + tag + ': ' + digest.n + ' trades, net ' + money(digest.net)
+      + (s ? ' · win rate ' + Math.round((s.winRate || 0) * 100) + '% · expectancy ' + money(s.expectancy || 0) + '/trade · fees ' + money(s.fees || 0) : '')
+      + ' · prior week ' + money(digest.prevNet) + ' over ' + digest.prevN + ' trades'
+      + (digest.best ? ' · best ' + digest.best.coin + ' ' + money(digest.best.net) : '')
+      + (digest.worst ? ' · worst ' + digest.worst.coin + ' ' + money(digest.worst.net) : '');
+    return { file, text, digest };
+  }
+  function maybeDigest() {
+    try {
+      const d = weeklyDigest();
+      if (d) {
+        console.log('[ledger] weekly digest written: ' + d.file);
+        if (alertCfg.webhook) postWebhook(alertCfg.webhook, d.text).catch(e => console.warn('[ledger] digest webhook failed: ' + e.message));
+      }
+    } catch (e) { console.warn('[ledger] weekly digest failed: ' + ((e && (e.msg || e.message)) || e)); }
+  }
+  if (refreshEveryMin > 0) {
+    const t = setInterval(() => { runScheduledRefresh().then(maybeDigest); }, Math.max(1, refreshEveryMin) * 60000);
+    if (t.unref) t.unref(); // never keep the process alive just for the schedule
+    console.log('[ledger] scheduled refresh every ' + refreshEveryMin + ' min'
+      + (alertCfg.webhook ? ' with webhook alerts' : ' (no ALERT_WEBHOOK set — refresh only)'));
+  }
+
   /* ---------------- v1 endpoint docs (served at GET /api/v1) ---------------- */
   const FILTER_DOC = 'market, wallet, coin, dir, status=open|closed|all, outcome=win|loss|be, tag, q, from, to (from/to compare closeTime, which for an open trade is its last fill — same semantics as the app), tz=utc|local';
   const V1_DOCS = [
@@ -601,6 +764,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
     { method: 'GET',  path: '/api/v1/spot/lots', auth: 'read', desc: 'FIFO 8949-style spot cost-basis lots; wallet= optional' },
     { method: 'GET',  path: '/api/v1/whatif', auth: 'read', desc: 'counterfactual replay removing trades matching field/op/value (op: eq|ne|lt|lte|gt|gte|in); filters' },
+    { method: 'GET',  path: '/api/v1/digests', auth: 'read', desc: 'stored weekly digests (newest first); /api/v1/digests/YYYY-MM-DD fetches one. Written automatically when REFRESH_INTERVAL_MIN is set' },
     { method: 'GET',  path: '/api/v1/journal', auth: 'read', desc: 'journal entries keyed by trade id (read-only)' },
     { method: 'GET',  path: '/api/v1/journal/:id', auth: 'read', desc: 'one journal entry (read-only)' },
     { method: 'GET',  path: '/api/v1/tags', auth: 'read', desc: 'distinct journal tags with usage counts' },
@@ -659,6 +823,7 @@ function createApp(opts) {
           spot: trades.filter(t => t.market === 'spot').length,
           open: trades.filter(t => t.isOpen).length,
         };
+        maybeAlert(); // fire-and-forget: a manual refresh should trigger the same monitoring
         return send(200, summary);
       } catch (e) { return fail(e); }
       finally { clearTimeout(watchdog); _refreshing = false; }
@@ -966,6 +1131,17 @@ function createApp(opts) {
         return send(200, { rule: { field: query.field, op: query.op || 'eq', value: query.value }, model });
       }
 
+      if (url === '/api/v1/digests') {
+        let files = [];
+        try { files = fs.readdirSync(reportsDir).filter(f => /^weekly-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().reverse(); } catch (e) {}
+        return send(200, { digests: files.map(f => f.slice(7, 17)) });
+      }
+      const digM = url.match(/^\/api\/v1\/digests\/(\d{4}-\d{2}-\d{2})$/);
+      if (digM) {
+        try { return send(200, JSON.parse(fs.readFileSync(path.join(reportsDir, 'weekly-' + digM[1] + '.json'), 'utf8'))); }
+        catch (e) { return send(404, { error: 'no digest for week ' + digM[1] }); }
+      }
+
       if (url === '/api/v1/journal') {
         const snap = currentSnapshot();
         return send(200, { journal: snap.journal || {} });
@@ -1188,6 +1364,8 @@ function createApp(opts) {
   server.appSyncCapable = appSyncCapable;
   server.engineOk = engine.ok;
   server.engineMissing = engine.missing;
+  server._weeklyDigest = weeklyDigest;       // exposed for tests — generation is time-gated in production
+  server._gatherAlertState = gatherAlertState; // exposed for tests
   return server;
 }
 
@@ -1222,4 +1400,4 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { createApp, buildEngine, ENGINE_FNS };
+module.exports = { createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook };
