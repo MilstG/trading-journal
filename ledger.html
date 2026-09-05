@@ -859,7 +859,7 @@ async function openExistingFile(){ if(!FSA){ $('importBtn').click(); return; }
     await applySnapshot(data); linkedHandle=h; linkedName=h.name; await idbSet('handle',h);
     renderDatafile('saved'); renderWallets();
     if(allTrades.length) render();
-    setStatus('Loaded from '+esc(h.name)+' · '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries. Hit Load all to refresh trades.');
+    setStatus('Loaded from '+h.name+' · '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries. Hit Load all to refresh trades.');
   }catch(e){ if(e.name!=='AbortError') renderDatafile('error'); } }
 async function reconnectFile(){ const h=await idbGet('handle'); if(!h){ renderDatafile(); return; }
   if(await ensurePerm(h,'readwrite')!=='granted'){ renderDatafile('need-permission'); return; }
@@ -867,7 +867,7 @@ async function reconnectFile(){ const h=await idbGet('handle'); if(!h){ renderDa
     await applySnapshot(data); linkedHandle=h; linkedName=h.name;
     renderDatafile('saved'); renderWallets();
     if(allTrades.length) render();
-    setStatus('Reconnected '+esc(h.name)+' · data restored. Hit Load all to refresh trades.');
+    setStatus('Reconnected '+h.name+' · data restored. Hit Load all to refresh trades.');
   }catch(e){ renderDatafile('error'); } }
 async function unlinkFile(){ linkedHandle=null; linkedName=''; await idbDel('handle'); renderDatafile(); }
 
@@ -932,7 +932,11 @@ async function fetchAllFills(addr, since=0){
     for(const f of batch) add(f);
     setStatus((since>0?'Fetching new fills… ':'Fetching fills… ')+all.length+' so far', true);
     if(batch.length<2000) break;
-    start=Math.max(...batch.map(f=>f.time))+1; pages++; await sleep(160);
+    // Resume AT the boundary time, not past it: fills sharing the boundary millisecond that
+    // didn't fit in this batch are picked up next page and removed by the dedupe set above.
+    // Only when an entire page is one millisecond (start can't advance) is +1 unavoidable.
+    const mx=Math.max(...batch.map(f=>f.time));
+    start=mx>start?mx:mx+1; pages++; await sleep(160);
     if(pages>=60) truncated=true; // hit the hard page cap with a full final batch — older history is missing
   }
   // TWAP slice fills live in a separate endpoint and are NOT in userFills — merge them in so
@@ -943,9 +947,29 @@ async function fetchAllFills(addr, since=0){
   return {fills:all, truncated};
 }
 async function fetchFunding(addr){
-  try{ const rows=await hlPost({type:'userFunding',user:addr,startTime:0});
-    return Array.isArray(rows)?rows.map(r=>({time:r.time,coin:r.delta&&r.delta.coin,usdc:parseFloat((r.delta&&r.delta.usdc)||0)})):[];
-  }catch(e){ return []; }
+  // userFunding caps each response (~500 rows). One call with startTime:0 silently drops
+  // everything past the cap, and funding feeds net = pnl - fees + funding — so heavy
+  // accounts got corrupted headline numbers. Page forward exactly like fetchAllFills:
+  // resume AT the boundary time (dupes straddling a page edge are keyed out below) and
+  // only skip a millisecond when a whole page shares one timestamp and start can't advance.
+  const out=[]; const seen=new Set();
+  let start=0, pages=0, partial=false;
+  try{
+    while(pages<200){
+      const rows=await hlPost({type:'userFunding',user:addr,startTime:start});
+      if(!Array.isArray(rows)||rows.length===0) break;
+      for(const r of rows){
+        const rec={time:r.time,coin:r.delta&&r.delta.coin,usdc:parseFloat((r.delta&&r.delta.usdc)||0)};
+        const id=rec.time+'|'+rec.coin; // one funding event per coin per tick
+        if(!seen.has(id)){ seen.add(id); out.push(rec); }
+      }
+      if(rows.length<500) break;
+      const mx=Math.max(...rows.map(r=>r.time));
+      start=mx>start?mx:mx+1; pages++; await sleep(160);
+    }
+  }catch(e){ partial=true; } // keep what we have, but say so — silent 0 looked like "no funding"
+  if(partial) setStatus('⚠ Funding history fetch interrupted — funding attribution may be incomplete for this load.');
+  return out;
 }
 // HIP-3 (builder-deployed) perps live on separate dexs with independent clearinghouses.
 // clearinghouseState with no `dex` param only returns the first (validator-operated) perp dex,
@@ -1113,8 +1137,12 @@ const dcoin=t=>{ const s=t.symbol; if(s&&!/^@\d+$/.test(s))return s; return (spo
 const dispMarket=k=>{ const s=String(k); const m=s.match(/^([A-Za-z0-9_-]+):(.+)$/); return m?m[2]+' ('+m[1]+' dex)':s; };
 const $=id=>document.getElementById(id);
 let _stTimer=null;
-function setStatus(m,busy){ const s=$('status'); s.className=''; s.innerHTML=(busy?'<span class="dot"></span>':'')+m;
-  clearTimeout(_stTimer); if(!busy&&m) _stTimer=setTimeout(()=>{ if(s.className==='')s.innerHTML=''; },8000); }
+function setStatus(m,busy){ const s=$('status'); s.className='';
+  // textContent, not innerHTML: messages interpolate wallet labels and coin/dex names,
+  // which arrive from imported backups and the exchange — identifiers, never markup.
+  s.textContent=m;
+  if(busy){ const d=document.createElement('span'); d.className='dot'; s.prepend(d); }
+  clearTimeout(_stTimer); if(!busy&&m) _stTimer=setTimeout(()=>{ if(s.className==='')s.textContent=''; },8000); }
 function setErr(m){ const s=$('status'); s.className='err'; s.textContent=m; }
 
 /* ============================ format ============================ */
@@ -4104,6 +4132,10 @@ function downscaleImage(file,max){ max=max||1200; return new Promise((res,rej)=>
     img.onerror=rej; img.src=rd.result; };
   rd.onerror=rej; rd.readAsDataURL(file); }); }
 const _attKey=id=>btoa(unescape(encodeURIComponent(id))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+// Attachments render via innerHTML/src, so every entry must be a well-formed base64 image
+// data URL — the server validates on PUT, but the client must not trust the read path
+// (a compromised sync server could otherwise inject markup through /api/att).
+const _attSrcOk=s=>typeof s==='string'&&/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]*$/i.test(s);
 async function syncAttUp(id){ if(!SRV.enabled)return;
   try{ const arr=(await idbGet('att:'+id))||[];
     if(arr.length)await srvFetch('/api/att/'+_attKey(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(arr)});
@@ -4111,14 +4143,15 @@ async function syncAttUp(id){ if(!SRV.enabled)return;
   }catch(e){} }
 async function syncAttDown(id){ if(!SRV.enabled)return null;
   try{ const r=await srvFetch('/api/att/'+_attKey(id));
-    if(!r.ok)return null; const arr=await r.json();
+    if(!r.ok)return null; let arr=await r.json();
+    if(Array.isArray(arr)) arr=arr.filter(_attSrcOk);
     if(Array.isArray(arr)&&arr.length){ await idbSet('att:'+id,arr); return arr; }
   }catch(e){} return null; }
 async function loadAttachments(id){ const box=document.getElementById('att-'+id); if(!box)return;
   let arr=(await idbGet('att:'+id))||[];
   if(!arr.length&&SRV.enabled){ const dl=await syncAttDown(id); if(dl)arr=dl; } // images follow you across devices
   if(!arr.length){ box.innerHTML='<span style="color:var(--faint);font-size:11.5px">No attachments yet.</span>'; return; }
-  box.innerHTML=arr.map((src,i)=>`<div class="attthumb"><img src="${src}" data-att-view="${id}:${i}" alt="attachment ${i+1}"><button class="att-del" data-att-del="${id}:${i}" title="Remove" aria-label="Remove attachment ${i+1}">×</button></div>`).join(''); }
+  box.innerHTML=arr.map((src,i)=>_attSrcOk(src)?`<div class="attthumb"><img src="${src}" data-att-view="${id}:${i}" alt="attachment ${i+1}"><button class="att-del" data-att-del="${id}:${i}" title="Remove" aria-label="Remove attachment ${i+1}">×</button></div>`:'').join(''); }
 async function addAttachments(id,files){ const box=document.getElementById('att-'+id);
   if(box)box.innerHTML='<span style="color:var(--faint);font-size:11.5px">Processing…</span>';
   let arr=(await idbGet('att:'+id))||[];
@@ -4638,7 +4671,9 @@ $('tbody').addEventListener('click',e=>{
   const save=e.target.closest('[data-save]'); if(save){ saveJournal(save.dataset.save); return; }
   const del=e.target.closest('[data-att-del]'); if(del){ const[id,idx]=del.dataset.attDel.split(':'); removeAttachment(id,+idx); return; }
   const rp=e.target.closest('[data-replay]'); if(rp){ openReplay(rp.dataset.replay,rp); return; }
-  const av=e.target.closest('[data-att-view]'); if(av){ const w=window.open(); if(w)w.document.write('<img src="'+av.getAttribute('src')+'" style="max-width:100%">'); return; }
+  const av=e.target.closest('[data-att-view]'); if(av){ const src=av.getAttribute('src');
+    if(_attSrcOk(src)){ const w=window.open(); if(w){ const img=w.document.createElement('img');
+      img.src=src; img.style.maxWidth='100%'; w.document.body.appendChild(img); } } return; }
   const star=e.target.closest('.star'); if(star){ setStar(star); return; }
   const chk=e.target.closest('.chk'); if(chk){ const id=chk.parentElement.dataset.id,m=chk.querySelector('input').dataset.m;
     const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);},0); return; }
@@ -4669,16 +4704,19 @@ $('modalLoad').onclick=async()=>{
   const raw=$('pasteBox').value.trim(); if(!raw)return; let data;
   try{ data=JSON.parse(raw); }catch(e){ setErr('That isn\u2019t valid JSON.'); return; }
   $('modal').classList.remove('show'); $('pasteBox').value='';
-  if(data&&!Array.isArray(data)&&typeof data==='object'&&!data.coin){
+  // !data.fills: a {fills:[...]} paste is fill data for reconstruction, not a journal —
+  // without this guard it would fall through to the journal branch and overwrite it.
+  if(data&&!Array.isArray(data)&&typeof data==='object'&&!data.coin&&!data.fills){
     if(data.journal||data.wallets||data.settings){ // full backup
-      if(data.journal)journal=data.journal;
-      if(Array.isArray(data.wallets))settings.wallets=data.wallets;
-      if(data.settings){ if(data.settings.riskDefault!=null)settings.riskDefault=data.settings.riskDefault; if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; }
-      await Store.set(J_KEY,journal); await Store.set(S_KEY,settings);
+      // applySnapshot is the one restore path that knows the whole backup shape — including
+      // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
+      await applySnapshot(data);
+      schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
       view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
       document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
       renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
-      setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries. Hit Load all to refresh trades.'); return;
+      const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
+      setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return;
     }
     journal=data; await Store.set(J_KEY,journal); if(allTrades.length)render();
     setStatus('Journal restored ('+Object.keys(journal).length+' entries).'); return;
