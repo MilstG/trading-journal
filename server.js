@@ -329,7 +329,7 @@ function createApp(opts) {
       const res = { address: w.address, label: w.label || '', newFills: 0, fills: 0, truncated: false, error: null };
       try {
         const cache = body.full ? null : readFillCache(w.address);
-        const since = (cache && cache.last) ? cache.last + 1 : 0;
+        const since = (cache && cache.last) ? cache.last : 0; // resume AT the watermark — dedupe below handles the overlap, boundary-ms fills are never skipped
         const fr = await E.fetchAllFills(w.address, since);
         let fills;
         if (cache) {

@@ -675,7 +675,18 @@ const FSA = ('showSaveFilePicker' in window);
 let linkedHandle=null, linkedName='', _writeTimer=null, _applying=false;
 function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('ledger_fs',1);
   r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
-async function idbSet(k,v){ try{ const db=await idb(); return new Promise((res)=>{ const tx=db.transaction('kv','readwrite'); tx.objectStore('kv').put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>res(); }); }catch(e){} }
+// IndexedDB write failures (quota above all) used to resolve as success — the fill cache,
+// the one thing preserving history beyond the API's page cap, could silently stop saving.
+// idbSet still never throws (call sites are fire-and-forget by design), but the first
+// failure is surfaced once in the status bar so the user knows their caches stopped.
+let _idbWarned=false;
+function _idbFail(e){ if(_idbWarned)return; _idbWarned=true;
+  const quota=e&&(e.name==='QuotaExceededError'||/quota/i.test(String(e&&e.message||e)));
+  try{ setErr(quota
+    ?'Browser storage is full — fill/candle caches can no longer save. Clear candle cache to free space, and export a backup: history beyond the API page cap is otherwise at risk.'
+    :'Browser storage write failed ('+(e&&e.name||'unknown')+') — caches may not persist. Export a backup.'); }catch(_){}
+}
+async function idbSet(k,v){ try{ const db=await idb(); return await new Promise((res,rej)=>{ const tx=db.transaction('kv','readwrite'); tx.objectStore('kv').put(v,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error); }); }catch(e){ _idbFail(e); } }
 async function idbGet(k){ try{ const db=await idb(); return new Promise((res)=>{ const tx=db.transaction('kv','readonly'); const rq=tx.objectStore('kv').get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>res(null); }); }catch(e){ return null; } }
 async function idbDel(k){ try{ const db=await idb(); return new Promise((res)=>{ const tx=db.transaction('kv','readwrite'); tx.objectStore('kv').delete(k); tx.oncomplete=()=>res(); tx.onerror=()=>res(); }); }catch(e){} }
 async function idbKeys(prefix){ try{ const db=await idb(); return new Promise((res)=>{ const tx=db.transaction('kv','readonly'); const rq=tx.objectStore('kv').getAllKeys();
@@ -760,26 +771,43 @@ function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout
 // with the server's current state, which the client applies instead of clobbering it.
 const SRV={enabled:false,needsAuth:false,badAuth:false,token:null,rev:0};
 let _srvTimer=null;
+// Journal ids edited locally since the last successful sync. On a 409 the server's snapshot
+// wins wholesale — except these entries, which are re-applied on top and re-synced, so a
+// note typed on this device isn't silently replaced by another device's older state.
+const _dirtyJ=new Set();
+let _srvWriting=false,_srvAgain=false;
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); }
 function scheduleServerWrite(){ if(!SRV.enabled||_applying)return; clearTimeout(_srvTimer); _srvTimer=setTimeout(writeServer,800); }
 function srvFetch(p,o){ o=o||{}; o.headers=Object.assign({},o.headers);
   if(SRV.token)o.headers['Authorization']='Bearer '+SRV.token; return fetch(p,o); }
 async function writeServer(){
   if(!SRV.enabled)return;
+  if(_srvWriting){ _srvAgain=true; return; } // serialize PUTs — interleaved responses can regress SRV.rev
+  _srvWriting=true;
   try{
     let excRows=null; try{ const p=await idbGet('excRows'); if(p&&p.v===1&&p.rows)excRows=p; }catch(e){}
     const snap={...snapshot()}; if(excRows)snap.excRows=excRows;
+    const sentDirty=[..._dirtyJ]; // edits made while this PUT is in flight stay dirty
     const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({rev:SRV.rev,snapshot:snap})});
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return; }
-    if(r.status===409){ // edited from another device since we last loaded — take theirs, don't clobber
+    if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
       const j=await r.json(); SRV.rev=j.rev||0;
-      if(j.snapshot){ await applySnapshot(j.snapshot); try{ renderWallets(); }catch(e){} }
-      setStatus('Loaded newer data saved from another device.');
+      if(j.snapshot){
+        const mine=journal, dirty=[..._dirtyJ];
+        await applySnapshot(j.snapshot); try{ renderWallets(); }catch(e){}
+        if(dirty.length){
+          for(const id of dirty){ if(mine[id]!==undefined)journal[id]=mine[id]; else delete journal[id]; }
+          await rawSet(J_KEY,journal); scheduleServerWrite(); // push the merge at the new revision
+        }
+      }
+      setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local journal edits were kept and will re-sync.':''));
       renderDatafile(); return;
     }
-    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1; renderDatafile('saved'); }
+    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1;
+      sentDirty.forEach(id=>_dirtyJ.delete(id)); renderDatafile('saved'); }
   }catch(e){ /* transient network failure — next change retries */ }
+  finally{ _srvWriting=false; if(_srvAgain){ _srvAgain=false; writeServer(); } }
 }
 async function initServerSync(){
   if(!/^https?:$/.test(location.protocol))return false;
@@ -1948,7 +1976,7 @@ function renderCharts(closed, allv){
   const byCoin={}; allv.forEach(t=>{const k=dcoin(t);byCoin[k]=(byCoin[k]||0)+t.net;});
   const coins=Object.entries(byCoin).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10);
   charts.coin=bar('byCoin',coins.map(c=>dispMarket(c[0])),coins.map(c=>c[1]));
-  const byMon={}; allv.forEach(t=>{ const d=new Date(t.closeTime); const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); byMon[k]=(byMon[k]||0)+t.net; });
+  const byMon={}; allv.forEach(t=>{ const p=tzParts(t.closeTime); const k=p.y+'-'+String(p.mo+1).padStart(2,'0'); byMon[k]=(byMon[k]||0)+t.net; }); // tzParts, not local Date — keeps this chart on the same clock as the monthly decomposition
   const mons=Object.keys(byMon).sort().slice(-12);
   const MONL=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   charts.month=bar('byMonth',mons.map(k=>MONL[+k.slice(5)-1]+' '+k.slice(2,4)),mons.map(k=>byMon[k]));
@@ -2597,7 +2625,7 @@ function renderDiagnostic(closed, allv){
   const afterLossExp=afterLoss.length?afterLoss.reduce((x,t)=>x+t.net,0)/afterLoss.length:null;
   const tilt=(afterLoss.length>=5 && afterLossExp!=null && afterLossExp<s.expectancy);
   // --- overtrading: high-count days vs the rest ---
-  const byDay={}; closed.forEach(t=>{const k=Math.floor(t.closeTime/86400000);(byDay[k]=byDay[k]||{n:0,net:0});byDay[k].n++;byDay[k].net+=t.net;});
+  const byDay={}; closed.forEach(t=>{const k=tzMidnight(t.closeTime);(byDay[k]=byDay[k]||{n:0,net:0});byDay[k].n++;byDay[k].net+=t.net;});
   const dayArr=Object.values(byDay); const dCounts=dayArr.map(d=>d.n);
   const dThr=Math.max(_avg(dCounts)+_std(dCounts), _avg(dCounts)+1);
   const hiDays=dayArr.filter(d=>d.n>=dThr), loDays=dayArr.filter(d=>d.n<dThr);
@@ -3223,16 +3251,20 @@ function mergeCandles(oldC,newC){ const m=new Map();
   for(const c of (oldC||[]))m.set(c[0],c); for(const c of (newC||[]))m.set(c[0],c);
   return [...m.values()].sort((a,b)=>a[0]-b[0]); }
 async function fetchCandles(coin,itvName,a,b){
-  let start=a; const out=[]; let pages=0;
-  while(start<b&&pages<12){ // HL caps ~5000 candles per response; paginate if the range is bigger
-    const rows=await hlPost({type:'candleSnapshot',req:{coin,interval:itvName,startTime:Math.floor(start),endTime:Math.floor(b)}});
-    if(!Array.isArray(rows)||!rows.length)break;
-    for(const r of rows)out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]); // open appended last so older [t,h,l,c] cache rows stay index-compatible
-    const lastT=+rows[rows.length-1].t;
-    if(rows.length<5000||lastT<=start)break;
+  // Returns {rows, coveredTo}. coveredTo < b when the page cap cut the fetch short — callers
+  // must record coverage only up to coveredTo, otherwise the gap would be marked covered,
+  // never refetched, and excursions computed over it would be silently wrong forever.
+  let start=a; const rows=[]; let pages=0, coveredTo=b;
+  while(start<b){ // HL caps ~5000 candles per response; paginate if the range is bigger
+    if(pages>=12){ coveredTo=start; break; } // hard page cap — everything past `start` was NOT fetched
+    const batch=await hlPost({type:'candleSnapshot',req:{coin,interval:itvName,startTime:Math.floor(start),endTime:Math.floor(b)}});
+    if(!Array.isArray(batch)||!batch.length)break; // exchange has nothing (further) in range — that IS coverage
+    for(const r of batch)rows.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]); // open appended last so older [t,h,l,c] cache rows stay index-compatible
+    const lastT=+batch[batch.length-1].t;
+    if(batch.length<5000||lastT<=start)break;
     start=lastT+1; pages++; await sleep(120);
   }
-  return out;
+  return {rows, coveredTo};
 }
 // candles: sorted [openTime, high, low, close, open?]; the open (index 4) exists only on rows fetched
 // after the replay-candlestick build — everything here uses indexes 1-3 so old cache rows are fine.
@@ -3351,8 +3383,8 @@ async function runExcursions(closed,openTrades){
         req++; grandReq++;
         setStatus(`Fetching candles… ${req}/${reqTotal}${pass?` (retry pass ${pass})`:''} (${j.e.coin} ${j.e.itv.name})`,true);
         try{ const c=await fetchCandles(j.e.coin,j.e.itv.name,u[0],u[1]);
-          j.cache.candles=mergeCandles(j.cache.candles,c);
-          j.cache.ranges=mergeRanges([...j.cache.ranges,[u[0],u[1]]],1);
+          j.cache.candles=mergeCandles(j.cache.candles,c.rows);
+          if(c.coveredTo>u[0]) j.cache.ranges=mergeRanges([...j.cache.ranges,[u[0],c.coveredTo]],1);
           await sleep(90);
         }catch(err){ skippedCoins.add(j.e.coin); } // no candles for this coin (some HIP-3/spot names) — skip, don't sink the run
       }
@@ -3502,8 +3534,8 @@ async function ensureTradeCandles(t){
     for(const u of uncoveredRanges(want,cache.ranges)){
       if(u[1]-u[0]<=itv.ms)continue;
       try{ const c=await fetchCandles(t.coin,itv.name,u[0],u[1]);
-        cache.candles=mergeCandles(cache.candles,c);
-        cache.ranges=mergeRanges([...cache.ranges,[u[0],u[1]]],1);
+        cache.candles=mergeCandles(cache.candles,c.rows);
+        if(c.coveredTo>u[0]) cache.ranges=mergeRanges([...cache.ranges,[u[0],c.coveredTo]],1);
       }catch(e){ return null; }
     }
     try{ await idbSet('cnd:'+k,cache); }catch(e){}
@@ -3610,8 +3642,8 @@ async function renderBenchmark(closed){
       for(const u of uncoveredRanges(want,cache.ranges)){
         if(u[1]-u[0]<=86400e3)continue;
         try{ const c=await fetchCandles(coin,'1d',u[0],u[1]);
-          cache.candles=mergeCandles(cache.candles,c);
-          cache.ranges=mergeRanges([...cache.ranges,[u[0],u[1]]],1); }catch(e){}
+          cache.candles=mergeCandles(cache.candles,c.rows);
+          if(c.coveredTo>u[0]) cache.ranges=mergeRanges([...cache.ranges,[u[0],c.coveredTo]],1); }catch(e){}
       }
       try{ await idbSet('cnd:'+k,cache); }catch(e){}
       const win=cache.candles.filter(c=>c[0]>=t0-86400e3&&c[0]<=t1+86400e3);
@@ -3868,7 +3900,7 @@ function worstLossStreakDepth(closed){
 }
 // Cost drag (fees net of funding as % of gross realized profit) by calendar month.
 function feeDragByMonth(closed){
-  const m={}; for(const t of closed){ const d=new Date(t.closeTime); const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const m={}; for(const t of closed){ const p=tzParts(t.closeTime); const k=p.y+'-'+String(p.mo+1).padStart(2,'0'); // tz-aware — matches the monthly decomposition chart
     const b=m[k]||(m[k]={fees:0,fund:0,gross:0}); b.fees+=t.fees; b.fund+=(t.funding||0); b.gross+=(t.pnl>0?t.pnl:0); }
   return Object.keys(m).sort().slice(-12).map(k=>{ const b=m[k]; const cost=b.fees-b.fund;
     return {k, cost, gross:b.gross, drag:b.gross>0?cost/b.gross:null}; });
@@ -4162,7 +4194,7 @@ async function removeAttachment(id,idx){ let arr=(await idbGet('att:'+id))||[]; 
   if(arr.length)await idbSet('att:'+id,arr); else await idbDel('att:'+id); loadAttachments(id); syncAttUp(id); }
 function ensureJ(id){ if(!journal[id])journal[id]={notes:'',tags:[],setup:'',rating:0,mistakes:[],risk:null,plan:null}; return journal[id]; }
 async function saveJournal(id){
-  const j=ensureJ(id);
+  const j=ensureJ(id); _dirtyJ.add(id);
   const g=s=>document.querySelector(`[data-j="${s}"][data-id="${id}"]`);
   if(g('notes'))j.notes=g('notes').value;
   if(g('setup'))j.setup=g('setup').value;
@@ -4211,24 +4243,24 @@ function renderTape(){
   const el=$('tape'); if(!el)return;
   const closedAll=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>b.closeTime-a.closeTime);
   if(!closedAll.length){ el.classList.add('hide'); return; }
-  const d0=new Date(); d0.setHours(0,0,0,0);
-  const today=closedAll.filter(t=>t.closeTime>=d0.getTime());
+  const day0=tzMidnight(Date.now()); // same "today" as the tripwire and daily analytics
+  const today=closedAll.filter(t=>t.closeTime>=day0);
   const tNet=today.reduce((s,t)=>s+t.net,0);
   const fmtT=ms=>{ const d=new Date(ms);
-    return d.getTime()>=d0.getTime() ? String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
+    return ms>=day0 ? String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
     : (d.getMonth()+1)+'/'+d.getDate(); };
   const chip=t=>`<span class="tp">${fmtT(t.closeTime)} <b>${esc(dispMarket(dcoin(t)))}</b> <b class="${isBE(t.net)?'':(t.net>=0?'up':'dn')}">${isBE(t.net)?'B/E':(t.net>=0?'+':'−')+'$'+Math.abs(t.net).toFixed(0)}</b></span>`;
-  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} fill${today.length===1?'':'s'}</span>`:`<span class="tp sum">NO FILLS TODAY · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
+  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} trade${today.length===1?'':'s'}</span>`:`<span class="tp sum">NO TRADES TODAY · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
   el.classList.remove('hide');
   el.innerHTML=sum+closedAll.slice(0,12).map(chip).join('');
 }
 function renderPulse(){
   const el=$('pulse'); const inv=allTrades.filter(viewFilter);
   if(!inv.length){ el.classList.add('hide'); return; }
-  const now=Date.now(); const d0=new Date(); d0.setHours(0,0,0,0);
+  const now=Date.now();
   const win=(from)=>{ const xs=inv.filter(t=>t.closeTime>=from&&t.closeTime<=now);
     return {net:xs.reduce((s,t)=>s+t.net,0), n:xs.length}; };
-  const spans=[['Today',win(d0.getTime())],['7D',win(now-7*86400000)],['30D',win(now-30*86400000)]];
+  const spans=[['Today',win(tzMidnight(now))],['7D',win(now-7*86400000)],['30D',win(now-30*86400000)]];
   el.classList.remove('hide');
   el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
@@ -4479,7 +4511,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
         const fcKey='flc:'+w.address;
         let fcache=null;
         if(!fresh){ try{ fcache=await unpackFillCache(await idbGet(fcKey)); }catch(e){} if(fcache&&(fcache.v!==2||!Array.isArray(fcache.fills)))fcache=null; }
-        const since=(fcache&&fcache.last)?fcache.last+1:0;
+        const since=(fcache&&fcache.last)?fcache.last:0; // resume AT the watermark — the merge below dedupes, and boundary-ms fills are never skipped
         const fr=await fetchAllFills(w.address, since);
         let fills;
         if(fcache){
@@ -4487,6 +4519,9 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh;
           fills=fcache.fills.slice(); let added=0;
           for(const f of fr.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fills.push(f); added++; } }
           newFills+=added; cachedN++;
+          // A truncated incremental fetch means a gap between the cache and now that the
+          // advancing watermark would otherwise paper over permanently — say so loudly.
+          if(fr.truncated)truncated.push(labelFor(w)+' (since last load — Shift-click Load all for a full refetch)');
         } else { fills=fr.fills; if(fr.truncated)truncated.push(labelFor(w)); }
         const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
         try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){}
@@ -4676,11 +4711,13 @@ $('tbody').addEventListener('click',e=>{
       img.src=src; img.style.maxWidth='100%'; w.document.body.appendChild(img); } } return; }
   const star=e.target.closest('.star'); if(star){ setStar(star); return; }
   const chk=e.target.closest('.chk'); if(chk){ const id=chk.parentElement.dataset.id,m=chk.querySelector('input').dataset.m;
-    const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);},0); return; }
+    const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);
+      _dirtyJ.add(id); Store.set(J_KEY,journal); },0); return; } // persist immediately — a toggle is an edit, not a draft
   if(e.target.closest('textarea,input,.rating,.mistakes,.jsave,.attgrid,.attbtn'))return;
   const row=e.target.closest('.trow'); if(row){ const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable(); }
 });
 function setStar(star){ const id=star.parentElement.dataset.id, r=+star.dataset.r; ensureJ(id).rating=r;
+  _dirtyJ.add(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
   star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); }); }
 // keyboard: expand rows with Enter/Space; set star ratings with Enter/Space/Arrows
 $('tbody').addEventListener('keydown',e=>{
@@ -4733,7 +4770,7 @@ $('exportCsv').onclick=()=>{
     lines.push([new Date(t.openTime).toISOString(),t.closeTime?new Date(t.closeTime).toISOString():'',
       t.market,dcoin(t),t.dir,t.isOpen?'open':'closed',t.avgEntry,t.avgExit==null?'':t.avgExit,t.maxSize,
       t.pnl,t.fees,t.funding||0,t.net,ret==null?'':ret.toFixed(4),R==null?'':R.toFixed(3),
-      t.durationMs?(t.durationMs/60000).toFixed(1):'',j.rating||'',j.setup||'',(j.tags||[]).join('; '),(j.mistakes||[]).join('; '),j.note||'',
+      t.durationMs?(t.durationMs/60000).toFixed(1):'',j.rating||'',j.setup||'',(j.tags||[]).join('; '),(j.mistakes||[]).join('; '),j.notes||'',
       t.wallet?labelFor(t.wallet):''].map(q).join(','));
   }
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
@@ -5177,7 +5214,10 @@ window.addEventListener('appinstalled',()=>{ const b=$('installPWA'); if(b)b.cla
 /* ---- small local helpers (nf* prefix to avoid collisions) ---- */
 const nfPct=(x,dp=1)=>x==null||!isFinite(x)?'\u2014':(x*100).toFixed(dp)+'%';
 const nfSignPct=(x,dp=1)=>x==null||!isFinite(x)?'\u2014':((x>=0?'+':'')+(x*100).toFixed(dp)+'%');
-const nfUtcDay=ms=>Math.floor(ms/86400000);
+// Day bucket honoring the tz toggle. This used to be a raw UTC day (floor(ms/86400000)),
+// so a US-timezone trader's "daily loss limit" and max-trades/day reset at 4-5pm local
+// while every other day analytic used tzMidnight. One clock now.
+const nfDayKey=ms=>tzMidnight(ms);
 function nfMedian(a){ if(!a||!a.length)return null; const s=[...a].sort((x,y)=>x-y),n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
 
 /* ======================= 2 · LEVERAGE SURVIVABILITY ======================= */
@@ -5206,31 +5246,38 @@ function evaluateRules(closed, rules){
   const R=rules||nfRules(); const out=[];
   const byClose=[...closed].filter(t=>t.closeTime).sort((a,b)=>a.openTime-b.openTime);
   if(R.maxPerDay>0){
-    const byDay={}; for(const t of byClose){ const k=nfUtcDay(t.openTime); (byDay[k]=byDay[k]||[]).push(t); }
+    const byDay={}; for(const t of byClose){ const k=nfDayKey(t.openTime); (byDay[k]=byDay[k]||[]).push(t); }
     const viol=[]; for(const k in byDay){ const arr=byDay[k].sort((a,b)=>a.openTime-b.openTime);
       for(let i=R.maxPerDay;i<arr.length;i++)viol.push(arr[i]); }
     out.push({rule:'Max '+R.maxPerDay+' trades/day', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0)}); }
   if(R.cooldownMin>0){
-    const win=R.cooldownMin*60000; const ct=byClose.map(t=>t.closeTime); const viol=[];
+    const win=R.cooldownMin*60000; const viol=[];
+    // Prior closes must be scanned in close-time order — byClose is open-time-ordered, and
+    // overlapping trades make closeTime non-monotone in it, which broke the old binary
+    // search. And ANY loss closed inside the window trips the rule, not just the single
+    // most recent close (a win closing after the loss used to hide it).
+    const closes=[...byClose].sort((a,b)=>a.closeTime-b.closeTime);
+    const ct=closes.map(t=>t.closeTime);
     for(const t of byClose){ let lo=0,hi=ct.length-1,idx=-1;
       while(lo<=hi){ const m=(lo+hi)>>1; if(ct[m]<=t.openTime){idx=m;lo=m+1;}else hi=m-1; }
-      let j=idx; while(j>=0){ if(byClose[j].id!==t.id){ if(t.openTime-byClose[j].closeTime<=win&&isLoss(byClose[j].net))viol.push(t); break; } j--; } }
+      for(let j=idx;j>=0;j--){ const p=closes[j]; if(t.openTime-p.closeTime>win)break;
+        if(p.id!==t.id&&isLoss(p.net)){ viol.push(t); break; } } }
     out.push({rule:R.cooldownMin+'-min cooldown after a loss', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0)}); }
   if(R.noAddToLosers){
     const viol=closed.filter(t=>t.entryDrift!=null&&t.entryDrift>0&&isLoss(t.net));
     out.push({rule:'No adding to losers', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0)}); }
   if(R.dailyLossLimit>0){
-    const byDay={}; for(const t of byClose){ const k=nfUtcDay(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }
+    const byDay={}; for(const t of byClose){ const k=nfDayKey(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }
     let days=0, cost=0; for(const k in byDay){ const arr=byDay[k].sort((a,b)=>a.closeTime-b.closeTime);
       let cum=0, tripped=false; for(const t of arr){ cum+=t.net; if(tripped)cost+=t.net; if(cum<=-R.dailyLossLimit&&!tripped)tripped=true; }
       if(tripped)days++; }
     out.push({rule:'Daily loss limit '+fmtUsd(R.dailyLossLimit), n:days, cost, unit:'days breached, PnL after breach'}); }
   return out;
 }
-// Today's (UTC) realized net across ALL closed trades — powers the live tripwire banner.
+// Today's realized net across ALL closed trades (tz-toggle day) — powers the live tripwire banner.
 function dailyLossToday(trades){
-  const k=nfUtcDay(Date.now()); let net=0, n=0;
-  for(const t of (trades||[])){ if(t.isOpen||!t.closeTime)continue; if(nfUtcDay(t.closeTime)===k){ net+=t.net; n++; } }
+  const k=nfDayKey(Date.now()); let net=0, n=0;
+  for(const t of (trades||[])){ if(t.isOpen||!t.closeTime)continue; if(nfDayKey(t.closeTime)===k){ net+=t.net; n++; } }
   return {net, n};
 }
 function renderTripwire(){

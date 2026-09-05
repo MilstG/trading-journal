@@ -19,9 +19,12 @@ function grabArrow(name){
 }
 const FNS = ['nfMedian','leverageSurvival',
   'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','nfGroupStats','leaderboard','fundingCarry'];
-const ARROWS = ['nfPct','nfSignPct','nfUtcDay'];
+const ARROWS = ['nfPct','nfSignPct','nfDayKey'];
 
 const ctx = { _be:50, journal:{}, settings:{rules:{},assumedLev:5}, spotMaps:{nameByCoin:{}}, Date, Math, console };
+// nfDayKey routes through the app's tz layer; pin it to UTC midnights here so day-bucket
+// assertions stay deterministic regardless of the machine running the suite.
+ctx.tzMidnight = ms => Math.floor(ms/86400000)*86400000;
 ctx.isWin=n=>n>ctx._be; ctx.isLoss=n=>n<-ctx._be; ctx.isBE=n=>Math.abs(n)<=ctx._be;
 ctx.dcoin=t=>t.coin; ctx.fmtUsd=n=>(n<0?'-$':'$')+Math.abs(n).toFixed(2);
 ctx.sharpeStats=()=>({sharpe:1.23}); ctx.dailySeriesCalendar=()=>[1,2,3];
@@ -41,7 +44,7 @@ t('leverageSurvival maxLev + flag', ()=>{ const ls=ctx.leverageSurvival(
 t('rules maxPerDay', ()=>{ const base=now-10*DAY; const closed=[0,1,2,3].map(i=>({id:'t'+i,openTime:base+i*6e4,closeTime:base+i*6e4+1e3,net:-100,entryDrift:0}));
   const f=ctx.evaluateRules(closed,{maxPerDay:2}).find(x=>x.rule.includes('Max 2')); eq(f.n,2); near(f.cost,-200); });
 t('rules noAddToLosers', ()=>{ const f=ctx.evaluateRules([{id:'x',net:-100,entryDrift:0.01},{id:'z',net:200,entryDrift:0.02}],{noAddToLosers:true}).find(x=>x.rule.includes('adding')); eq(f.n,1); });
-t('dailyLossToday utc filter', ()=>{ const d=ctx.dailyLossToday([{isOpen:false,closeTime:now,net:-300},{isOpen:false,closeTime:now,net:100},{isOpen:false,closeTime:now-2*DAY,net:-9}]); near(d.net,-200); eq(d.n,2); });
+t('dailyLossToday same-day filter', ()=>{ const d=ctx.dailyLossToday([{isOpen:false,closeTime:now,net:-300},{isOpen:false,closeTime:now,net:100},{isOpen:false,closeTime:now-2*DAY,net:-9}]); near(d.net,-200); eq(d.n,2); });
 t('planAdherence long', ()=>{ ctx.journal={L1:{plan:{entry:100,stop:90,target:120}}};
   const pa=ctx.planAdherence([{id:'L1',dir:'Long',avgEntry:100,avgExit:118,maxSize:10,net:180}],ctx.journal);
   eq(pa.stopHonoredRate,1); eq(pa.targetHitRate,0); near(pa.medPlannedRR,2); near(pa.medRealizedR,1.8); });

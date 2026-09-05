@@ -65,7 +65,7 @@ t('timing persists through the ratchet and reuse path', () => {
 
 console.log('\nTrade replay (#1)');
 t('candles now carry close AND open; midpoint fallback lives in candleOpen', () => {
-  ok(html.includes('out.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]);'));
+  ok(html.includes('rows.push([+r.t,parseFloat(r.h),parseFloat(r.l),parseFloat(r.c),parseFloat(r.o)]);'));
   ok(html.includes('function candleOpen(candles,i)'));
 });
 t('replay button, container, delegate, and toggle-off present', () => {
