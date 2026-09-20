@@ -1046,7 +1046,10 @@ async function fetchLedgerUpdates(addr){
     while(pages<120){
       const rows=await hlPost({type:'userNonFundingLedgerUpdates',user:addr,startTime:start});
       if(!Array.isArray(rows)||rows.length===0)break;
-      for(const r of rows){ const id=(r.hash||'')+'|'+r.time+'|'+((r.delta&&r.delta.type)||'');
+      for(const r of rows){ const d=r.delta||{};
+        // amount + destination belong in the key: two same-type transfers batched into one
+        // block (same ms, equal/empty hash) are distinct capital flows, not duplicates
+        const id=(r.hash||'')+'|'+r.time+'|'+(d.type||'')+'|'+(d.usdc||'')+'|'+(d.destination||'');
         if(!seen.has(id)){ seen.add(id); out.push(r); } }
       if(rows.length<500)break;
       const mx=Math.max(...rows.map(r=>r.time));
@@ -1107,8 +1110,10 @@ function capitalModel(flows, closed, equityNow, now){
     while(ci<chron.length&&chron[ci].time<=t.closeTime){ capNow+=chron[ci].usdc; ci++; }
     cum+=t.net; if(cum>peak)peak=cum;
     const dd=cum-peak;
-    if(dd<worst$){ worst$=dd; const pct=capNow>0?dd/capNow:null;
-      if(pct!=null&&(worstPct==null||pct<worstPct))worstPct=pct; }
+    if(dd<worst$)worst$=dd;
+    // the % track is evaluated at EVERY underwater point, not only new dollar troughs —
+    // a proportionally deeper dip against smaller capital is the one that hurts most
+    if(dd<0&&capNow>0){ const pct=dd/capNow; if(worstPct==null||pct<worstPct)worstPct=pct; }
   }
   const implied=(equityNow!=null&&isFinite(equityNow))?equityNow-cap:null; // the account's own all-time accounting, unrealized included
   return {n:chron.length, firstAt:chron[0].time, lastAt:chron[chron.length-1].time,
@@ -1331,7 +1336,9 @@ function addDays(ms,n){ if(settings.tz==='utc')return ms+n*86400000; const d=new
 const tzLabel=()=>settings.tz==='utc'?'UTC':'local';
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDate(ms){ const p=tzParts(ms); let h=p.h,ap=h<12?'AM':'PM'; h=h%12; if(h===0)h=12;
-  return MONTHS[p.mo]+' '+p.day+' '+h+':'+String(p.min).padStart(2,'0')+' '+ap; }
+  // multi-year curves need the year — "Mar 4" of which year is ambiguous on an all-time chart
+  const yr=p.y!==new Date().getFullYear()?' ’'+String(p.y).slice(2):'';
+  return MONTHS[p.mo]+' '+p.day+yr+' '+h+':'+String(p.min).padStart(2,'0')+' '+ap; }
 const cls=n=>n>0?'pos-t':n<0?'neg-t':'';
 const dayKey=ms=>{ const p=tzParts(ms); return p.y+'-'+String(p.mo+1).padStart(2,'0')+'-'+String(p.day).padStart(2,'0'); };
 // break-even band: trades within ±_be of zero count as scratches, not wins or losses
@@ -1450,6 +1457,15 @@ function projBaseline(trades, lookbackDays, now){
   if(!inWin.length) return null;
   const m={}; let min=Infinity;
   inWin.forEach(t=>{ const k=tzMidnight(t.closeTime); m[k]=(m[k]||0)+t.net; if(k<min)min=k; });
+  // Per-calendar-day pace divides by the WINDOW, not first-trade-in-window-to-now: a 90d
+  // lookback with trades only in the last 10 days is a trader who paused, not a 9x pace.
+  // Accounts younger than the lookback clamp to their own first trade ever, so a 2-week-old
+  // account isn't diluted across 90 empty days it didn't exist for.
+  if(lookbackDays>0&&closed.length){
+    const firstEver=tzMidnight(Math.min(...closed.map(t=>t.closeTime)));
+    const start=Math.max(tzMidnight(from),firstEver);
+    if(start<min)min=start;
+  }
   const end=tzMidnight(now);
   const daily=[]; let active=0;
   for(let d=min; d<=end; d=addDays(d,1)){ daily.push(m[d]||0); if(m[d]!=null)active++; }
@@ -2308,6 +2324,10 @@ function renderCharts(closed, allv){
   const coins=Object.entries(byCoin).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10);
   charts.coin=bar('byCoin',coins.map(c=>dispMarket(c[0])),coins.map(c=>c[1]));
   const byMon={}; allv.forEach(t=>{ const p=tzParts(t.closeTime); const k=p.y+'-'+String(p.mo+1).padStart(2,'0'); byMon[k]=(byMon[k]||0)+t.net; }); // tzParts, not local Date — keeps this chart on the same clock as the monthly decomposition
+  // zero-fill skipped months — omitting them visually compressed inactive stretches out of the timeline
+  { const mks=Object.keys(byMon).sort();
+    if(mks.length>1){ let y0=+mks[0].slice(0,4),m0=+mks[0].slice(5); const y1=+mks[mks.length-1].slice(0,4),m1=+mks[mks.length-1].slice(5);
+      while(y0<y1||(y0===y1&&m0<=m1)){ const k=y0+'-'+String(m0).padStart(2,'0'); if(byMon[k]==null)byMon[k]=0; if(++m0>12){m0=1;y0++;} } } }
   const mons=Object.keys(byMon).sort().slice(-12);
   const MONL=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   charts.month=bar('byMonth',mons.map(k=>MONL[+k.slice(5)-1]+' '+k.slice(2,4)),mons.map(k=>byMon[k]));
@@ -2913,7 +2933,11 @@ function setupScorecards(closed, journalObj){
     const wins=ts.filter(t=>isWin(t.net)).length, losses=ts.filter(t=>isLoss(t.net)).length;
     cards.push({name, n:ts.length, net:+cum.toFixed(2), expectancy:_avg(nets),
       winRate:(wins+losses)?wins/(wins+losses):null, earlyExp:eE, lateExp:eL,
-      trend: eL==null?null : (eL<0&&eE>=0)?'flipped' : eL>=eE?'improving':'fading',
+      trend: eL==null?null
+        : (eE<0&&eL<0)?(eL<eE?'worsening':'negative')     // never made money — say so, don't call it "fading"
+        : (eL<0&&eE>=0)?'flipped'
+        : (eL>=0&&eE<0)?'recovered'
+        : eL>=eE?'improving':'fading',
       curve, lastAt:ts[ts.length-1].closeTime});
   }
   return cards.sort((a,b)=>Math.abs(b.net)-Math.abs(a.net)).slice(0,6);
@@ -2923,7 +2947,10 @@ function setupSectionHtml(closed){
   if(!cards.length)return '';
   const badge=c=>c.trend==='improving'?'<span class="badge ok" data-tip="Average net per trade over the most recent third beats the earlier two-thirds.">improving</span>'
     :c.trend==='fading'?'<span class="badge mid" data-tip="Recent-third expectancy is below the earlier two-thirds — still positive, but decaying. Re-test before sizing up.">fading</span>'
-    :c.trend==='flipped'?'<span class="badge no" data-tip="Recent-third expectancy went NEGATIVE after a positive start. Treat this setup as unproven again.">flipped negative</span>':'';
+    :c.trend==='flipped'?'<span class="badge no" data-tip="Recent-third expectancy went NEGATIVE after a positive start. Treat this setup as unproven again.">flipped negative</span>'
+    :c.trend==='recovered'?'<span class="badge mid" data-tip="Lost money in discovery, positive over the recent third. A young turnaround — small-sample caution applies.">recovering</span>'
+    :c.trend==='worsening'?'<span class="badge no" data-tip="Negative in discovery and worse recently. Nothing here to keep yet.">worsening</span>'
+    :c.trend==='negative'?'<span class="badge no" data-tip="Negative throughout. This is a leak wearing a setup name.">negative throughout</span>':'';
   const row=c=>`<div class="metric-row"><span class="ml"><b>${esc(c.name)}</b> ${badge(c)}</span>
     <span class="mv">${c.n} trades · <span class="${c.net>=0?'pos-t':'loss'}">${fmtUsd(c.net)}</span> · ${fmtUsd(c.expectancy)}/trade${c.winRate!=null?' · '+Math.round(c.winRate*100)+'% wr':''} · recent ${c.lateExp!=null?fmtUsd(c.lateExp):'—'} vs early ${fmtUsd(c.earlyExp)}</span></div>`;
   return `<div class="diag-section">
@@ -3953,7 +3980,10 @@ async function rerunExcursions(){
     const openT=allTrades.filter(t=>t.isOpen&&viewFilter(t));
     const out=await runExcursions(closed,openT);
     _excCache={..._excCache,...out};
-    for(const r of [...out.rows,...(out.openRows||[])])_excM[r.id]=r;
+    for(const r of out.rows)_excM[r.id]=r;
+    // open-position measurements are tagged: once the trade closes, the stale entry-to-
+    // earlier-now window must not feed the miner's exc families until the ratchet re-measures
+    for(const r of (out.openRows||[]))_excM[r.id]={...r,openMeas:true};
     renderExcResults(_excCache);
     setStatus('Excursions updated'+(out.openRows&&out.openRows.length?' · '+out.openRows.length+' open position'+(out.openRows.length===1?'':'s')+' re-measured':' · no open positions in this view')+'.');
   }catch(e){ setStatus('Excursion update stopped: '+e.message);
@@ -3968,7 +3998,10 @@ function wireExcursions(closed){
     try{ const openT=allTrades.filter(t=>t.isOpen&&viewFilter(t));
       const out=await runExcursions(closed,openT);
       _excCache={key,...out,closedRef:closed}; // closedRef powers the update-open-positions re-run
-      for(const r of [...out.rows,...(out.openRows||[])])_excM[r.id]=r;
+      for(const r of out.rows)_excM[r.id]=r;
+    // open-position measurements are tagged: once the trade closes, the stale entry-to-
+    // earlier-now window must not feed the miner's exc families until the ratchet re-measures
+    for(const r of (out.openRows||[]))_excM[r.id]={...r,openMeas:true};
       // fresh excursion data unlocks new miner families — invalidate any cached scan
       _minerCache={key:null,res:null,deep:null};
       const rb=$('runMiner'); if(rb){ rb.disabled=false; rb.textContent='Run pattern miner + deep scan'; }
@@ -4733,9 +4766,9 @@ function renderTape(){
   const day0=tzMidnight(Date.now()); // same "today" as the tripwire and daily analytics
   const today=closedAll.filter(t=>t.closeTime>=day0);
   const tNet=today.reduce((s,t)=>s+t.net,0);
-  const fmtT=ms=>{ const d=new Date(ms);
-    return ms>=day0 ? String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
-    : (d.getMonth()+1)+'/'+d.getDate(); };
+  const fmtT=ms=>{ const p=tzParts(ms); // tz-toggle clock — the "TODAY" cut is tz-aware, so the printed times must be too
+    return ms>=day0 ? String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0')
+    : (p.mo+1)+'/'+p.day; };
   const chip=t=>`<span class="tp">${fmtT(t.closeTime)} <b>${esc(dispMarket(dcoin(t)))}</b> <b class="${isBE(t.net)?'':(t.net>=0?'up':'dn')}">${isBE(t.net)?'B/E':(t.net>=0?'+':'−')+'$'+Math.abs(t.net).toFixed(0)}</b></span>`;
   const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} trade${today.length===1?'':'s'}</span>`:`<span class="tp sum">NO TRADES TODAY · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
   el.classList.remove('hide');
@@ -4883,7 +4916,10 @@ function dayJKey(ms){ const p=tzParts(ms); return 'day:'+p.y+'-'+String(p.mo+1).
 function dayJournalSectionHtml(){
   const k=dayJKey(Date.now()); const e=journal[k]||{};
   const recent=[];
-  for(let i=1;i<=21&&recent.length<7;i++){ const rk=dayJKey(Date.now()-i*86400000); const d=journal[rk]; if(d)recent.push([rk,d]); }
+  // step from today's tz-midnight and sample mid-day: naive now−i*24h skipped or doubled
+  // a calendar date across DST transitions (23/25-hour local days)
+  const mid0=tzMidnight(Date.now())+43200000;
+  for(let i=1;i<=21&&recent.length<7;i++){ const rk=dayJKey(mid0-i*86400000); const d=journal[rk]; if(d)recent.push([rk,d]); }
   const chip=(rk,d)=>`<div class="metric-row"><span class="ml">${esc(rk.slice(4))}${d.bias?' · '+esc(d.bias):''}${d.adherence?' · <span class="pos-t">plan followed</span>':''}</span><span class="mv" style="max-width:58%;text-align:right;white-space:normal;font-weight:400">${esc(d.review||d.plan||'')}</span></div>`;
   return `<div class="diag-section"><h2>Day journal <span style="font-size:11px;color:var(--faint);font-weight:400">pre-market plan · end-of-day review</span></h2>
     <div class="diag-grid">
@@ -4927,7 +4963,7 @@ function renderProjection(){
   if(closed.length<5){ el.innerHTML='<div class="diag-section"><p class="lead">Need at least 5 closed trades in this view to project forward. Load more history first.</p></div>'+nfSizerHtml(); nfWireSizer(); return; }
   let base=projBaseline(closed,_proj.look);
   if((!base||base.trades<5)&&_proj.look>0) base=projBaseline(closed,0); // fall back to all history if the window is too thin
-  if(!base){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades inside the selected lookback window.</p></div>'; return; }
+  if(!base){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades inside the selected lookback window.</p></div>'+nfSizerHtml(); nfWireSizer(); return; } // the pre-trade sizer needs no history — keep it available
   const fc=projectForward(base.daily,_proj.hor,400,null,_proj.block);
   const now=Date.now(), startBal=closed.reduce((s,t)=>s+t.net,0);
   const medPerDay=fc.end.p50/_proj.hor;
@@ -5161,6 +5197,10 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     fillsTruncated=truncated;
     ledFlows=flowsAcc.sort((a,b)=>a.time-b.time); ledSkipped=skippedAcc;
+    // purge stale open-window MAE/MFE for trades that have since closed — the ratchet
+    // re-measures them entry-to-exit on its next pass
+    { const closedIds=new Set(allTrades.filter(t=>!t.isOpen).map(t=>t.id));
+      for(const id in _excM) if(_excM[id]&&_excM[id].openMeas&&closedIds.has(id)) delete _excM[id]; }
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
@@ -5552,12 +5592,14 @@ class MiniPDF{
   constructor(){ this.pages=[]; this._imgs=[]; this.newPage(); }
   newPage(){ this._ops=[]; this.pages.push(this._ops); }
   usePage(i){ this._ops=this.pages[i]; }
-  _esc(s){ s=String(s)
+  _sub(s){ return String(s)
       .replace(/[\u2014\u2013\u2212]/g,'-').replace(/\u00b7/g,'.').replace(/\u2248/g,'~')
       .replace(/\u00d7/g,'x').replace(/\u2192/g,'->').replace(/[\u2018\u2019]/g,"'")
-      .replace(/[\u201c\u201d]/g,'"').replace(/[^\x20-\x7E]/g,'?');
-    return s.replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
-  w(s,size){ return String(s).length*0.6*(size||8); } // Courier advance = 600/1000 em
+      .replace(/[\u201c\u201d]/g,'"').replace(/[^\x20-\x7E]/g,'?'); }
+  _esc(s){ return this._sub(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
+  // Measure the SUBSTITUTED string: '\u2192' renders as two glyphs ('->'), and measuring the
+  // raw string shifted every right-aligned cell containing an arrow by one glyph.
+  w(s,size){ return this._sub(s).length*0.6*(size||8); } // Courier advance = 600/1000 em
   text(x,y,s,o={}){ const size=o.size||8, f=o.bold?'F2':(o.italic?'F3':'F1'), c=o.color||[0,0,0];
     this._ops.push(`BT /${f} ${size} Tf ${c[0]} ${c[1]} ${c[2]} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${this._esc(s)}) Tj ET`); }
   textR(x,y,s,o={}){ this.text(x-this.w(s,o.size||8),y,s,o); } // right-aligned
@@ -5576,6 +5618,7 @@ class MiniPDF{
     for(let i=2;i<bin.length-9;){
       if(bin.charCodeAt(i)!==0xFF){ i++; continue; }
       const mk=bin.charCodeAt(i+1);
+      if(mk===0xFF){ i++; continue; } // 0xFF fill bytes are legal padding — stepping past them read a bogus segment length
       if(mk===0xD8||mk===0x01||(mk>=0xD0&&mk<=0xD9)){ i+=2; continue; }
       const len=(bin.charCodeAt(i+2)<<8)|bin.charCodeAt(i+3);
       if(mk>=0xC0&&mk<=0xCF&&mk!==0xC4&&mk!==0xC8&&mk!==0xCC){
@@ -5717,10 +5760,12 @@ function renderTaxPdfDoc(model){
     pdf.text(Mg,y,'TAX YEAR '+Y.year,{size:8.5,bold:true});
     pdf.textR(W-Mg,y,'opening '+money(Y.open)+'   closing '+money(Y.close),{size:7.5,color:gray});
     y-=18;
-    // monthly summary
-    pdf.text(Mg,y,'Monthly summary',{size:7,italic:true,color:gray}); y-=11;
+    // monthly summary — re-emit the label after a page break so continuation rows
+    // aren't a headless block of numbers
+    const monHead=cont=>{ pdf.text(Mg,y,'Monthly summary'+(cont?' (continued)':''),{size:7,italic:true,color:gray}); y-=11; };
+    monHead(false);
     const mc={mo:Mg, n:Mg+120, wl:Mg+185, pnl:Mg+265, fees:Mg+330, fund:Mg+395, net:Mg+455, bal:W-Mg};
-    for(const m of Y.months){ ensure(10);
+    for(const m of Y.months){ if(y-10<Mg+26){ page(); monHead(true); }
       pdf.text(mc.mo,y,m.label,{size:7.5});
       pdf.textR(mc.n,y,m.n+' trades',{size:7.5,color:gray});
       pdf.textR(mc.wl,y,m.wins+'W/'+m.losses+'L',{size:7.5,color:gray});
