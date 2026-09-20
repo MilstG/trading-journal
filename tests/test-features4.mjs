@@ -16,9 +16,9 @@ const _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
 `;
 
 const { setupScorecards } = await evalModule(['setupScorecards'], ['setupScorecards'], PRELUDE);
-const { csvParseRows, parseFillsCsv, reconstructTrades } = await evalModule(
-  ['csvParseRows', 'parseFillsCsv', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
-  ['csvParseRows', 'parseFillsCsv', 'reconstructTrades'], PRELUDE);
+const { csvParseRows, csvNum, parseFillsCsv, reconstructTrades } = await evalModule(
+  ['csvParseRows', 'csvNum', 'parseFillsCsv', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
+  ['csvParseRows', 'csvNum', 'parseFillsCsv', 'reconstructTrades'], PRELUDE);
 
 const DAY = 86400000, T0 = 1700000000000;
 const mk = (setup, net, i) => ({ id: setup + i, net, closeTime: T0 + i * DAY, isOpen: false });
@@ -205,6 +205,62 @@ t('missing required columns → specific error', () => {
   try { parseFillsCsv('when,what\n1,2\n'); } catch (e) { msg = e.message; }
   ok(msg.includes('could not find column(s)'));
   ok(msg.includes('coin'));
+});
+t('csvNum: locale formats parse, ambiguity is rejected', () => {
+  near(csvNum('1,234.50'), 1234.5);    // US thousands
+  near(csvNum('1.234,56'), 1234.56);   // EU thousands + decimal comma
+  near(csvNum('1234,56'), 1234.56);    // bare decimal comma
+  near(csvNum('1,234'), 1234);         // lone comma + 3 digits = thousands
+  near(csvNum('(12.5)'), -12.5);       // accounting negative
+  near(csvNum('$2,000'), 2000);
+  near(csvNum('-1.5e3'), -1500);
+  ok(Number.isNaN(csvNum('1,23,456')), 'mixed grouping is refused, not guessed');
+  ok(Number.isNaN(csvNum('abc')));
+});
+t('locale-formatted prices import correctly end to end', () => {
+  const { fills } = parseFillsCsv(
+    'time,coin,side,px,sz\n'
+    + '1700000000000,BTC,buy,"1,234.50",2\n');
+  eq(fills[0].px, '1234.5'); // parseFloat alone made this 1
+});
+t('exact Side column beats an order-type column (alias specificity)', () => {
+  const { fills } = parseFillsCsv(
+    'time,coin,Type,Side,px,sz\n'
+    + '1700000000000,ETH,LIMIT,sell,1000,1\n');
+  eq(fills.length, 1); eq(fills[0].side, 'A');
+});
+t('epoch heuristics: yyyymmdd is a date; implausible digit strings are rejected', () => {
+  const { fills, skipped } = parseFillsCsv(
+    'time,coin,side,px,sz\n'
+    + '20260920,ETH,buy,1000,1\n'   // date, not epoch-seconds (would be Aug 1970)
+    + '1700000000000000,ETH,sell,1100,1\n' // microseconds → ms
+    + '123456,ETH,buy,1000,1\n');  // implausible epoch — rejected
+  eq(fills.length, 2); eq(skipped, 1);
+  // output is time-sorted: the microsecond row (2023) precedes the yyyymmdd date (2026)
+  eq(fills[0].time, 1700000000000);
+  eq(fills[1].time, Date.parse('2026-09-20'));
+});
+t('descending exports keep same-millisecond fills in chronological order', () => {
+  // newest-first file: same-ms sell-then-buy must be walked buy-then-sell
+  const { fills } = parseFillsCsv(
+    'time,coin,side,px,sz\n'
+    + '1700000001000,SOL,sell,110,1\n'  // row 1 (later in time)
+    + '1700000000500,SOL,sell,105,1\n'  // row 2 — same ms as row 3, happened AFTER it
+    + '1700000000500,SOL,buy,100,1\n'   // row 3
+    + '1700000000000,SOL,buy,100,1\n'); // row 4 (earliest)
+  eq(fills.map(f => f.side), ['B', 'B', 'A', 'A']);
+  const trades = reconstructTrades(fills, 'csv', 'perp');
+  eq(trades.length, 1); near(trades[0].pnl, 15); // (105-100) + (110-100)
+});
+t('imported fills carry no execution style — counted in neither maker nor taker', () => {
+  const { fills } = parseFillsCsv(
+    'time,coin,side,px,sz\n'
+    + '1700000000000,ETH,buy,1000,1\n'
+    + '1700000100000,ETH,sell,1100,1\n');
+  const [t0] = reconstructTrades(fills, 'csv', 'perp');
+  eq((t0.makerFills || 0) + (t0.takerFills || 0), 0);
+  eq(t0.unkFills, 2);
+  near(t0.unkNotional, 2100);
 });
 t('junk rows are skipped and counted, not imported', () => {
   const { fills, skipped } = parseFillsCsv(

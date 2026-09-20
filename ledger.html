@@ -1190,8 +1190,12 @@ function newTrade(coin,f,dir,openSz,openNotional,fills){
     closeSz:0,closeNotional:0,pnl:0,fees:0,fills:fills||0,maxSize:openSz||0,
     makerFills:0,takerFills:0,makerFee:0,takerFee:0,makerNotional:0,takerNotional:0,liquidated:false,firstEntryPx:parseFloat(f.px),
     events:[]}; }   // events: compact [time,px,sz,k] per fill (k=+1 open/add, -1 close) — powers the replay chart's fill markers
-function tallyFill(t,f,fee){ const taker=!!f.crossed; const notl=Math.abs(parseFloat(f.sz||0))*parseFloat(f.px||0);
-  if(taker){ t.takerFills++; t.takerFee+=fee; t.takerNotional+=notl; } else { t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
+function tallyFill(t,f,fee){ const notl=Math.abs(parseFloat(f.sz||0))*parseFloat(f.px||0);
+  // crossed is tri-state: true=taker, false=maker, undefined=unknown (CSV imports carry
+  // no execution style — fabricating either side would feed the miner a fake signal)
+  if(f.crossed===true){ t.takerFills++; t.takerFee+=fee; t.takerNotional+=notl; }
+  else if(f.crossed===false){ t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
+  else { t.unkFills=(t.unkFills||0)+1; t.unkNotional=(t.unkNotional||0)+notl; }
   if(f.liquidation || /liquidat/i.test(f.dir||'')) t.liquidated=true; }
 function reconstructTrades(fills, addr, market){
   const pred = market==='spot' ? (c=>!isPerp(c)) : (c=>isPerp(c));
@@ -2000,7 +2004,7 @@ function computeStats(closed, allv){
   const rets=closed.map(retPct).filter(x=>x!==null); const avgRet=rets.length?_avg(rets):null;
   const _sortedNets=[...closed.map(t=>t.net)].sort((a,b)=>a-b);
   const median=_sortedNets.length?(_sortedNets.length%2?_sortedNets[(_sortedNets.length-1)/2]:(_sortedNets[_sortedNets.length/2-1]+_sortedNets[_sortedNets.length/2])/2):null;
-  return {n:closed.length,openN:allv.filter(t=>t.isOpen).length,net,fees,fund,volume:allv.reduce((a,t)=>a+((t.makerNotional||0)+(t.takerNotional||0)),0),wins:wins.length,losses:losses.length,breakeven:scratches.length,
+  return {n:closed.length,openN:allv.filter(t=>t.isOpen).length,net,fees,fund,volume:allv.reduce((a,t)=>a+((t.makerNotional||0)+(t.takerNotional||0)+(t.unkNotional||0)),0),wins:wins.length,losses:losses.length,breakeven:scratches.length,
     winRate:(wins.length+losses.length)?wins.length/(wins.length+losses.length):0,
     profitFactor:gl>0?gp/gl:(gp>0?Infinity:0),avgWin:avgW,avgLoss:avgL,payoff,breakevenWR,
     expectancy,maxDD,maxDDpct,
@@ -4558,7 +4562,7 @@ function journalRow(t,j,R){
         <div class="num" style="color:var(--muted);font-size:12.5px;line-height:1.9">
           Realized ${fmtUsd(t.pnl)} · fees ${fmtUsd(-t.fees)} · funding <span class="${cls(t.funding||0)}">${fmtUsd(t.funding||0)}</span><br>
           <strong style="color:var(--text)">Net ${fmtUsd(t.net)}</strong>${retPct(t)!=null?' · <span class="'+cls(retPct(t))+'">'+(retPct(t)>=0?'+':'')+retPct(t).toFixed(2)+'%</span>':''}${R!=null?' · <span class="'+cls(R)+'">'+(R>=0?'+':'')+R.toFixed(2)+'R</span>':''} · ${t.fills} fills · held ${fmtDur(t.durationMs)}<br>
-          <span data-tip="Share of this trade's fills that were taker (crossed the spread) vs maker (resting). Taker fills pay the higher fee tier.">maker ${(t.makerFills||0)} · taker ${(t.takerFills||0)}${(t.takerFills+t.makerFills)?' ('+Math.round((t.takerFills/(t.takerFills+t.makerFills))*100)+'% taker)':''}</span>${t.entryDrift!=null?` · <span data-tip="How far your size-weighted entry drifted from your first fill, in the adverse direction. Positive = you scaled in at worse prices (chasing).">entry drift <span class="${t.entryDrift>0?'neg-t':t.entryDrift<0?'pos-t':''}">${(t.entryDrift>=0?'+':'')+(t.entryDrift*100).toFixed(2)}%</span></span>`:''}${addedToLoser(t)?' · <span class="neg-t" data-tip="At least one add was executed while the position was underwater vs your running average entry (detected from the fill stream, not a proxy).">avg’d down</span>':''}${t.liquidated?' · <span class="loss" data-tip="Contains a liquidation fill.">⚠ liquidated</span>':''}${excLine(t)}
+          <span data-tip="Share of this trade's fills that were taker (crossed the spread) vs maker (resting). Taker fills pay the higher fee tier. Imported fills carry no execution style and are counted in neither.">${((t.makerFills||0)+(t.takerFills||0))?`maker ${(t.makerFills||0)} · taker ${(t.takerFills||0)}${(t.takerFills+t.makerFills)?' ('+Math.round((t.takerFills/(t.takerFills+t.makerFills))*100)+'% taker)':''}`:(t.unkFills?'execution style unknown (imported)':'maker 0 · taker 0')}</span>${t.entryDrift!=null?` · <span data-tip="How far your size-weighted entry drifted from your first fill, in the adverse direction. Positive = you scaled in at worse prices (chasing).">entry drift <span class="${t.entryDrift>0?'neg-t':t.entryDrift<0?'pos-t':''}">${(t.entryDrift>=0?'+':'')+(t.entryDrift*100).toFixed(2)}%</span></span>`:''}${addedToLoser(t)?' · <span class="neg-t" data-tip="At least one add was executed while the position was underwater vs your running average entry (detected from the fill stream, not a proxy).">avg’d down</span>':''}${t.liquidated?' · <span class="loss" data-tip="Contains a liquidation fill.">⚠ liquidated</span>':''}${excLine(t)}
         </div></div>
     </div>
     <div class="field"><label>Screenshots / attachments <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— stored in this browser (IndexedDB), not in the JSON backup</span></label>
@@ -5127,28 +5131,68 @@ function csvParseRows(text){
 // startPosition and closedPnl are derived (running position + average-cost realization)
 // when the CSV lacks them — exact when the file carries each coin's full history, and the
 // status line says when derivation was used. Throws with a specific message on bad input.
+// Locale-tolerant numeric parser. Handles "1,234.50" (US thousands), "1.234,56" (EU),
+// "1234,56" (bare decimal comma), accounting negatives "(12.5)", $ prefixes and plain
+// floats/exponents. Returns NaN for anything ambiguous — a skipped row beats a silently
+// corrupted one (parseFloat alone read "1,234.50" as 1 and imported it as a valid price).
+function csvNum(v){
+  let s=String(v==null?'':v).trim().replace(/[$\s]/g,'');
+  if(!s)return NaN;
+  const neg=/^\(.*\)$/.test(s); if(neg)s=s.slice(1,-1);
+  const hasC=s.includes(','), hasD=s.includes('.');
+  if(hasC&&hasD){
+    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); // EU: 1.234,56
+    else s=s.replace(/,/g,'');                                                        // US: 1,234.50
+  } else if(hasC){
+    const parts=s.split(',');
+    if(parts.length===2&&parts[1].length!==3) s=parts[0]+'.'+parts[1];        // 1234,56 → decimal comma
+    else if(parts.slice(1).every(p=>p.length===3)) s=parts.join('');          // 1,234 / 1,234,567 → thousands
+    else return NaN;                                                          // 1,23,456 — refuse to guess
+  }
+  if(!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return NaN;
+  const n=parseFloat(s); return neg?-n:n;
+}
 function parseFillsCsv(text){
   const rows=csvParseRows(text.trim());
   if(rows.length<2)throw new Error('need a header row plus at least one data row');
   const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
   const header=rows[0].map(norm);
+  // Two alias tiers per column: exact/primary names always win over loose ones across the
+  // whole header, so a Binance-style "…,Type,Side,…" maps side←Side, never side←Type.
+  // ('type' is gone entirely — order-type columns shadowed real Side columns.)
   const ALIAS={
-    time:['time','date','datetime','timestamp','ts','filledat','executedat','tradetime','createdat'],
-    coin:['coin','symbol','market','pair','asset','ticker','instrument','contract'],
-    side:['side','direction','buysell','type','action'],
-    px:['px','price','fillprice','avgprice','execprice','dealprice','filledprice'],
-    sz:['sz','size','qty','quantity','amount','filled','baseqty','executedqty','filledqty','vol','volume'],
-    fee:['fee','fees','commission','feepaid','tradingfee'],
-    closedPnl:['closedpnl','realizedpnl','pnl','realized','profit'],
-    startPosition:['startposition'],
+    time:[['time','date','datetime','timestamp','ts'],['filledat','executedat','tradetime','createdat']],
+    coin:[['coin','symbol','pair'],['market','asset','ticker','instrument','contract']],
+    side:[['side','direction','buysell'],['action']],
+    px:[['px','price','fillprice'],['avgprice','execprice','dealprice','filledprice']],
+    sz:[['sz','size','qty','quantity'],['amount','filled','baseqty','executedqty','filledqty','vol','volume']],
+    fee:[['fee','fees','commission'],['feepaid','tradingfee']],
+    closedPnl:[['closedpnl','realizedpnl'],['pnl','realized','profit']],
+    startPosition:[['startposition'],[]],
   };
   const col={};
-  for(const k in ALIAS){ const i=header.findIndex(h=>ALIAS[k].includes(h)); if(i>=0)col[k]=i; }
+  for(const k in ALIAS){
+    let i=header.findIndex(h=>ALIAS[k][0].includes(h));
+    if(i<0)i=header.findIndex(h=>ALIAS[k][1].includes(h));
+    if(i>=0)col[k]=i;
+  }
   const missing=['time','coin','side','px','sz'].filter(k=>col[k]==null);
   if(missing.length)throw new Error('could not find column(s) for: '+missing.join(', ')
     +' — headers seen: '+rows[0].join(', '));
-  const parseT=v=>{ if(/^\d+(\.\d+)?$/.test(v)){ const n=parseFloat(v); return n<1e12?Math.round(n*1000):Math.round(n); }
-    const t=Date.parse(v); return isNaN(t)?null:t; };
+  const parseT=v=>{
+    if(/^\d+(\.\d+)?$/.test(v)){
+      const n=parseFloat(v);
+      // digit-string heuristics: 8 digits like 20260920 is a date, not epoch seconds;
+      // plausible epoch ranges (~2001-2052) in s / ms / µs; anything else is rejected
+      // rather than silently imported as 1970 or year 55978
+      if(/^\d{8}$/.test(v)){ const t=Date.parse(v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8)); return isNaN(t)?null:t; }
+      if(n>=1e9&&n<2.6e9)return Math.round(n*1000);
+      if(n>=1e12&&n<2.6e12)return Math.round(n);
+      if(n>=1e15&&n<2.6e15)return Math.round(n/1000);
+      return null;
+    }
+    const t=Date.parse(v); return isNaN(t)?null:t;
+  };
   const sideOf=v=>{ const s=norm(v); if(['b','buy','long','open','bid'].includes(s))return 'B';
     if(['a','s','sell','short','close','ask'].includes(s))return 'A'; return null; };
   const fills=[]; let skipped=0;
@@ -5156,17 +5200,23 @@ function parseFillsCsv(text){
     const time=parseT(String(row[col.time]||'').trim());
     const coin=String(row[col.coin]||'').trim();
     const side=sideOf(row[col.side]);
-    const px=parseFloat(row[col.px]), sz=Math.abs(parseFloat(row[col.sz]));
+    const px=csvNum(row[col.px]), sz=Math.abs(csvNum(row[col.sz]));
     if(time==null||!coin||!side||!(px>0)||!(sz>0)){ skipped++; continue; }
+    // no `crossed` field: execution style is unknown for imported fills, and tallyFill
+    // counts unknowns in neither maker nor taker instead of fabricating a signal
     const f={coin, side, time, px:String(px), sz:String(sz),
-      fee:col.fee!=null?String(parseFloat(row[col.fee])||0):'0',
-      tid:'csv'+r, oid:r, crossed:true, dir:''};
-    if(col.closedPnl!=null&&row[col.closedPnl]!==''&&isFinite(parseFloat(row[col.closedPnl])))f.closedPnl=String(parseFloat(row[col.closedPnl]));
-    if(col.startPosition!=null&&row[col.startPosition]!==''&&isFinite(parseFloat(row[col.startPosition])))f.startPosition=String(parseFloat(row[col.startPosition]));
+      fee:col.fee!=null&&isFinite(csvNum(row[col.fee]))?String(csvNum(row[col.fee])):'0',
+      tid:'csv'+r, oid:r, dir:''};
+    if(col.closedPnl!=null&&row[col.closedPnl]!==''&&isFinite(csvNum(row[col.closedPnl])))f.closedPnl=String(csvNum(row[col.closedPnl]));
+    if(col.startPosition!=null&&row[col.startPosition]!==''&&isFinite(csvNum(row[col.startPosition])))f.startPosition=String(csvNum(row[col.startPosition]));
     fills.push(f);
   }
   if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped)');
-  fills.sort((a,b)=>a.time-b.time);
+  // Stable time sort; same-millisecond ties keep the FILE's chronological direction —
+  // most venue exports are newest-first, and walking a same-ms close-then-reopen
+  // backwards corrupts the average-cost derivation.
+  const desc=fills.length>1&&fills[0].time>fills[fills.length-1].time;
+  fills.sort((a,b)=>a.time-b.time||(desc?b.oid-a.oid:a.oid-b.oid));
   // derive startPosition and closedPnl per coin where absent: running position, and
   // average-cost realization on the closing portion of each reducing fill
   let derived=false;
