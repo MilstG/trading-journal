@@ -46,19 +46,34 @@ companion server and your journal persists across devices and reboots.
 
 Subsequent loads are incremental: fills are cached in your browser (IndexedDB)
 and only new activity is fetched. **Shift-click Load all** to force a full
-re-fetch if something looks off.
+re-fetch if something looks off. A persistent **data-health strip** under the
+header flags anything incomplete — truncated fill history, partial funding or
+capital-flow fetches, failing browser storage — for as long as it's true,
+instead of a status message that scrolls away.
 
 No wallet? **Paste data manually** accepts raw fill JSON (e.g. copied from an
-API response) and runs the same reconstruction.
+API response) and runs the same reconstruction. It also accepts **CSV** — a
+header row plus columns for time, symbol, side, price, and size, matched
+against common aliases with exact names beating loose ones — so fills
+exported from another venue or a hand-built spreadsheet feed the exact same
+engine. Locale-formatted numbers ("1,234.50", "1.234,56") parse correctly and
+ambiguous values are rejected rather than guessed; fee and realized-PnL
+columns are used when present, otherwise position and PnL are derived by
+average cost (exact when the file carries each coin's full history, and the
+status line says when derivation was used). Imported fills carry no
+maker/taker execution style, and the analytics count them in neither rather
+than fabricating one.
 
 ## Loading your data
 
 **What gets fetched per wallet:** the full fill history (paginated), funding
-payment history, open perp positions from the main clearinghouse, and — if your
-fills reveal activity on HIP-3 builder-deployed DEXes — each of those
-clearinghouses too (HIP-3 positions carry a purple `hip3` pill). Spot balances
-come from spot state, and spot pair indices (`@210`-style) are resolved to
-their real token names via the exchange registry.
+payment history (paginated too — heavy accounts get complete funding, not one
+capped page), the capital-flow ledger (deposits, withdrawals, vault and
+cross-account transfers), open perp positions from the main clearinghouse,
+and — if your fills reveal activity on HIP-3 builder-deployed DEXes — each of
+those clearinghouses too (HIP-3 positions carry a purple `hip3` pill). Spot
+balances come from spot state, and spot pair indices (`@210`-style) are
+resolved to their real token names via the exchange registry.
 
 **What reconstruction produces:** position-level trades with entry/exit
 averages, peak size, duration, fees split by maker/taker, entry drift (how much
@@ -101,6 +116,24 @@ Everything you journal becomes analytical fuel: tags, setups, ratings, and
 mistake flags are all mined as pattern-miner families, and the Review view
 tracks journaling completeness. Once you've run Price excursions, each trade's
 expanded row also shows its MAE/MFE (with ≈ marking approximate measurements).
+Trades where you added while underwater (detected from the fill stream against
+your running average entry, not a proxy) carry an **avg'd down** badge and feed
+the miner and the rule engine.
+
+**The day journal** (Review tab) adds a per-day layer: bias, pre-market plan,
+an end-of-day review, a plan-adherence check, and a **committed max loss** —
+which, when set, becomes that day's tripwire threshold on the dashboard. The
+number you chose calmly before the session is the one enforced when the
+session goes sideways — and the tripwire counts **open losses** toward the
+limit too, so being deep underwater on open positions trips it before you
+close (open gains never license more risk). Day entries sync and back up
+with the trade journal, and **clicking any day in the calendar heatmap**
+opens that date's entry (the heatmap scales its colors over the visible
+window and toggles between 26 and 52 weeks).
+
+**Monthly goals** (also Review) hold the month to three optional commitments:
+a net target (with straight-line projection and needed daily pace), a max
+acceptable intramonth drawdown, and a trades/week cap.
 
 ## The Diagnostic view
 
@@ -131,6 +164,21 @@ The statistician's view of your trading. Sections top to bottom:
   notional, which is additive and size-neutral, so a small market traded well
   can outrank a big one you churn. This is attribution, not edge quality — the
   Edge breakdown below is the per-market expectancy view.
+- **Capital & true return** — deposits, withdrawals, and transfers from the
+  exchange ledger give the app the missing denominator: return on
+  *time-weighted average capital employed* (with annualization), a
+  **money-weighted XIRR** beside it (TWR grades the strategy, XIRR grades the
+  account), max drawdown as a % of the capital present at the trough, a net
+  flow-mix row (external vs vault vs transfers), and implied all-time PnL
+  (live equity minus net deposited). Deposits and withdrawals are also drawn
+  as markers on the dashboard equity curve, so capital events explain its
+  steps. Account-wide by nature, so this card ignores the view/period filters
+  and says so. Unclassifiable ledger entries are counted and shown, never
+  silently mixed in.
+- **Setup scorecards** — every journaled setup tracked as its own little
+  strategy: per-setup equity curves and an early-vs-recent expectancy split
+  with an improving / fading / flipped-negative verdict. The standing re-test
+  the miner's own caveat asks for.
 - **Result distribution** — histogram of outcomes in $, %, or R, with
   configurable binning and a breakeven threshold; win/loss shape, profit
   quality, best & worst.
@@ -203,7 +251,9 @@ trade (worst dip → final outcome, with a dashed line at the 90% winner
 boundary), per-trade MAE/MFE lines in the journal, new miner families, and an
 **open-position monitor** comparing each live position's drawdown-so-far
 against your winner history — flagging any that are already
-"beyond winner territory."
+"beyond winner territory." An **Update open positions** button re-measures
+live positions entry-to-now on demand (closed trades reload instantly from
+saved measurements), so the monitor tracks a position while it's still open.
 
 **Precision and the ratchet.** The exchange retains only ~5,000 recent candles
 per interval (1m ≈ 3.5 days back, 15m ≈ 52 days). Older short trades therefore
@@ -322,6 +372,26 @@ is wiped on redeploy — no volume, no persistence) and **set `AUTH_TOKEN`**
 (your journal contains wallet addresses and notes; don't leave the API open on
 a public URL). The app asks for the token once per browser.
 
+### Automation: scheduled refresh, alerts, weekly digests
+
+All opt-in via environment variables, still zero dependencies:
+
+- `REFRESH_INTERVAL_MIN=30` — refresh the server-side caches from Hyperliquid
+  on a timer, so monitoring works without anyone opening the app.
+- `ALERT_WEBHOOK=https://…` — Discord, Slack, ntfy, or any JSON-accepting
+  endpoint (the body is shaped per receiver). Fires when something needs a
+  human *during* the session: a position within `ALERT_LIQ_PCT` (default 10)
+  percent of liquidation, the daily loss limit crossed (`ALERT_DAILY_LOSS`,
+  falling back to the app's saved daily-loss rule), funding bleed beyond
+  `ALERT_FUNDING_24H` dollars per day, or a drawdown deeper than the
+  Monte-Carlo 95th percentile for your own return stream. Alerts dedupe per
+  position / per day with a 6-hour cooldown.
+- With the schedule on, the first run of each ISO week writes a **weekly
+  digest** of the previous week (trades, net, win rate, expectancy, fees,
+  prior-week comparison, best/worst market) to `DATA_DIR/reports/` — 26 kept —
+  and posts a one-line summary to the webhook. Read them back via
+  `GET /api/v1/digests`.
+
 ## The analytics API (`/api/v1`)
 
 The companion server exposes a **read-only** HTTP API over your trading data,
@@ -365,6 +435,8 @@ below, including auth mode and filter docs.
 | `GET /api/v1/breakdown?by=` | grouped stats by `coin, dir, market, wallet, tag, dow, hour`, plus per-group contribution shares and a ranked best/worst `contribution` block (`basis=usd|pct`, `top=N`) |
 | `GET /api/v1/projection` | Monte Carlo fan (`horizon, paths, block, seed, lookback`) — same deterministic seeding contract as the Project tab |
 | `GET /api/v1/kelly` | Kelly sizing from the filtered closed set (`null` under 10 decisive trades) |
+| `GET /api/v1/capital` | capital flows + time-weighted return-on-capital model (account-wide; `wallet=` optional) |
+| `GET /api/v1/digests`, `/digests/YYYY-MM-DD` | stored weekly digests (written automatically when scheduled refresh is on) |
 | `GET /api/v1/risk` | open-position risk model: liquidation distances, concentration, danger list |
 | `GET /api/v1/positions` | cached positions/spot/account snapshot; `?live=1` refetches (full token) |
 | `GET /api/v1/spot/lots` | FIFO 8949-style spot cost-basis lots |
@@ -422,7 +494,14 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
   open book summarized as *risk* rather than a list: per-position distance to
   liquidation sorted nearest-first, net directional exposure by coin netted
   across wallets (HIP-3 dexs included), concentration, and a warning callout
-  for anything within 10% of its liquidation price.
+  for anything within 10% of its liquidation price. Two on-demand tools live
+  here too: **correlation clusters** (one click fetches ~90 days of daily
+  candles per held coin, computes real pairwise correlations, and nets
+  exposure within co-moving clusters — five alt longs at 0.8 correlation
+  shown as the single bet they are, with cluster-netted vs independent
+  directional exposure side by side) and **scenario shock** (mark the whole
+  book ±5/10/20% and see the PnL impact, % of account, and exactly which
+  positions cross their liquidation price — first-order, stated as such).
 
 ## Limitations, stated honestly
 
@@ -457,13 +536,19 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 npm test         # or: node tests/run-all.mjs
 ```
 
-128 tests across five suites cover reconstruction (flips, funding windows,
-spot/perp separation), the Web Worker dispatcher end-to-end with byte-parity
-against the synchronous fallback, excursion math and the retention/ratchet
-behavior, miner families and determinism, and the server over real HTTP (auth,
-revision conflicts, restart survival). The suites extract functions **directly
-from `ledger.html`**, so they test exactly what ships — there is no second copy
-of the code to drift out of sync.
+328 tests across seventeen suites cover reconstruction (flips, funding
+windows, spot/perp separation, partial-history flagging), the Web Worker
+dispatcher end-to-end with byte-parity against the synchronous fallback,
+excursion math and the retention/ratchet behavior, miner families and
+determinism, capital-flow classification and the time-weighted return model,
+webhook alert thresholds, CSV import (quoting, alias mapping, average-cost
+derivation), correlation clustering and scenario shock, monthly goals,
+add-to-loser detection, the Student-t CDF against reference values, a
+whole-file parse check of every script block, and the server over real HTTP
+(auth, revision conflicts, restart survival, the capital endpoint, digest
+lifecycle). The suites extract functions **directly from `ledger.html`**, so
+they test exactly what ships — there is no second copy of the code to drift
+out of sync.
 
 Architecture in one paragraph: everything is in `ledger.html` — UI, engine,
 and a Web Worker built at runtime from a Blob of the page's own function

@@ -23,6 +23,9 @@ globalThis._srand = evalFn('_srand');
 globalThis._hashSeed = evalFn('_hashSeed');
 globalThis._erf = evalFn('_erf');
 globalThis._normCdf = z => 0.5 * (1 + _erf(z / Math.SQRT2));
+globalThis._lgamma = evalFn('_lgamma');
+globalThis._ibetaReg = evalFn('_ibetaReg');
+globalThis._tCdf = evalFn('_tCdf'); // diagScan's bucket p-values are Student-t now
 globalThis.bootstrapMeanCI = evalFn('bootstrapMeanCI');
 
 const walkForward = evalFn('walkForward');

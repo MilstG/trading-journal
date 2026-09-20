@@ -65,8 +65,10 @@ export function makeExtractor(html){
 
   // Bundle several extracted functions into one ES module so they can reference each other
   // (e.g. reconstructTrades -> newTrade/tallyFill). `exports` defaults to every name.
-  const evalModule = (names, exports) => {
-    const src = names.map(grabFn).join('\n') +
+  // `prelude` carries one-line consts the functions lean on (isWin/_be and friends) —
+  // consts aren't brace-extractable, so suites re-declare them, same as the server engine.
+  const evalModule = (names, exports, prelude) => {
+    const src = (prelude ? prelude + '\n' : '') + names.map(grabFn).join('\n') +
       '\nexport { ' + (exports || names).join(', ') + ' };';
     return import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
   };

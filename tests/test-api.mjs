@@ -40,6 +40,12 @@ const FILLS = [
   F('@107', 'A', 4,  2.5, T0 + 6 * H, 10, 2,   0.01),
 ];
 const FUNDING = [{ time: T0 + 0.5 * H, delta: { coin: 'ETH', usdc: '1.5' } }];
+const LEDGER = [
+  { time: T0 - DAY, hash: '0x1', delta: { type: 'deposit', usdc: '10000' } },
+  { time: T0,       hash: '0x2', delta: { type: 'withdraw', usdc: '2000' } },
+  { time: T0 + H,   hash: '0x3', delta: { type: 'accountClassTransfer', usdc: '500' } }, // internal — not a flow
+  { time: T0 + H,   hash: '0x4', delta: { type: 'mysteryType', usdc: '1' } },            // unknown — counted, never mixed in
+];
 const ETH_T1_ID = ADDR + ':ETH:' + T0;
 const ETH_T2_ID = ADDR + ':ETH:' + (T0 + 2 * H);
 
@@ -52,6 +58,7 @@ function mockFetch(url, opts){
     case 'userFillsByTime':   return reply(FILLS.filter(f => f.time >= (body.startTime || 0)));
     case 'userTwapSliceFills':return reply([]);
     case 'userFunding':       return reply(FUNDING);
+    case 'userNonFundingLedgerUpdates': return reply(LEDGER.filter(r => r.time >= (body.startTime || 0)));
     case 'clearinghouseState':
       if (body.dex) return reply({ assetPositions: [] });
       return reply({ assetPositions: [{ position: { coin: 'BTC', szi: '0.5', entryPx: '30000',
@@ -315,6 +322,83 @@ await t('READ_TOKEN: v1 GETs yes, everything else no', async () => {
   eq((await jget('/api/data', READ)).status, 401, 'read token must never open the data blob');
   eq((await fetch(base + '/api/snapshots', { headers: READ })).status, 401);
   eq((await jget('/api/v1/stats', {})).status, 401, 'no token, no analytics');
+});
+
+console.log('\nAPI v1: capital + weekly digests');
+await t('capital: flows classified, time-weighted model, account-wide', async () => {
+  const { status, body } = await jget('/api/v1/capital', READ);
+  eq(status, 200);
+  eq(body.flows, 2); eq(body.skipped, 1);
+  near(body.model.netDeposited, 8000);
+  near(body.model.totIn, 10000); near(body.model.totOut, 2000);
+  near(body.model.realized, -104.5, 0.01); // ETH +99.5 and -204; open trades excluded
+  ok(body.model.avgCapital > 8000 && body.model.avgCapital < 10000, 'time-weighted between the two levels');
+});
+await t('weekly digest: generated once, listed, fetchable, idempotent', async () => {
+  // seed a second wallet whose single closed trade lands deterministically in LAST week
+  // (the digest covers [monday-7d, monday), computed the same way the server does)
+  const zlib = require('node:zlib');
+  const ADDR2 = '0x' + 'b'.repeat(40);
+  const nowD = new Date(); const dow = (nowD.getUTCDay() + 6) % 7;
+  const monday = Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - dow);
+  const ct = monday - 3 * DAY;
+  const fills = [F('SOL', 'B', 1, 100, ct - H, 0, 0, 1), F('SOL', 'A', 1, 600, ct, 1, 500, 1)];
+  writeFileSync(join(dataDir, 'fills', ADDR2.toLowerCase() + '.json.gz'),
+    zlib.gzipSync(JSON.stringify({ v: 1, last: ct, count: 2, savedAt: Date.now(), truncated: false, fills })));
+  const d = app._weeklyDigest();
+  ok(d && d.digest, 'digest generated');
+  ok(d.digest.n >= 1, 'covers the seeded last-week trade');
+  ok(d.text.includes('Week ending'), 'human summary line');
+  eq(app._weeklyDigest(), null, 'second call is a no-op — one digest per week');
+  const list = (await jget('/api/v1/digests', READ)).body.digests;
+  eq(list.length, 1);
+  const one = await jget('/api/v1/digests/' + list[0], READ);
+  eq(one.status, 200); ok(one.body.n >= 1);
+  eq((await jget('/api/v1/digests/1999-01-04', READ)).status, 404);
+});
+
+console.log('\nAPI v1: round-2 hardening');
+await t('capital unions ledger-cache wallets with saved ones (repro of the round-2 HIGH)', async () => {
+  // ADDR2 already has a fill cache from the digest test; give it a ledger cache too —
+  // its flows must now appear even though it is not in the saved wallet list
+  const zlib = require('node:zlib');
+  const ADDR2 = '0x' + 'b'.repeat(40);
+  writeFileSync(join(dataDir, 'ledger', ADDR2.toLowerCase() + '.json.gz'),
+    zlib.gzipSync(JSON.stringify({ v: 1, savedAt: Date.now(),
+      rows: [{ time: T0 - DAY, hash: '0xb1', delta: { type: 'deposit', usdc: '500' } }] })));
+  const { status, body } = await jget('/api/v1/capital', READ);
+  eq(status, 200);
+  eq(body.flows, 3);                 // 2 from ADDR + 1 from the non-saved ADDR2
+  near(body.model.totIn, 10500);
+});
+await t('capital?wallet= narrows flows AND nulls account-wide equity', async () => {
+  const { body } = await jget('/api/v1/capital?wallet=' + ADDR, READ);
+  eq(body.flows, 2);
+  near(body.model.totIn, 10000);
+  eq(body.model.equityNow, null, 'account-wide equity must not be compared against one wallet’s deposits');
+  eq(body.model.impliedPnl, null);
+});
+await t('refresh rejects malformed and non-object bodies instead of running a default refresh', async () => {
+  const r1 = await fetch(base + '/api/v1/refresh', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FULL }, body: 'not json{' });
+  eq(r1.status, 400);
+  const r2 = await fetch(base + '/api/v1/refresh', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FULL }, body: '[1,2]' });
+  eq(r2.status, 400);
+});
+await t('malformed percent-encoding in :id routes is a 400, not a logged 500', async () => {
+  eq((await jget('/api/v1/trades/%zz')).status, 400);
+  eq((await jget('/api/v1/journal/%zz')).status, 400);
+});
+await t('CSV formula guard catches the leading-whitespace bypass', async () => {
+  const zlib = require('node:zlib');
+  // plant a note starting with whitespace+formula on the ETH trade and re-export
+  const cur = await (await get('/api/data')).json();
+  cur.snapshot.journal[ETH_T1_ID].notes = ' =HYPERLINK("http://x")';
+  await fetch(base + '/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...FULL },
+    body: JSON.stringify({ rev: cur.rev, snapshot: cur.snapshot }) });
+  const csv = await (await get('/api/v1/export/trades.csv')).text();
+  ok(csv.includes("' =HYPERLINK"), 'whitespace-led formula must be prefixed');
 });
 
 console.log('\nAPI v1: engine failure stays soft');
