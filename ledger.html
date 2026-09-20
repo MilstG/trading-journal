@@ -1270,12 +1270,23 @@ function reconstructTrades(fills, addr, market){
   return trades.sort((a,b)=>b.openTime-a.openTime);
 }
 function attributeFunding(trades,fundingRows){
+  // Per coin: sorted rows + prefix sums, then two binary searches per trade. The old full
+  // scan per trade was O(trades × rows) per coin — ~35M row visits for a 2-year account,
+  // re-run on every reconstruction (including each 3-minute auto-refresh).
   const byCoin={};
   for(const r of fundingRows){ (byCoin[r.coin]=byCoin[r.coin]||[]).push(r); }
-  for(const c in byCoin) byCoin[c].sort((a,b)=>a.time-b.time);
+  const pre={};
+  for(const c in byCoin){ const rows=byCoin[c].sort((a,b)=>a.time-b.time);
+    const p=new Float64Array(rows.length+1);
+    for(let i=0;i<rows.length;i++)p[i+1]=p[i]+rows[i].usdc;
+    pre[c]=p; }
+  const lb=(rows,x)=>{ let lo=0,hi=rows.length; while(lo<hi){ const m=(lo+hi)>>1; if(rows[m].time<x)lo=m+1; else hi=m; } return lo; }; // first index with time >= x
   for(const t of trades){
-    const rows=byCoin[t.coin]||[]; const end=t.isOpen?Date.now():t.closeTime;
-    let f=0; for(const r of rows){ if(r.time>=t.openTime && r.time<=end) f+=r.usdc; }
+    const rows=byCoin[t.coin];
+    if(!rows||!rows.length){ t.funding=0; t.net=t.pnl-t.fees; continue; }
+    const end=t.isOpen?Date.now():t.closeTime;
+    const a=lb(rows,t.openTime), b=lb(rows,end+1); // [openTime, end] inclusive
+    const f=pre[t.coin][b]-pre[t.coin][a];
     t.funding=f; t.net=t.pnl - t.fees + f;   // all-in realized (funding usdc: +received / -paid)
   }
   return trades;
@@ -2307,6 +2318,25 @@ const usdTip={callbacks:{label:c=>' '+fmtUsd(c.parsed.y)}};
 function scales(x={}){ return {x:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:8},...x},
   y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>'$'+Number(v).toLocaleString()}}};}
 const signCol=arr=>arr.map(v=>v>=0?'rgba(47,208,140,.75)':'rgba(244,88,106,.75)');
+// Min-max decimation for per-trade line series: each bucket of consecutive points keeps
+// its extremes (order preserved) plus the final point, so the drawn pixels are identical
+// while a 30k-trade curve ships ~1.5k points instead of 30k labels + 30k date formats.
+// Returns the kept indices, or null when the series is already small enough.
+function decimateIdx(ys,maxN){
+  const n=ys.length; maxN=maxN||1500;
+  if(n<=maxN)return null;
+  const idx=[]; const bucket=Math.ceil(n/(maxN/2));
+  for(let i=0;i<n;i+=bucket){
+    const end=Math.min(n,i+bucket);
+    let lo=i,hi=i;
+    for(let j=i+1;j<end;j++){ if(ys[j]<ys[lo])lo=j; if(ys[j]>ys[hi])hi=j; }
+    const a=Math.min(lo,hi),b=Math.max(lo,hi);
+    idx.push(a); if(b!==a)idx.push(b);
+  }
+  if(idx[idx.length-1]!==n-1)idx.push(n-1);
+  return idx;
+}
+const pickIdx=(arr,idx)=>idx?idx.map(i=>arr[i]):arr;
 function bar(canvas,labels,data,opt={}){ return new Chart($(canvas),{type:'bar',
   data:{labels,datasets:[{data,backgroundColor:signCol(data),borderRadius:4,...(opt.ds||{})}]},
   options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:opt.tip||usdTip},scales:scales(opt.x||{})}});}
@@ -2314,11 +2344,13 @@ function renderCharts(closed, allv){
   allv=allv||closed;
   destroyCharts();
   const chron=[...allv].sort((a,b)=>a.closeTime-b.closeTime);
-  let cum=0; const eq=chron.map(t=>({x:t.closeTime,y:(cum+=t.net)}));
+  let cum=0; const eqT=[],eqY=[];
+  for(const t of chron){ cum+=t.net; eqT.push(t.closeTime); eqY.push(cum); }
+  const eqIdx=decimateIdx(eqY); // labels are formatted AFTER decimation — never 30k fmtDate calls
   const ctx=$('equity').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,260);
   g.addColorStop(0,'rgba(47,208,140,.16)'); g.addColorStop(1,'rgba(47,208,140,0)');
-  charts.eq=new Chart(ctx,{type:'line',data:{labels:eq.map(p=>fmtDate(p.x)),
-    datasets:[{data:eq.map(p=>p.y),borderColor:'#2FD08C',borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4}]},
+  charts.eq=new Chart(ctx,{type:'line',data:{labels:pickIdx(eqT,eqIdx).map(fmtDate),
+    datasets:[{data:pickIdx(eqY,eqIdx),borderColor:'#2FD08C',borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:usdTip},scales:scales(),interaction:{intersect:false,mode:'index'}}});
   const byCoin={}; allv.forEach(t=>{const k=dcoin(t);byCoin[k]=(byCoin[k]||0)+t.net;});
   const coins=Object.entries(byCoin).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10);
@@ -3011,16 +3043,27 @@ function renderDiagnostic(closed, allv){
   const nets=closed.map(t=>t.net);
   const chronNets=[...closed].sort((a,b)=>a.closeTime-b.closeTime).map(t=>t.net);
   const B = N>3000?800:2000, MCI = N>3000?500:1500;
-  const boot = nets.length>=5 ? bootstrapMeanCI(nets,B) : null;
-  const esig = nets.length>=5 ? edgeSignificance(nets) : null;
+  // Monte Carlo (bootstrap CI + shuffle/forward drawdown, up to ~4k iterations) is memoized
+  // on the closed set's identity: it used to re-run synchronously on the main thread on
+  // EVERY Diagnostic render — including each journal save while the tab was open. The PRNG
+  // is seeded from the same identity above, so cached values equal recomputed ones exactly.
+  const mcKey=[N,closed.length?closed[0].id:'',closed.length?closed[closed.length-1].id:'',s.net,_be].join('|');
+  let boot,esig,mcdd,fdd;
+  if(_diagMC.key===mcKey){ ({boot,esig,mcdd,fdd}=_diagMC); }
+  else{
+    boot = nets.length>=5 ? bootstrapMeanCI(nets,B) : null;
+    esig = nets.length>=5 ? edgeSignificance(nets) : null;
+    mcdd = chronNets.length>=5 ? mcMaxDD(chronNets,MCI) : null;
+    const HZN0 = Math.min(200,Math.max(50,N));
+    fdd = chronNets.length>=10 ? fwdMaxDD(chronNets,HZN0,N>3000?400:800) : null;
+    _diagMC={key:mcKey,boot,esig,mcdd,fdd};
+  }
   const skew = _skew(nets);
   const acf1 = _autocorr1(chronNets);
-  const mcdd = chronNets.length>=5 ? mcMaxDD(chronNets,MCI) : null;
   const cdd = chronNets.length? currentDD(chronNets) : null;
   const chronT=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   const uw = underwaterStats(chronT);
   const HZN = Math.min(200,Math.max(50,N));
-  const fdd = chronNets.length>=10 ? fwdMaxDD(chronNets,HZN,N>3000?400:800) : null;
   // cost drag: fees as % of gross realized profit (before fees/funding)
   const grossReal = s.net + s.fees - s.fund; // undo costs
   const costDragPct = grossReal>0 ? s.fees/grossReal : null;
@@ -3380,11 +3423,12 @@ function renderDiagnostic(closed, allv){
   // --- equity vs HWM chart ---
   const chronAll=[...allv].sort((a,b)=>a.closeTime-b.closeTime);
   if(chronAll.length>=2){
-    let cum=0,hwm=0; const eqD=[],hwmD=[],labels=[];
-    for(const t of chronAll){ cum+=t.net; if(cum>hwm)hwm=cum; eqD.push(cum); hwmD.push(hwm); labels.push(fmtDate(t.closeTime)); }
-    _diagCharts.eq=new Chart($('diagEq'),{type:'line',data:{labels,datasets:[
-      {data:hwmD,borderColor:'#3A4560',borderWidth:1.2,borderDash:[4,4],pointRadius:0,fill:false},
-      {data:eqD,borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,fill:'-1',backgroundColor:'rgba(244,88,106,.14)'}]},
+    let cum=0,hwm=0; const eqD=[],hwmD=[],ts=[];
+    for(const t of chronAll){ cum+=t.net; if(cum>hwm)hwm=cum; eqD.push(cum); hwmD.push(hwm); ts.push(t.closeTime); }
+    const di=decimateIdx(eqD); // both series sampled at the equity curve's kept extremes
+    _diagCharts.eq=new Chart($('diagEq'),{type:'line',data:{labels:pickIdx(ts,di).map(fmtDate),datasets:[
+      {data:pickIdx(hwmD,di),borderColor:'#3A4560',borderWidth:1.2,borderDash:[4,4],pointRadius:0,fill:false},
+      {data:pickIdx(eqD,di),borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,fill:'-1',backgroundColor:'rgba(244,88,106,.14)'}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+(c.datasetIndex?'equity ':'high-water ')+fmtUsd(c.parsed.y)}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
   }
@@ -3393,11 +3437,12 @@ function renderDiagnostic(closed, allv){
   const W=30;
   if(chronClosed.length>=40){
     $('diagRollEmpty').classList.add('hide'); $('diagRoll').style.display='';
-    const roll=[],rl=[]; let s2=0;
+    const roll=[],rt=[]; let s2=0;
     for(let i=0;i<chronClosed.length;i++){ s2+=chronClosed[i].net; if(i>=W)s2-=chronClosed[i-W].net;
-      if(i>=W-1){ roll.push(s2/W); rl.push(fmtDate(chronClosed[i].closeTime)); } }
-    _diagCharts.roll=new Chart($('diagRoll'),{type:'line',data:{labels:rl,datasets:[
-      {data:roll,borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,
+      if(i>=W-1){ roll.push(s2/W); rt.push(chronClosed[i].closeTime); } }
+    const ri=decimateIdx(roll);
+    _diagCharts.roll=new Chart($('diagRoll'),{type:'line',data:{labels:pickIdx(rt,ri).map(fmtDate),datasets:[
+      {data:pickIdx(roll,ri),borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,
        segment:{borderColor:c=>c.p1.parsed.y>=0?'rgba(63,207,142,.95)':'rgba(240,97,109,.95)'},fill:{target:{value:0}},backgroundColor:'rgba(47,208,140,.07)'}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtUsd(c.parsed.y)+'/trade (last '+W+')'}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
@@ -4126,6 +4171,7 @@ async function openReplay(id,btn){
 }
 
 /* ============================ benchmark: you vs buy-and-hold ============================ */
+let _diagMC={key:null}; // memoized Monte Carlo results for renderDiagnostic (see mcKey there)
 let _benchToken=0; // stale-render guard: only the latest benchmark run may draw (the miner has the same guard)
 async function renderBenchmark(closed){
   const el=$('diagBench'); if(!el||closed.length<5)return;
@@ -5373,8 +5419,12 @@ $('loadAll').onclick=e=>loadAll({fresh:!!(e&&(e.shiftKey||e.altKey))});
 $('walletAddr').addEventListener('keydown',e=>{ if(e.key==='Enter')loadAll(); });
 $('walletLabel').addEventListener('keydown',e=>{ if(e.key==='Enter')$('walletAddr').focus(); });
 $('wallets').addEventListener('click',e=>{ const b=e.target.closest('[data-rm]'); if(b)removeWallet(+b.dataset.rm); });
-$('riskDefault').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.riskDefault=v>0?v:null; await Store.set(S_KEY,settings); if(allTrades.length)render(); });
-$('beThresh').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.beThreshold=(isFinite(v)&&v>=0)?v:0; await Store.set(S_KEY,settings); if(allTrades.length)render(); });
+// debounced: these fire per keystroke, and each render() destroys and rebuilds all nine
+// dashboard charts — typing "1500" used to trigger four full re-renders
+let _setRenderTimer=null;
+const debouncedRender=()=>{ clearTimeout(_setRenderTimer); _setRenderTimer=setTimeout(()=>{ if(allTrades.length)render(); },350); };
+$('riskDefault').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.riskDefault=v>0?v:null; await Store.set(S_KEY,settings); debouncedRender(); });
+$('beThresh').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.beThreshold=(isFinite(v)&&v>=0)?v:0; await Store.set(S_KEY,settings); debouncedRender(); });
 $('rBasis').addEventListener('change',async e=>{ settings.rBasis=e.target.value;
   const fixed=settings.rBasis==='fixed'; $('riskDefault').classList.toggle('hide',!fixed);
   $('rBasisNote').textContent=fixed?'$ risk per trade · override per trade':'R-multiples scale to your average loss · override per trade';
