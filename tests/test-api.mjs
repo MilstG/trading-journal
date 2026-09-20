@@ -357,6 +357,50 @@ await t('weekly digest: generated once, listed, fetchable, idempotent', async ()
   eq((await jget('/api/v1/digests/1999-01-04', READ)).status, 404);
 });
 
+console.log('\nAPI v1: round-2 hardening');
+await t('capital unions ledger-cache wallets with saved ones (repro of the round-2 HIGH)', async () => {
+  // ADDR2 already has a fill cache from the digest test; give it a ledger cache too —
+  // its flows must now appear even though it is not in the saved wallet list
+  const zlib = require('node:zlib');
+  const ADDR2 = '0x' + 'b'.repeat(40);
+  writeFileSync(join(dataDir, 'ledger', ADDR2.toLowerCase() + '.json.gz'),
+    zlib.gzipSync(JSON.stringify({ v: 1, savedAt: Date.now(),
+      rows: [{ time: T0 - DAY, hash: '0xb1', delta: { type: 'deposit', usdc: '500' } }] })));
+  const { status, body } = await jget('/api/v1/capital', READ);
+  eq(status, 200);
+  eq(body.flows, 3);                 // 2 from ADDR + 1 from the non-saved ADDR2
+  near(body.model.totIn, 10500);
+});
+await t('capital?wallet= narrows flows AND nulls account-wide equity', async () => {
+  const { body } = await jget('/api/v1/capital?wallet=' + ADDR, READ);
+  eq(body.flows, 2);
+  near(body.model.totIn, 10000);
+  eq(body.model.equityNow, null, 'account-wide equity must not be compared against one wallet’s deposits');
+  eq(body.model.impliedPnl, null);
+});
+await t('refresh rejects malformed and non-object bodies instead of running a default refresh', async () => {
+  const r1 = await fetch(base + '/api/v1/refresh', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FULL }, body: 'not json{' });
+  eq(r1.status, 400);
+  const r2 = await fetch(base + '/api/v1/refresh', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FULL }, body: '[1,2]' });
+  eq(r2.status, 400);
+});
+await t('malformed percent-encoding in :id routes is a 400, not a logged 500', async () => {
+  eq((await jget('/api/v1/trades/%zz')).status, 400);
+  eq((await jget('/api/v1/journal/%zz')).status, 400);
+});
+await t('CSV formula guard catches the leading-whitespace bypass', async () => {
+  const zlib = require('node:zlib');
+  // plant a note starting with whitespace+formula on the ETH trade and re-export
+  const cur = await (await get('/api/data')).json();
+  cur.snapshot.journal[ETH_T1_ID].notes = ' =HYPERLINK("http://x")';
+  await fetch(base + '/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...FULL },
+    body: JSON.stringify({ rev: cur.rev, snapshot: cur.snapshot }) });
+  const csv = await (await get('/api/v1/export/trades.csv')).text();
+  ok(csv.includes("' =HYPERLINK"), 'whitespace-led formula must be prefixed');
+});
+
 console.log('\nAPI v1: engine failure stays soft');
 await t('stale ledger.html: persistence works, v1 analytics 503 with the missing list', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ledger-api-stale-'));

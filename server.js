@@ -185,8 +185,10 @@ const csvCell = (v) => {
   let s = String(v);
   // Formula-injection guard: journal notes/tags flow into this CSV and open in Excel or
   // Sheets, where a leading = @ (or a +/- that isn't a number) executes as a formula.
-  // Real negative numbers pass untouched.
-  if (/^[=@]/.test(s) || (/^[+-]/.test(s) && !isFinite(Number(s)))) s = "'" + s;
+  // Checked on the whitespace-trimmed value — some importers trim before formula
+  // detection, so " =HYPERLINK(…)" was a bypass. Real negative numbers pass untouched.
+  const t0 = s.replace(/^[\s]+/, '');
+  if (/^[=@]/.test(t0) || (/^[+-]/.test(t0) && !isFinite(Number(t0)))) s = "'" + s;
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
@@ -267,10 +269,20 @@ function createApp(opts) {
   const engine = buildEngine(htmlPath, opts.fetchImpl || ((...a) => globalThis.fetch(...a)));
   const E = engine.ctx; // undefined when !engine.ok — every v1 route checks first
 
+  // mtime-cached: cacheSig, setEngineState and ensureTrades each read the snapshot, which
+  // used to mean 2-3 full JSON parses of the whole data blob per request
+  let _dataCache = { mtime: 0, data: null };
   const readData = () => {
-    try { return JSON.parse(fs.readFileSync(dataFile, 'utf8')); } catch (e) { return null; }
+    try {
+      const st = fs.statSync(dataFile);
+      if (_dataCache.data && _dataCache.mtime === st.mtimeMs) return _dataCache.data;
+      const d = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+      _dataCache = { mtime: st.mtimeMs, data: d };
+      return d;
+    } catch (e) { return null; }
   };
   const writeData = (obj) => {
+    _dataCache.mtime = 0; // invalidate — the rename below may land within the same ms
     const tmp = dataFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(obj));
     try { if (fs.existsSync(dataFile)) fs.copyFileSync(dataFile, dataFile + '.bak'); } catch (e) {}
@@ -349,6 +361,11 @@ function createApp(opts) {
   /* ---------------- refresh: Hyperliquid -> caches (mirrors the client's loadAll) ---------------- */
   let _refreshing = false, _lastRefreshAt = 0, _lastRefreshSummary = null;
   const REFRESH_MIN_MS = 15000;
+  // Generation counter: a doRefresh that outlives its watchdog becomes a zombie whose late
+  // cache writes would overwrite a NEWER refresh's data with stale bytes stamped fresh.
+  // Each run captures the generation at start; the watchdog bumps it on timeout, and every
+  // write checks it first — a superseded run dies at its next write instead of clobbering.
+  let _refreshGen = 0;
 
   async function fetchPositionsSrv(addr, hip3Dexs) {
     // Client fetchPositions carries browser-only HIP-3 diagnostics (IndexedDB, status bar);
@@ -370,6 +387,8 @@ function createApp(opts) {
   }
 
   async function doRefresh(body) {
+    const gen = ++_refreshGen;
+    const fresh = () => { if (gen !== _refreshGen) throw { code: 409, msg: 'superseded by a newer refresh' }; };
     const snap = currentSnapshot();
     let wallets = snapWallets(snap);
     if (Array.isArray(body.wallets) && body.wallets.length) {
@@ -387,6 +406,7 @@ function createApp(opts) {
     let portAll = 0, portPerp = 0, portAllHas = false, portPerpHas = false;
 
     for (const w of wallets) {
+      if (gen !== _refreshGen) break; // superseded: stop fetching, the final fresh() below reports it
       const res = { address: w.address, label: w.label || '', newFills: 0, fills: 0, truncated: false, error: null };
       try {
         const cache = body.full ? null : readFillCache(w.address);
@@ -399,16 +419,16 @@ function createApp(opts) {
           for (const f of fr.fills) if (!seen.has(fillId(f))) { seen.add(fillId(f)); fills.push(f); res.newFills++; }
         } else { fills = fr.fills; res.newFills = fills.length; res.truncated = !!fr.truncated; }
         const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
-        gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills });
+        fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills });
         res.fills = fills.length;
 
         // funding: full refetch each refresh — matches the client, keeps semantics identical
         const frows = await E.fetchFunding(w.address);
-        gzWrite(fundingFile(w.address), { v: 1, savedAt: Date.now(), rows: frows });
+        fresh(); gzWrite(fundingFile(w.address), { v: 1, savedAt: Date.now(), rows: frows });
 
         // capital flows (deposits/withdrawals/transfers) — small, full refetch like funding
         const led = await E.fetchLedgerUpdates(w.address);
-        gzWrite(ledgerFile(w.address), { v: 1, savedAt: Date.now(), rows: led });
+        fresh(); gzWrite(ledgerFile(w.address), { v: 1, savedAt: Date.now(), rows: led });
 
         const hip3 = E.hip3DexsFromFills(fills);
         const [ch, sbal, port] = await Promise.all([
@@ -445,6 +465,7 @@ function createApp(opts) {
       hlPnl: { all: portAllHas ? portAll : null, perp: portPerpHas ? portPerp : null },
       spotMaps,
     };
+    fresh(); // last checkpoint before the market snapshot lands
     const tmp = marketFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(market));
     fs.renameSync(tmp, marketFile);
@@ -457,10 +478,16 @@ function createApp(opts) {
   let _tradesMemo = null; // {sig, trades, builtAt}
   function cacheSig() {
     const parts = [];
-    try { for (const f of fs.readdirSync(fillsDir).sort()) parts.push(f + ':' + fs.statSync(path.join(fillsDir, f)).mtimeMs); } catch (e) {}
+    // funding + ledger mtimes are load-bearing, not decorative: today they only ever change
+    // alongside a fills write, but that invariant was accidental — any future path writing
+    // funding alone would have served stale trades forever. Labels invalidate too, so a
+    // wallet rename shows up without waiting for the next refresh.
+    for (const [tag, dir] of [['', fillsDir], ['f', fundingDir], ['l', ledgerDir]]) {
+      try { for (const f of fs.readdirSync(dir).sort()) parts.push(tag + f + ':' + fs.statSync(path.join(dir, f)).mtimeMs); } catch (e) {}
+    }
     try { parts.push('m:' + fs.statSync(marketFile).mtimeMs); } catch (e) {}
     const snap = currentSnapshot();
-    parts.push('w:' + snapWallets(snap).map(w => w.address.toLowerCase()).join(','));
+    parts.push('w:' + snapWallets(snap).map(w => w.address.toLowerCase() + ':' + (w.label || '')).join(','));
     return parts.join('|');
   }
   function ensureTrades() {
@@ -643,9 +670,13 @@ function createApp(opts) {
     const dayOf = (ms) => { const p = E.tzParts(ms); return p.y + '-' + (p.mo + 1) + '-' + p.day; };
     const todayKey = dayOf(Date.now());
     let todayNet = 0; for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
+    // every cached wallet, not just saved ones — todayNet already covers all cached
+    // wallets via ensureTrades, and the two feeding different wallet sets skewed alerts
     let funding24h = 0; const cut = Date.now() - 86400000;
-    for (const w of snapWallets(snap)) { const fc = readFundingCache(w.address);
-      if (fc) for (const r of fc.rows) if (r.time >= cut && isFinite(r.usdc)) funding24h += r.usdc; }
+    try { for (const f of fs.readdirSync(fundingDir)) { const a = f.replace(/\.json\.gz$/, '');
+      if (!ADDR_RE.test(a)) continue;
+      const fc = readFundingCache(a);
+      if (fc) for (const r of fc.rows) if (r.time >= cut && isFinite(r.usdc)) funding24h += r.usdc; } } catch (e) {}
     const nets = closed.map(t => t.net);
     let currentDD = null, ddP95 = null;
     if (nets.length >= 20) {
@@ -657,18 +688,25 @@ function createApp(opts) {
       rulesDailyLoss: (snap.settings && snap.settings.rules && parseFloat(snap.settings.rules.dailyLossLimit)) || 0 };
   }
   const _alertSent = new Map();
+  let _alertBusy = false;
   async function maybeAlert() {
-    if (!alertCfg.webhook) return;
-    let state; try { state = gatherAlertState(); } catch (e) { return; }
-    if (!state) return;
-    const cfg = { ...alertCfg, dailyLoss: alertCfg.dailyLoss > 0 ? alertCfg.dailyLoss : state.rulesDailyLoss };
-    const now = Date.now();
-    const due = alertsFrom(state, cfg).filter(a => now - (_alertSent.get(a.key) || 0) >= alertCfg.cooldownMs);
-    if (!due.length) return;
+    if (!alertCfg.webhook || _alertBusy) return; // overlapping calls (scheduled tick + manual refresh) posted duplicates
+    _alertBusy = true;
     try {
-      await postWebhook(alertCfg.webhook, due.map(a => a.text).join('\n'));
-      for (const a of due) _alertSent.set(a.key, now);
-    } catch (e) { console.warn('[ledger] alert webhook failed: ' + e.message); }
+      let state;
+      try { state = gatherAlertState(); }
+      catch (e) { console.warn('[ledger] alert state failed: ' + ((e && (e.msg || e.message)) || e)); return; } // a dead alert path deserves a log line, not silence
+      if (!state) return;
+      const cfg = { ...alertCfg, dailyLoss: alertCfg.dailyLoss > 0 ? alertCfg.dailyLoss : state.rulesDailyLoss };
+      const now = Date.now();
+      const due = alertsFrom(state, cfg).filter(a => now - (_alertSent.get(a.key) || 0) >= alertCfg.cooldownMs);
+      if (due.length) {
+        for (const a of due) _alertSent.set(a.key, now); // record BEFORE the await — the send window was the double-post race
+        try { await postWebhook(alertCfg.webhook, due.map(a => a.text).join('\n')); }
+        catch (e) { for (const a of due) _alertSent.delete(a.key); console.warn('[ledger] alert webhook failed: ' + e.message); } // failed post re-arms
+      }
+      for (const [k, ts] of _alertSent) if (now - ts > 7 * 86400e3) _alertSent.delete(k); // day-scoped keys otherwise accrete forever
+    } finally { _alertBusy = false; }
   }
   async function runScheduledRefresh() {
     if (_refreshing) return;
@@ -677,7 +715,10 @@ function createApp(opts) {
     try {
       const summary = await Promise.race([
         doRefresh({}),
-        new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('timed out')), 5 * 60000); if (watchdog.unref) watchdog.unref(); }),
+        new Promise((_, reject) => { watchdog = setTimeout(() => {
+          _refreshGen++; _lastRefreshAt = Date.now(); // invalidate the zombie + keep the 15s gate honest
+          reject(new Error('timed out'));
+        }, 5 * 60000); if (watchdog.unref) watchdog.unref(); }),
       ]);
       _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
     }
@@ -721,7 +762,9 @@ function createApp(opts) {
       while (files.length > 26) fs.unlinkSync(path.join(reportsDir, files.shift()));
     } catch (e) {}
     const money = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
-    const text = '📒 Week ending ' + tag + ': ' + digest.n + ' trades, net ' + money(digest.net)
+    // the window is [monday-7d, monday) — the week ENDS on the Sunday before `tag`
+    const endTag = new Date(monday - 86400000).toISOString().slice(0, 10);
+    const text = '📒 Week ending ' + endTag + ': ' + digest.n + ' trades, net ' + money(digest.net)
       + (s ? ' · win rate ' + Math.round((s.winRate || 0) * 100) + '% · expectancy ' + money(s.expectancy || 0) + '/trade · fees ' + money(s.fees || 0) : '')
       + ' · prior week ' + money(digest.prevNet) + ' over ' + digest.prevN + ' trades'
       + (digest.best ? ' · best ' + digest.best.coin + ' ' + money(digest.best.net) : '')
@@ -740,7 +783,11 @@ function createApp(opts) {
   if (refreshEveryMin > 0) {
     const t = setInterval(() => { runScheduledRefresh().then(maybeDigest); }, Math.max(1, refreshEveryMin) * 60000);
     if (t.unref) t.unref(); // never keep the process alive just for the schedule
-    console.log('[ledger] scheduled refresh every ' + refreshEveryMin + ' min'
+    // one run shortly after boot: every redeploy resets the interval, so with long
+    // intervals the Monday digest and liquidation alerts could slip by a full period
+    const boot = setTimeout(() => { runScheduledRefresh().then(maybeDigest); }, 30000);
+    if (boot.unref) boot.unref();
+    console.log('[ledger] scheduled refresh every ' + refreshEveryMin + ' min (first run ~30s after boot)'
       + (alertCfg.webhook ? ' with webhook alerts' : ' (no ALERT_WEBHOOK set — refresh only)'));
   }
 
@@ -796,8 +843,16 @@ function createApp(opts) {
       if (req.method !== 'POST') return send(405, { error: 'method not allowed' });
       if (!authOk(req)) return send(401, { error: 'unauthorized' });
       if (!engine.ok) return send(503, { error: 'analytics engine unavailable — missing: ' + engine.missing.join(', ') });
+      // an empty body is fine ({}); an unparseable or oversized one is an ERROR — silently
+      // treating a typo'd {"wallets":[…]} as a default all-wallets refresh helped nobody
+      let raw;
+      try { raw = await readBody(req); }
+      catch (e) { return send(413, { error: 'body too large' }); }
       let body = {};
-      try { body = JSON.parse(await readBody(req)) || {}; } catch (e) { body = {}; }
+      if (raw && raw.trim()) {
+        try { body = JSON.parse(raw); } catch (e) { return send(400, { error: 'body must be valid JSON' }); }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400, { error: 'body must be a JSON object' });
+      }
       if (_refreshing) return send(409, { error: 'refresh already running' });
       if (!body.force && Date.now() - _lastRefreshAt < REFRESH_MIN_MS)
         return send(429, { error: 'refreshed ' + Math.round((Date.now() - _lastRefreshAt) / 1000) + 's ago — min interval 15s (pass force:true to override)', lastSummary: _lastRefreshSummary });
@@ -811,7 +866,11 @@ function createApp(opts) {
         const summary = await Promise.race([
           doRefresh(body),
           new Promise((_, reject) => {
-            watchdog = setTimeout(() => reject({ code: 504, msg: 'refresh timed out after 5 minutes — Hyperliquid slow or unreachable; try again' }), 5 * 60000);
+            watchdog = setTimeout(() => {
+              _refreshGen++;              // invalidate the zombie — its next write throws instead of clobbering
+              _lastRefreshAt = Date.now(); // and a retry still honors the 15s gate
+              reject({ code: 504, msg: 'refresh timed out after 5 minutes — Hyperliquid slow or unreachable; try again' });
+            }, 5 * 60000);
             if (watchdog.unref) watchdog.unref();
           }),
         ]);
@@ -888,7 +947,7 @@ function createApp(opts) {
       if (tradeM) {
         setEngineState(query);
         const { trades } = ensureTrades();
-        const id = decodeURIComponent(tradeM[1]);
+        let id; try { id = decodeURIComponent(tradeM[1]); } catch (e) { throw { code: 400, msg: 'malformed percent-encoding in id' }; }
         const t = trades.find(x => x.id === id);
         if (!t) return send(404, { error: 'no trade with id ' + id });
         const closed = trades.filter(x => !x.isOpen);
@@ -1029,7 +1088,17 @@ function createApp(opts) {
         // both the flows and the trades to one address, which stays internally consistent)
         const { trades } = ensureTrades();
         const snap = currentSnapshot();
-        let wallets = snapWallets(snap);
+        // SAME union rule as ensureTrades: saved wallets ∪ anything holding a ledger cache.
+        // body.wallets refreshes write ledger caches for non-saved wallets too — reading
+        // flows from saved wallets only counted those wallets' trades against a capital
+        // base missing their deposits.
+        let wallets = snapWallets(snap).slice();
+        try {
+          for (const f of fs.readdirSync(ledgerDir)) {
+            const a = f.replace(/\.json\.gz$/, '');
+            if (ADDR_RE.test(a) && !wallets.find(w => w.address.toLowerCase() === a)) wallets.push({ address: a, label: '' });
+          }
+        } catch (e) {}
         if (query.wallet) {
           if (!ADDR_RE.test(query.wallet)) throw { code: 400, msg: 'invalid wallet address' };
           wallets = [{ address: query.wallet }];
@@ -1049,7 +1118,10 @@ function createApp(opts) {
         const closedAll = trades.filter(t => !t.isOpen && t.closeTime
           && (!query.wallet || (t.wallet && wset.has(t.wallet.address.toLowerCase()))));
         const market = readMarket();
-        const equityNow = market && (market.accountValue != null || market.spotAccountValue != null)
+        // market equity is the SUM over all refreshed wallets — with wallet= narrowing the
+        // flows, comparing one wallet's deposits against everyone's equity manufactured
+        // huge fictitious impliedPnl; per-wallet equity isn't cached, so null is honest
+        const equityNow = !query.wallet && market && (market.accountValue != null || market.spotAccountValue != null)
           ? (market.accountValue || 0) + (market.spotAccountValue || 0) : null;
         return send(200, { flows: flows.length, skipped, cachedAt,
           model: E.capitalModel(flows, closedAll, equityNow) });
@@ -1149,7 +1221,7 @@ function createApp(opts) {
       const jM = url.match(/^\/api\/v1\/journal\/(.+)$/);
       if (jM) {
         const snap = currentSnapshot();
-        const id = decodeURIComponent(jM[1]);
+        let id; try { id = decodeURIComponent(jM[1]); } catch (e) { throw { code: 400, msg: 'malformed percent-encoding in id' }; }
         const e = (snap.journal || {})[id];
         return e ? send(200, { id, entry: e }) : send(404, { error: 'no journal entry for ' + id });
       }
