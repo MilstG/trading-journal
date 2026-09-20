@@ -1,5 +1,10 @@
 # Second-pass audit — September 20, 2026
 
+> **Status: addressed.** Every finding below (R2-H1–H3, M1–M11, L1–L16) was fixed, the
+> performance batch applied, and every suggested improvement/feature built, in the commits
+> following this document on the same branch. The text is preserved as the audit record;
+> line numbers refer to the revision that was audited.
+
 Scope: adversarial review of the code added in the first fix/feature wave (client and
 server), plus a fresh-eyes sweep of regions the first audit covered lightly (render
 pipeline, PDF writers, Project tab, guardrails, filters). Three independent review passes;

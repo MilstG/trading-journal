@@ -46,16 +46,23 @@ companion server and your journal persists across devices and reboots.
 
 Subsequent loads are incremental: fills are cached in your browser (IndexedDB)
 and only new activity is fetched. **Shift-click Load all** to force a full
-re-fetch if something looks off.
+re-fetch if something looks off. A persistent **data-health strip** under the
+header flags anything incomplete — truncated fill history, partial funding or
+capital-flow fetches, failing browser storage — for as long as it's true,
+instead of a status message that scrolls away.
 
 No wallet? **Paste data manually** accepts raw fill JSON (e.g. copied from an
 API response) and runs the same reconstruction. It also accepts **CSV** — a
 header row plus columns for time, symbol, side, price, and size, matched
-loosely against common aliases — so fills exported from another venue or a
-hand-built spreadsheet feed the exact same engine. Fee and realized-PnL
-columns are used when present; otherwise position and PnL are derived by
+against common aliases with exact names beating loose ones — so fills
+exported from another venue or a hand-built spreadsheet feed the exact same
+engine. Locale-formatted numbers ("1,234.50", "1.234,56") parse correctly and
+ambiguous values are rejected rather than guessed; fee and realized-PnL
+columns are used when present, otherwise position and PnL are derived by
 average cost (exact when the file carries each coin's full history, and the
-status line says when derivation was used).
+status line says when derivation was used). Imported fills carry no
+maker/taker execution style, and the analytics count them in neither rather
+than fabricating one.
 
 ## Loading your data
 
@@ -117,7 +124,12 @@ the miner and the rule engine.
 an end-of-day review, a plan-adherence check, and a **committed max loss** —
 which, when set, becomes that day's tripwire threshold on the dashboard. The
 number you chose calmly before the session is the one enforced when the
-session goes sideways. Day entries sync and back up with the trade journal.
+session goes sideways — and the tripwire counts **open losses** toward the
+limit too, so being deep underwater on open positions trips it before you
+close (open gains never license more risk). Day entries sync and back up
+with the trade journal, and **clicking any day in the calendar heatmap**
+opens that date's entry (the heatmap scales its colors over the visible
+window and toggles between 26 and 52 weeks).
 
 **Monthly goals** (also Review) hold the month to three optional commitments:
 a net target (with straight-line projection and needed daily pace), a max
@@ -154,11 +166,15 @@ The statistician's view of your trading. Sections top to bottom:
   Edge breakdown below is the per-market expectancy view.
 - **Capital & true return** — deposits, withdrawals, and transfers from the
   exchange ledger give the app the missing denominator: return on
-  *time-weighted average capital employed* (with annualization), max drawdown
-  as a % of the capital present at the trough, and implied all-time PnL (live
-  equity minus net deposited). Account-wide by nature, so this card ignores
-  the view/period filters and says so. Unclassifiable ledger entries are
-  counted and shown, never silently mixed in.
+  *time-weighted average capital employed* (with annualization), a
+  **money-weighted XIRR** beside it (TWR grades the strategy, XIRR grades the
+  account), max drawdown as a % of the capital present at the trough, a net
+  flow-mix row (external vs vault vs transfers), and implied all-time PnL
+  (live equity minus net deposited). Deposits and withdrawals are also drawn
+  as markers on the dashboard equity curve, so capital events explain its
+  steps. Account-wide by nature, so this card ignores the view/period filters
+  and says so. Unclassifiable ledger entries are counted and shown, never
+  silently mixed in.
 - **Setup scorecards** — every journaled setup tracked as its own little
   strategy: per-setup equity curves and an early-vs-recent expectancy split
   with an improving / fading / flipped-negative verdict. The standing re-test
@@ -520,7 +536,7 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 npm test         # or: node tests/run-all.mjs
 ```
 
-311 tests across seventeen suites cover reconstruction (flips, funding
+328 tests across seventeen suites cover reconstruction (flips, funding
 windows, spot/perp separation, partial-history flagging), the Web Worker
 dispatcher end-to-end with byte-parity against the synchronous fallback,
 excursion math and the retention/ratchet behavior, miner families and
