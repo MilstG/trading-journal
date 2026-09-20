@@ -779,15 +779,24 @@ function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout
 // with the server's current state, which the client applies instead of clobbering it.
 const SRV={enabled:false,needsAuth:false,badAuth:false,token:null,rev:0};
 let _srvTimer=null;
-// Journal ids edited locally since the last successful sync. On a 409 the server's snapshot
-// wins wholesale — except these entries, which are re-applied on top and re-synced, so a
-// note typed on this device isn't silently replaced by another device's older state.
-const _dirtyJ=new Set();
+// Journal ids edited locally since the last successful sync, with a per-id edit counter.
+// On a 409 the server's snapshot wins wholesale — except these entries, which are
+// re-applied on top and re-synced. The counter matters: a plain Set lost an entry that
+// was re-edited WHILE a PUT was in flight (success deleted the id even though the newer
+// edit was never sent); success now clears an id only when its counter is unchanged.
+const _dirtyJ=new Map();
 let _srvWriting=false,_srvAgain=false;
 // Journal edit counter — part of the miner cache key, since tags/setups/mistakes/ratings
 // change miner inputs without changing the trade count.
 let _jrev=0;
-function markJEdit(id){ _dirtyJ.add(id); _jrev++; }
+function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; }
+// Settings as of the last successful sync — powers a field-level 409 merge: a goal/rule/tz
+// edit made here since the last sync wins over the incoming snapshot instead of silently
+// bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
+// wins there, as before).
+let _lastSyncedS=null;
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins'];
+function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; return JSON.parse(JSON.stringify(o)); }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); }
 function scheduleServerWrite(){ if(!SRV.enabled||_applying)return; clearTimeout(_srvTimer); _srvTimer=setTimeout(writeServer,800); }
 function srvFetch(p,o){ o=o||{}; o.headers=Object.assign({},o.headers);
@@ -799,25 +808,40 @@ async function writeServer(){
   try{
     let excRows=null; try{ const p=await idbGet('excRows'); if(p&&p.v===1&&p.rows)excRows=p; }catch(e){}
     const snap={...snapshot()}; if(excRows)snap.excRows=excRows;
-    const sentDirty=[..._dirtyJ]; // edits made while this PUT is in flight stay dirty
+    const sentDirty=[..._dirtyJ.entries()]; // (id, counter) pairs — edits made while in flight bump the counter and stay dirty
+    const sentS=_snapS();
     const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({rev:SRV.rev,snapshot:snap})});
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return; }
     if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
       const j=await r.json(); SRV.rev=j.rev||0;
       if(j.snapshot){
-        const mine=journal, dirty=[..._dirtyJ];
+        const mine=journal, dirty=[..._dirtyJ.keys()], localS=_snapS();
         await applySnapshot(j.snapshot); try{ renderWallets(); }catch(e){}
+        let merged=false;
         if(dirty.length){
           for(const id of dirty){ if(mine[id]!==undefined)journal[id]=mine[id]; else delete journal[id]; }
-          await rawSet(J_KEY,journal); scheduleServerWrite(); // push the merge at the new revision
+          await rawSet(J_KEY,journal); merged=true;
         }
+        // field-level settings merge: fields changed here since the last successful sync
+        // win over the incoming snapshot (the edit that triggered this very PUT used to
+        // silently bounce back). Never-synced sessions skip this — server wins there.
+        if(_lastSyncedS){
+          let sChanged=false;
+          for(const k of _SYNC_S_FIELDS){
+            if(JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])){ settings[k]=localS[k]; sChanged=true; }
+          }
+          if(sChanged){ await rawSet(S_KEY,settings); merged=true; }
+        }
+        if(merged)scheduleServerWrite(); // push the merge at the new revision
       }
-      setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local journal edits were kept and will re-sync.':''));
+      setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local edits were kept and will re-sync.':''));
       renderDatafile(); return;
     }
     if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1;
-      sentDirty.forEach(id=>_dirtyJ.delete(id)); renderDatafile('saved'); }
+      for(const [id,rev] of sentDirty) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); // only clear what was actually sent unchanged
+      _lastSyncedS=sentS;
+      renderDatafile('saved'); }
   }catch(e){ /* transient network failure — next change retries */ }
   finally{ _srvWriting=false; if(_srvAgain){ _srvAgain=false; writeServer(); } }
 }
@@ -832,7 +856,8 @@ async function initServerSync(){
     const d=await srvFetch('/api/data');
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
-      if(j.snapshot)await applySnapshot(j.snapshot); }
+      if(j.snapshot)await applySnapshot(j.snapshot);
+      _lastSyncedS=_snapS(); } // baseline for the field-level 409 settings merge
     // PWA: only meaningful when served — installable app icon + offline shell
     try{ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
       if(!document.querySelector('link[rel=manifest]')){ const l=document.createElement('link');

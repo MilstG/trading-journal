@@ -114,6 +114,13 @@ t('resetDerivedState is wired at every world-replacement site', () => {
   ok(html.includes("const _riskKey=ne=>ne.map(e=>e.coin+':'+Math.round(e.net))"), 'cluster cache key includes exposure sizes');
 });
 
+t('sync integrity: per-id edit counters and field-level settings merge wired', () => {
+  ok(html.includes('const _dirtyJ=new Map()'), 'dirty map, not set');
+  ok(html.includes('if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id)'), 'success clears only unchanged counters');
+  ok(html.includes('_lastSyncedS=_snapS()'), 'last-synced settings baseline recorded');
+  ok(html.includes('JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])'), 'locally-changed fields re-applied on 409');
+});
+
 console.log('\nmonthly goals');
 {
   const { monthlyGoalModel } = await evalModule(['monthlyGoalModel'], ['monthlyGoalModel'],
