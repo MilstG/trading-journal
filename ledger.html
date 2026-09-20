@@ -2061,10 +2061,27 @@ function renderPositions(){
 // 10% of its liquidation price. Perp-only by design: spot holdings have no liq price.
 // On-demand correlation clusters for the risk panel: ~90 days of 1d candles per held coin
 // (same cache the benchmark uses), real pairwise correlations, exposure netted per cluster.
-let _riskClusters=null; // {key: sorted coin set, res} — recompute when the open book changes
+let _riskClusters=null; // {key, res} — keyed on coins AND sizes (see _riskKey)
 let _shockPct=null;     // active scenario-shock selection; null = off
+// Cluster cache key: coin set plus rounded net exposures. Keying on coins alone let a
+// 3-minute auto-refresh change sizes/marks while the panel kept showing stale dollars.
+const _riskKey=ne=>ne.map(e=>e.coin+':'+Math.round(e.net)).sort().join(',');
+// One reset for every piece of state DERIVED from the loaded wallet set. loadFromPaste,
+// removeWallet, and backup restore each replace part of the world; anything derived from
+// the old one — capital flows, correlation clusters, scenario shock, excursion and miner
+// caches — must not survive into the new one. Three staleness bugs came from missing
+// exactly this hook. With removeAddr set, wallet-tagged state is filtered, not wiped.
+function resetDerivedState(removeAddr){
+  if(removeAddr){ const a=removeAddr.toLowerCase();
+    ledFlows=ledFlows.filter(f=>(f.wallet||'').toLowerCase()!==a);
+  } else { ledFlows=[]; ledSkipped=0; }
+  _riskClusters=null; _shockPct=null;
+  _excCache={key:null,rows:null,openRows:null,skippedCoins:null,skippedN:0};
+  _minerCache={key:null,res:null,deep:null};
+}
 async function computeRiskClusters(){
   const ne=netExposureByCoin(); if(ne.length<2)return;
+  const key=_riskKey(ne);
   const btn=$('riskCorrBtn'); if(btn){ btn.disabled=true; btn.textContent='Fetching daily candles…'; }
   const now=Date.now(), from=now-95*86400e3;
   const candlesByCoin={};
@@ -2085,7 +2102,7 @@ async function computeRiskClusters(){
     }catch(err){} // no candles for this name (some HIP-3 markets) — skip, don't sink the panel
   }
   const res=exposureClusters(ne,coinCorrelations(candlesByCoin),0.7);
-  _riskClusters={key:ne.map(e=>e.coin).sort().join(','), res};
+  _riskClusters={key, res};
   renderRiskPanel();
 }
 function renderRiskPanel(){
@@ -2108,7 +2125,7 @@ function renderRiskPanel(){
   const concHtml=(conc&&conc.clustered)?`<div class="guard overtrading" style="margin-top:8px" data-tip="Perps move together \u2014 in risk-off, alts track BTC \u2014 so several positions on the same side carry more real risk than the sum of their individual liquidation distances suggests. This flags when your book is heavily one-directional (|net|/gross \u2265 60%) across multiple names. Heuristic: without a price-history correlation matrix it measures how one-sided you are, not exact correlations."><span class="gicon">\u26a0</span><span><b>Concentrated ${conc.side} book</b>: ${(conc.dirRatio*100).toFixed(0)}% of gross exposure is net ${conc.side} across ${conc.side==='long'?conc.longs:conc.shorts} of ${conc.positions} positions. Correlated names moving together means your real risk is larger than the per-position liquidation distances imply \u2014 a single regime move hits all of them at once. Size the cluster as one bet.</span></div>`:'';
   // real correlation clusters (on demand): the exact version of the heuristic above
   const ne=netExposureByCoin();
-  const ckey=ne.map(x=>x.coin).sort().join(',');
+  const ckey=_riskKey(ne);
   let clusterHtml='';
   if(ne.length>=2){
     if(_riskClusters&&_riskClusters.key===ckey){
@@ -5020,6 +5037,10 @@ async function removeWallet(i){
   openPositions=openPositions.filter(p=>!p.wallet||p.wallet.address!==w.address);
   spotHoldings=spotHoldings.filter(p=>!p.wallet||p.wallet.address!==w.address);
   hlPnl={all:null,perp:null};
+  // per-wallet equity isn't tracked, so the aggregates are unknowable until the next load —
+  // null beats keeping the removed wallet's money in the capital card's equity
+  accountValue=null; spotAccountValue=null;
+  resetDerivedState(w.address); // drop the removed wallet's capital flows + derived caches
   if(allTrades.length||openPositions.length||spotHoldings.length){ render(); } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); }
   setStatus('Removed '+labelFor(w)+(settings.wallets.length?'':' · list empty'));
 }
@@ -5253,6 +5274,7 @@ async function loadFromPaste(fills){
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; hlPnl={all:null,perp:null};
+  resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[];
   $('empty').classList.add('hide'); $('app').classList.remove('hide'); render();
   setStatus(`Loaded ${fills.length} pasted fills → ${perpTr.length} perp + ${spotTr.length} spot trades.`);
@@ -5441,6 +5463,7 @@ $('modalLoad').onclick=async()=>{
       // applySnapshot is the one restore path that knows the whole backup shape — including
       // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
       await applySnapshot(data);
+      resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
       schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
       view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
       document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));

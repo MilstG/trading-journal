@@ -106,6 +106,14 @@ t('no strong pairs → no clusters, both totals equal', () => {
   near(res.naiveDirectional, res.effectiveDirectional);
 });
 
+console.log('\nderived-state hygiene');
+t('resetDerivedState is wired at every world-replacement site', () => {
+  ok(html.includes('resetDerivedState(); // pasted world'), 'loadFromPaste resets');
+  ok(html.includes('resetDerivedState(w.address)'), 'removeWallet filters by wallet');
+  ok(html.includes('resetDerivedState(); // restored wallet set'), 'backup restore resets');
+  ok(html.includes("const _riskKey=ne=>ne.map(e=>e.coin+':'+Math.round(e.net))"), 'cluster cache key includes exposure sizes');
+});
+
 console.log('\nmonthly goals');
 {
   const { monthlyGoalModel } = await evalModule(['monthlyGoalModel'], ['monthlyGoalModel'],
