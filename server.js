@@ -91,7 +91,7 @@ const ENGINE_FNS = [
   'openRiskModel', 'whatIfStats', 'whatIfModel', 'walkForward', 'riskConcentration',
   'cusumDrift', 'decayAssess',
   // capital flows -> return on capital
-  'fetchLedgerUpdates', 'capitalFlows', 'capitalModel',
+  'fetchLedgerUpdates', 'capitalFlows', 'capitalModel', 'xirrFromFlows',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
   'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio',
 ];
@@ -1124,7 +1124,8 @@ function createApp(opts) {
         const equityNow = !query.wallet && market && (market.accountValue != null || market.spotAccountValue != null)
           ? (market.accountValue || 0) + (market.spotAccountValue || 0) : null;
         return send(200, { flows: flows.length, skipped, cachedAt,
-          model: E.capitalModel(flows, closedAll, equityNow) });
+          model: E.capitalModel(flows, closedAll, equityNow),
+          xirr: E.xirrFromFlows(flows, equityNow) }); // money-weighted annual return; null without live equity
       }
 
       if (url === '/api/v1/walkforward') {

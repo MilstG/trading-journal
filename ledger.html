@@ -518,6 +518,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <button data-tab="proj" role="tab" aria-selected="false" aria-controls="projView" data-tip="Simulate your current performance forward — weekly / monthly / yearly pace, a Monte Carlo fan of possible equity paths, and milestone dates. Positive visualization, not a forecast.">Project</button>
     </div>
     <div id="reconWarn" class="reconwarn hide"></div>
+    <div id="dataHealth" class="reconwarn hide"></div>
     <div id="tripwire" class="reconwarn hide"></div>
     <div id="reconcile" class="reconcile hide"></div>
     <div id="dashView" role="tabpanel" aria-label="Dashboard">
@@ -535,7 +536,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 
     <div class="calrow">
     <div class="card">
-      <h3>Daily PnL <span class="hint">green = up day, red = down day · last 26 weeks</span></h3>
+      <h3>Daily PnL <span class="hint" id="calHint">green = up day, red = down day · click a day to journal it</span> <button class="gear" id="calWeeksBtn" data-tip="Toggle the heatmap window between 26 and 52 weeks.">26w</button></h3>
       <div class="cal-wrap"><div class="cal" id="cal"></div></div>
       <div class="cal-legend"><span>loss</span><span class="sw" style="background:rgba(244,88,106,.85)"></span><span class="sw" style="background:rgba(240,97,109,.4)"></span><span class="sw" style="background:var(--panel2)"></span><span class="sw" style="background:rgba(63,207,142,.4)"></span><span class="sw" style="background:rgba(47,208,140,.85)"></span><span>profit</span></div>
     </div>
@@ -1033,7 +1034,11 @@ async function fetchFunding(addr){
       start=mx>start?mx:mx+1; pages++; await sleep(160);
     }
   }catch(e){ partial=true; } // keep what we have, but say so — silent 0 looked like "no funding"
-  if(partial) setStatus('⚠ Funding history fetch interrupted — funding attribution may be incomplete for this load.');
+  if(partial||pages>=200){
+    // a transient status line gets overwritten within seconds; the data-health strip is
+    // the durable signal that funding attribution is incomplete this session
+    if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.funding=true;
+  }
   return out;
 }
 // Capital flows — deposits, withdrawals, vault and cross-account transfers — from
@@ -1055,7 +1060,8 @@ async function fetchLedgerUpdates(addr){
       const mx=Math.max(...rows.map(r=>r.time));
       start=mx>start?mx:mx+1; pages++; await sleep(160);
     }
-  }catch(e){ setStatus('⚠ Capital-flow history fetch interrupted — return-on-capital may be incomplete.'); }
+  }catch(e){ if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.ledger=true; }
+  if(pages>=120){ if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.ledger=true; }
   return out;
 }
 // Classify raw ledger updates into signed capital flows for one wallet. Only types whose
@@ -1120,6 +1126,24 @@ function capitalModel(flows, closed, equityNow, now){
     totIn, totOut, netDeposited:cap, maxCapital:maxCap, avgCapital,
     realized, nTrades:closedIn.length, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
     equityNow:equityNow!=null?equityNow:null, impliedPnl:implied};
+}
+// Money-weighted (XIRR) annual return: the rate r solving Σ flow·(1+r)^(yrs remaining) =
+// live equity — deposits count against you, withdrawals for you, and periods are weighted
+// by how much capital was actually in. The complement to time-weighted ROC: XIRR answers
+// "what did MY money earn", TWR answers "how good is the strategy". Bisection; returns
+// null without live equity or when the history doesn't bracket a root. Pure.
+function xirrFromFlows(flows,equityNow,now){
+  now=now||Date.now();
+  if(equityNow==null||!isFinite(equityNow)||!flows||!flows.length)return null;
+  const YR=365*86400000;
+  const f=r=>{ let v=0; for(const fl of flows){ if(!(fl.time<=now))continue; v+=fl.usdc*Math.pow(1+r,(now-fl.time)/YR); } return v-equityNow; };
+  let lo=-0.9999, hi=10, flo=f(lo), fhi=f(hi);
+  if(!isFinite(flo)||!isFinite(fhi)||flo*fhi>0)return null;
+  for(let i=0;i<200;i++){ const mid=(lo+hi)/2, fm=f(mid);
+    if(!isFinite(fm))return null;
+    if(Math.abs(fm)<1e-7)return mid;
+    if(flo*fm<=0){ hi=mid; fhi=fm; } else { lo=mid; flo=fm; } }
+  return (lo+hi)/2;
 }
 // HIP-3 (builder-deployed) perps live on separate dexs with independent clearinghouses.
 // clearinghouseState with no `dex` param only returns the first (validator-operated) perp dex,
@@ -1295,6 +1319,7 @@ function attributeFunding(trades,fundingRows){
 /* ============================ state ============================ */
 let allTrades=[], fundingRows=[], fundingTotal=0, openPositions=[], accountValue=null;
 let ledFlows=[], ledSkipped=0; // classified capital flows (deposits/withdrawals/transfers) across loaded wallets
+let _fetchHealth={funding:false,ledger:false}; // partial-fetch flags for the persistent data-health line
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
 let hlPnl={all:null,perp:null};
 let fillsTruncated=[];
@@ -2254,11 +2279,14 @@ function renderStats(s){
 /* ============================ calendar heatmap ============================ */
 function renderCalendar(trades){
   const map={}; trades.forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].net+=t.net; map[k].n++; });
-  const vals=Object.values(map).map(o=>Math.abs(o.net)); const scale=vals.length?Math.max(...vals):1;
-  const WEEKS=26; const DOWN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const WEEKS=settings.calWeeks===52?52:26; const DOWN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const today=tzMidnight(Date.now());
   const end=addDays(today, 6-tzDow(today));        // saturday of this week, in the active tz
   const start=addDays(end, -(WEEKS*7-1));
+  // color scale over the VISIBLE window only — with "all time" selected, one monster day
+  // a year ago used to wash all contrast out of the drawn weeks
+  let scale=1;
+  { let d0=start; for(let i=0;i<WEEKS*7;i++){ const o=map[dayKey(d0)]; if(o&&Math.abs(o.net)>scale)scale=Math.abs(o.net); d0=addDays(d0,1); } }
   let cols=[], d=start;
   for(let w=0;w<WEEKS;w++){ let cells=[];
     for(let i=0;i<7;i++){ const k=dayKey(d); const o=map[k]; const p=tzParts(d);
@@ -2268,13 +2296,15 @@ function renderCalendar(trades){
         bg=o.net>=0?`rgba(47,208,140,${inten})`:`rgba(244,88,106,${inten})`;
         tip=`${dateStr} · ${fmtUsd(o.net)} · ${o.n} trade${o.n===1?'':'s'}`; }
       else if(isFuture){ bg='transparent'; }
+      if(!isFuture)tip+=' · click to open this day’s journal';
       const a11y = o!==undefined ? ` role="img" aria-label="${esc(tip)}"` : ' aria-hidden="true"';
-      cells.push(`<div class="cal-cell" style="background:${bg}"${isFuture&&o===undefined?' aria-hidden="true"':` data-tip="${esc(tip)}"${a11y}`}></div>`);
+      cells.push(`<div class="cal-cell" style="background:${bg}${isFuture?'':';cursor:pointer'}"${isFuture&&o===undefined?' aria-hidden="true"':` data-tip="${esc(tip)}"${a11y}`}${isFuture?'':` data-day="${k}"`}></div>`);
       d=addDays(d,1);
     }
     cols.push('<div class="cal-col">'+cells.join('')+'</div>');
   }
   $('cal').innerHTML=cols.join('');
+  const wb=$('calWeeksBtn'); if(wb)wb.textContent=WEEKS+'w';
 }
 /* ============================ guardrails + day×hour heatmap ============================ */
 function renderGuardrails(){
@@ -2347,11 +2377,29 @@ function renderCharts(closed, allv){
   let cum=0; const eqT=[],eqY=[];
   for(const t of chron){ cum+=t.net; eqT.push(t.closeTime); eqY.push(cum); }
   const eqIdx=decimateIdx(eqY); // labels are formatted AFTER decimation — never 30k fmtDate calls
+  const keptT=pickIdx(eqT,eqIdx), keptY=pickIdx(eqY,eqIdx);
+  // deposit/withdrawal markers on the curve: capital events explain its steps in context —
+  // a flat month after a big withdrawal is smaller capital at work, not a cold streak
+  const flowAmt={};
+  if(ledFlows.length&&keptT.length){
+    for(const f of ledFlows){ if(f.type!=='deposit'&&f.type!=='withdraw')continue;
+      if(f.time<keptT[0])continue;
+      let lo=0,hi=keptT.length-1,idx=0;
+      while(lo<=hi){ const m=(lo+hi)>>1; if(keptT[m]<=f.time){idx=m;lo=m+1;}else hi=m-1; }
+      flowAmt[idx]=(flowAmt[idx]||0)+f.usdc; }
+  }
   const ctx=$('equity').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,260);
   g.addColorStop(0,'rgba(47,208,140,.16)'); g.addColorStop(1,'rgba(47,208,140,0)');
-  charts.eq=new Chart(ctx,{type:'line',data:{labels:pickIdx(eqT,eqIdx).map(fmtDate),
-    datasets:[{data:pickIdx(eqY,eqIdx),borderColor:'#2FD08C',borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:usdTip},scales:scales(),interaction:{intersect:false,mode:'index'}}});
+  charts.eq=new Chart(ctx,{type:'line',data:{labels:keptT.map(fmtDate),
+    datasets:[{data:keptY,borderColor:'#2FD08C',borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4},
+      ...(Object.keys(flowAmt).length?[{data:keptY.map((v,i)=>flowAmt[i]!=null?v:null),showLine:false,fill:false,
+        pointStyle:'triangle',pointRadius:5,pointHoverRadius:7,pointBorderWidth:0,
+        pointRotation:keptY.map((v,i)=>(flowAmt[i]||0)<0?180:0),
+        pointBackgroundColor:keptY.map((v,i)=>(flowAmt[i]||0)>=0?'rgba(139,147,255,.95)':'rgba(230,180,80,.95)')}]:[])]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>c.datasetIndex===1&&flowAmt[c.dataIndex]!=null
+        ? ' '+(flowAmt[c.dataIndex]>=0?'deposit +':'withdrawal −')+'$'+Math.abs(Math.round(flowAmt[c.dataIndex])).toLocaleString('en-US')
+        : ' '+fmtUsd(c.parsed.y)}}},scales:scales(),interaction:{intersect:false,mode:'index'}}});
   const byCoin={}; allv.forEach(t=>{const k=dcoin(t);byCoin[k]=(byCoin[k]||0)+t.net;});
   const coins=Object.entries(byCoin).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10);
   charts.coin=bar('byCoin',coins.map(c=>dispMarket(c[0])),coins.map(c=>c[1]));
@@ -3017,6 +3065,8 @@ function capitalSectionHtml(){
         ${mrow('Total in / out',fmtUsd(m.totIn)+' / '+fmtUsd(m.totOut),'Lifetime gross deposits and gross withdrawals.')}
         ${mrow('Peak capital',fmtUsd(m.maxCapital),'Highest net-deposited level ever reached.')}
         ${mrow('Avg capital employed',fmtUsd(m.avgCapital),'Time-weighted average of net deposits over the whole span — the honest denominator when capital moved mid-history.')}
+        ${mrow('Flow mix',(()=>{ const mix={}; for(const f of ledFlows){ const g=(f.type==='deposit'||f.type==='withdraw')?'external':(String(f.type).indexOf('vault')===0?'vault':'transfers'); mix[g]=(mix[g]||0)+f.usdc; }
+          const ps=Object.entries(mix).map(([g,v])=>esc(g)+' <span class="'+cls(v)+'">'+fmtUsd(v)+'</span>'); return ps.length?ps.join(' · '):'—'; })(),'Net contribution by flow type: external deposits/withdrawals, vault parks and returns, cross-account transfers.')}
         ${mrow('Flows',m.n+(ledSkipped?' · <span class="loss">'+ledSkipped+' unclassified skipped</span>':''),'Ledger entries classified as capital flows. Unclassified entries (unknown types) are excluded and counted here rather than silently mixed in.')}
       </div>
       <div class="diag-card"><h3 data-tip="Realized net over the flow-covered span divided by time-weighted average capital. This is the number to compare against any other use of the same money.">Return on capital</h3>
@@ -3024,6 +3074,7 @@ function capitalSectionHtml(){
         ${mrow('Return on avg capital','<span class="'+cls(m.roc||0)+'">'+pctS(m.roc)+'</span>','Realized net ÷ time-weighted average capital.')}
         ${mrow('Annualized',m.rocAnnual!=null?'<span class="'+cls(m.rocAnnual)+'">'+pctS(m.rocAnnual)+'</span>':'—','Geometric annualization of the same figure. Shown only once the span exceeds ~18 days; in-sample, edges drift.')}
         ${mrow('Max drawdown vs capital',m.maxDDpctCap!=null?'<span class="loss">'+pctS(m.maxDDpctCap)+'</span>':'—','Worst realized peak-to-trough dip as a share of the capital present at the trough ('+fmtUsd(m.maxDD$)+'). The % your account actually felt, not % of notional.')}
+        ${(()=>{ const x=xirrFromFlows(ledFlows,equityNow); return x!=null?mrow('Money-weighted (XIRR)','<span class="'+cls(x)+'">'+pctS(x)+'</span> /yr','Annualized return of YOUR dollars: solves the cash-flow equation of every dated deposit/withdrawal against live equity, weighting each period by the capital actually deployed. The time-weighted figure above grades the strategy; this grades the account.'):''; })()}
         ${m.impliedPnl!=null?mrow('Implied all-time PnL','<span class="'+cls(m.impliedPnl)+'">'+fmtUsd(m.impliedPnl)+'</span>','Live equity ('+fmtUsd(m.equityNow)+') minus net deposited — the account’s own all-time accounting, unrealized and untracked history included. If this diverges far from realized net, history beyond the fill cache or unrealized PnL is the difference.'):''}
       </div>
     </div>
@@ -4959,8 +5010,11 @@ function wireGoals(){
 // dates), so they ride the existing persistence, server sync, conflict merge, and backup
 // machinery for free — trade ids are 'addr:COIN:time', so the keyspace can't collide.
 function dayJKey(ms){ const p=tzParts(ms); return 'day:'+p.y+'-'+String(p.mo+1).padStart(2,'0')+'-'+String(p.day).padStart(2,'0'); }
+let _dayJEditKey=null; // set by a calendar-day click: the editor then targets that date instead of today
 function dayJournalSectionHtml(){
-  const k=dayJKey(Date.now()); const e=journal[k]||{};
+  const todayK=dayJKey(Date.now());
+  const k=_dayJEditKey||todayK, isToday=k===todayK;
+  const e=journal[k]||{};
   const recent=[];
   // step from today's tz-midnight and sample mid-day: naive now−i*24h skipped or doubled
   // a calendar date across DST transitions (23/25-hour local days)
@@ -4969,7 +5023,7 @@ function dayJournalSectionHtml(){
   const chip=(rk,d)=>`<div class="metric-row"><span class="ml">${esc(rk.slice(4))}${d.bias?' · '+esc(d.bias):''}${d.adherence?' · <span class="pos-t">plan followed</span>':''}</span><span class="mv" style="max-width:58%;text-align:right;white-space:normal;font-weight:400">${esc(d.review||d.plan||'')}</span></div>`;
   return `<div class="diag-section"><h2>Day journal <span style="font-size:11px;color:var(--faint);font-weight:400">pre-market plan · end-of-day review</span></h2>
     <div class="diag-grid">
-      <div class="diag-card"><h3 data-tip="Write the plan BEFORE the session: bias, what you'll trade, and the loss at which you stop. A committed max loss becomes today's tripwire threshold on the dashboard — a number you chose calmly, enforced when you aren't.">Today — ${esc(k.slice(4))}</h3>
+      <div class="diag-card"><h3 data-tip="Write the plan BEFORE the session: bias, what you'll trade, and the loss at which you stop. A committed max loss becomes today's tripwire threshold on the dashboard — a number you chose calmly, enforced when you aren't.">${isToday?'Today':'Day'} — ${esc(k.slice(4))}${isToday?'':' <button class="linkish" id="djToday" style="margin-left:8px">back to today</button>'}</h3>
         <div class="field"><label>Bias / market read</label><input type="text" id="djBias" value="${esc(e.bias||'')}" placeholder="e.g. chop until CPI, long bias above break"></div>
         <div class="field"><label>Plan</label><textarea id="djPlan" placeholder="What will you trade today — and what will you NOT do?">${esc(e.plan||'')}</textarea></div>
         <div class="field"><label>Committed max loss ($)</label><input type="number" id="djMaxLoss" min="0" step="any" value="${e.maxLoss>0?esc(e.maxLoss):''}" placeholder="stop trading for the day at −$…"></div>
@@ -4983,9 +5037,10 @@ function dayJournalSectionHtml(){
     </div></div>`;
 }
 function wireDayJournal(){
+  const tb=$('djToday'); if(tb)tb.onclick=()=>{ _dayJEditKey=null; renderReview(); };
   const b=$('djSave'); if(!b)return;
   b.onclick=()=>{
-    const k=dayJKey(Date.now());
+    const k=_dayJEditKey||dayJKey(Date.now());
     const num=parseFloat($('djMaxLoss').value);
     const e={bias:$('djBias').value.trim(), plan:$('djPlan').value.trim(),
       maxLoss:num>0?num:null, review:$('djReview').value.trim(),
@@ -5112,7 +5167,23 @@ function renderProjection(){
       scales:scales()}});
   el.insertAdjacentHTML('beforeend', nfSizerHtml()); nfWireSizer();
 }
+// Persistent data-health strip: partial or failing data sources, visible until resolved.
+// Status-bar warnings get overwritten within seconds; incomplete funding or capital data
+// silently skews net PnL and return-on-capital, which deserves a standing flag.
+function renderDataHealth(){
+  const el=$('dataHealth'); if(!el)return;
+  const items=[];
+  if(Array.isArray(fillsTruncated)&&fillsTruncated.length)
+    items.push('fill history truncated for '+fillsTruncated.map(esc).join(', ')+' (Shift-click Load all for a full refetch)');
+  if(_fetchHealth.funding)items.push('funding history partial — net PnL may be missing funding for this load');
+  if(_fetchHealth.ledger)items.push('capital-flow history partial — return-on-capital may be incomplete');
+  if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
+  if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
+  el.classList.remove('hide');
+  el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ');
+}
 function renderReconcile(){
+  renderDataHealth();
   const el=$('reconcile');
   const all=hlPnl.all, perp=hlPnl.perp, spot=(all!=null&&perp!=null)?all-perp:null;
   // all-time reconstructed sums (incl. open positions' realized) for apples-to-apples deltas
@@ -5181,6 +5252,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], totalFills=0, failed=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false;
   let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0;
+  _fetchHealth={funding:false,ledger:false}; // fresh load, fresh health
   try{
     setStatus('Fetching spot metadata…',true);
     spotMaps=await fetchSpotMaps();
@@ -5440,6 +5512,14 @@ $('topnav').addEventListener('click',e=>{ const b=e.target.closest('button'); if
 $('topnav').addEventListener('keydown',e=>{ if(e.key!=='ArrowRight'&&e.key!=='ArrowLeft')return;
   const btns=[...document.querySelectorAll('#topnav button')]; const i=btns.indexOf(document.activeElement); if(i<0)return;
   const n=btns[(i+(e.key==='ArrowRight'?1:btns.length-1))%btns.length]; n.focus(); activateTab(n); e.preventDefault(); });
+// calendar → day journal: clicking a heatmap day opens that date's entry in the Review tab
+$('cal').addEventListener('click',e=>{ const c=e.target.closest('[data-day]'); if(!c)return;
+  _dayJEditKey='day:'+c.dataset.day;
+  activateTab(document.querySelector('#topnav button[data-tab="review"]'));
+  setTimeout(()=>{ const f=$('djBias'); if(f){ f.scrollIntoView({behavior:'smooth',block:'center'}); f.focus(); } },60);
+});
+$('calWeeksBtn').addEventListener('click',async()=>{ settings.calWeeks=settings.calWeeks===52?26:52;
+  await Store.set(S_KEY,settings); if(allTrades.length)render(); });
 $('walletsBtn').addEventListener('click',()=>$('setupPanel').classList.toggle('hide'));
 $('hdrsum').addEventListener('click',()=>$('setupPanel').classList.toggle('hide'));
 $('periods').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
@@ -6164,10 +6244,16 @@ function renderTripwire(){
   if(!(lim>0)||!allTrades.length){ el.classList.add('hide'); return; }
   const src=committed?'your committed max loss for today':'your daily limit';
   const d=dailyLossToday(allTrades);
+  // open losses count toward the limit (open GAINS never license more risk) \u2014 a trader
+  // deep underwater on open positions used to get no warning until they closed
+  const uPnl=(openPositions||[]).reduce((a,p)=>a+(p.uPnl||0),0)+(spotHoldings||[]).reduce((a,p)=>a+(p.uPnl||0),0);
+  const openLoss=Math.min(0,uPnl);
   if(d.net<=-lim){ el.classList.remove('hide');
     el.innerHTML=`\u26d4 <b>Daily loss limit hit.</b> Today's realized PnL is ${fmtUsd(d.net)} across ${d.n} trade${d.n===1?'':'s'} \u2014 past ${src} (${fmtUsd(lim)}). Step away.`;
+  } else if(d.net+openLoss<=-lim){ el.classList.remove('hide');
+    el.innerHTML=`\u26d4 <b>Daily loss limit hit including open positions.</b> Realized ${fmtUsd(d.net)} today plus ${fmtUsd(openLoss)} of open losses right now is past ${src} (${fmtUsd(lim)}). Cut or step away \u2014 closing them later doesn't un-lose the money.`;
   } else if(d.net<-lim*0.6){ el.classList.remove('hide');
-    el.innerHTML=`\u26a0 Approaching ${src}: ${fmtUsd(d.net)} today vs a ${fmtUsd(lim)} cap.`;
+    el.innerHTML=`\u26a0 Approaching ${src}: ${fmtUsd(d.net)} today vs a ${fmtUsd(lim)} cap${openLoss<0?` (open positions add ${fmtUsd(openLoss)} on top)`:''}.`;
   } else el.classList.add('hide');
 }
 

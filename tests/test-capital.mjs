@@ -9,8 +9,8 @@ import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'ledger.html'), 'utf8');
 const { evalModule } = makeExtractor(html);
-const { capitalFlows, capitalModel } = await evalModule(
-  ['capitalFlows', 'capitalModel'], ['capitalFlows', 'capitalModel']);
+const { capitalFlows, capitalModel, xirrFromFlows } = await evalModule(
+  ['capitalFlows', 'capitalModel', 'xirrFromFlows'], ['capitalFlows', 'capitalModel', 'xirrFromFlows']);
 
 const DAY = 86400000, T0 = 1700000000000;
 const ADDR = '0x' + 'a'.repeat(40);
@@ -97,6 +97,29 @@ t('annualization gated on span length', () => {
   const yr = capitalModel([{ time: NOW - 365 * DAY, usdc: 10000 }],
     [{ isOpen: false, closeTime: NOW - DAY, net: 1000 }], null, NOW);
   near(yr.rocAnnual, 0.1, 0.005); // +10% over one year annualizes to ~10%
+});
+
+console.log('\nxirrFromFlows (money-weighted return)');
+t('single deposit one year ago, equity 1.1x → ~10%/yr', () => {
+  const x = xirrFromFlows([{ time: NOW - 365 * DAY, usdc: 10000 }], 11000, NOW);
+  near(x, 0.10, 1e-4);
+});
+t('deposit + interim withdrawal weight periods by deployed capital', () => {
+  // 10k in 2y ago, 5k out 1y ago, 6.655k equity now — money grew 10%/yr throughout:
+  // FV = 10000·1.1² − 5000·1.1 = 12100 − 5500 = 6600
+  const x = xirrFromFlows([
+    { time: NOW - 730 * DAY, usdc: 10000 },
+    { time: NOW - 365 * DAY, usdc: -5000 },
+  ], 6600, NOW);
+  near(x, 0.10, 1e-3);
+});
+t('losing account solves to a negative rate', () => {
+  const x = xirrFromFlows([{ time: NOW - 365 * DAY, usdc: 10000 }], 8000, NOW);
+  near(x, -0.20, 1e-3);
+});
+t('no live equity → null (never guessed)', () => {
+  eq(xirrFromFlows([{ time: NOW - DAY, usdc: 1000 }], null, NOW), null);
+  eq(xirrFromFlows([], 5000, NOW), null);
 });
 
 report('capital');
