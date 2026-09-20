@@ -1318,6 +1318,15 @@ function tzParts(ms){ const d=new Date(ms);
 const tzHour=ms=>tzParts(ms).h;
 const tzDow=ms=>tzParts(ms).dow;
 function tzMidnight(ms){ const p=tzParts(ms); return settings.tz==='utc'?Date.UTC(p.y,p.mo,p.day):new Date(p.y,p.mo,p.day).getTime(); }
+// yyyy-mm-dd from a date input, resolved on the tz-toggle clock. Local-only parsing
+// shifted range edges by the viewer's UTC offset relative to every other day boundary.
+// end=true returns the last millisecond of that day.
+function dateBound(v,end){
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v||'').trim()); if(!m)return null;
+  const y=+m[1],mo=+m[2]-1,d=+m[3];
+  const t0=settings.tz==='utc'?Date.UTC(y,mo,d):new Date(y,mo,d).getTime();
+  return end?t0+86400000-1:t0;
+}
 function addDays(ms,n){ if(settings.tz==='utc')return ms+n*86400000; const d=new Date(ms); d.setDate(d.getDate()+n); return d.getTime(); }
 const tzLabel=()=>settings.tz==='utc'?'UTC':'local';
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -4084,8 +4093,10 @@ async function openReplay(id,btn){
 }
 
 /* ============================ benchmark: you vs buy-and-hold ============================ */
+let _benchToken=0; // stale-render guard: only the latest benchmark run may draw (the miner has the same guard)
 async function renderBenchmark(closed){
   const el=$('diagBench'); if(!el||closed.length<5)return;
+  const tok=++_benchToken;
   try{
     const t0=Math.min(...closed.map(t=>t.openTime)), t1=Math.max(...closed.map(t=>t.closeTime));
     if(!(t1>t0))return;
@@ -4105,6 +4116,9 @@ async function renderBenchmark(closed){
       const win=cache.candles.filter(c=>c[0]>=t0-86400e3&&c[0]<=t1+86400e3);
       if(win.length>=2)series[coin]=win;
     }
+    // a Diagnostic re-render during the awaited candle fetches replaced this card's canvas —
+    // drawing now would paint a detached element and destroy the newer run's chart
+    if(tok!==_benchToken||!el.isConnected)return;
     if(!Object.keys(series).length)return;
     // your line: cumulative net as % of average deployed notional — a stated approximation
     const avgNotional=_avg(closed.map(t=>(t.maxSize||0)*(t.avgEntry||0)).filter(x=>x>0));
@@ -4377,9 +4391,17 @@ function guardrailSignals(){
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>b.closeTime-a.closeTime);
   if(closed.length<20)return [];
   const out=[]; const now=Date.now();
-  // after-loss expectancy
+  // after-loss expectancy — the nearest CLOSE before each open (binary search, skip self),
+  // matching the Diagnostic's priorClose. Adjacent close-ordered pairs also matched
+  // concurrent positions opened hours BEFORE the loss closed (negative gaps).
   const byClose=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
-  const afterLoss=[]; for(let i=1;i<byClose.length;i++){ if(isLoss(byClose[i-1].net)&&(byClose[i].openTime-byClose[i-1].closeTime)<=3600000) afterLoss.push(byClose[i].net); }
+  const ct=byClose.map(t=>t.closeTime);
+  const afterLoss=[]; for(const t of closed){
+    let lo=0,hi=ct.length-1,idx=-1;
+    while(lo<=hi){ const m=(lo+hi)>>1; if(ct[m]<=t.openTime){idx=m;lo=m+1;} else hi=m-1; }
+    while(idx>=0&&byClose[idx].id===t.id)idx--;
+    if(idx>=0&&isLoss(byClose[idx].net)&&(t.openTime-byClose[idx].closeTime)<=3600000)afterLoss.push(t.net);
+  }
   const overallExp=_avg(closed.map(t=>t.net));
   const alExp=afterLoss.length?_avg(afterLoss):null;
   const last=closed[0];
@@ -4487,8 +4509,8 @@ function filteredTrades(){
   const closed=periodTradesAll();
   const fc=$('fCoin').value,fs=$('fSide').value,fo=$('fOut').value,ft=$('fTag').value,fw=$('fWallet').value,q=$('fSearch').value.toLowerCase().trim();
   const fRating=+$('fRating').value, fFlag=$('fFlag').value;
-  const fromMs=$('fFrom').value?new Date($('fFrom').value+'T00:00:00').getTime():null;
-  const toMs=$('fTo').value?new Date($('fTo').value+'T23:59:59').getTime():null;
+  const fromMs=dateBound($('fFrom').value,false);
+  const toMs=dateBound($('fTo').value,true);
   let r=closed.filter(t=>{
     if(fromMs&&t.closeTime<fromMs)return false;
     if(toMs&&t.closeTime>toMs)return false;
@@ -4514,7 +4536,7 @@ function renderTable(){
   const rows=filteredTrades(); const multi=settings.wallets.length>1;
   // reset to page 1 whenever the filtered/sorted set changes (but not on row-expand)
   const sig=[sortKey,sortDir,view,period,customRange.from,customRange.to,pageSize,
-    $('fSearch').value,$('fTag').value,$('fCoin').value,$('fWallet').value,
+    $('fSearch').value,$('fTag').value,$('fCoin').value,$('fWallet').value,$('fSide').value,$('fOut').value,
     ($('fFrom')&&$('fFrom').value),($('fTo')&&$('fTo').value),($('fRating')&&$('fRating').value),
     ($('fFlag')&&$('fFlag').value),rows.length].join('|');
   if(sig!==_tblSig){ page=1; _tblSig=sig; }
@@ -5336,8 +5358,8 @@ $('periods').addEventListener('click',e=>{ const b=e.target.closest('button'); i
   render(); });
 function applyRange(){
   const fv=$('pFrom').value, tv=$('pTo').value;
-  customRange.from = fv? new Date(fv+'T00:00:00').getTime() : null;
-  customRange.to   = tv? new Date(tv+'T23:59:59.999').getTime() : null;
+  customRange.from = dateBound(fv,false);
+  customRange.to   = dateBound(tv,true);
   $('pFrom').classList.toggle('act',!!fv); $('pTo').classList.toggle('act',!!tv);
   const on=rangeActive(); $('rangeBtn').classList.toggle('on',on);
   if(on) document.querySelectorAll('#periods button').forEach(x=>x.classList.remove('on'));
@@ -6094,7 +6116,7 @@ function nfGroupStats(trades){
   const expectancy=net/n;
   const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   let cum=0,peak=0,mdd=0; for(const t of chron){ cum+=t.net; if(cum>peak)peak=cum; const dd=cum-peak; if(dd<mdd)mdd=dd; }
-  let sharpe=null; try{ const ss=sharpeStats(dailySeriesCalendar(closed)); sharpe=ss?ss.sharpe:null; }catch(e){}
+  let sharpe=null; try{ const ss=sharpeStats(dailySeriesCalendar(closed)); sharpe=ss?ss.sr:null; }catch(e){} // .sr — sharpeStats has no .sharpe key, so this column was always a dash
   return {n, net, winRate, expectancy, maxDD:mdd, sharpe};
 }
 function leaderboard(closed){
