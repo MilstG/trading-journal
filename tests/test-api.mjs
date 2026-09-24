@@ -370,6 +370,19 @@ await t('capital unions ledger-cache wallets with saved ones (repro of the round
   eq(status, 200);
   eq(body.flows, 3);                 // 2 from ADDR + 1 from the non-saved ADDR2
   near(body.model.totIn, 10500);
+  // equity covers only the saved wallets, so equity-based outputs are withheld and say why
+  eq(body.model.equityNow, null);
+  ok(String(body.note || '').includes('DELETE /api/v1/cache'));
+});
+await t('DELETE /api/v1/cache/:addr evicts a ghost wallet and restores equity outputs', async () => {
+  const ADDR2 = '0x' + 'b'.repeat(40);
+  eq((await fetch(base + '/api/v1/cache/' + ADDR2, { method: 'DELETE', headers: READ })).status, 401, 'full token required');
+  const r = await fetch(base + '/api/v1/cache/' + ADDR2, { method: 'DELETE', headers: FULL });
+  eq(r.status, 200);
+  ok((await r.json()).removed >= 1);
+  const { body } = await jget('/api/v1/capital', READ);
+  eq(body.flows, 2);
+  ok(body.model.equityNow != null, 'saved-wallet-only flows get equity back');
 });
 await t('capital?wallet= narrows flows AND nulls account-wide equity', async () => {
   const { body } = await jget('/api/v1/capital?wallet=' + ADDR, READ);
@@ -399,6 +412,71 @@ await t('CSV formula guard catches the leading-whitespace bypass', async () => {
     body: JSON.stringify({ rev: cur.rev, snapshot: cur.snapshot }) });
   const csv = await (await get('/api/v1/export/trades.csv')).text();
   ok(csv.includes("' =HYPERLINK"), 'whitespace-led formula must be prefixed');
+});
+
+console.log('\nAPI: server-held backups');
+let bkName;
+await t('POST /api/backup stores the client backup (full token only, shape-checked)', async () => {
+  eq((await post('/api/backup', { app: 'ledger' }, READ)).status, 401, 'read token must not write backups');
+  eq((await post('/api/backup', { hello: 'world' })).status, 400, 'garbage shape rejected');
+  const r = await post('/api/backup', { app: 'ledger', version: 9, journal: { a: { notes: 'kept' } }, fillCaches: {} });
+  eq(r.status, 200);
+  bkName = (await r.json()).name;
+  ok(/^backup-[A-Za-z0-9-]+\.json\.gz$/.test(bkName), bkName);
+});
+await t('GET /api/backups lists newest first; GET one round-trips the JSON', async () => {
+  eq((await get('/api/backups', READ)).status, 401);
+  const { status, body } = await jget('/api/backups');
+  eq(status, 200);
+  ok(body.backups.length >= 1 && body.backups[0].bytes > 0);
+  eq(body.backups[0].name, bkName);
+  const one = await jget('/api/backups/' + bkName);
+  eq(one.status, 200);
+  eq(one.body.journal.a.notes, 'kept');
+  eq((await jget('/api/backups/backup-nope.json.gz')).status, 404);
+});
+await t('backup store prunes to the newest 10', async () => {
+  for (let i = 0; i < 12; i++) {
+    await new Promise(r => setTimeout(r, 3)); // timestamp names — avoid same-ms collisions
+    eq((await post('/api/backup', { app: 'ledger', i })).status, 200);
+  }
+  const { body } = await jget('/api/backups');
+  eq(body.backups.length, 10);
+});
+
+console.log('\nAPI v1: monitoring metrics');
+await t('GET /api/v1/metrics returns flat numbers a dashboard can plot', async () => {
+  eq((await get('/api/v1/metrics', {})).status, 401);
+  const { status, body } = await jget('/api/v1/metrics', READ);
+  eq(status, 200);
+  eq(body.trades_total, 4); eq(body.open_trades, 2);
+  near(body.net_total, -104.5);
+  eq(body.trades_today, 0); near(body.net_today, 0); // fixture closes 4-5 days ago
+  near(body.current_drawdown, -204); // peak +99.5 then -204 → 204 under water
+  eq(body.open_positions, 1);
+  near(body.gross_exposure, 16000); near(body.net_exposure, 16000); // one long BTC position
+  near(body.account_value, 5000);
+  ok(isFinite(body.updated_at) && body.updated_at > 0);
+});
+await t('?format=prom emits Prometheus exposition text', async () => {
+  const r = await get('/api/v1/metrics?format=prom', READ);
+  eq(r.status, 200);
+  ok((r.headers.get('content-type') || '').startsWith('text/plain'));
+  const text = await r.text();
+  ok(text.includes('ledger_trades_total 4'));
+  ok(text.includes('ledger_net_total -104.5'));
+  ok(!text.includes('null') && !text.includes('NaN'), 'numbers only');
+});
+await t('buildBotState assembles a truthful snapshot for the Telegram router', async () => {
+  const st = app._buildBotState();
+  eq(st.engineOk, true);
+  eq(st.todayN, 0); near(st.todayNet, 0);
+  eq(st.tripLimit, 0, 'no daily-loss rule saved in the fixture');
+  ok(st.risk && st.risk.positions === 1, 'one cached BTC position');
+  near(st.risk.gross, 16000);
+  ok(st.stats30 && st.stats30.n === 2, 'both ETH round trips inside 30d');
+  near(st.stats30.net, -104.5);
+  ok(!('goals' in st), 'no goals configured — router says so');
 });
 
 console.log('\nAPI v1: engine failure stays soft');

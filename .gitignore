@@ -1,0 +1,7 @@
+# The local server's data directory holds the JOURNAL — wallet addresses, trading notes,
+# attachments, fill caches. It must never be committed.
+data/
+
+node_modules/
+*.log
+.DS_Store

@@ -10,9 +10,10 @@ measurements — so they survive reboots, redeploys, and device switches.
 
 ```
 ledger.html     the app (unchanged single file — still works from file:// too)
-server.js       companion server
+server.js       companion server: persistence + read-only analytics API (/api/v1),
+                scheduled refresh, webhook alerts, weekly digests, server backups
 package.json    start script + node version (no dependencies to install)
-tests/          test suites (`npm test`)
+tests/          test suites (`npm test`; CI runs them on every push)
 ```
 
 ## Railway setup (once)
@@ -46,8 +47,10 @@ tests/          test suites (`npm test`)
 
 - **Reboots/redeploys:** data lives on the volume; the server is stateless.
 - **Two devices:** writes carry a revision number. A stale write is refused
-  (HTTP 409) and that client loads the newer server state instead of
-  overwriting it — last writer wins, silently clobbering never happens.
+  (HTTP 409); the client then applies the newer server state but **merges your
+  unsynced edits on top** — journal entries you touched since the last sync,
+  and settings fields you changed — and re-syncs the merge at the new
+  revision. Neither device's note is silently lost.
 - **Stays in the browser (by design):** candle caches and fill caches
   (re-fetchable, large) and journal image attachments. "Backup all" still
   exports everything exportable as a portable JSON.
@@ -57,11 +60,23 @@ tests/          test suites (`npm test`)
 
 ## Environment variables
 
-| Var          | Default                          | Notes                              |
-|--------------|----------------------------------|------------------------------------|
-| `PORT`       | `8080`                           | Railway injects this automatically |
-| `AUTH_TOKEN` | *(empty = API open — don't)*     | Bearer token for `/api/data`       |
-| `DATA_DIR`   | `/data` if present, else `./data`| Where `ledger-data.json` lives     |
+| Var                    | Default                          | Notes |
+|------------------------|----------------------------------|-------|
+| `PORT`                 | `8080`                           | Railway injects this automatically |
+| `AUTH_TOKEN`           | *(empty = API open — don't)*     | Bearer token — everything |
+| `READ_TOKEN`           | *(unset)*                        | Optional second token: `GET /api/v1/*` only. Safe for scripts/dashboards |
+| `CORS_ORIGIN`          | *(unset)*                        | Exact origin allowed to call `/api/*` from a browser app |
+| `DATA_DIR`             | `/data` if present, else `./data`| Where the journal, caches, reports, and backups live |
+| `REFRESH_INTERVAL_MIN` | *(unset = off)*                  | Refresh server caches from Hyperliquid on a timer (first run ~30s after boot) |
+| `ALERT_WEBHOOK`        | *(unset)*                        | Discord/Slack/ntfy/JSON endpoint for alerts + weekly digests |
+| `ALERT_LIQ_PCT`        | `10`                             | Alert when a position is within this % of liquidation |
+| `ALERT_DAILY_LOSS`     | *(app's saved rule)*             | $ daily-loss alert threshold |
+| `ALERT_FUNDING_24H`    | *(unset = off)*                  | Alert when funding paid per 24h exceeds this $ |
+| `TELEGRAM_BOT_TOKEN`   | *(unset)*                        | Telegram bot (from @BotFather): alert/digest delivery + read-only commands |
+| `TELEGRAM_CHAT_ID`     | *(unset)*                        | Comma-separated chat-id allowlist; other chats are ignored silently |
+
+The analytics API, scheduled refresh, alerts, and weekly digests are documented
+in the main [README](README.md).
 
 ## Verifying persistence
 

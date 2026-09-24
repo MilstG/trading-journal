@@ -64,6 +64,13 @@ status line says when derivation was used). Imported fills carry no
 maker/taker execution style, and the analytics count them in neither rather
 than fabricating one.
 
+Just looking? **Load sample data** (on the empty state and in the setup panel)
+generates a seeded, deterministic five-month synthetic history — four perp
+coins with a realistic fat left tail plus a spot position — and runs it through
+the exact same import pipeline, so every panel is populated without pasting a
+wallet. Nothing is fetched and nothing is saved; reload or add a real address
+to clear it.
+
 ## Loading your data
 
 **What gets fetched per wallet:** the full fill history (paginated), funding
@@ -274,6 +281,30 @@ lowest-probability conditions pulled from your data, actionable ideas, and
 **Focus for next week** — a short list of concrete things your own numbers say
 to do differently.
 
+It also carries the habit loops:
+
+- **Day journal** — pre-market plan (bias, plan, committed max loss) and
+  end-of-day review. A committed max loss becomes today's tripwire threshold.
+- **Weekly review wizard** — three questions about the last completed Mon–Sun
+  week (best/worst trade prefilled): what worked, what changes, and a one-line
+  lesson. Answers are keyed `week:GGGG-Www` on the same journal plumbing as
+  everything else (sync, backup, conflict merge), and every lesson feeds a
+  browsable **lessons library** with the latest surfaced on top.
+- **Monthly goals** — target, max drawdown, trades/week cap vs the month so far.
+- **Costs & variance** — your current **Hyperliquid fee tier** from exact
+  trailing-14-day fill volume, distance to the next tier, and last month's
+  taker flow re-priced one tier up / at maker rates (base schedule, hardcoded —
+  verify against app.hyperliquid.xyz/fees); plus **variance expectations**, a
+  seeded simulation from your own win rate and distribution: the probability of
+  loss streaks over the next 200 trades and the 1-in-20 bad month at current
+  sizing — decided calmly, before it happens.
+
+Two guardrail chips watch the dashboard alongside the tripwire: **unplanned
+trading** (2+ trades today with no day-journal plan filed) and **risk creep**
+(median entry notional of the last 20 trades outrunning your actual capital
+growth). If notifications were granted (asked only when you save a loss limit),
+the tripwire also fires a desktop notification when the tab is backgrounded.
+
 ## The Project view
 
 Forward visualization of your current performance — explicitly a *what-if*,
@@ -333,6 +364,7 @@ Treat it as positive visualization of staying the course, nothing more.
 | **Spot lots** | 8949-style lot-level CSV for spot: FIFO cost basis, one row per lot consumed by each sale — quantity, acquired/disposed dates, proceeds, basis, gain, short/long term. Sales of tokens that were transferred or airdropped in (no on-exchange purchase) are emitted at zero cost with an explicit `UNKNOWN BASIS` note for your accountant to resolve. Built from the locally cached fills. |
 | **Export journal** | Journal entries as JSON. |
 | **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
+| **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. List and fetch them back via `GET /api/backups`. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
 | **Export PDF** (Diagnostic) | Print-grade PDF sibling of the report: headline stats, every visible chart embedded as a JPEG image (the built-in PDF writer gained DCTDecode image XObjects for this), and the recommendations — opens anywhere, no browser needed. |
 | **Clear candle cache** | Frees the (large) cached candles; saved measurements are kept. |
@@ -389,8 +421,17 @@ All opt-in via environment variables, still zero dependencies:
 - With the schedule on, the first run of each ISO week writes a **weekly
   digest** of the previous week (trades, net, win rate, expectancy, fees,
   prior-week comparison, best/worst market) to `DATA_DIR/reports/` — 26 kept —
-  and posts a one-line summary to the webhook. Read them back via
+  and posts a one-line summary to the delivery channels. Read them back via
   `GET /api/v1/digests`.
+- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (comma-separated chat-id
+  allowlist) — a **two-way Telegram bot**, still zero dependencies. Alerts and
+  digests are delivered to those chats alongside (or instead of) the webhook,
+  and a long-polling command loop answers `/today` (realized PnL vs your daily
+  limit), `/risk` (open book + liquidation distances), `/stats` (last 30 days),
+  `/goals` (month vs plan), and `/digest` — the phone as a read-only terminal.
+  Messages from chats outside the allowlist are ignored silently; the bot can
+  never write journal data. Get a token from @BotFather; your chat id from
+  e.g. @userinfobot.
 
 ## The analytics API (`/api/v1`)
 
@@ -443,6 +484,8 @@ below, including auth mode and filter docs.
 | `GET /api/v1/whatif` | counterfactual replay removing trades matching `field/op/value` |
 | `GET /api/v1/journal`, `/journal/:id`, `/tags` | read-only journal views |
 | `GET /api/v1/export/trades.csv` | flat CSV of the filtered trades |
+| `GET /api/v1/metrics` | flat monitoring numbers (trades/net today and total, drawdown, exposure, account values) for Grafana/Home-Assistant; `?format=prom` emits Prometheus text |
+| `DELETE /api/v1/cache/:addr` | (full token) evict one wallet's server caches — cleans up removed wallets and `body.wallets` experiments |
 
 **Filters** (shared by trades/stats/equity/calendar/breakdown/projection/
 kelly/whatif/export): `market=perp|spot|combined`, `wallet`, `coin` (matches
@@ -536,17 +579,19 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 npm test         # or: node tests/run-all.mjs
 ```
 
-328 tests across seventeen suites cover reconstruction (flips, funding
+358 tests across eighteen suites cover reconstruction (flips, funding
 windows, spot/perp separation, partial-history flagging), the Web Worker
 dispatcher end-to-end with byte-parity against the synchronous fallback,
 excursion math and the retention/ratchet behavior, miner families and
 determinism, capital-flow classification and the time-weighted return model,
-webhook alert thresholds, CSV import (quoting, alias mapping, average-cost
-derivation), correlation clustering and scenario shock, monthly goals,
-add-to-loser detection, the Student-t CDF against reference values, a
-whole-file parse check of every script block, and the server over real HTTP
-(auth, revision conflicts, restart survival, the capital endpoint, digest
-lifecycle). The suites extract functions **directly from `ledger.html`**, so
+webhook alert thresholds and the Telegram command router, CSV import
+(quoting, alias mapping, average-cost derivation), correlation clustering and
+scenario shock, monthly goals, add-to-loser detection, the fee-tier model,
+ISO-week boundaries, variance expectations and risk-creep thresholds, demo-fill
+generation through real reconstruction, the Student-t CDF against reference
+values, a whole-file parse check of every script block, and the server over
+real HTTP (auth, revision conflicts, restart survival, the capital endpoint,
+digest lifecycle, server-held backups, the metrics endpoint). The suites extract functions **directly from `ledger.html`**, so
 they test exactly what ships — there is no second copy of the code to drift
 out of sync.
 

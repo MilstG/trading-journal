@@ -231,6 +231,8 @@ t('csvNum: locale formats parse, ambiguity is rejected', () => {
   near(csvNum('-1.5e3'), -1500);
   ok(Number.isNaN(csvNum('1,23,456')), 'mixed grouping is refused, not guessed');
   ok(Number.isNaN(csvNum('abc')));
+  near(csvNum('(-5)'), -5, 1e-12, 'inner sign inside parens is redundant, not a double negative');
+  near(csvNum('(+5)'), -5, 1e-12, 'parens win over a contradictory inner +');
 });
 t('locale-formatted prices import correctly end to end', () => {
   const { fills } = parseFillsCsv(
