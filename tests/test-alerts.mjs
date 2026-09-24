@@ -1,7 +1,7 @@
 // Webhook alert derivation (scheduled refresh + alerts feature). alertsFrom is pure —
 // thresholds and dedupe keys are pinned here without a server, caches, or network.
 import { t, ok, eq, report } from './harness.mjs';
-import { alertsFrom, postWebhook } from '../server.js';
+import { alertsFrom, postWebhook, telegramReply } from '../server.js';
 
 const CFG = { liqPct: 10, dailyLoss: 500, funding24h: 100, cooldownMs: 0 };
 
@@ -70,6 +70,53 @@ await t('non-2xx throws so the caller can log it', async () => {
   try { await postWebhook('https://example.com/h', 'x'); } catch (e) { threw = true; }
   finally { globalThis.fetch = orig; }
   ok(threw);
+});
+
+console.log('\ntelegramReply command router');
+t('engine-down state answers every command with the same explanation', () => {
+  ok(telegramReply('/today', { engineOk: false }).includes('engine unavailable'));
+  ok(telegramReply('/risk', null).includes('engine unavailable'));
+});
+t('/today reports net, count, and the daily limit both sides of the line', () => {
+  const under = telegramReply('/today', { engineOk: true, todayNet: -200, todayN: 3, tripLimit: 500 });
+  ok(under.includes('-$200') && under.includes('3 trades') && under.includes('Daily limit: $500'));
+  const over = telegramReply('/today', { engineOk: true, todayNet: -650, todayN: 5, tripLimit: 500 });
+  ok(over.includes('⛔') && over.includes('step away'));
+  const noLimit = telegramReply('/today', { engineOk: true, todayNet: 100, todayN: 1, tripLimit: 0 });
+  ok(!noLimit.includes('limit'));
+});
+t('/risk summarizes the book and lists liquidation dangers', () => {
+  const st = { engineOk: true, accountValue: 25000, risk: { positions: 2, gross: 40000, skew: -10000,
+    dangers: [{ coin: 'DOGE', side: 'long', liqDistPct: 6.5 }] } };
+  const r = telegramReply('/risk', st);
+  ok(r.includes('2 position(s)') && r.includes('gross $40,000') && r.includes('short $10,000'));
+  ok(r.includes('account $25,000'));
+  ok(r.includes('DOGE long (6.5% away)'));
+  const safe = telegramReply('/risk', { engineOk: true, risk: { positions: 1, gross: 100, skew: 100, dangers: [] } });
+  ok(safe.includes('No positions within 10%'));
+  ok(telegramReply('/risk', { engineOk: true }).includes('refresh first'));
+});
+t('/stats formats the 30d summary; empty window says so', () => {
+  const s = telegramReply('/stats', { engineOk: true, stats30: { n: 12, net: 340, winRate: 0.583,
+    expectancy: 28.3, profitFactor: 1.62, fees: 41 } });
+  ok(s.includes('12 trades') && s.includes('win rate 58%') && s.includes('PF 1.62'));
+  ok(telegramReply('/stats', { engineOk: true }).includes('No closed trades'));
+});
+t('/goals reports month vs plan; unset goals point at the Review tab', () => {
+  const g = telegramReply('/goals', { engineOk: true, goals: { net: 800, target: 2000, n: 9,
+    projected: 2400, intraDD: -300, maxDD: 1000, tradesPerWeek: 4.5, maxTradesWeek: 10 } });
+  ok(g.includes('$800 / $2,000 target') && g.includes('Projected month-end: $2,400'));
+  ok(g.includes('DD -$300 vs cap -$1,000') && g.includes('4.5 trades/wk vs cap 10'));
+  ok(telegramReply('/goals', { engineOk: true }).includes('No monthly goals set'));
+});
+t('/digest returns the stored digest text or explains there is none', () => {
+  eq(telegramReply('/digest', { engineOk: true, digest: 'weekly text' }), 'weekly text');
+  ok(telegramReply('/digest', { engineOk: true }).includes('No weekly digest'));
+});
+t('unknown commands get the help text listing every command', () => {
+  const h = telegramReply('/help', { engineOk: true });
+  for (const c of ['/today', '/risk', '/stats', '/goals', '/digest']) ok(h.includes(c));
+  ok(h.includes('read-only'));
 });
 
 report('alerts');

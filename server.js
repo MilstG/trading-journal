@@ -28,6 +28,8 @@
 //        stale rev -> 409 {rev, snapshot}
 //   GET  /api/snapshots , GET /api/snapshots/YYYY-MM-DD               (AUTH_TOKEN)
 //   GET/PUT/DELETE /api/att/<key>                                     (AUTH_TOKEN)
+//   POST /api/backup , GET /api/backups , GET /api/backups/<name>     (AUTH_TOKEN)
+//        server-held copies of the app's "Backup all" JSON (gzipped, newest 10 kept)
 //
 // Analytics API v1 (read-only; GET = AUTH_TOKEN or READ_TOKEN, POST = AUTH_TOKEN):
 //   GET  /api/v1                       self-describing endpoint index (no auth — docs only)
@@ -92,6 +94,8 @@ const ENGINE_FNS = [
   'cusumDrift', 'decayAssess',
   // capital flows -> return on capital
   'fetchLedgerUpdates', 'capitalFlows', 'capitalModel', 'xirrFromFlows',
+  // goals (Telegram /goals + future endpoints)
+  'monthlyGoalModel',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
   'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio',
 ];
@@ -215,6 +219,53 @@ function alertsFrom(state, cfg) {
       text: '📉 Drawdown ' + money(state.currentDD) + ' exceeds the 95th-percentile expectation (' + money(state.ddP95) + ') for your own shuffled return stream — statistically unusual for your strategy, not routine variance.' });
   return out;
 }
+// Pure command router for the Telegram bot: (command, state) -> reply text. state is the
+// plain-data snapshot buildBotState assembles; exported so the reply wording and threshold
+// logic are testable without a bot, network, or engine.
+function telegramReply(cmd, st) {
+  const money = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+  const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+  if (!st || st.engineOk === false) return 'Analytics engine unavailable on the server — persistence still works.';
+  switch (cmd) {
+    case '/today': {
+      let t = 'Today: ' + money(st.todayNet || 0) + ' across ' + (st.todayN || 0) + ' trade' + ((st.todayN || 0) === 1 ? '' : 's') + '.';
+      if (st.tripLimit > 0) t += (st.todayNet <= -st.tripLimit
+        ? ' ⛔ Past your ' + money(st.tripLimit) + ' daily limit — step away.'
+        : ' Daily limit: ' + money(st.tripLimit) + '.');
+      return t;
+    }
+    case '/risk': {
+      if (!st.risk) return 'No position snapshot yet — refresh first (or wait for the schedule).';
+      let t = st.risk.positions + ' position(s) · gross ' + money(st.risk.gross) + ' · net '
+        + (st.risk.skew >= 0 ? 'long ' : 'short ') + money(Math.abs(st.risk.skew));
+      if (st.accountValue != null) t += ' · account ' + money(st.accountValue);
+      if (st.risk.dangers && st.risk.dangers.length)
+        t += '\n⚠ near liquidation: ' + st.risk.dangers.map(d => d.coin + ' ' + d.side
+          + (d.liqDistPct != null ? ' (' + d.liqDistPct.toFixed(1) + '% away)' : '')).join(', ');
+      else t += '\nNo positions within 10% of liquidation.';
+      return t;
+    }
+    case '/stats': {
+      if (!st.stats30) return 'No closed trades in the last 30 days.';
+      const s = st.stats30;
+      return 'Last 30d: ' + s.n + ' trades · net ' + money(s.net) + ' · win rate ' + pct(s.winRate)
+        + ' · expectancy ' + money(s.expectancy) + '/trade'
+        + (s.profitFactor != null ? ' · PF ' + s.profitFactor.toFixed(2) : '') + ' · fees ' + money(s.fees);
+    }
+    case '/goals': {
+      if (!st.goals) return 'No monthly goals set (Review tab → Monthly goals).';
+      const g = st.goals;
+      let t = 'Month: ' + money(g.net) + (g.target != null ? ' / ' + money(g.target) + ' target' : '') + ' over ' + g.n + ' trades.';
+      if (g.projected != null) t += ' Projected month-end: ' + money(g.projected) + '.';
+      if (g.maxDD != null) t += ' Intramonth DD ' + money(g.intraDD) + ' vs cap ' + money(-g.maxDD) + '.';
+      if (g.maxTradesWeek != null) t += ' ' + g.tradesPerWeek.toFixed(1) + ' trades/wk vs cap ' + g.maxTradesWeek + '.';
+      return t;
+    }
+    case '/digest': return st.digest || 'No weekly digest stored yet.';
+    default:
+      return 'Ledger bot — read-only.\n/today — realized PnL today + limit\n/risk — open book + liquidation distances\n/stats — last 30 days\n/goals — month vs plan\n/digest — latest weekly digest';
+  }
+}
 // Best-effort webhook post; shapes the body for the common receivers.
 async function postWebhook(url, text) {
   let body, headers = { 'Content-Type': 'application/json' };
@@ -251,6 +302,10 @@ function createApp(opts) {
   fs.mkdirSync(ledgerDir, { recursive: true });
   const reportsDir = path.join(dataDir, 'reports');
   fs.mkdirSync(reportsDir, { recursive: true });
+  const backupsDir = path.join(dataDir, 'backups');
+  fs.mkdirSync(backupsDir, { recursive: true });
+  const BACKUP_RE = /^backup-[A-Za-z0-9-]+\.json\.gz$/;
+  const BACKUP_KEEP = 10;
   const ATT_KEY = /^[A-Za-z0-9_-]{1,200}$/;   // base64url of the trade id
   const MAX_ATT = 8 * 1024 * 1024;            // per-trade attachment set
   const MAX_ATT_TOTAL = 512 * 1024 * 1024;    // whole store — Railway volumes are small, and per-key caps alone allow unbounded growth
@@ -659,6 +714,108 @@ function createApp(opts) {
     funding24h: parseFloat(process.env.ALERT_FUNDING_24H || '0'), // $ paid per 24h; 0 = off
     cooldownMs: 6 * 3600e3,
   }, opts.alerts || {});
+
+  /* ---------------- Telegram bot: delivery channel + read-only commands ---------------- */
+  // TELEGRAM_BOT_TOKEN (from @BotFather) + TELEGRAM_CHAT_ID (comma-separated chat-id
+  // allowlist) turn on two things: alert/digest delivery to those chats, and a long-polling
+  // command bot (/today /risk /stats /goals /digest). Read-only by design — no command can
+  // write journal data. Messages from chats outside the allowlist are ignored silently:
+  // the journal is private, and even an error reply would confirm the bot is alive.
+  const telegramCfg = Object.assign({
+    token: process.env.TELEGRAM_BOT_TOKEN || '',
+    chats: String(process.env.TELEGRAM_CHAT_ID || '').split(',').map(s => s.trim()).filter(Boolean),
+  }, opts.telegram || {});
+  const tgApi = (method) => 'https://api.telegram.org/bot' + telegramCfg.token + '/' + method;
+  async function tgSend(chatId, text) {
+    const res = await fetch(tgApi('sendMessage'), { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: String(text).slice(0, 4000) }) });
+    if (!res.ok) throw new Error('telegram HTTP ' + res.status);
+  }
+  async function tgBroadcast(text) {
+    let sent = 0, lastErr = null;
+    for (const c of telegramCfg.chats) {
+      try { await tgSend(c, text); sent++; } catch (e) { lastErr = e; }
+    }
+    if (!sent) throw lastErr || new Error('no telegram chats configured');
+    return sent;
+  }
+  // One predicate + one sender for "somewhere to deliver alerts and digests". Webhook and
+  // Telegram are peers; success on either channel counts as delivered (a half-failed send
+  // still reached a human, and per-channel retry bookkeeping isn't worth the complexity).
+  const hasDelivery = () => !!(alertCfg.webhook || (telegramCfg.token && telegramCfg.chats.length));
+  async function deliver(text) {
+    let ok = 0, lastErr = null;
+    if (alertCfg.webhook) { try { await postWebhook(alertCfg.webhook, text); ok++; } catch (e) { lastErr = e; } }
+    if (telegramCfg.token && telegramCfg.chats.length) { try { await tgBroadcast(text); ok++; } catch (e) { lastErr = e; } }
+    if (!ok) throw lastErr || new Error('no delivery channel configured');
+    return ok;
+  }
+  // Plain-data snapshot for the pure telegramReply router. Every field beyond engineOk is
+  // optional — the router degrades to "refresh first" answers when caches are cold.
+  function buildBotState() {
+    if (!engine.ok) return { engineOk: false };
+    const snap = currentSnapshot();
+    setEngineState({});
+    const { trades } = ensureTrades();
+    const closed = trades.filter(t => !t.isOpen && t.closeTime).sort((a, b) => a.closeTime - b.closeTime);
+    const dayOf = (ms) => { const p = E.tzParts(ms); return p.y + '-' + (p.mo + 1) + '-' + p.day; };
+    const todayKey = dayOf(Date.now());
+    let todayNet = 0, todayN = 0;
+    for (const t of closed) if (dayOf(t.closeTime) === todayKey) { todayNet += t.net; todayN++; }
+    const rules = (snap.settings && snap.settings.rules) || {};
+    const st = { engineOk: true, todayNet, todayN, tripLimit: parseFloat(rules.dailyLossLimit) || 0 };
+    const market = readMarket();
+    if (market) {
+      st.accountValue = market.accountValue;
+      const rm = E.openRiskModel(market.positions || []);
+      st.risk = rm ? { positions: rm.positions, gross: rm.gross, skew: rm.skew,
+        dangers: rm.danger.map(r => ({ coin: r.coin, side: r.side,
+          liqDistPct: r.liqDist != null ? r.liqDist * 100 : null })) }
+        : { positions: 0, gross: 0, skew: 0, dangers: [] };
+    }
+    const w30 = closed.filter(t => t.closeTime >= Date.now() - 30 * 86400000);
+    if (w30.length) {
+      E._oneR = E.computeOneR(w30);
+      const s = E.computeStats(w30, w30);
+      st.stats30 = { n: w30.length, net: s.net, winRate: s.winRate, expectancy: s.expectancy,
+        profitFactor: isFinite(s.profitFactor) ? s.profitFactor : null, fees: s.fees };
+    }
+    try { const g = E.monthlyGoalModel(closed, (snap.settings && snap.settings.goals) || null); if (g) st.goals = g; } catch (e) {}
+    try {
+      const files = fs.readdirSync(reportsDir).filter(f => /^weekly-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+      if (files.length) st.digest = digestText(JSON.parse(fs.readFileSync(path.join(reportsDir, files[files.length - 1]), 'utf8')));
+    } catch (e) {}
+    return st;
+  }
+  let _tgOffset = 0;
+  async function telegramLoop() {
+    for (;;) {
+      try {
+        const res = await fetch(tgApi('getUpdates') + '?timeout=50&offset=' + _tgOffset);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const j = await res.json();
+        for (const u of ((j && j.result) || [])) {
+          _tgOffset = u.update_id + 1;
+          const msg = u.message;
+          if (!msg || typeof msg.text !== 'string') continue;
+          const chat = String(msg.chat && msg.chat.id);
+          if (!telegramCfg.chats.includes(chat)) continue; // strangers: silence, not an error reply
+          const cmd = msg.text.trim().split(/[\s@]/)[0].toLowerCase();
+          let reply;
+          try { reply = telegramReply(cmd, buildBotState()); }
+          catch (e) { reply = 'Server error building the answer: ' + ((e && (e.msg || e.message)) || e); }
+          try { await tgSend(chat, reply); } catch (e) { console.warn('[ledger] telegram send failed: ' + e.message); }
+        }
+      } catch (e) { await new Promise(r => setTimeout(r, 10000)); } // network trouble: back off, keep polling
+    }
+  }
+  if (telegramCfg.token && telegramCfg.chats.length && !opts.noTelegramLoop) {
+    telegramLoop();
+    console.log('[ledger] telegram bot polling (' + telegramCfg.chats.length + ' allowed chat'
+      + (telegramCfg.chats.length === 1 ? '' : 's') + ')');
+  }
+
   function gatherAlertState() {
     if (!engine.ok) return null;
     const snap = currentSnapshot();
@@ -702,7 +859,7 @@ function createApp(opts) {
   };
   let _alertBusy = false;
   async function maybeAlert() {
-    if (!alertCfg.webhook || _alertBusy) return; // overlapping calls (scheduled tick + manual refresh) posted duplicates
+    if (!hasDelivery() || _alertBusy) return; // overlapping calls (scheduled tick + manual refresh) posted duplicates
     _alertBusy = true;
     try {
       let state;
@@ -714,8 +871,8 @@ function createApp(opts) {
       const due = alertsFrom(state, cfg).filter(a => now - (_alertSent.get(a.key) || 0) >= alertCfg.cooldownMs);
       if (due.length) {
         for (const a of due) _alertSent.set(a.key, now); // record BEFORE the await — the send window was the double-post race
-        try { await postWebhook(alertCfg.webhook, due.map(a => a.text).join('\n')); }
-        catch (e) { for (const a of due) _alertSent.delete(a.key); console.warn('[ledger] alert webhook failed: ' + e.message); } // failed post re-arms
+        try { await deliver(due.map(a => a.text).join('\n')); }
+        catch (e) { for (const a of due) _alertSent.delete(a.key); console.warn('[ledger] alert delivery failed: ' + e.message); } // failed post re-arms
       }
       for (const [k, ts] of _alertSent) if (now - ts > 7 * 86400e3) _alertSent.delete(k); // day-scoped keys otherwise accrete forever
       saveAlertState();
@@ -755,7 +912,7 @@ function createApp(opts) {
       // scheduled run instead of being lost until someone reads the reports dir
       try {
         const prevD = JSON.parse(fs.readFileSync(file, 'utf8'));
-        if (alertCfg.webhook && prevD && prevD.webhookSent === false)
+        if (hasDelivery() && prevD && prevD.webhookSent === false)
           return { file, digest: prevD, text: digestText(prevD), resend: true };
       } catch (e) {}
       return null;
@@ -776,7 +933,7 @@ function createApp(opts) {
       n: wk.length, net: +sumNet(wk).toFixed(2), prevN: prev.length, prevNet: +sumNet(prev).toFixed(2),
       stats: s, best: best ? { coin: best.symbol || best.coin, net: best.net } : null,
       worst: worst ? { coin: worst.symbol || worst.coin, net: worst.net } : null,
-      webhookSent: !alertCfg.webhook, // no webhook configured counts as nothing pending
+      webhookSent: !hasDelivery(), // no delivery channel configured counts as nothing pending
     };
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(digest, null, 2)); fs.renameSync(tmp, file);
@@ -802,14 +959,14 @@ function createApp(opts) {
       const d = weeklyDigest();
       if (d) {
         if (!d.resend) console.log('[ledger] weekly digest written: ' + d.file);
-        if (alertCfg.webhook) postWebhook(alertCfg.webhook, d.text)
+        if (hasDelivery()) deliver(d.text)
           .then(() => { // mark sent so the next run doesn't repeat it
             try { d.digest.webhookSent = true;
               const tmp = d.file + '.tmp';
               fs.writeFileSync(tmp, JSON.stringify(d.digest, null, 2)); fs.renameSync(tmp, d.file);
             } catch (e) {}
           })
-          .catch(e => console.warn('[ledger] digest webhook failed (will retry next run): ' + e.message));
+          .catch(e => console.warn('[ledger] digest delivery failed (will retry next run): ' + e.message));
       }
     } catch (e) { console.warn('[ledger] weekly digest failed: ' + ((e && (e.msg || e.message)) || e)); }
   }
@@ -821,7 +978,7 @@ function createApp(opts) {
     const boot = setTimeout(() => { runScheduledRefresh().then(maybeDigest); }, 30000);
     if (boot.unref) boot.unref();
     console.log('[ledger] scheduled refresh every ' + refreshEveryMin + ' min (first run ~30s after boot)'
-      + (alertCfg.webhook ? ' with webhook alerts' : ' (no ALERT_WEBHOOK set — refresh only)'));
+      + (hasDelivery() ? ' with alert delivery' : ' (no ALERT_WEBHOOK / TELEGRAM_BOT_TOKEN set — refresh only)'));
   }
 
   /* ---------------- v1 endpoint docs (served at GET /api/v1) ---------------- */
@@ -850,6 +1007,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/journal/:id', auth: 'read', desc: 'one journal entry (read-only)' },
     { method: 'GET',  path: '/api/v1/tags', auth: 'read', desc: 'distinct journal tags with usage counts' },
     { method: 'GET',  path: '/api/v1/export/trades.csv', auth: 'read', desc: 'flat CSV of the filtered trades; filters' },
+    { method: 'GET',  path: '/api/v1/metrics', auth: 'read', desc: 'flat monitoring numbers (trades, PnL today/total, drawdown, exposure, account value); ?format=prom for Prometheus text' },
   ];
 
   /* ---------------- v1 router ---------------- */
@@ -973,6 +1131,45 @@ function createApp(opts) {
             return { beThreshold: s.beThreshold, rBasis: s.rBasis, riskDefault: s.riskDefault, tz: s.tz }; })(),
           refresh: { running: _refreshing, lastAt: _lastRefreshAt || null },
         });
+      }
+
+      // Flat monitoring numbers for dashboards (Grafana/Uptime-Kuma/Home Assistant).
+      // JSON by default; ?format=prom emits Prometheus exposition text (numbers only).
+      if (url === '/api/v1/metrics') {
+        if (!engine.ok) throw { code: 503, msg: 'analytics engine unavailable' };
+        const d = readData();
+        const market = readMarket();
+        const m = { updated_at: null, trades_total: null, open_trades: null, net_total: null,
+          net_today: null, trades_today: null, current_drawdown: null,
+          open_positions: market ? (market.positions || []).length : null,
+          gross_exposure: null, net_exposure: null,
+          account_value: market ? market.accountValue : null,
+          spot_account_value: market ? market.spotAccountValue : null };
+        if (d && d.updatedAt) { const t = Date.parse(d.updatedAt); if (isFinite(t)) m.updated_at = t; }
+        if (market) {
+          const rm = E.openRiskModel(market.positions || []);
+          m.gross_exposure = rm ? rm.gross : 0;
+          m.net_exposure = rm ? rm.skew : 0;
+        }
+        setEngineState({});
+        const { trades } = ensureTrades();
+        const closed = trades.filter(t => !t.isOpen && t.closeTime);
+        m.trades_total = trades.length;
+        m.open_trades = trades.filter(t => t.isOpen).length;
+        m.net_total = +closed.reduce((s, t) => s + t.net, 0).toFixed(2);
+        const todayKey = dayKeyN(Date.now());
+        let tn = 0, tc = 0;
+        for (const t of closed) if (dayKeyN(t.closeTime) === todayKey) { tn += t.net; tc++; }
+        m.net_today = +tn.toFixed(2); m.trades_today = tc;
+        const nets = [...closed].sort((a, b) => a.closeTime - b.closeTime).map(t => t.net);
+        if (nets.length) m.current_drawdown = +E.currentDD(nets).dd.toFixed(2);
+        if (query.format === 'prom') {
+          let text = '';
+          for (const k in m) if (m[k] != null && isFinite(m[k])) text += 'ledger_' + k + ' ' + m[k] + '\n';
+          res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
+          return res.end(text);
+        }
+        return send(200, m);
       }
 
       if (url === '/api/v1/trades') {
@@ -1408,6 +1605,55 @@ function createApp(opts) {
       } catch (e) { return json(res, 404, { error: 'no snapshot for ' + snapM[1] }); }
     }
 
+    // --- server-held full backups: the client's "Backup all" JSON, gzipped, newest 10 kept ---
+    // Daily snapshots only cover the synced blob; this captures everything exportable
+    // (fill caches, attachments metadata, candles — whatever the client bundles) on demand.
+    if (url === '/api/backup') {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+      let size = 0; const chunks = []; let aborted = false;
+      req.on('data', (c) => { size += c.length;
+        if (size > MAX_BODY) { aborted = true; json(res, 413, { error: 'payload too large' }); req.destroy(); return; }
+        chunks.push(c); });
+      req.on('end', () => {
+        if (aborted) return;
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
+        // shape check keeps a stray POST from burning the retained slots
+        if (!body || typeof body !== 'object' || body.app !== 'ledger')
+          return json(res, 400, { error: "expected the app's backup JSON (app:'ledger')" });
+        const name = 'backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json.gz';
+        try { gzWrite(path.join(backupsDir, name), body); }
+        catch (e) { return json(res, 500, { error: 'write failed: ' + e.message }); }
+        try {
+          const files = fs.readdirSync(backupsDir).filter(f => BACKUP_RE.test(f)).sort();
+          while (files.length > BACKUP_KEEP) fs.unlinkSync(path.join(backupsDir, files.shift()));
+        } catch (e) {}
+        return json(res, 200, { ok: true, name });
+      });
+      return;
+    }
+    if (url === '/api/backups') {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
+      let out = [];
+      try {
+        out = fs.readdirSync(backupsDir).filter(f => BACKUP_RE.test(f)).sort().reverse()
+          .map(f => { const st = fs.statSync(path.join(backupsDir, f));
+            return { name: f, bytes: st.size, savedAt: st.mtimeMs }; });
+      } catch (e) {}
+      return json(res, 200, { backups: out });
+    }
+    const bkM = url.match(/^\/api\/backups\/(backup-[A-Za-z0-9-]+\.json\.gz)$/);
+    if (bkM) {
+      if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
+      const obj = gzRead(path.join(backupsDir, bkM[1]));
+      if (!obj) return json(res, 404, { error: 'no such backup' });
+      return json(res, 200, obj);
+    }
+
     if (url === '/api/data') {
       if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
 
@@ -1494,6 +1740,7 @@ function createApp(opts) {
   server.engineMissing = engine.missing;
   server._weeklyDigest = weeklyDigest;       // exposed for tests — generation is time-gated in production
   server._gatherAlertState = gatherAlertState; // exposed for tests
+  server._buildBotState = buildBotState;       // exposed for tests — the loop itself needs a live bot
   return server;
 }
 
@@ -1528,4 +1775,4 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook };
+module.exports = { createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook, telegramReply };

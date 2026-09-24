@@ -593,6 +593,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <button class="linkish" id="exportSpotLots" data-tip="8949-style lot-level CSV for SPOT trades: FIFO cost basis, one row per lot consumed by each sale, with acquired/disposed dates, proceeds, basis, gain, and short/long term. Sales of tokens transferred or airdropped in (no on-exchange purchase) get a zero-cost UNKNOWN-BASIS flag your accountant must resolve. Built from the locally cached fills — hit Load all first.">Spot lots</button>
       <button class="linkish" id="exportJ">Export journal</button>
       <button class="linkish" id="backupAll">Backup all</button>
+      <button class="linkish hide" id="backupSrv" data-tip="Store the same full backup on the sync server (kept: newest 10, gzipped). Covers what daily snapshots don't — fill caches beyond the API's history cap.">Backup to server</button>
       <button class="linkish" id="autoBtn" data-tip="Auto-refresh: while this tab is open, re-fetch new fills every 3 minutes and automatically lock in MAE/MFE measurements for freshly closed trades. Incremental — only new activity is fetched.">⟳ auto: on</button>
       <button class="linkish" id="clearCandles" data-tip="Candles fetched for MAE/MFE excursions are cached in this browser (IndexedDB) and quietly become the largest thing stored. Clearing is safe — candles re-fetch on the next run, and completed MAE/MFE measurements are saved separately and kept.">Clear candle cache</button>
       <button class="linkish hide" id="installPWA" data-tip="Install Ledger as an app (available when the page is served over http/https and your browser supports it).">Install app</button>
@@ -959,6 +960,7 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
       return;
     }
     el.className='datafile on';
+    { const bs=$('backupSrv'); if(bs)bs.classList.remove('hide'); } // server present + authed — offer server-held backups
     const tag=state==='saved'?'<span style="color:var(--profit)">saved</span>':'synced';
     el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>
       <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days). Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>`;
@@ -6175,18 +6177,34 @@ $('exportSpotLots').onclick=async()=>{
 };
 $('exportJ').onclick=()=>{ const blob=new Blob([JSON.stringify(journal,null,2)],{type:'application/json'});
   dlBlob(blob,'hl-journal-'+new Date().toISOString().slice(0,10)+'.json'); };
-$('backupAll').onclick=async()=>{
-  // Full backup = snapshot (journal + wallets + settings) + per-wallet fill caches.
-  // Caches make the backup restorable past the API's 60-page history cap, and are
-  // deliberately NOT in the auto-synced linked file (they'd bloat every debounced write).
+// Full backup = snapshot (journal + wallets + settings) + per-wallet fill caches.
+// Caches make the backup restorable past the API's 60-page history cap, and are
+// deliberately NOT in the auto-synced linked file (they'd bloat every debounced write).
+// Shared by the download button and the server-backup button.
+async function buildBackupData(){
   const data={...snapshot(),version:9,fillCaches:{}};
   for(const w of settings.wallets){ try{ const c=await unpackFillCache(await idbGet('flc:'+w.address));
     if(validFillCache(w.address,c)) data.fillCaches[w.address]=c; }catch(e){} }
   try{ const p=await idbGet('excRows'); if(p&&p.v===1&&p.rows)data.excRows=p; }catch(e){}
+  return data;
+}
+$('backupAll').onclick=async()=>{
+  const data=await buildBackupData();
   const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
   dlBlob(blob,'ledger-backup-'+new Date().toISOString().slice(0,10)+'.json');
   const nc=Object.keys(data.fillCaches).length;
   setStatus('Backup exported ('+(blob.size/1024/1024).toFixed(1)+' MB)'+(nc?' incl. fill cache for '+nc+' wallet'+(nc===1?'':'s')+' — restoring it preserves history beyond the 60-page API cap':'')+'.'); };
+$('backupSrv').onclick=async()=>{
+  if(!SRV.enabled){ setErr('No sync server detected.'); return; }
+  setStatus('Building backup…');
+  try{
+    const data=await buildBackupData();
+    const r=await srvFetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||('HTTP '+r.status)); }
+    const j=await r.json();
+    setStatus('Backup stored on the server as '+j.name+' (newest 10 kept).');
+  }catch(e){ setErr('Server backup failed: '+e.message); }
+};
 $('clearCandles').onclick=async()=>{
   const keys=await idbKeys('cnd:');
   if(!keys.length){ setStatus('Candle cache is empty.'); return; }
