@@ -452,6 +452,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
       <input type="text" class="addr" id="walletAddr" placeholder="0x wallet address — add one or more" spellcheck="false" autocomplete="off">
       <button class="btn ghost" id="addWallet">Add</button>
       <button class="btn ghost" id="importBtn">Paste data</button>
+      <button class="btn ghost" id="demoBtn2" data-tip="Seeded synthetic history for a look around — replaces the current in-memory view only; your journal and wallets are untouched.">Sample data</button>
     </div>
     <div id="wallets" class="wallets"></div>
     <div id="datafile" class="datafile hide"></div>
@@ -463,6 +464,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
     <p>Add one or more wallet addresses you trade with on Hyperliquid, then hit <strong>Load all</strong>. Everything is pulled read-only from Hyperliquid's public API — nothing leaves your browser — and every wallet's history is pooled into one combined view.</p>
     <p>Then attach notes, tags, a setup, a rating, mistakes, and your planned risk to any trade. Your journal is saved locally on this device.</p>
     <div class="steps"><span>1 · Load fills &amp; positions</span><span>2 · Rebuild trades + funding</span><span>3 · Read the analytics</span><span>4 · Journal each trade</span></div>
+    <p style="margin-top:14px"><button class="btn ghost" id="demoBtn" data-tip="Loads a seeded, synthetic 5-month fill history (perps + spot) through the normal import pipeline so every panel is populated. Nothing is fetched and no wallet is involved — reload or add a real address to clear it.">Just looking? Load sample data</button></p>
   </div>
 
   <div id="app" class="hide" role="main">
@@ -4546,9 +4548,18 @@ function netExposureByCoin(){
 }
 // Guardrail signals computed from the most recently loaded trades (advisory, snapshot-based).
 function guardrailSignals(){
+  const out=[];
+  // trading with no plan filed — fires regardless of history depth (it's a habit nudge)
+  const up=unplannedToday(allTrades,journal);
+  if(up.unplanned)
+    out.push({type:'unplanned',txt:`<b>${up.n}</b> trades today with no plan filed. The end-of-day review will ask why — write the bias, plan, and max loss in <b>Review → Day journal</b> before the next entry.`});
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>b.closeTime-a.closeTime);
-  if(closed.length<20)return [];
-  const out=[]; const now=Date.now();
+  if(closed.length<20)return out;
+  const now=Date.now();
+  // sizing creep vs capital
+  const rc=riskCreepModel(closed,((accountValue||0)+(spotAccountValue||0))||null);
+  if(rc&&rc.creep)
+    out.push({type:'overtrading',txt:`Sizing is creeping: median entry notional <b>${fmtUsd(rc.m2).replace('.00','')}</b> over your last 20 trades vs ${fmtUsd(rc.m1).replace('.00','')} the 20 before (+${Math.round(rc.sizeGrowth*100)}%)${rc.eqGrowth!=null?`, while capital moved ${(rc.eqGrowth>=0?'+':'')+Math.round(rc.eqGrowth*100)}%`:''}. Size that outruns equity is the classic post-win-streak failure — re-derive size from the sizer, not from momentum.`});
   // after-loss expectancy — the nearest CLOSE before each open (binary search, skip self),
   // matching the Diagnostic's priorClose. Adjacent close-ordered pairs also matched
   // concurrent positions opened hours BEFORE the loss closed (negative gaps).
@@ -4948,11 +4959,41 @@ function renderReview(){
   if(wk.length>weeklyCounts*1.5&&wk.length>=6) focus.push(`You traded ${wk.length} times this week vs a ~${weeklyCounts.toFixed(0)}/week norm. Watch for overtrading — check the Day×hour heatmap for a leaky slot.`);
   if(worst&&Math.abs(worst.net)>Math.abs(sumNet(mo))*0.5&&worst.net<0) focus.push(`One trade (${dispMarket(dcoin(worst))}, ${fmtUsd(worst.net)}) drove an outsized share of this month's damage. A per-trade stop or size cap would blunt tails like it.`);
   if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
+  // costs & variance: fee-tier economics + what normal-bad looks like at your own edge
+  const bp=x=>{const s=(x*1e4).toFixed(1);return (s.endsWith('.0')?s.slice(0,-2):s)+' bp';};
+  const fee=feeTierModel(allTrades);
+  let feeCard='';
+  if(fee){
+    const fmtVol=v=>v>=1e9?'$'+(v/1e9).toFixed(2)+'B':v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmtUsd(v).replace('.00','');
+    feeCard=`<div class="diag-card"><h3 data-tip="Hyperliquid fees step by trailing-14-day volume. Rates here are the BASE schedule (no staking discounts) — verify against app.hyperliquid.xyz/fees before acting on the dollar figures; last checked September 2026.">Fee tier <span style="font-size:11px;color:var(--faint);font-weight:400">14d volume</span></h3>
+      ${mrow('14-day volume',fmtVol(fee.vol14),'Summed fill notional (both sides) across all loaded wallets over the trailing 14 days.')}
+      ${mrow('Current tier','tier '+fee.tier+' · taker '+bp(fee.cur.taker)+' / maker '+bp(fee.cur.maker))}
+      ${fee.next?mrow('Next tier at',fmtVol(fee.next.min)+' · '+fmtVol(fee.toNext)+' away','Volume needed in a 14-day window to reach taker '+bp(fee.next.taker)+' / maker '+bp(fee.next.maker)+'.'):mrow('Next tier','— top tier')}
+      ${mrow('Taker fees · last 30d','<span class="'+cls(-fee.takerFee30)+'">'+fmtUsd(fee.takerFee30)+'</span>','Estimated: taker notional × your current tier rate. Actual paid fees over 30d: '+fmtUsd(fee.fees30)+'.')}
+      ${fee.saveNextTier30!=null?mrow('One tier up saves','~'+fmtUsd(fee.saveNextTier30)+'/mo','Last 30 days’ taker flow re-priced at the next tier’s taker rate.'):''}
+      ${mrow('As maker instead','~'+fmtUsd(fee.saveAsMaker30)+'/mo cheaper','Last 30 days’ taker flow re-priced at your tier’s MAKER rate — the concrete answer to “does resting orders pay”. Fills change when you rest orders, so treat as an upper bound.')}
+      <p class="mini-note">Base schedule, hardcoded — verify at app.hyperliquid.xyz/fees (last checked Sep 2026).</p></div>`;
+  }
+  const vm=varianceModel(closed);
+  let varCard='';
+  if(vm){
+    const srows=vm.streaks.filter(s=>s.prob>=0.03&&s.prob<=0.985).slice(0,4)
+      .map(s=>mrow(s.len+'+ losses in a row',Math.round(s.prob*100)+'% chance','Probability that a run of at least '+s.len+' consecutive losses appears somewhere in your next '+vm.horizon+' trades, at your '+Math.round(vm.p*100)+'% win rate. Seeded simulation from your own numbers.')).join('');
+    varCard=`<div class="diag-card"><h3 data-tip="Simulated from YOUR win rate, frequency, and trade distribution (seeded, reproducible). Decide now what normal-bad looks like, so a live drawdown reads as variance instead of falsification — the trader who expects the 6-loss streak survives it.">Variance expectations <span style="font-size:11px;color:var(--faint);font-weight:400">next ${vm.horizon} trades</span></h3>
+      ${mrow('Your inputs',Math.round(vm.p*100)+'% win rate · ~'+vm.perMonth+' trades/mo','Decisive trades only; frequency from your full history span.')}
+      ${srows}
+      ${mrow('1-in-20 bad month','<span class="'+cls(vm.monthP5)+'">'+fmtUsd(vm.monthP5)+'</span>','5th percentile of 1,000 bootstrapped months (~'+vm.perMonth+' draws from your own trade nets). At current sizing, a month like this is expected about once every 20 — plan the response before it happens.')}
+      ${mrow('Median month','<span class="'+cls(vm.monthMed)+'">'+fmtUsd(vm.monthMed)+'</span>')}
+      <p class="mini-note">If the 1-in-20 month would break your rules or your account, the sizing — not the edge — is the problem.</p></div>`;
+  }
+  const costVar=(feeCard||varCard)?`<div class="diag-section"><h2>Costs &amp; variance</h2><div class="diag-grid">${feeCard}${varCard}</div></div>`:'';
 
   el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
    ${dayJournalSectionHtml()}
+   ${weeklyReviewSectionHtml()}
    ${goalsSectionHtml()}
    <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
+   ${costVar}
    <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
      <div class="diag-card"><h3>Best &amp; worst</h3>
        ${mrow('Best trade',tradeLine(best))}
@@ -4966,7 +5007,7 @@ function renderReview(){
    </div></div>
    <div class="diag-section"><h2>Focus for next week</h2><ol class="recs">${focus.map(f=>`<li>${f}</li>`).join('')}</ol></div>
    ${nfLeaderboardHtml(periodTrades().filter(t=>!t.isOpen))}`;
-  wireDayJournal(); wireGoals();
+  wireDayJournal(); wireWeeklyReview(); wireGoals();
 }
 /* ============================ monthly goals ============================ */
 // This-month progress vs self-set goals: realized net vs target (with straight-line pace
@@ -5080,6 +5121,7 @@ function wireDayJournal(){
     if(!(e.bias||e.plan||e.review||e.maxLoss||e.adherence)) delete journal[k];
     else journal[k]={...e,updatedAt:Date.now()};
     markJEdit(k); Store.set(J_KEY,journal);
+    if(e.maxLoss>0)askNotifyPerm(); // committed max loss + save gesture — offer desktop notifications
     const s=$('djSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
     renderTripwire(); // a committed max loss takes effect immediately
   };
@@ -6213,6 +6255,254 @@ $('clearCandles').onclick=async()=>{
   _excCache={key:null,rows:null,skippedCoins:null,skippedN:0};
   setStatus('Cleared '+keys.length+' cached candle set'+(keys.length===1?'':'s')+' ('+(bytes/1024/1024).toFixed(1)+' MB). Candles re-fetch on the next run; saved MAE/MFE measurements are kept.'); };
 
+/* ============================ fee-tier optimizer ============================ */
+// Hyperliquid perp fees step by trailing-14-day volume. This table is the BASE schedule
+// (no staking discounts, no referral rebates) — VERIFY against app.hyperliquid.xyz/fees
+// before trusting the dollar figures; last checked September 2026. Rates are decimals.
+const FEE_TIERS=[
+  {min:0,    taker:0.00045, maker:0.00015},
+  {min:5e6,  taker:0.00040, maker:0.00012},
+  {min:25e6, taker:0.00035, maker:0.00008},
+  {min:100e6,taker:0.00030, maker:0.00004},
+  {min:500e6,taker:0.00028, maker:0},
+  {min:2e9,  taker:0.00026, maker:0},
+];
+// Rolling volume from the per-fill events each reconstructed trade carries ([time,px,sz,k]),
+// so the 14-day window is exact even when a trade spans it. The "what would last month have
+// cost" answers use the recorded maker/taker split. Pure; null when there is no flow at all.
+function feeTierModel(trades, now){
+  now=now||Date.now();
+  const cut14=now-14*86400000, cut30=now-30*86400000;
+  let vol14=0, fees30=0, takerN30=0, makerN30=0, unk30=0;
+  for(const t of (trades||[])){
+    for(const ev of (t.events||[])){ const n=Math.abs((ev[1]||0)*(ev[2]||0)); if(ev[0]>=cut14&&ev[0]<=now)vol14+=n; }
+    const last=t.closeTime||t.openTime;
+    if(last>=cut30&&last<=now){ fees30+=t.fees||0; takerN30+=t.takerNotional||0; makerN30+=t.makerNotional||0; unk30+=t.unkNotional||0; }
+  }
+  if(!(vol14>0)&&!(takerN30+makerN30+unk30>0))return null;
+  let tier=0; for(let i=0;i<FEE_TIERS.length;i++)if(vol14>=FEE_TIERS[i].min)tier=i;
+  const cur=FEE_TIERS[tier], next=FEE_TIERS[tier+1]||null;
+  const takerFee30=takerN30*cur.taker;
+  return {vol14, tier, cur, next, toNext:next?Math.max(0,next.min-vol14):null,
+    takerN30, makerN30, unk30, fees30, takerFee30,
+    saveAsMaker30:takerFee30-takerN30*cur.maker,
+    saveNextTier30:next?takerFee30-takerN30*next.taker:null};
+}
+
+/* ============================ weekly review wizard + lessons ============================ */
+// ISO week key ('week:GGGG-Www') from the tz-toggle calendar date — rides the existing
+// journal plumbing (sync, backup, conflict merge) exactly like the 'day:' entries.
+function isoWeekKey(ms){
+  const p=tzParts(ms);
+  const d=new Date(Date.UTC(p.y,p.mo,p.day));
+  d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7)+3);      // this week's Thursday fixes the ISO year
+  const ft=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  ft.setUTCDate(ft.getUTCDate()-((ft.getUTCDay()+6)%7)+3);   // first ISO week's Thursday
+  const week=1+Math.round((d-ft)/(7*86400000));
+  return 'week:'+d.getUTCFullYear()+'-W'+String(week).padStart(2,'0');
+}
+function lastCompletedWeekRange(now){
+  now=now||Date.now();
+  const p=tzParts(now);
+  const dow=(new Date(Date.UTC(p.y,p.mo,p.day)).getUTCDay()+6)%7; // Mon=0 on the tz calendar
+  const thisMon=tzMidnight(now-dow*86400000);
+  return {from:tzMidnight(thisMon-7*86400000+43200000), to:thisMon};
+}
+function weeklyReviewSectionHtml(){
+  const {from,to}=lastCompletedWeekRange();
+  const wkKey=isoWeekKey(from+3.5*86400000);
+  const e=journal[wkKey]||{};
+  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime>=from&&t.closeTime<to&&viewFilter(t));
+  const net=closed.reduce((s,t)=>s+t.net,0);
+  const sorted=[...closed].sort((a,b)=>b.net-a.net);
+  const best=sorted[0], worst=sorted[sorted.length-1];
+  const tl=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span>`:'—';
+  const lessons=Object.keys(journal).filter(k=>k.startsWith('week:')&&journal[k]&&journal[k].lesson)
+    .sort().reverse().map(k=>({k,e:journal[k]}));
+  const lrows=lessons.slice(0,12).map(x=>`<div class="metric-row"><span class="ml">${esc(x.k.slice(5))}</span><span class="mv" style="max-width:70%;text-align:right;white-space:normal;font-weight:400">${esc(x.e.lesson)}</span></div>`).join('');
+  return `<div class="diag-section"><h2>Weekly review <span style="font-size:11px;color:var(--faint);font-weight:400">${esc(wkKey.slice(5))} · last completed week</span></h2>
+    <div class="diag-grid">
+      <div class="diag-card"><h3 data-tip="Three questions, once a week, about the week that just ended. The digest automates the numbers; this automates the learning — every answer feeds the lessons library.">Guided review — ${closed.length} trade${closed.length===1?'':'s'}, net <span class="${cls(net)}">${fmtUsd(net)}</span></h3>
+        <div class="metric-row"><span class="ml">Best trade</span><span class="mv">${tl(best)}</span></div>
+        <div class="metric-row"><span class="ml">Worst trade</span><span class="mv">${tl(worst)}</span></div>
+        <div class="field" style="margin-top:8px"><label>What worked — worth repeating?</label><textarea id="wrRepeat" placeholder="setups, conditions, behaviors that paid">${esc(e.repeat||'')}</textarea></div>
+        <div class="field"><label>What didn't — what changes next week?</label><textarea id="wrChange" placeholder="the leak you'll plug">${esc(e.change||'')}</textarea></div>
+        <div class="field"><label>One-line lesson</label><input type="text" id="wrLesson" maxlength="160" value="${esc(e.lesson||'')}" placeholder="the sentence future-you should re-read"></div>
+        <div><button class="btn ghost" id="wrSave">Save week</button> <span id="wrSaved" style="color:var(--faint);font-size:11px"></span></div>
+      </div>
+      <div class="diag-card"><h3 data-tip="Every one-line lesson from your saved weekly reviews, newest first. Rereading these before a session is the cheapest edge available.">Lessons library</h3>
+        ${lessons.length?`<p class="lead" style="margin-bottom:8px">Latest: <b>${esc(lessons[0].e.lesson)}</b></p>`:''}
+        ${lrows||'<p class="lead">No lessons saved yet. Answer the three questions and the library builds itself.</p>'}
+      </div>
+    </div></div>`;
+}
+function wireWeeklyReview(){
+  const b=$('wrSave'); if(!b)return;
+  b.onclick=()=>{
+    const {from}=lastCompletedWeekRange();
+    const wkKey=isoWeekKey(from+3.5*86400000);
+    const e={repeat:$('wrRepeat').value.trim(), change:$('wrChange').value.trim(), lesson:$('wrLesson').value.trim()};
+    if(!(e.repeat||e.change||e.lesson)) delete journal[wkKey];
+    else journal[wkKey]={...e,updatedAt:Date.now()};
+    markJEdit(wkKey); Store.set(J_KEY,journal);
+    const s=$('wrSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
+    renderReview(); // the lessons library updates in place
+  };
+}
+
+/* ============================ variance expectations ============================ */
+// From YOUR OWN win rate, frequency, and net distribution (seeded MC): how likely a given
+// loss streak is over the next 200 trades, and what a 1-in-20 bad month looks like at
+// current sizing. Deciding NOW what normal-bad looks like is the single best antidote to
+// abandoning an edge mid-drawdown — live pain then reads as variance, not falsification.
+function varianceModel(closed, opts){
+  opts=opts||{};
+  const dec=(closed||[]).filter(t=>isWin(t.net)||isLoss(t.net));
+  if(!closed||closed.length<20||dec.length<10)return null;
+  const p=dec.filter(t=>isWin(t.net)).length/dec.length;
+  const nets=closed.map(t=>t.net);
+  const times=closed.map(t=>t.closeTime);
+  const span=Math.max(1,(Math.max(...times)-Math.min(...times))/86400000);
+  const perMonth=Math.max(1,Math.round(closed.length/span*30.44));
+  const N=opts.horizon||200, SIM=opts.sims||2000, MAXL=10;
+  _srand(_hashSeed(opts.seed||('variance|'+closed.length+'|'+dec.length)));
+  const hit=new Array(MAXL+1).fill(0);
+  for(let s=0;s<SIM;s++){
+    let run=0,best=0;
+    for(let i=0;i<N;i++){ if(_rng()>=p){ run++; if(run>best)best=run; } else run=0; }
+    for(let L=1;L<=MAXL;L++)if(best>=L)hit[L]++;
+  }
+  const streaks=[]; for(let L=3;L<=MAXL;L++){ const pr=hit[L]/SIM; if(pr>=0.01)streaks.push({len:L,prob:pr}); }
+  const months=[];
+  for(let s=0;s<1000;s++){ let m=0; for(let i=0;i<perMonth;i++)m+=nets[Math.floor(_rng()*nets.length)]; months.push(m); }
+  months.sort((a,b)=>a-b);
+  const q=x=>months[Math.min(months.length-1,Math.floor(x*months.length))];
+  return {p, n:closed.length, perMonth, horizon:N, streaks, monthP5:q(0.05), monthP25:q(0.25), monthMed:q(0.5)};
+}
+
+/* ============================ risk-creep detector ============================ */
+// Median entry notional of the last 20 trades vs the 20 before, compared with how much
+// capital actually changed over the same stretch. Sizing that outruns equity is the
+// classic post-win-streak failure. Pure; needs 40 closed trades.
+function riskCreepModel(closed, acctNow){
+  const chron=(closed||[]).filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
+  if(chron.length<40)return null;
+  const notional=t=>(t.maxSize||0)*(t.avgEntry||0);
+  const last=chron.slice(-20), prior=chron.slice(-40,-20);
+  const m2=nfMedian(last.map(notional)), m1=nfMedian(prior.map(notional));
+  if(!(m1>0)||!(m2>0))return null;
+  const sizeGrowth=m2/m1-1;
+  let eqGrowth=null;
+  if(acctNow>0){
+    const netSince=last.reduce((s,t)=>s+t.net,0); // realized change over the last-20 stretch
+    const acctThen=acctNow-netSince;
+    if(acctThen>0)eqGrowth=acctNow/acctThen-1;
+  }
+  // creep = sizing clearly up AND clearly ahead of capital (or way up with no equity data)
+  const creep=sizeGrowth>0.25&&(eqGrowth==null?sizeGrowth>0.5:sizeGrowth>eqGrowth+0.25);
+  return {m1, m2, sizeGrowth, eqGrowth, creep};
+}
+
+/* ============================ unplanned-trading guardrail ============================ */
+// The day journal knows whether today has a plan; the tape knows whether you're trading.
+// Pure given the journal object; today = tz-toggle day, opens and closes both count.
+function unplannedToday(trades, journalObj, now){
+  now=now||Date.now();
+  const d0=tzMidnight(now);
+  let n=0;
+  for(const t of (trades||[])){
+    if(t.isOpen){ if(t.openTime>=d0)n++; }
+    else if(t.closeTime>=d0)n++;
+  }
+  const dj=(journalObj||{})[dayJKey(now)];
+  const hasPlan=!!(dj&&(dj.plan||dj.bias||dj.maxLoss>0));
+  return {n, hasPlan, unplanned:n>=2&&!hasPlan};
+}
+
+/* ============================ demo mode ============================ */
+// Seeded synthetic history so a fresh visitor (or a screenshot) sees every panel populated
+// without pasting a wallet: ~5 months of perp round trips across four coins (52% win rate,
+// fat left tail, mild size-follows-wins creep) plus PURR/USDC spot accumulation with a
+// partial take-profit. Deterministic per seed, and it goes through the exact paste-import
+// path — nothing about the pipeline is special-cased. Rows use the exchange fill schema.
+function demoFills(seed, now){
+  now=now||Date.now();
+  _srand(_hashSeed('demo|'+(seed==null?1:seed)));
+  const R=()=>_rng();
+  const DAY=86400000, H=3600000;
+  const coins=[{c:'ETH',px:2600},{c:'BTC',px:64000},{c:'SOL',px:150},{c:'DOGE',px:0.12}];
+  const out=[]; let tid=1;
+  const F=(coin,side,sz,px,time,sp,pnl,fee,crossed)=>out.push({coin,side,
+    sz:String(+sz.toFixed(5)), px:String(+px.toFixed(8)), time:Math.round(time),
+    startPosition:String(+sp.toFixed(5)), closedPnl:String(+pnl.toFixed(2)),
+    fee:String(+fee.toFixed(4)), crossed, dir:'', tid:tid++, oid:9000+tid});
+  let size=1;
+  const free={}; // per-coin next-free time — overlapping same-coin round trips would read as adds
+  for(let day=150;day>=1;day--){
+    const t0=now-day*DAY;
+    const dow=new Date(t0).getUTCDay();
+    if(R()<(dow===0||dow===6?0.75:0.35)){continue;}
+    const nTr=R()<0.3?2:1;
+    for(let i=0;i<nTr;i++){
+      const A=coins[Math.floor(R()*coins.length)];
+      let open=t0+(7+R()*11)*H;
+      if(free[A.c]&&open<free[A.c])open=free[A.c]+H;
+      const hold=(0.4+R()*(R()<0.85?7:30))*H;
+      const close=open+hold;
+      if(close>now-2*H)continue;
+      const px0=A.px*(1+(R()-0.5)*0.24);
+      const long=R()<0.58;
+      const notional=(3000+R()*9000)*size;
+      const sz=notional/px0;
+      const win=R()<0.52;
+      // decisive moves (0.4–4.5% of notional) so the default $50 break-even band doesn't
+      // turn the whole demo into scratches; ~15% of losses draw the fat left tail
+      const gross=win?notional*(0.005+R()*0.04):-notional*(0.004+R()*(R()<0.15?0.09:0.03));
+      const px1=px0+(long?1:-1)*gross/sz;
+      const maker=R()<0.3, feeR=maker?0.00015:0.00045;
+      F(A.c, long?'B':'A', sz, px0, open, 0, 0, notional*feeR, !maker);
+      F(A.c, long?'A':'B', sz, px1, close, long?sz:-sz, gross, Math.abs(px1*sz)*feeR, !maker);
+      free[A.c]=close;
+      size*=win?1.004:0.999;
+    }
+  }
+  // spot: four PURR buys, one partial sale near the end
+  let bag=0, cost=0;
+  for(let k=0;k<4;k++){
+    const px=0.14+R()*0.1, sz=3000+R()*3000;
+    F('PURR/USDC','B',sz,px,now-(130-k*25)*DAY+10*H,bag,0,sz*px*0.0004,true);
+    bag+=sz; cost+=sz*px;
+  }
+  const sellSz=bag*0.4, sellPx=(cost/bag)*1.35;
+  F('PURR/USDC','A',sellSz,sellPx,now-9*DAY+15*H,bag,(sellPx-cost/bag)*sellSz,sellSz*sellPx*0.0004,true);
+  out.sort((a,b)=>a.time-b.time);
+  return out;
+}
+async function loadDemo(){
+  setStatus('Generating sample data…',true);
+  try{ await loadFromPaste(demoFills(1)); }
+  catch(e){ setErr('Demo generation failed: '+e.message); return; }
+  setStatus('Sample data loaded — '+allTrades.length+' synthetic trades across perps and spot. Nothing was fetched or saved to a wallet; add a real address whenever you like.');
+}
+(function(){ for(const id of ['demoBtn','demoBtn2']){ const b=$(id); if(b)b.onclick=loadDemo; } })();
+
+/* ============================ tab-visible tripwire notifications ============================ */
+// The webhook covers the phone; this covers the desktop: when the app sits in a background
+// tab and the tripwire trips, the OS notification fires. Permission is only ever requested
+// on an explicit save gesture (rules / day plan) — never on load.
+const _notified={};
+function maybeNotify(key, title, body){
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted')return;
+    if(_notified[key])return;
+    _notified[key]=1;
+    new Notification(title,{body, tag:key});
+  }catch(e){}
+}
+function askNotifyPerm(){
+  try{ if(('Notification' in window)&&Notification.permission==='default')Notification.requestPermission().catch(()=>{}); }catch(e){}
+}
+
 /* ============================ PWA ============================ */
 // Installable when served over http(s): the manifest + icons above handle "Add to home screen".
 // Full offline caching needs a companion service worker file at the origin (see self-hosting notes),
@@ -6336,8 +6626,10 @@ function renderTripwire(){
   const openLoss=Math.min(0,uNow-_uPnlBase.val);
   if(d.net<=-lim){ el.classList.remove('hide');
     el.innerHTML=`\u26d4 <b>Daily loss limit hit.</b> Today's realized PnL is ${fmtUsd(d.net)} across ${d.n} trade${d.n===1?'':'s'} \u2014 past ${src} (${fmtUsd(lim)}). Step away.`;
+    maybeNotify('trip:'+nfDayKey(Date.now()),'Daily loss limit hit','Realized '+fmtUsd(d.net)+' today \u2014 past '+fmtUsd(lim)+'. Step away.');
   } else if(d.net+openLoss<=-lim){ el.classList.remove('hide');
     el.innerHTML=`\u26d4 <b>Daily loss limit hit including open positions.</b> Realized ${fmtUsd(d.net)} today plus ${fmtUsd(openLoss)} of open-PnL decline since your first look today is past ${src} (${fmtUsd(lim)}). Cut or step away \u2014 closing them later doesn't un-lose the money.`;
+    maybeNotify('trip:'+nfDayKey(Date.now()),'Daily loss limit hit (incl. open)','Realized '+fmtUsd(d.net)+' + '+fmtUsd(openLoss)+' open decline \u2014 past '+fmtUsd(lim)+'.');
   } else if(d.net<-lim*0.6){ el.classList.remove('hide');
     el.innerHTML=`\u26a0 Approaching ${src}: ${fmtUsd(d.net)} today vs a ${fmtUsd(lim)} cap${openLoss<0?` (open positions add ${fmtUsd(openLoss)} on top)`:''}.`;
   } else el.classList.add('hide');
@@ -6465,6 +6757,7 @@ function nfWireDiag(closed){
     const gi=id=>{ const e=$(id); return e?e.value:''; };
     r.maxPerDay=parseInt(gi('nfRuleMax'))||0; r.cooldownMin=parseInt(gi('nfRuleCool'))||0;
     r.dailyLossLimit=parseFloat(gi('nfRuleDLL'))||0; r.noAddToLosers=!!($('nfRuleNAL')&&$('nfRuleNAL').checked);
+    if(r.dailyLossLimit>0)askNotifyPerm(); // save gesture — the one acceptable moment to ask
     await Store.set(S_KEY,settings); renderTripwire(); };
   ['nfRuleMax','nfRuleCool','nfRuleDLL'].forEach(id=>{ const e=$(id); if(e)e.onchange=saveRules; });
   const nal=$('nfRuleNAL'); if(nal)nal.onchange=saveRules;
