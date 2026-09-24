@@ -451,7 +451,7 @@ function createApp(opts) {
               uPnl: value - b.entry, wallet: { address: w.address, label: w.label || '' } });
         });
         if (sbal.length) spotAccVals.push(spotVal);
-      } catch (e) { res.error = e && e.message || String(e); }
+      } catch (e) { res.error = (e && (e.message || e.msg)) || String(e); } // internal throws carry .msg — '[object Object]' helps nobody
       out.wallets.push(res);
     }
 
@@ -805,7 +805,8 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/breakdown', auth: 'read', desc: 'grouped stats + per-group contribution shares; by=coin|dir|market|wallet|tag|dow|hour; basis=usd|pct ranks by dollars or summed return points; top=N (default 5) sizes the best/worst lists; filters' },
     { method: 'GET',  path: '/api/v1/projection', auth: 'read', desc: 'Monte Carlo forward sim; horizon (days, default 90), paths (<=2000, default 400), block, seed, lookback (days); filters' },
     { method: 'GET',  path: '/api/v1/kelly', auth: 'read', desc: 'Kelly sizing from filtered closed trades' },
-    { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model; account-wide — ignores filters; wallet= optional' },
+    { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model and money-weighted xirr; account-wide — ignores filters; wallet= optional' },
+    { method: 'DELETE', path: '/api/v1/cache/:addr', auth: 'full', desc: 'evict one wallet\'s server caches (fills/funding/ledger) — cleans up body.wallets experiments and removed wallets' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
@@ -886,6 +887,21 @@ function createApp(opts) {
         return send(200, summary);
       } catch (e) { return fail(e); }
       finally { clearTimeout(watchdog); _refreshing = false; }
+    }
+
+    // evict one wallet's server-side caches (fills/funding/ledger) — the cure for a
+    // body.wallets experiment or a removed wallet haunting capital/alert aggregates
+    const cacheM = url.match(/^\/api\/v1\/cache\/(0x[0-9a-fA-F]{40})$/);
+    if (cacheM) {
+      if (req.method !== 'DELETE') return send(405, { error: 'method not allowed' });
+      if (!authOk(req)) return send(401, { error: 'unauthorized' });
+      const a = cacheM[1];
+      let removed = 0;
+      for (const file of [fillsFile(a), fundingFile(a), ledgerFile(a)]) {
+        try { fs.unlinkSync(file); removed++; } catch (e) {}
+      }
+      _tradesMemo = null;
+      return send(200, { ok: true, removed });
     }
 
     // everything below is GET + read scope
@@ -1092,11 +1108,13 @@ function createApp(opts) {
         // body.wallets refreshes write ledger caches for non-saved wallets too — reading
         // flows from saved wallets only counted those wallets' trades against a capital
         // base missing their deposits.
+        const savedSet = new Set(snapWallets(snap).map(w => w.address.toLowerCase()));
         let wallets = snapWallets(snap).slice();
+        let hasNonSaved = false;
         try {
           for (const f of fs.readdirSync(ledgerDir)) {
             const a = f.replace(/\.json\.gz$/, '');
-            if (ADDR_RE.test(a) && !wallets.find(w => w.address.toLowerCase() === a)) wallets.push({ address: a, label: '' });
+            if (ADDR_RE.test(a) && !wallets.find(w => w.address.toLowerCase() === a)) { wallets.push({ address: a, label: '' }); hasNonSaved = true; }
           }
         } catch (e) {}
         if (query.wallet) {
@@ -1118,15 +1136,19 @@ function createApp(opts) {
         const closedAll = trades.filter(t => !t.isOpen && t.closeTime
           && (!query.wallet || (t.wallet && wset.has(t.wallet.address.toLowerCase()))));
         const market = readMarket();
-        // market equity is the SUM over all refreshed wallets — with wallet= narrowing the
-        // flows, comparing one wallet's deposits against everyone's equity manufactured
-        // huge fictitious impliedPnl; per-wallet equity isn't cached, so null is honest
-        const equityNow = !query.wallet && market && (market.accountValue != null || market.spotAccountValue != null)
+        // Equity-based outputs (impliedPnl, xirr) need equity and flows to cover the SAME
+        // wallet set. market equity reflects the last refresh's saved wallets, so it is
+        // withheld when wallet= narrows the flows OR when non-saved cached wallets (from
+        // body.wallets refreshes) contribute flows the equity can't see. DELETE
+        // /api/v1/cache/:addr evicts a stale wallet's caches to restore the full picture.
+        const equityNow = !query.wallet && !hasNonSaved && market && (market.accountValue != null || market.spotAccountValue != null)
           ? (market.accountValue || 0) + (market.spotAccountValue || 0) : null;
         return send(200, { flows: flows.length, skipped, cachedAt,
+          ...(hasNonSaved ? { note: 'non-saved cached wallets contribute flows; equity-based outputs withheld — evict stale caches via DELETE /api/v1/cache/:addr' } : {}),
           model: E.capitalModel(flows, closedAll, equityNow),
-          xirr: E.xirrFromFlows(flows, equityNow) }); // money-weighted annual return; null without live equity
+          xirr: E.xirrFromFlows(flows, equityNow) }); // money-weighted annual return; null without matching live equity
       }
+
 
       if (url === '/api/v1/walkforward') {
         const { closed } = prepare(query);

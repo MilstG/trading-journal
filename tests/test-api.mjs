@@ -370,6 +370,19 @@ await t('capital unions ledger-cache wallets with saved ones (repro of the round
   eq(status, 200);
   eq(body.flows, 3);                 // 2 from ADDR + 1 from the non-saved ADDR2
   near(body.model.totIn, 10500);
+  // equity covers only the saved wallets, so equity-based outputs are withheld and say why
+  eq(body.model.equityNow, null);
+  ok(String(body.note || '').includes('DELETE /api/v1/cache'));
+});
+await t('DELETE /api/v1/cache/:addr evicts a ghost wallet and restores equity outputs', async () => {
+  const ADDR2 = '0x' + 'b'.repeat(40);
+  eq((await fetch(base + '/api/v1/cache/' + ADDR2, { method: 'DELETE', headers: READ })).status, 401, 'full token required');
+  const r = await fetch(base + '/api/v1/cache/' + ADDR2, { method: 'DELETE', headers: FULL });
+  eq(r.status, 200);
+  ok((await r.json()).removed >= 1);
+  const { body } = await jget('/api/v1/capital', READ);
+  eq(body.flows, 2);
+  ok(body.model.equityNow != null, 'saved-wallet-only flows get equity back');
 });
 await t('capital?wallet= narrows flows AND nulls account-wide equity', async () => {
   const { body } = await jget('/api/v1/capital?wallet=' + ADDR, READ);

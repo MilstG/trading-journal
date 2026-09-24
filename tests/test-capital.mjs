@@ -121,5 +121,11 @@ t('no live equity → null (never guessed)', () => {
   eq(xirrFromFlows([{ time: NOW - DAY, usdc: 1000 }], null, NOW), null);
   eq(xirrFromFlows([], 5000, NOW), null);
 });
+t('extremes clamp instead of vanishing', () => {
+  // total loss: deposits only, equity 0 — true answer is −100%, reported as the −99.99% clamp
+  near(xirrFromFlows([{ time: NOW - 365 * DAY, usdc: 10000 }], 0, NOW), -0.9999, 1e-6);
+  // 10x in 30 days is beyond +1000%/yr — reported as the upper clamp
+  near(xirrFromFlows([{ time: NOW - 30 * DAY, usdc: 1000 }], 10000, NOW), 10, 1e-6);
+});
 
 report('capital');
