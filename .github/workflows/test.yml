@@ -1,0 +1,18 @@
+# Runs the full suite on every push and PR. The suites are offline (the exchange is
+# mocked) and dependency-free, so this is just node + the repo.
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
