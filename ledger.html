@@ -642,6 +642,10 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
     <h2>Paste data manually</h2>
     <p>If the live pull is blocked by your browser (common when opening the file directly from disk), paste a raw <span class="mono">userFills</span> JSON array here. You can also paste a <b>journal export</b> or a full <b>backup</b> (wallets + settings + journal) to restore it — the type is auto-detected.</p>
     <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <input type="file" id="pasteFile" accept=".json,.csv,.txt" style="font-size:12px">
+      <span id="pasteType" class="hint"></span>
+    </div>
     <textarea id="pasteBox" placeholder='[ { "coin":"BTC", "px":"...", "sz":"...", "side":"B", "time":..., "startPosition":"...", "closedPnl":"...", "fee":"..." }, ... ]'></textarea>
     <div class="modal-actions">
       <button class="btn ghost" id="modalCancel">Cancel</button>
@@ -1168,12 +1172,6 @@ function hip3DexsFromFills(fills){
     if(i>0 && !c.includes('/') && !c.startsWith('@')) dexs.add(c.slice(0,i)); }
   return [...dexs].sort();
 }
-// One-shot per-session diagnostic for the open verification item: does a per-dex
-// clearinghouseState return coins bare ("COIN") or already prefixed ("dex:COIN")?
-// The normalizer handles both; this passively confirms the live shape in-browser.
-const _hip3Seen=new Set(); const _hip3Notes=[];
-function hip3CoinShape(dex,coins){ if(!coins||!coins.length)return 'empty';
-  return coins.every(c=>typeof c==='string'&&c.indexOf(dex+':')===0)?'prefixed':'bare'; }
 function mapClearinghouse(s,dex){
   return (s.assetPositions||[]).map(a=>a.position).filter(p=>p&&parseFloat(p.szi)!==0).map(p=>{
     // normalize: fills name HIP-3 assets "dex:COIN"; make positions match regardless of
@@ -1199,16 +1197,6 @@ async function fetchPositions(addr, hip3Dexs){
   for(const dex of (hip3Dexs||[])){
     try{
       const s=await hlPost({type:'clearinghouseState',user:addr,dex});
-      if(!_hip3Seen.has(dex)){ _hip3Seen.add(dex);
-        try{ const raw=(s.assetPositions||[]).map(a=>a&&a.position&&a.position.coin).filter(c=>typeof c==='string');
-          const shape=hip3CoinShape(dex,raw);
-          console.info('[ledger] HIP-3 dex "'+dex+'" clearinghouseState coin shape: '+shape+(raw.length?' — raw: '+raw.join(', '):' (no open positions on this dex)'));
-          // close the standing verification item: persist what the LIVE browser response
-          // looked like, and surface it once in the status bar after the load finishes.
-          if(shape!=='empty'){ _hip3Notes.push({dex,shape});
-            idbSet('hip3shape:'+dex,{shape,at:Date.now(),sample:raw.slice(0,6)}); }
-        }catch(e){}
-      }
       positions=positions.concat(mapClearinghouse(s,dex));
     }catch(e){} // a dead/renamed dex shouldn't sink the whole load
   }
@@ -3095,7 +3083,8 @@ function capitalSectionHtml(){
 }
 function renderDiagnostic(closed, allv){
   destroyDiagCharts();
-  _srand(_hashSeed('diag|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:'')));
+  const diagSeed=_hashSeed('diag|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:''));
+  _srand(diagSeed);
   const el=$('diagView');
   if(!closed.length){ el.innerHTML='<div class="verdict"><div class="grade">No completed trades in this view</div><p>Switch the Perps / Spot / Combined toggle or widen the period, then re-open Diagnostic.</p></div>'; return; }
   const s=computeStats(closed, allv), N=closed.length;
@@ -3112,15 +3101,32 @@ function renderDiagnostic(closed, allv){
   // EVERY Diagnostic render — including each journal save while the tab was open. The PRNG
   // is seeded from the same identity above, so cached values equal recomputed ones exactly.
   const mcKey=[N,closed.length?closed[0].id:'',closed.length?closed[closed.length-1].id:'',s.net,_be].join('|');
-  let boot,esig,mcdd,fdd;
+  let boot,esig,mcdd,fdd,mcPending=false;
+  const _mcSync=()=>{ // one synchronous compute — small accounts, and the fallback when the worker is unavailable
+    _srand(diagSeed);
+    const b2=nets.length>=5?bootstrapMeanCI(nets,B):null;
+    const e2=nets.length>=5?edgeSignificance(nets):null;
+    const m2=chronNets.length>=5?mcMaxDD(chronNets,MCI):null;
+    const HZ=Math.min(200,Math.max(50,N));
+    const f2=chronNets.length>=10?fwdMaxDD(chronNets,HZ,N>3000?400:800):null;
+    return {key:mcKey,boot:b2,esig:e2,mcdd:m2,fdd:f2};
+  };
   if(_diagMC.key===mcKey){ ({boot,esig,mcdd,fdd}=_diagMC); }
+  else if(N<1500){ _diagMC=_mcSync(); ({boot,esig,mcdd,fdd}=_diagMC); }
   else{
-    boot = nets.length>=5 ? bootstrapMeanCI(nets,B) : null;
-    esig = nets.length>=5 ? edgeSignificance(nets) : null;
-    mcdd = chronNets.length>=5 ? mcMaxDD(chronNets,MCI) : null;
-    const HZN0 = Math.min(200,Math.max(50,N));
-    fdd = chronNets.length>=10 ? fwdMaxDD(chronNets,HZN0,N>3000?400:800) : null;
-    _diagMC={key:mcKey,boot,esig,mcdd,fdd};
+    // big accounts: the Monte Carlo batch (up to ~4k iterations) goes to the worker so the
+    // first Diagnostic render doesn't block the main thread; the affected panels show
+    // their empty states until the results land (~1s), then the tab re-renders once.
+    // Seed + compute order match the sync path exactly, so the values are identical.
+    boot=esig=mcdd=fdd=null; mcPending=true;
+    if(_diagMC.pending!==mcKey){
+      _diagMC.pending=mcKey;
+      runInWorker('diagmc',{nets,chron:chronNets,seed:diagSeed,B,MCI,HZN:Math.min(200,Math.max(50,N)),FI:N>3000?400:800,be:_be})
+        .then(out=>{ _diagMC={key:mcKey,...out};
+          if(activeTab==='diag')renderDiagnostic(periodTrades(),periodTradesAll()); })
+        .catch(()=>{ _diagMC=_mcSync();
+          if(activeTab==='diag')renderDiagnostic(periodTrades(),periodTradesAll()); });
+    }
   }
   const skew = _skew(nets);
   const acf1 = _autocorr1(chronNets);
@@ -3299,7 +3305,7 @@ function renderDiagnostic(closed, allv){
    ${wfHtml}
    <div class="diag-section">
      <div class="diag-grid">
-       <div class="diag-card"><h3 data-tip="How much you can trust the numbers: sample size, the Sharpe with its confidence band, cost drag, and whether recent performance matches earlier performance.">Statistical reliability</h3>
+       <div class="diag-card"><h3 data-tip="How much you can trust the numbers: sample size, the Sharpe with its confidence band, cost drag, and whether recent performance matches earlier performance.">Statistical reliability${mcPending?' <span class="hint">Monte Carlo computing…</span>':''}</h3>
          ${mrow('Completed trades',`<span class="badge ${adeq[0]}">${N}</span> ${adeq[1]}`,'Number of closed round-trips. Under 30 is anecdotal, 100+ starts to be meaningful, 300+ gives stable estimates. This is your true sample size — more decisive than day count.')}
          ${mrow('Calendar days',s.sharpeN||0,'Span from first to last trade in calendar days, including days you did not trade. Used as the denominator for annualizing Sharpe/Sortino.')}
          ${mrow('Sharpe (annualized, net)',s.sharpe!=null?s.sharpe.toFixed(2):'—','Mean daily net PnL ÷ its standard deviation, over calendar days, annualized ×√365, risk-free 0. Net of fees and funding. Rewards steady gains over lumpy ones.')}
@@ -3697,6 +3703,7 @@ function deepScan(closed,V){
 // re-sent with each request. If Worker construction or execution fails for any reason, the
 // wrappers fall back to the original synchronous code path — identical results, just blocking.
 const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,addedToLoser,dcoin,dispMarket,
+  mcMaxDD,fwdMaxDD,edgeSignificance,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,minerFams,mineInsights,deepScan});
@@ -3709,6 +3716,12 @@ const _WORKER_DISPATCH="onmessage=function(e){var d=e.data;"+
  "var res=mineInsights(d.payload.trades,V);var deep=deepScan(d.payload.trades,V);_progress=null;out={res:res,deep:deep};}"+
  "else if(d.kind==='reconstruct'){out={perp:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'perp'),d.payload.frows||[]),"+
  "spot:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'spot'),[])};}"+
+ "else if(d.kind==='diagmc'){if(d.payload.be!=null)_be=d.payload.be;_srand(d.payload.seed);"+
+ "var nets=d.payload.nets,chron=d.payload.chron;"+ // SAME compute order as the sync path — identical PRNG stream, identical values
+ "out={boot:nets.length>=5?bootstrapMeanCI(nets,d.payload.B):null,"+
+ "esig:nets.length>=5?edgeSignificance(nets):null,"+
+ "mcdd:chron.length>=5?mcMaxDD(chron,d.payload.MCI):null,"+
+ "fdd:chron.length>=10?fwdMaxDD(chron,d.payload.HZN,d.payload.FI):null};}"+
  "else throw new Error('unknown kind: '+d.kind);"+
  "postMessage({id:d.id,type:'done',out:out});}"+
  "catch(err){postMessage({id:d.id,type:'error',message:(err&&err.message)||String(err)});}};";
@@ -5346,8 +5359,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
     const perpN=allTrades.filter(t=>!t.isOpen&&t.market==='perp').length, spotN=allTrades.filter(t=>!t.isOpen&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
-    const hipNote=_hip3Notes.length?' · HIP-3 verified live: '+_hip3Notes.splice(0).map(x=>`${x.dex} returns ${x.shape} coin names`).join(', ')+' (normalizer confirmed)':'';
-    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${hipNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
+    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
   }catch(e){ console.error(e);
     // a background refresh failing (offline laptop, transient outage) is not banner-worthy —
     // it retries in 3 minutes; only a user-initiated load earns the error treatment
@@ -5677,7 +5689,36 @@ $('tbody').addEventListener('keydown',e=>{
 });
 $('tbody').addEventListener('change',e=>{ const fi=e.target.closest('input[data-att]');
   if(fi&&fi.files&&fi.files.length){ addAttachments(fi.dataset.att,[...fi.files]); fi.value=''; } });
-$('importBtn').onclick=()=>$('modal').classList.add('show');
+// The paste modal does four jobs behind one box (fills JSON, CSV, journal restore, full
+// backup). Naming the detected type BEFORE Load removes the "wrong branch" surprise class.
+function detectPasteType(raw){
+  const t=String(raw||'').trim(); if(!t)return '';
+  try{ const d=JSON.parse(t);
+    if(Array.isArray(d))return d.length&&d[0]&&d[0].coin!==undefined?'fills JSON · '+d.length+' fills':'JSON array';
+    if(d&&typeof d==='object'){
+      if(d.fills)return 'fills JSON · '+((d.fills&&d.fills.length)||0)+' fills';
+      if(d.journal||d.wallets||d.settings)return 'full backup'+(d.fillCaches?' · incl. fill caches':'');
+      return 'journal export · '+Object.keys(d).length+' entries';
+    }
+    return 'JSON';
+  }catch(e){}
+  const first=t.split('\n')[0]||'';
+  if(t.includes('\n')&&first.includes(','))return 'CSV · '+(t.split('\n').length-1)+' rows';
+  return 'unrecognized — expected fills JSON, a backup/journal export, or CSV';
+}
+function updatePasteType(){ const el=$('pasteType'); if(!el)return;
+  const ty=detectPasteType($('pasteBox').value);
+  el.textContent=ty?('detected: '+ty):''; }
+let _pasteTypeTimer=null;
+$('pasteBox').addEventListener('input',()=>{ clearTimeout(_pasteTypeTimer); _pasteTypeTimer=setTimeout(updatePasteType,250); });
+$('pasteFile').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{ $('pasteBox').value=String(rd.result||''); updatePasteType(); };
+  rd.onerror=()=>setErr('Could not read '+f.name+'.');
+  rd.readAsText(f); e.target.value='';
+});
+$('importBtn').onclick=()=>{ $('modal').classList.add('show'); updatePasteType(); };
 $('modalCancel').onclick=()=>$('modal').classList.remove('show');
 $('modal').addEventListener('click',e=>{ if(e.target===$('modal'))$('modal').classList.remove('show'); });
 $('modalLoad').onclick=async()=>{

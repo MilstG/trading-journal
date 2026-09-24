@@ -687,7 +687,19 @@ function createApp(opts) {
     return { risk: (risk && risk.rows) || [], todayKey, todayNet, funding24h, currentDD, ddP95,
       rulesDailyLoss: (snap.settings && snap.settings.rules && parseFloat(snap.settings.rules.dailyLossLimit)) || 0 };
   }
+  // Alert dedupe state survives restarts: Railway redeploys reset process memory, and
+  // without this every deploy re-fired any currently-true alert.
+  const alertStateFile = path.join(dataDir, 'alert-state.json');
   const _alertSent = new Map();
+  try { const st = JSON.parse(fs.readFileSync(alertStateFile, 'utf8'));
+    if (st && typeof st === 'object') for (const k in st) if (isFinite(st[k])) _alertSent.set(k, st[k]);
+  } catch (e) {}
+  const saveAlertState = () => {
+    try { const tmp = alertStateFile + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(_alertSent)));
+      fs.renameSync(tmp, alertStateFile);
+    } catch (e) {}
+  };
   let _alertBusy = false;
   async function maybeAlert() {
     if (!alertCfg.webhook || _alertBusy) return; // overlapping calls (scheduled tick + manual refresh) posted duplicates
@@ -706,6 +718,7 @@ function createApp(opts) {
         catch (e) { for (const a of due) _alertSent.delete(a.key); console.warn('[ledger] alert webhook failed: ' + e.message); } // failed post re-arms
       }
       for (const [k, ts] of _alertSent) if (now - ts > 7 * 86400e3) _alertSent.delete(k); // day-scoped keys otherwise accrete forever
+      saveAlertState();
     } finally { _alertBusy = false; }
   }
   async function runScheduledRefresh() {
@@ -737,7 +750,16 @@ function createApp(opts) {
     const monday = Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - dow);
     const tag = new Date(monday).toISOString().slice(0, 10);
     const file = path.join(reportsDir, 'weekly-' + tag + '.json');
-    if (fs.existsSync(file)) return null; // this week's digest already written
+    if (fs.existsSync(file)) {
+      // already written — but a digest whose webhook post failed is retried on the next
+      // scheduled run instead of being lost until someone reads the reports dir
+      try {
+        const prevD = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (alertCfg.webhook && prevD && prevD.webhookSent === false)
+          return { file, digest: prevD, text: digestText(prevD), resend: true };
+      } catch (e) {}
+      return null;
+    }
     setEngineState({});
     const { trades } = ensureTrades();
     const WEEK = 7 * 86400000;
@@ -754,6 +776,7 @@ function createApp(opts) {
       n: wk.length, net: +sumNet(wk).toFixed(2), prevN: prev.length, prevNet: +sumNet(prev).toFixed(2),
       stats: s, best: best ? { coin: best.symbol || best.coin, net: best.net } : null,
       worst: worst ? { coin: worst.symbol || worst.coin, net: worst.net } : null,
+      webhookSent: !alertCfg.webhook, // no webhook configured counts as nothing pending
     };
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(digest, null, 2)); fs.renameSync(tmp, file);
@@ -761,22 +784,32 @@ function createApp(opts) {
       const files = fs.readdirSync(reportsDir).filter(f => /^weekly-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
       while (files.length > 26) fs.unlinkSync(path.join(reportsDir, files.shift()));
     } catch (e) {}
+    return { file, text: digestText(digest), digest };
+  }
+  // one text builder for fresh digests and webhook retries alike
+  function digestText(d) {
     const money = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
-    // the window is [monday-7d, monday) — the week ENDS on the Sunday before `tag`
-    const endTag = new Date(monday - 86400000).toISOString().slice(0, 10);
-    const text = '📒 Week ending ' + endTag + ': ' + digest.n + ' trades, net ' + money(digest.net)
+    const s = d.stats;
+    const endTag = new Date(d.to - 86400000).toISOString().slice(0, 10); // the window is [from, to) — it ENDS the Sunday before `to`
+    return '📒 Week ending ' + endTag + ': ' + d.n + ' trades, net ' + money(d.net)
       + (s ? ' · win rate ' + Math.round((s.winRate || 0) * 100) + '% · expectancy ' + money(s.expectancy || 0) + '/trade · fees ' + money(s.fees || 0) : '')
-      + ' · prior week ' + money(digest.prevNet) + ' over ' + digest.prevN + ' trades'
-      + (digest.best ? ' · best ' + digest.best.coin + ' ' + money(digest.best.net) : '')
-      + (digest.worst ? ' · worst ' + digest.worst.coin + ' ' + money(digest.worst.net) : '');
-    return { file, text, digest };
+      + ' · prior week ' + money(d.prevNet) + ' over ' + d.prevN + ' trades'
+      + (d.best ? ' · best ' + d.best.coin + ' ' + money(d.best.net) : '')
+      + (d.worst ? ' · worst ' + d.worst.coin + ' ' + money(d.worst.net) : '');
   }
   function maybeDigest() {
     try {
       const d = weeklyDigest();
       if (d) {
-        console.log('[ledger] weekly digest written: ' + d.file);
-        if (alertCfg.webhook) postWebhook(alertCfg.webhook, d.text).catch(e => console.warn('[ledger] digest webhook failed: ' + e.message));
+        if (!d.resend) console.log('[ledger] weekly digest written: ' + d.file);
+        if (alertCfg.webhook) postWebhook(alertCfg.webhook, d.text)
+          .then(() => { // mark sent so the next run doesn't repeat it
+            try { d.digest.webhookSent = true;
+              const tmp = d.file + '.tmp';
+              fs.writeFileSync(tmp, JSON.stringify(d.digest, null, 2)); fs.renameSync(tmp, d.file);
+            } catch (e) {}
+          })
+          .catch(e => console.warn('[ledger] digest webhook failed (will retry next run): ' + e.message));
       }
     } catch (e) { console.warn('[ledger] weekly digest failed: ' + ((e && (e.msg || e.message)) || e)); }
   }

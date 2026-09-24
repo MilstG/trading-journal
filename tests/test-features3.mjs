@@ -39,7 +39,6 @@ const unpackFillCache = evalFn('unpackFillCache');
 const MiniPDF = evalClass('MiniPDF');
 globalThis.MiniPDF = MiniPDF;
 const renderDiagPdfDoc = evalFn('renderDiagPdfDoc');
-const hip3CoinShape = evalFn('hip3CoinShape');
 
 const DAY = 86400000;
 
@@ -349,17 +348,9 @@ await t('validFillCache accepts both v2 and v3, rejects junk', () => {
   ok(!validFillCache(addr, { v: 2, fills: [{ nope: 1 }], last: 1 }), 'fill shape');
 });
 
-console.log('\nHIP-3 verification + wiring guards (#7 and UI plumbing)');
-await t('hip3CoinShape still classifies bare / prefixed / empty', () => {
-  ok(hip3CoinShape('dex', ['dex:AAA', 'dex:BBB']) === 'prefixed', 'prefixed');
-  ok(hip3CoinShape('dex', ['AAA']) === 'bare', 'bare');
-  ok(hip3CoinShape('dex', []) === 'empty', 'empty');
-});
-await t('live shape verification is persisted and surfaced in the load status', () => {
-  ok(html.includes("idbSet('hip3shape:'+dex"), 'persistence write missing');
-  ok(html.includes('_hip3Notes.push({dex,shape})'), 'note collection missing');
-  ok(html.includes('HIP-3 verified live'), 'status surfacing missing');
-});
+console.log('\nHIP-3 wiring guards (UI plumbing)');
+// (the one-shot coin-shape verification scaffolding was removed once the live shape was
+// confirmed; the normalizer in mapClearinghouse still handles bare and prefixed coins)
 await t('fill cache read/write routes through pack/unpack in loadAll and backup', () => {
   ok(html.includes('await idbSet(fcKey,await packFillCache(fills,lastT))'), 'write path');
   ok(html.includes('fcache=await unpackFillCache(await idbGet(fcKey))'), 'read path');
