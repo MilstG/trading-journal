@@ -1,5 +1,12 @@
 # Third-pass audit & roadmap — September 24, 2026
 
+> **Status: addressed.** Every fix (F1–F12) and improvement (I1–I4) below landed, and all
+> ten roadmap features shipped in the same wave: the Telegram bot (delivery + read-only
+> commands), fee-tier optimizer, weekly review wizard + lessons library, unplanned-trading
+> guardrail, server-held backups, variance expectations, risk-creep detector, demo mode,
+> tab-visible tripwire notifications, and `GET /api/v1/metrics`. 358 tests / 18 suites
+> green at the merged revision.
+
 Scope: adversarial review of the second fix/feature wave (the 10 commits it landed in),
 plus a repo-hygiene sweep and a product-level roadmap now that two full audit cycles have
 hardened the fundamentals. Findings were verified by reading each changed function in full

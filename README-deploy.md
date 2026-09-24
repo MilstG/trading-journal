@@ -72,6 +72,8 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ALERT_LIQ_PCT`        | `10`                             | Alert when a position is within this % of liquidation |
 | `ALERT_DAILY_LOSS`     | *(app's saved rule)*             | $ daily-loss alert threshold |
 | `ALERT_FUNDING_24H`    | *(unset = off)*                  | Alert when funding paid per 24h exceeds this $ |
+| `TELEGRAM_BOT_TOKEN`   | *(unset)*                        | Telegram bot (from @BotFather): alert/digest delivery + read-only commands |
+| `TELEGRAM_CHAT_ID`     | *(unset)*                        | Comma-separated chat-id allowlist; other chats are ignored silently |
 
 The analytics API, scheduled refresh, alerts, and weekly digests are documented
 in the main [README](README.md).
