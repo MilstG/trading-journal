@@ -222,7 +222,8 @@ fees, daily P&L, best and worst markets and hours; deeper insights unlock with
 level. **See in-depth stats** opens the full picture for the same range: equity
 curve and drawdown, results/risk/consistency figures, what each Discipline slip
 cost against clean trades, plan vs execution, how trades land, P&L by hour and
-weekday, and tables by market, side, position size, holding time and month;
+weekday, fees and funding, and tables by market, side, position size, holding
+time, month, market volatility and trend;
 **How the scores work** spells out every formula), **Check-in** (readiness, today's trade cap,
 loss limit and plan) and **Progress** (level, XP, streak and shields, the
 weekly challenge, badges, share cards). A quick journal screen rates and notes
@@ -275,10 +276,51 @@ shields, **good moments** (the times you followed a rule that usually costs you)
 and **saved you** estimates. Today shows **live nudges** when a trigger you
 tend to slip after is happening right now (a fresh loss, a fast re-entry).
 
-**Badges.** About 280 badges in 44 families (discipline, consistency,
+**Badges.** About 270 badges in 45 families (discipline, consistency,
 journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
 on a public **badge page** at `/b/<name>` to share.
+
+**Tilt meter and quiet mode.** A live reading (0–100) on Today of the triggers
+that come before a blow-up: losses in a row (30 points at three), a loss in the
+last 15 minutes (20), entries at 1.5× your usual size (15), four entries in an
+hour or twice your usual day (15), three quarters of your risk budget used (10)
+and low readiness from the check-in (10). Profit plays no part. At 65 a new
+loss or entry turns on **quiet mode**: a full-screen card that lists what pushed
+the reading up, brings back the lesson you wrote about that slip, and offers a
+15-minute break with a countdown (or "I'm calm"). One answer covers one episode.
+Optionally the browser notifies you when it happens.
+
+**Market conditions.** Each day is tagged from BTC's daily candles: *volatile*,
+*normal* or *quiet* (the day's high–low range against the median of the 30 days
+before) and *trending up/down*, *mixed* or *choppy* (the 7-day efficiency ratio:
+net move over the sum of daily moves). In-depth stats breaks results down by
+volatility and by trend and says so when you lose in one and make it back in
+another ("You lose on volatile days … and make it back on normal days"); Today's
+**Right now** shows today's conditions and how you do on days like it.
+
+**Lessons library.** Each review's lesson line and its mistake answer become
+lessons (you can add your own). They come back on Today after 1, 3, 7, 14, 30 and
+60 days: "I still live by it" moves one to the next step, "I slipped on it"
+restarts it tomorrow; one kept through all six is kept for good. Lessons are
+tagged with the slip they're about (from their words or that day's slips), and
+quiet mode shows the one that matches what's tilting you.
+
+**Process goals.** Up to three at a time, on Progress: a month's Discipline
+average (70/80/90, at least five trading days), weeks without one slip (2/4/8;
+the clock restarts after one), a share of the month's trades journaled, a
+number of check-ins in the month, or weeks inside your loss limit. Each shows a
+progress ring and on-track / behind; reaching one earns the **Goal getter**
+badge family.
+
+**Trade charts.** Every card on the quick journal screen carries a candle chart
+of the trade (the same cached candles as the excursion scan) with entry and exit
+marked and your written stop and target drawn in.
+
+**Fees and funding.** In-depth stats shows your maker share of volume, average
+fee in basis points, fees against your result on price and funding paid, with
+one line each when it matters — e.g. how much entering half your taker volume
+with limit orders would have kept.
 
 **AI coach.** With `COACH_AI=1`, a **Coach** tab lets members chat with Claude
 about their trading, within a daily allowance (10 messages by default; the owner

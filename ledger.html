@@ -658,6 +658,22 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-planrow{padding:8px 0;border-top:1px solid var(--pz-line);align-items:center}
 .pz-pos{display:flex;flex-direction:column;gap:3px;padding:8px 0;border-top:1px solid var(--pz-line)}
 .pz-nowrow{display:flex;gap:10px;align-items:flex-start;padding:6px 0}
+.pz-tilt{display:flex;flex-direction:column;gap:8px}
+.pz-snap{min-height:0}
+.pz-snapsvg{display:block;width:100%;height:auto;background:#0E1216;border-radius:10px!important}
+.pz-snapph{display:flex;align-items:center;gap:8px;height:60px;font-size:12px;color:var(--pz-muted)}
+.pz-goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.pz-goal{display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--pz-line);border-radius:14px!important}
+.pz-goalform{display:flex;flex-direction:column;gap:10px;max-width:420px}
+.pz-tiltbar{position:relative;height:8px;border-radius:4px!important;background:linear-gradient(90deg,#3FE0A0 0 35%,#F4C04E 35% 65%,#FF7A59 65% 100%);opacity:.9;margin:4px 0}
+.pz-tiltbar>i{position:absolute;top:-4px;width:4px;height:16px;margin-left:-2px;border-radius:2px!important;background:var(--pz-text);box-shadow:0 0 0 2px var(--pz-card)}
+body.pz-quiet-on{overflow:hidden}
+.pz-quiet{position:fixed;inset:0;z-index:90;background:rgba(6,8,10,.96);display:flex;align-items:center;justify-content:center;padding:24px 16px;overflow:auto}
+.pz-quiet>div{max-width:460px;width:100%;display:flex;flex-direction:column;gap:14px;text-align:center;align-items:center}
+.pz-quiet .pz-qico{width:72px;height:72px;border-radius:36px!important;display:flex;align-items:center;justify-content:center;background:#2A1712;color:#FF7A59}
+.pz-quiet ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;width:100%;text-align:left}
+.pz-quiet li{background:var(--pz-card);border:1px solid var(--pz-line);border-radius:12px!important;padding:10px 12px;font-size:14px;display:flex;justify-content:space-between;gap:10px}
+.pz-quiet .pz-qtime{font-family:var(--pz-num);font-size:56px;font-weight:600;letter-spacing:.02em;line-height:1}
 .pz-nowrow>i{width:8px;height:8px;border-radius:50%!important;margin-top:6px;flex:0 0 auto}
 .pz-wk{display:flex;flex-direction:column}
 .pz-wkr{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--pz-line);text-decoration:none;color:var(--pz-text)!important;font-size:13px}
@@ -985,7 +1001,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   if(/^https?:$/.test(location.protocol)){ var l=document.querySelector('link[rel="manifest"]'); if(l)l.setAttribute('href','/pulse.webmanifest'); }
 }catch(e){} })();
 </script>
-<div id="pz"><div id="pzView"></div><div id="pzSheet"></div><div id="pzNote" class="pz-note" role="status" aria-live="polite"></div></div>
+<div id="pz"><div id="pzView"></div><div id="pzSheet"></div><div id="pzQuiet"></div><div id="pzNote" class="pz-note" role="status" aria-live="polite"></div></div>
 <div class="wrap">
   <header>
     <div class="brand"><h1>Ledger</h1></div>
@@ -1327,14 +1343,16 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     if(data.settings){ if('riskDefault' in data.settings)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout;
+      if(data.settings.pzLessons&&typeof data.settings.pzLessons==='object')settings.pzLessons=pzLessonsNorm(data.settings.pzLessons);
+      if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -1381,7 +1399,21 @@ function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMa
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
 // wins there, as before).
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket','pzLayout'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals'];
+// lessons and goals are lists edited on several devices: a conflict merges them by id instead of
+// letting one device's copy replace the other's (the newest change to an item wins; removals stick)
+function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }
+function _syncMerge(k, mine, theirs){
+  if(k==='pzGoals'){ const by=new Map(); for(const g of [...(Array.isArray(theirs)?theirs:[]),...(Array.isArray(mine)?mine:[])]){ if(!g||typeof g.id!=='string')continue;
+      const o=by.get(g.id); if(!o){ by.set(g.id,Object.assign({},g)); continue; } const m=Object.assign({},(g.at||0)>=(o.at||0)?o:g,(g.at||0)>=(o.at||0)?g:o);
+      for(const f of ['done','missed','cleared','dropped'])m[f]=o[f]||g[f]||m[f]; by.set(g.id,m); }
+    return [...by.values()].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)).slice(-40); }
+  if(k==='pzLessons'){ const a=pzLessonsNorm(mine), b=pzLessonsNorm(theirs), items=Object.assign({},b.items);
+    for(const [id,v] of Object.entries(a.items)){ const o=items[id]; items[id]=!o||(v.at||0)>=(o.at||0)?Object.assign({},v,{off:v.off||(o&&o.off)}):Object.assign({},o,{off:o.off||v.off}); }
+    const own=new Map(); for(const o of [...b.own,...a.own])own.set(o.id,o);
+    return Object.assign({},b,a,{items,own:[...own.values()].slice(-300),since:Math.min(a.since||Infinity,b.since||Infinity)===Infinity?undefined:Math.min(a.since||Infinity,b.since||Infinity)}); }
+  return mine;
+}
 function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; return JSON.parse(JSON.stringify(o)); }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); vaultSchedule(); }
 // A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min).
@@ -1422,7 +1454,7 @@ async function writeServer(){
         if(_lastSyncedS){
           let sChanged=false;
           for(const k of _SYNC_S_FIELDS){
-            if(JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])){ settings[k]=localS[k]; sChanged=true; }
+            if(JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])){ settings[k]=_syncMerge(k,localS[k],settings[k]); sChanged=true; }
           }
           if(sChanged){ await rawSet(S_KEY,settings); merged=true; }
         }
@@ -8868,7 +8900,7 @@ function challengeStatus(res, ended){
 let _gameMemo={key:null,g:null};
 function gameContext(){
   const ctx=coachContext();
-  const key=_coachMemo.key+'|'+_jrev+'|'+PZ_CFG.rev;
+  const key=_coachMemo.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0);
   if(_gameMemo.key===key)return _gameMemo.g;
   const X=pzXpCfg();
   const now=Date.now(), nowWeek=isoWeekOfKey(dayKey(now));
@@ -9200,6 +9232,302 @@ function pzLoad(trades, todayK, dayOf){
   const rN=medN?n/medN:0, rV=medV?v/medV:0, ratio=Math.max(rN,rV);
   return {score:Math.round(Math.min(100,ratio*50)),ratio,n,v,medN,medV,rN,rV,days:ks.length};
 }
+// ---- market regimes: each day tagged by how BTC moved — calm or wild, trending or choppy ----
+// Read from BTC daily candles. Volatility is the day's high–low range against the median of the
+// 30 days before it; trend is the 7-day efficiency ratio (the net move over the sum of the daily
+// moves): near 1 is a clean trend, near 0 is chop. Days are UTC, like the candles. Pure.
+const PZ_VOL={low:'Quiet days',normal:'Normal days',high:'Volatile days'}, PZ_TREND={up:'Trending up',down:'Trending down',mixed:'Mixed',chop:'Choppy'};
+function pzRegimes(candles, now){
+  const c=(candles||[]).filter(x=>x&&x[3]>0).slice().sort((a,b)=>a[0]-b[0]), out={};
+  // a day still in progress has had less time to move: a range grows roughly with the square
+  // root of time, so today's is scaled up by √(day ÷ time elapsed) before it's compared
+  const rng=c.map(x=>{ const r=(x[1]-x[2])/x[3], f=now&&now-x[0]<86400000?Math.max(0.1,(now-x[0])/86400000):1; return f<1?r/Math.sqrt(f):r; });
+  for(let i=0;i<c.length;i++){
+    const prev=rng.slice(Math.max(0,i-30),i).filter(x=>x>0), med=prev.length>=10?nfMedian(prev):null;
+    const r=med&&rng[i]>0?rng[i]/med:null;
+    let trend=null, er=null;
+    if(i>=7){ let path=0; for(let j=i-6;j<=i;j++)path+=Math.abs(c[j][3]-c[j-1][3]); const move=c[i][3]-c[i-7][3]; er=path>0?Math.abs(move)/path:0;
+      trend=er>=0.5?(move>0?'up':'down'):er<=0.25?'chop':'mixed'; }
+    out[new Date(c[i][0]).toISOString().slice(0,10)]={vol:r==null?null:r>=1.4?'high':r<=0.7?'low':'normal',trend,ratio:r,er,range:rng[i]};
+  }
+  return out;
+}
+const pzUtcDay=ms=>new Date(ms).toISOString().slice(0,10);
+// BTC daily candles, cached like trade candles; today's (still moving) candle is always refetched
+const PZ_REG={map:null,at:0,busy:false};
+// worth (re)loading: never loaded, an hour old, or a new UTC day the map doesn't have yet (with a
+// five-minute pause after a failure, so being offline doesn't mean a request on every screen)
+function pzRegimeWant(){ const now=Date.now(), m=PZ_REG.map, fresh=m&&m[pzUtcDay(now)];
+  if(PZ_REG.busy)return; if(fresh?now-PZ_REG.at>3600000:now-PZ_REG.at>300000)pzRegimeLoad(); }
+async function pzRegimeLoad(){
+  if(PZ_REG.busy||!allTrades.length||typeof hlPost!=='function')return;
+  PZ_REG.busy=true;
+  try{ const now=Date.now(), DAY=86400000; let first=Infinity; for(const t of allTrades)if(t.openTime&&t.openTime<first)first=t.openTime;
+    if(!isFinite(first))first=now-90*DAY;
+    const a=Math.max(first-45*DAY,now-1800*DAY), k='cnd:'+excKey('BTC','1d');
+    let cache=null; try{ cache=await idbGet(k); }catch(e){}
+    if(!cache||cache.v!==1||!Array.isArray(cache.candles)||!Array.isArray(cache.ranges))cache={v:1,candles:[],ranges:[]};
+    const settled=Math.floor(now/DAY)*DAY-DAY; // candles before yesterday's open don't change any more
+    const covered=cache.ranges.map(r=>[r[0],Math.min(r[1],settled)]).filter(r=>r[1]>r[0]);
+    for(const u of uncoveredRanges([a,now],covered)){ if(u[1]-u[0]<DAY/2)continue;
+      const f=await fetchCandles('BTC','1d',u[0],u[1]); cache.candles=mergeCandles(cache.candles,f.rows);
+      if(f.coveredTo>u[0]){ covered.push([u[0],f.coveredTo]); cache.ranges=mergeRanges(covered,1); } }
+    try{ await idbSet(k,cache); }catch(e){}
+    const m=pzRegimes(cache.candles,now), before=JSON.stringify(PZ_REG.map&&PZ_REG.map[pzUtcDay(now)]||null)+(PZ_REG.map?Object.keys(PZ_REG.map).length:0);
+    PZ_REG.map=m; PZ_REG.at=now;
+    if(JSON.stringify(m[pzUtcDay(now)]||null)+Object.keys(m).length!==before&&PZ)pzRender();
+  }catch(e){ console.warn('regimes',e); PZ_REG.at=Date.now(); }
+  finally{ PZ_REG.busy=false; }
+}
+function pzRegimeOf(ms){ const m=PZ_REG.map; return m?m[pzUtcDay(ms)]||null:null; }
+// the regime you trade worst and best in, when the gap is real (5+ trades on each side)
+function pzRegimeInsight(rows, names){
+  const ok=(rows||[]).filter(r=>r.n>=5&&r.avg!=null); if(ok.length<2)return null;
+  const s=[...ok].sort((a,b)=>a.avg-b.avg), lo=s[0], hi=s[s.length-1];
+  if(lo.avg>=0||hi.avg<=0)return null;
+  return {lo,hi,text:`You lose on ${names[lo.k].toLowerCase()} (avg ${signedPlain(lo.avg)} over ${lo.n} trades) and make it back on ${names[hi.k].toLowerCase()} (avg ${signedPlain(hi.avg)} over ${hi.n}).`};
+}
+// ---- costs: what fees and funding take, and the one change that would keep more of it ----
+// pnl is the price result, fees and funding are the costs (funding: + received, − paid). Maker and
+// taker notional come from each fill's crossed flag; rates fall back to Hyperliquid's base tier. Pure.
+function pzCostStats(trades){
+  let price=0,fees=0,fund=0,paid=0,mkN=0,tkN=0,mkF=0,tkF=0,unN=0;
+  for(const t of trades||[]){ price+=+t.pnl||0; fees+=+t.fees||0; const f=+t.funding||0; fund+=f; if(f<0)paid-=f;
+    mkN+=+t.makerNotional||0; tkN+=+t.takerNotional||0; mkF+=+t.makerFee||0; tkF+=+t.takerFee||0; unN+=+t.unkNotional||0; }
+  // maker share is over fills that say which side they were; fees per volume over all of it
+  const known=mkN+tkN, vol=known+unN, tkRate=tkN>0&&tkF>0?tkF/tkN:0.00045, mkRate=mkN>0?mkF/mkN:Math.min(tkRate,0.00015);
+  const r={price,fees,fund,paid,vol,makerShare:known?mkN/known:null,feeBps:vol?fees/vol*1e4:null,
+    drag:price>0?fees/price:null,fundShare:price>0&&paid>0?paid/price:null,save:Math.max(0,tkN*(tkRate-mkRate)*0.5),advice:[]};
+  if(r.makerShare!=null&&r.makerShare<0.3&&r.save>=5)r.advice.push(`${Math.round((1-r.makerShare)*100)}% of your volume paid taker fees. Entering half of it with limit orders would have kept about ${usdPlain(r.save)}.`);
+  if(r.drag!=null&&r.drag>=0.25)r.advice.push(`Fees took ${Math.round(r.drag*100)}% of what your trades made on price. Fewer trades with more room to run keep more of it.`);
+  else if(price<=0&&fees>0)r.advice.push(`Your trades lost on price before costs; fees added ${usdPlain(fees)} on top. Cutting the weakest setups cuts both.`);
+  if(r.fundShare!=null&&r.fundShare>=0.1)r.advice.push(`Funding cost ${usdPlain(paid)} — ${Math.round(r.fundShare*100)}% of your price profit. Holding the crowded side through funding is a cost; time the hold or size it smaller.`);
+  if(!r.advice.length&&vol)r.advice.push(fund>0?`Costs are in hand, and funding paid you ${usdPlain(fund)}.`:'Costs are in hand: no change would make a real difference here.');
+  return r;
+}
+function pzCostHtml(tr){
+  const c=pzCostStats(tr); if(!c.vol&&!c.fees)return '';
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Fees and funding</b>
+    ${c.makerShare!=null?`<div class="pz-row-t" title="Share of your traded volume that rested on the book (maker) instead of crossing the spread (taker)"><span>Maker share of volume</span><b>${Math.round(c.makerShare*100)}%</b></div>`:''}
+    ${c.feeBps!=null?`<div class="pz-row-t" title="Fees per $10,000 traded (basis points)"><span>Average fee</span><b>${c.feeBps.toFixed(1)} bps</b></div>`:''}
+    <div class="pz-row-t"><span>Fees vs result on price</span><b style="color:${c.drag!=null&&c.drag>=0.25?PZ_COL.low:'var(--pz-text)'}">${c.drag!=null?Math.round(c.drag*100)+'% of '+esc(usdPlain(c.price)):esc(usdPlain(c.fees))+' on a '+esc(signedPlain(c.price))+' price result'}</b></div>
+    <div class="pz-row-t"><span>Funding</span><b style="color:${pzSignCol(c.fund)}">${esc(signedPlain(c.fund))}${c.paid?' · '+esc(usdPlain(c.paid))+' paid':''}</b></div>
+    ${c.advice.map(a=>`<p class="pz-sub" style="font-size:13px;margin-top:4px">${esc(a)}</p>`).join('')}</section>`;
+}
+// ---- a chart on every journal card: candles around the trade, with entry, exit, stop and target ----
+const PZ_SNAP={}, _pzSnapQ=[]; let _pzSnapBusy=false;
+function pzSnapSvg(t, candles, ms, plan){
+  if(!candles||candles.length<2)return '';
+  // at most 80 candles: merge neighbours on long trades
+  const k=Math.max(1,Math.ceil(candles.length/80)), cs=[];
+  for(let i=0;i<candles.length;i+=k){ const g=candles.slice(i,i+k), o=g[0][4]!=null?g[0][4]:(i?candles[i-1][3]:g[0][3]);
+    cs.push({t:g[0][0],h:Math.max(...g.map(x=>x[1])),l:Math.min(...g.map(x=>x[2])),c:g[g.length-1][3],o}); }
+  const W=340, H=150, L=6, R=58, T=8, B=16, pw=W-L-R, ph=H-T-B, step=pw/cs.length;
+  const lv=[t.avgEntry,t.isOpen?null:t.avgExit,plan&&plan.stop,plan&&plan.target].filter(v=>v>0);
+  let lo=Math.min(...cs.map(x=>x.l),...lv), hi=Math.max(...cs.map(x=>x.h),...lv); const pad=(hi-lo)*0.06||hi*0.001; lo-=pad; hi+=pad;
+  const Y=v=>T+ph*(hi-v)/(hi-lo), X=ms0=>L+pw*Math.max(0,Math.min(1,(ms0-cs[0].t)/((cs[cs.length-1].t+ms*k)-cs[0].t)));
+  const fx=n=>n.toFixed(1), px=v=>{ const d=v>=100?2:v>=1?4:6; return (+v).toFixed(d).replace(/\.?0+$/,''); };
+  const body=cs.map((x,i)=>{ const up=x.c>=x.o, col=up?'#2E9E74':'#B5533C', cx=L+step*(i+0.5), w=Math.max(1,step*0.62);
+    return `<line x1="${fx(cx)}" x2="${fx(cx)}" y1="${fx(Y(x.h))}" y2="${fx(Y(x.l))}" stroke="${col}" stroke-width="1"/><rect x="${fx(cx-w/2)}" y="${fx(Y(Math.max(x.o,x.c)))}" width="${fx(w)}" height="${fx(Math.max(1,Math.abs(Y(x.o)-Y(x.c))))}" fill="${col}"/>`; }).join('');
+  // labels sit at their line, nudged apart so two close prices stay readable
+  const labs=[], win=t.net>=0, line=(v,col,dash,lab)=>{ if(!(v>0))return ''; labs.push({y:Y(v),col,lab}); return `<line x1="${L}" x2="${W-R}" y1="${fx(Y(v))}" y2="${fx(Y(v))}" stroke="${col}" stroke-width="1.5"${dash?` stroke-dasharray="${dash}"`:''}/>`; };
+  const vx=(ms0,col)=>`<line x1="${fx(X(ms0))}" x2="${fx(X(ms0))}" y1="${T}" y2="${H-B}" stroke="${col}" stroke-width="1" stroke-dasharray="2 3" opacity=".8"/>`;
+  return `<svg class="pz-snapsvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(dispMarket(dcoin(t)))} price around the trade: entry ${px(t.avgEntry)}${t.isOpen?'':', exit '+px(t.avgExit)}${plan&&plan.stop>0?', stop '+px(plan.stop):''}${plan&&plan.target>0?', target '+px(plan.target):''}">
+    ${body}${vx(t.openTime,'#F4C04E')}${t.isOpen?'':vx(t.closeTime,win?'#3FE0A0':'#FF7A59')}
+    ${line(plan&&plan.stop,'#FF7A59','2 3','stop')}${line(plan&&plan.target,'#3FE0A0','2 3','target')}${line(t.avgEntry,'#F4C04E','','in '+px(t.avgEntry))}${t.isOpen?'':line(t.avgExit,win?'#3FE0A0':'#FF7A59','','out '+px(t.avgExit))}
+    ${(()=>{ labs.sort((a,b)=>a.y-b.y); for(let i=1;i<labs.length;i++)if(labs[i].y-labs[i-1].y<11)labs[i].y=labs[i-1].y+11;
+      const over=labs.length?labs[labs.length-1].y-(H-B):0; if(over>0)labs.forEach(l=>{ l.y-=over; });
+      return labs.map(l=>`<text x="${W-R+4}" y="${fx(l.y+4)}" font-size="10" font-weight="700" fill="${l.col}">${esc(l.lab)}</text>`).join(''); })()}
+    <text x="${L}" y="${H-3}" font-size="10" fill="#8B95A1">${esc(dayLabel(dayKey(cs[0].t)))}</text></svg>`;
+}
+function pzSnapHtml(t){
+  const s=PZ_SNAP[t.id];
+  if(!s){ pzSnapWant(t); return '<div class="pz-snapph"><span class="pz-spin"></span>Loading the chart…</div>'; }
+  if(s.st==='busy')return '<div class="pz-snapph"><span class="pz-spin"></span>Loading the chart…</div>';
+  if(s.st!=='ok'){ if(Date.now()-(s.at||0)>5*60000){ delete PZ_SNAP[t.id]; return pzSnapHtml(t); } return ''; }
+  return pzSnapSvg(t,s.c,s.ms,typeof nfPlan==='function'?nfPlan(journal[t.id]):null);
+}
+function pzSnapWant(t){ if(PZ_SNAP[t.id]||typeof ensureTradeCandles!=='function')return; PZ_SNAP[t.id]={st:'busy'}; _pzSnapQ.push(t); pzSnapRun(); }
+async function pzSnapRun(){
+  if(_pzSnapBusy)return; _pzSnapBusy=true;
+  try{ while(_pzSnapQ.length){ const t=_pzSnapQ.shift(); let r=null; try{ r=await ensureTradeCandles(t); }catch(e){}
+      PZ_SNAP[t.id]=r&&r.candles&&r.candles.length>=2?{st:'ok',c:r.candles,ms:r.itv.ms}:{st:'none',at:Date.now()};
+      const el=document.querySelector('[data-pz-snap="'+CSS.escape(t.id)+'"]'); if(el)el.innerHTML=pzSnapHtml(t); } }
+  finally{ _pzSnapBusy=false; }
+}
+// ---- process goals: targets for how you trade, never for what you make ----
+// disc: a month's Discipline average · noslip: N weeks without one slip · journal: share of a month's
+// trades journaled · checkin: check-ins in a month · limit: N weeks inside your loss limit.
+const PZ_GOAL_KINDS={
+  disc:{title:g=>'Discipline average of '+g.target+'+ in '+pzMonthName(g.month),targets:[70,80,90],month:1},
+  noslip:{title:g=>'No '+PZ_SLIP_TOPIC[g.slip]+' for '+g.target+' weeks',targets:[2,4,8]},
+  journal:{title:g=>'Journal '+g.target+'% of trades in '+pzMonthName(g.month),targets:[80,90,100],month:1},
+  checkin:{title:g=>'Check in on '+g.target+' days in '+pzMonthName(g.month),targets:[10,15,20],month:1},
+  limit:{title:g=>'Inside your loss limit every day for '+g.target+' weeks',targets:[2,4,8]}};
+const pzMonthName=m=>new Date(Date.UTC(+m.slice(0,4),+m.slice(5,7)-1,1)).toLocaleString('en-US',{month:'long',timeZone:'UTC'});
+const pzMonthEnd=m=>new Date(Date.UTC(+m.slice(0,4),+m.slice(5,7),0)).toISOString().slice(0,10);
+const pzDaysBetween=(a,b)=>Math.round((Date.parse(b+'T00:00:00Z')-Date.parse(a+'T00:00:00Z'))/86400000);
+// progress for one goal. x = {days (trading days, oldest first), J (journal), closed, today, dayOf, journaled}. Pure.
+function pzGoalEval(g, x){
+  const today=x.today, inMonth=k=>k.slice(0,7)===g.month, monthOver=!!g.month&&today.slice(0,7)>g.month;
+  if(g.kind==='disc'){ const ds=x.days.filter(d=>inMonth(d.key)), avg=ds.length?Math.round(ds.reduce((a,d)=>a+d.score,0)/ds.length):null, ok=avg!=null&&avg>=g.target&&ds.length>=5;
+    return {pct:avg==null?0:Math.min(1,avg/g.target),now:avg==null?'No trading days yet':avg+' average over '+ds.length+' day'+(ds.length===1?'':'s'),
+      status:monthOver?(ok?'done':'missed'):avg==null||avg>=g.target?'on':'behind',note:ds.length<5&&!monthOver?'Counts once you’ve traded 5 days this month.':''}; }
+  if(g.kind==='journal'){ const tr=x.closed.filter(t=>inMonth(x.dayOf(t.closeTime))), j=tr.filter(t=>x.journaled(x.J[t.id])).length, sh=tr.length?Math.round(100*j/tr.length):null;
+    return {pct:sh==null?0:Math.min(1,sh/g.target),now:sh==null?'No trades yet':sh+'% · '+j+' of '+tr.length+' trades',status:monthOver?(sh!=null&&sh>=g.target?'done':'missed'):sh==null||sh>=g.target?'on':'behind'}; }
+  if(g.kind==='checkin'){ let n=0; for(const k in x.J){ if(!k.startsWith('day:')||!inMonth(k.slice(4)))continue; const e=x.J[k]; if(e&&(+e.sleep||+e.stress||+e.focus))n++; }
+    const left=g.month===today.slice(0,7)?pzDaysBetween(today,pzMonthEnd(g.month))+1:0;
+    return {pct:Math.min(1,n/g.target),now:n+' of '+g.target+' check-ins',status:n>=g.target?'done':monthOver||n+left<g.target?'missed':'on'}; }
+  // run goals: the clock starts with the goal and restarts after a break. Days you don't trade
+  // never break it, but they don't prove anything either: it also takes three trading days per
+  // week of the target (for the limit goal, trading days with a loss limit set).
+  const span=g.target*7, needT=g.target*3; let from=g.start, broke=null;
+  const counts=d=>g.kind==='noslip'?true:!!(d.parts&&d.parts.limit!=null);
+  for(const d of x.days){ if(d.key<g.start)continue;
+    const bad=g.kind==='noslip'?((d.behavior&&d.behavior.flags&&d.behavior.flags[g.slip])||0)>0:counts(d)&&!!d.breached;
+    if(bad){ broke=d.key; from=d.key; } }
+  const run=Math.max(0,pzDaysBetween(from,today)), traded=x.days.filter(d=>d.key>=g.start&&(broke?d.key>broke:true)&&counts(d)).length;
+  return {pct:Math.min(1,run/span,traded/needT),now:run+' of '+span+' days · '+Math.min(traded,needT)+' of '+needT+' trading days'+(broke?' · restarted '+x.label(broke):''),
+    status:run>=span&&traded>=needT?'done':broke&&run<3?'behind':'on',
+    note:g.kind==='limit'&&!x.days.some(d=>d.key>=g.start&&counts(d))?'Counts the days you trade with a loss limit set in your check-in.':''};
+}
+// goals as synced: only kinds this version knows, no dropped ones
+const pzGoalList=()=>(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&typeof x.id==='string'&&PZ_GOAL_KINDS[x.kind]&&!x.dropped);
+const pzGoalTitle=go=>{ try{ return PZ_GOAL_KINDS[go.kind].title(go); }catch(e){ return 'A goal'; } };
+function pzGoalsCtx(g){ return {days:g.days,J:journal,closed:g.ctx.closed||[],today:dayKey(Date.now()),dayOf:dayKey,journaled:isJournaled,label:dayLabel}; }
+// a goal reached is stamped once (and counts for the Goal getter badge); a missed one stays until cleared
+function pzGoalsSettle(g){
+  const list=pzGoalList(), x=pzGoalsCtx(g); let ch=false;
+  for(const go of list){ if(go.done||go.missed)continue; let e; try{ e=pzGoalEval(go,x); }catch(err){ continue; }
+    if(e.status==='done'){ go.done=Date.now(); ch=true; pzNote('Goal reached: '+pzGoalTitle(go)+'.'); }
+    else if(e.status==='missed'){ go.missed=Date.now(); ch=true; } }
+  if(ch)Store.set(S_KEY,settings);
+}
+function pzGoalsHtml(g){
+  try{ pzGoalsSettle(g); }catch(e){}
+  const list=pzGoalList().filter(x=>!x.cleared), x=pzGoalsCtx(g);
+  const card=go=>{ let e; try{ e=pzGoalEval(go,x); }catch(err){ return ''; }
+    const st=go.done?'done':go.missed?'missed':e.status, col=st==='done'?PZ_COL.good:st==='missed'?PZ_COL.low:st==='behind'?PZ_COL.mid:PZ_COL.risk;
+    return `<div class="pz-goal">${pzRing(st==='done'?'✓':Math.round(e.pct*100)+'%',st==='done'?1:e.pct,col,{size:64})}
+      <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:14px;line-height:1.35">${esc(pzGoalTitle(go))}</b>
+      <span class="pz-sub" style="font-size:12px">${esc(e.now)}</span><span style="font-size:12px;font-weight:700;color:${col}">${st==='done'?'Reached':st==='missed'?'Missed':st==='behind'?'Behind':'On track'}</span>${e.note?`<span class="pz-fine">${esc(e.note)}</span>`:''}</span>
+      <button type="button" class="pz-chip icon" data-pz-goaldel="${esc(go.id)}" aria-label="${go.done||go.missed?'Clear':'Drop'} this goal">${pzI('x',16)}</button></div>`; };
+  const active=list.filter(x=>!x.done&&!x.missed).length, f=pzS.goalNew;
+  const unit=v=>f.kind==='disc'?v+'+ average':f.kind==='journal'?v+'%':f.kind==='checkin'?v+' days':v+' weeks';
+  const form=f?`<div class="pz-goalform"><div class="pz-field"><label for="pzGk" style="font-size:13px">Goal</label><select id="pzGk">${Object.entries({disc:'Discipline average for the month',noslip:'Weeks without a slip',journal:'Share of trades journaled this month',checkin:'Check-ins this month',limit:'Weeks inside your loss limit'}).map(([k,l])=>`<option value="${k}"${f.kind===k?' selected':''}>${l}</option>`).join('')}</select></div>
+      ${f.kind==='noslip'?`<div class="pz-field"><label for="pzGs" style="font-size:13px">Which slip</label><select id="pzGs">${Object.entries(PZ_SLIP_TOPIC).map(([k,l])=>`<option value="${k}"${f.slip===k?' selected':''}>${l[0].toUpperCase()+l.slice(1)}</option>`).join('')}</select></div>`:''}
+      <div class="pz-field"><label for="pzGt" style="font-size:13px">Target</label><select id="pzGt">${PZ_GOAL_KINDS[f.kind].targets.map(v=>`<option value="${v}"${+f.target===v?' selected':''}>${unit(v)}</option>`).join('')}</select></div>
+      <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:42px" id="pzGsave">Set this goal</button><button type="button" class="pz-ghost pz-sm" style="flex:1" id="pzGcancel">Cancel</button></div></div>`
+    :active<3?`<button type="button" class="pz-ghost pz-sm" id="pzGnew" style="width:auto;align-self:flex-start;padding:0 16px">${pzI('plus',14,3)} New goal</button>`:'<p class="pz-fine">Three goals at a time keeps each one meaningful.</p>';
+  return `<section class="pz-card pz-kv pz-span"><div><b class="pz-kvh" style="display:flex;align-items:center;gap:6px">${pzI('target',16)} Process goals</b><span class="pz-sub" style="font-size:12px">How you trade, never what you make</span></div>
+    ${list.length?`<div class="pz-goals">${list.map(card).join('')}</div>`:'<p class="pz-sub" style="font-size:13px">Pick a target for your process: a Discipline average, weeks without revenge entries, every trade journaled. Reaching one earns the Goal getter badge.</p>'}${form}</section>`;
+}
+// ---- lessons: what your evening reviews taught you, brought back before you forget ----
+// Lessons come from each review's “lesson” line and its mistake answers, plus any you add.
+// They come back on a spaced schedule (1, 3, 7, 14, 30, 60 days) until you've kept one through
+// all six, and early when today's tilt matches the slip a lesson was written about.
+const PZ_LESSON_STEPS=[1,3,7,14,30,60];
+const PZ_SLIP_TOPIC={revenge:'revenge entries',afterTwo:'trading on after two losses',sizeUp:'sizing up after a loss',addLoser:'adding to losers',overtrade:'overtrading',heldLoser:'holding losers'};
+const PZ_LESSON_TAGS=[['revenge',/reveng|re-?ent(er|ry)|right after (a|the) loss|win it back/i],['afterTwo',/two loss|2 loss|losing streak|tilt|stop after/i],
+  ['sizeUp',/siz(e|ing)|too big|position size|leverage/i],['overtrade',/overtrad|too many|fewer trades|bored/i],['addLoser',/add(ed|ing)? to (a |my |the )?los|averag(e|ing) down/i],
+  ['heldLoser',/held|holding|stop ?loss|cut (it|losers)|let (it|losers) run/i]];
+function pzLessonTag(text, dayFlags){
+  for(const [k,re] of PZ_LESSON_TAGS)if(re.test(text||''))return k;
+  if(dayFlags){ const top=Object.keys(dayFlags).filter(k=>dayFlags[k]>0).sort((a,b)=>dayFlags[b]-dayFlags[a])[0]; if(top)return top; }
+  return null;
+}
+// every lesson, newest first, with its schedule; st is settings.pzLessons ({items:{id:{step,due,done,off}},own:[{id,text,at}]})
+function pzLessonList(J, st, flagsOf){
+  st=st&&typeof st==='object'?st:{}; const items=st.items&&typeof st.items==='object'?st.items:{}, own=Array.isArray(st.own)?st.own:[], out=[];
+  const add=(id,text,key,at,kind)=>{ text=String(text||'').trim(); if(text.length<3)return; const s=items[id]||{};
+    if(s.off)return; out.push({id,text,key,at,kind,tag:pzLessonTag(text,flagsOf?flagsOf(key):null),step:s.step||0,due:s.due||(at+PZ_LESSON_STEPS[0]*86400000),done:!!s.done}); };
+  for(const k in J){ if(!k.startsWith('day:'))continue; const e=J[k], v=e&&e.eod; if(!v||!v.at)continue; const key=k.slice(4);
+    if(v.lesson)add('d:'+key+':l',v.lesson,key,v.at,'lesson');
+    for(const q in (v.answers||{}))if(/mistake|not to repeat|do differently/i.test(q))add('d:'+key+':m',v.answers[q],key,v.at,'mistake'); }
+  for(const o of own)if(o&&typeof o.id==='string')add(o.id,o.text,o.key||null,o.at||0,'own');
+  // lessons written before resurfacing started don't all come due at once: one a day, oldest first
+  const since=+st.since||0; if(since){ let i=0; for(const l of [...out].sort((a,b)=>a.at-b.at))if(!items[l.id]&&l.at<since)l.due=since+(i++)*86400000; }
+  return out.sort((a,b)=>b.at-a.at);
+}
+function pzLessonsAll(){ let fl=null;
+  // the day lessons started coming back on this account: older lessons are spread one a day from it
+  if(!settings.pzLessons||!settings.pzLessons.since){ settings.pzLessons=Object.assign(pzLessonsNorm(settings.pzLessons),{since:Date.now()}); try{ Store.set(S_KEY,settings); }catch(e){} } try{ const g=gameContext(); fl=k=>{ const d=g.days.find(x=>x.key===k); return d&&d.behavior?d.behavior.flags:null; }; }catch(e){}
+  return pzLessonList(journal,settings.pzLessons,fl); }
+// the one due now, the longest-waiting first
+function pzLessonDue(list, now){ return list.filter(l=>!l.done&&l.due<=now).sort((a,b)=>a.due-b.due)[0]||null; }
+// the lesson that fits this tilt: written about the slip the reading points at, newest first
+const PZ_TILT_SLIP={streak:'afterTwo',revenge:'revenge',size:'sizeUp',pace:'overtrade'};
+function pzLessonFor(T, D, list){
+  const want=new Set((T.reasons||[]).map(r=>PZ_TILT_SLIP[r.k]).filter(Boolean)); if(!want.size)return null;
+  return (list||pzLessonsAll()).find(l=>l.tag&&want.has(l.tag))||null;
+}
+async function pzLessonMark(id, how){
+  const st=settings.pzLessons=pzLessonsNorm(settings.pzLessons); st.items=Object.assign({},st.items);
+  const l=pzLessonsAll().find(x=>x.id===id), cur=Object.assign({step:l?l.step:0},st.items[id]||{}), now=Date.now();
+  if(how==='got'){ cur.step=(cur.step||0)+1; if(cur.step>=PZ_LESSON_STEPS.length)cur.done=true; else cur.due=now+PZ_LESSON_STEPS[cur.step]*86400000; }
+  else if(how==='again'){ cur.step=0; cur.due=now+86400000; cur.done=false; }
+  else if(how==='off'){ cur.off=true; }
+  else if(how==='back'){ cur.done=false; cur.step=0; cur.due=now; }
+  cur.at=now; st.items[id]=cur; await Store.set(S_KEY,settings);
+}
+function pzLessonDueHtml(D){
+  const l=pzLessonDue(pzLessonsAll(),Date.now()); if(!l)return '';
+  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><span class="pz-lbl" style="color:${PZ_COL.xp}">${pzI('book',14)} A lesson to revisit</span><a class="pz-link" href="#lessons" style="min-height:0">All lessons ›</a></div>
+    <p style="margin:0;font-size:16px;line-height:1.45">“${esc(l.text)}”</p><span class="pz-sub" style="font-size:12px">${l.key?'You wrote this '+esc(dayLabel(l.key)):'You added this'}${l.tag?' · about '+esc(PZ_SLIP_TOPIC[l.tag]):''}</span>
+    <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:42px" data-pz-lesson="got" data-id="${esc(l.id)}">I still live by it</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-pz-lesson="again" data-id="${esc(l.id)}">I slipped on it</button></div></section>`;
+}
+function pzLessonsCardHtml(){
+  const L=pzLessonsAll(), due=L.filter(l=>!l.done&&l.due<=Date.now()).length, done=L.filter(l=>l.done).length;
+  return `<a class="pz-card pz-cardlink" href="#lessons"><span class="pz-ico" style="background:#22213A;color:${PZ_COL.xp}">${pzI('book',20)}</span>
+    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">Lessons library</b><span class="pz-sub" style="font-size:12px">${L.length?L.length+' lesson'+(L.length===1?'':'s')+(due?' · '+due+' to revisit':'')+(done?' · '+done+' kept for good':''):'Your evening reviews fill it — one line a night'}</span></span>${pzI('chev',18)}</a>`;
+}
+function pzLessonsHtml(D){
+  const back=`<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a>`;
+  const L=pzLessonsAll(), now=Date.now(), F=pzS.lf||'all', q=(pzS.lq||'').toLowerCase();
+  const shown=L.filter(l=>(F==='due'?!l.done&&l.due<=now:F==='kept'?l.done:true)&&(!q||l.text.toLowerCase().includes(q)));
+  const seg=`<div class="pz-seg" role="group" aria-label="Show">${[['all','All'],['due','To revisit'],['kept','Kept']].map(([k,l])=>`<button type="button" data-pz-lf="${k}" aria-pressed="${F===k}">${l}</button>`).join('')}</div>`;
+  const pg=pzPage('lessons:'+F+':'+q,shown);
+  const row=l=>`<section class="pz-card pz-kv"><p style="margin:0;font-size:15px;line-height:1.45">${esc(l.text)}</p>
+    <div class="pz-kvrow"><span class="pz-sub" style="font-size:12px">${l.key?esc(dayLabel(l.key)):'Added by you'}${l.kind==='mistake'?' · a mistake':''}${l.tag?' · about '+esc(PZ_SLIP_TOPIC[l.tag]):''} · ${l.done?'kept for good':l.due<=now?'to revisit now':'next '+esc(dayLabel(dayKey(l.due)))}</span>
+    <span style="display:flex;gap:10px;flex-wrap:wrap">${!l.done&&l.due<=now?`<button type="button" class="pz-linkbtn" data-pz-lesson="got" data-id="${esc(l.id)}">I still live by it</button><button type="button" class="pz-linkbtn" data-pz-lesson="again" data-id="${esc(l.id)}">I slipped on it</button>`:''}${l.done?`<button type="button" class="pz-linkbtn" data-pz-lesson="back" data-id="${esc(l.id)}">Bring it back</button>`:''}<button type="button" class="pz-linkbtn" data-pz-lesson="off" data-id="${esc(l.id)}" aria-label="Remove this lesson">Remove</button></span></div></section>`;
+  return `${back}${pzHead(L.length+' lesson'+(L.length===1?'':'s'),'Lessons',seg)}
+  <div class="pz-wide"><div class="pz-col">
+    <div class="pz-field"><label for="pzLq" class="pz-sr">Search lessons</label><input type="search" id="pzLq" value="${esc(pzS.lq||'')}" placeholder="Search your lessons" autocomplete="off"></div>
+    ${shown.length?pg.items.map(row).join('')+pg.html:`<section class="pz-card"><p class="pz-sub">${L.length?'Nothing here.':'No lessons yet. Each evening review asks for one line — today’s lesson — and it lands here.'}</p></section>`}</div>
+  <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">Add a lesson</b><div class="pz-field"><label for="pzLnew" class="pz-sr">Lesson</label><textarea id="pzLnew" rows="2" maxlength="200" placeholder="e.g. After two losses, I’m done for the day."></textarea></div>
+      <button type="button" class="pz-ghost" id="pzLadd">Add to my lessons</button></section>
+    <p class="pz-fine">Lessons come back after 1, 3, 7, 14, 30 and 60 days. Say you still live by it and it waits longer; say you slipped and it starts again tomorrow. When your tilt meter runs hot, the lesson you wrote about that slip comes back on the spot.</p></div></div>`;
+}
+// ---- tilt: one live reading of the triggers that come before a blow-up ----
+// Each trigger scores 0–1 and carries a weight; the reading is their weighted sum, 0–100.
+// Profit plays no part: three green trades in a row are not tilt, three red ones can be.
+const PZ_TILT_W={streak:30,revenge:20,size:15,pace:15,risk:10,ready:10};
+const PZ_TILT_HOT=65, PZ_TILT_WARM=35;
+function pzTilt(o){
+  const now=o.now, c=(o.closed||[]).filter(t=>t.closeTime).slice().sort((a,b)=>a.closeTime-b.closeTime);
+  let run=0; for(let i=c.length-1;i>=0&&PZ_LOSS(c[i].net);i--)run++;
+  let lastLoss=null; for(let i=c.length-1;i>=0;i--)if(PZ_LOSS(c[i].net)){ lastLoss=c[i]; break; }
+  const since=lastLoss?Math.max(0,(now-lastLoss.closeTime)/60000):null;
+  const recent=(o.opened||[]).filter(t=>t.openTime&&now-t.openTime>=0&&now-t.openTime<=3600000).length;
+  const sx=o.sizeX, used=o.used, rd=o.ready;
+  const parts=[
+    ['streak',run>=3?1:run===2?0.7:run===1?0.3:0,run+' loss'+(run===1?'':'es')+' in a row'],
+    ['revenge',since==null?0:since<15?1:since<30?0.5:0,since==null?'':Math.round(since)+' min since a loss'],
+    ['size',sx==null?0:sx>=1.5?1:sx>=1.2?0.5:0,sx==null?'':'Entries at '+sx.toFixed(1)+'× your usual size'],
+    ['pace',recent>=4?1:recent>=3?0.6:o.paceX>=2?0.6:0,recent>=3?recent+' entries in the last hour':'Twice your usual number of trades'],
+    ['risk',used==null?0:used>=1?1:used>=0.75?0.6:0,used==null?'':Math.round(used*100)+'% of today’s risk budget used'],
+    ['ready',rd==null?0:rd<40?1:rd<60?0.5:0,rd==null?'':'Readiness '+rd+' from your check-in']];
+  const reasons=parts.filter(p=>p[1]>0).map(([k,v,text])=>({k,pts:Math.round(PZ_TILT_W[k]*v),text})).sort((a,b)=>b.pts-a.pts);
+  const score=Math.min(100,reasons.reduce((a,r)=>a+r.pts,0));
+  return {score,band:score>=PZ_TILT_HOT?'hot':score>=PZ_TILT_WARM?'warm':'calm',reasons,run,since,recent,
+    // what set it off: the latest fill-driven event, so one break covers one episode
+    key:Math.max(lastLoss?lastLoss.closeTime:0,...(o.opened||[]).map(t=>t.openTime||0),0)};
+}
+function pzTiltOf(D){
+  const opened=(D.ctx.trades||[]).filter(t=>t.openTime&&dayKey(t.openTime)===D.todayK);
+  return pzTilt({now:Date.now(),closed:D.risk.closed,opened,sizeX:D.risk.sizeX,paceX:D.load&&D.load.rN,used:D.risk.used,ready:D.ready});
+}
+const pzTiltCol=b=>b==='hot'?PZ_COL.low:b==='warm'?PZ_COL.mid:PZ_COL.good;
 // Plain stats for a window: the full app's computeStats, plus markets, hours and daily P&L.
 function pzStatsFor(trades, fromMs){
   const all=(trades||[]).filter(t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen);
@@ -9264,6 +9592,8 @@ function pzDeepStats(trades, o){
     // from the journal: what you called the setup, and how well you rated your own execution (1–5)
     setups:o.setupOf?group(t=>{ const x=o.setupOf(t); return x?x.toLowerCase():null; },(a,b)=>b.n-a.n).map(r=>Object.assign(r,{label:o.setupOf(tr.find(t=>(o.setupOf(t)||'').toLowerCase()===r.k))})):[],
     ratings:o.ratingOf?group(t=>{ const x=o.ratingOf(t); return x>=1&&x<=5?x:null; },(a,b)=>b.k-a.k):[],
+    vol:o.volOf?group(o.volOf,(a,b)=>['low','normal','high'].indexOf(a.k)-['low','normal','high'].indexOf(b.k)):[],
+    trend:o.trendOf?group(o.trendOf,(a,b)=>['up','down','mixed','chop'].indexOf(a.k)-['up','down','mixed','chop'].indexOf(b.k)):[],
     bySize,byHold,dist,absMed,
     streaks:{bestW,bestL,current:run*runSign},
     after:{win:agg(after.win),loss:agg(after.loss)},
@@ -9309,6 +9639,7 @@ const PZ_FAMILIES=[
   ['habitrun','habits','Locked in',t=>'one habit kept '+t+' trading days running',[3,7,14,30,60,120],2],
   ['challenge','habits','Challenger',t=>t+' weekly challenge'+(t===1?'':'s')+' completed',[1,3,6,12,26,52],0],
   ['adopt','habits','Toolbox',t=>t+' habit'+(t===1?'':'s')+' adopted',[1,2,3,5,8,12],0],
+  ['goals','habits','Goal getter',t=>t+' process goal'+(t===1?'':'s')+' reached',[1,3,6,12,24,48],1],
   ['plugged','habits','Leak plugged',t=>t+' leak'+(t===1?'':'s')+' plugged for three weeks straight',[1,2,3,4,5,6],5],
   ['days','consistency','Showing up',t=>t+' trading days',[10,30,75,150,300,600],0],
   ['weeks','consistency','Week after week',t=>t+' weeks traded',[4,12,26,52,104,208],2],
@@ -9366,6 +9697,7 @@ function pzBadgeCatalog(G){
     for(const x of res){ if(x.kept)hk.push(x.key); r=x.kept?r+1:sh.has(x.key)&&r>0?r:0; hrun.push([x.key,r]); } }
   add('habitdays',hk); run('habitrun',hrun.sort((a,b)=>a[0]<b[0]?-1:1));
   add('challenge',(G.challenges||[]).filter(c=>c.status==='done').map(c=>c.key));
+  add('goals',(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&x.done&&!x.dropped).map(x=>dayKey(x.done)));
   add('adopt',(Array.isArray(settings.habits)?settings.habits:[]).filter(h=>h&&h.createdAt).map(h=>dayKey(h.createdAt)));
   add('plugged',pzPlugs().filter(p=>p.done).map(p=>p.done));
   // consistency
@@ -9690,7 +10022,7 @@ function pzCoachLine(D){
 }
 
 // ---- UI state (never stored) ----
-const PZ_TABS=['today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues'];
+const PZ_TABS=['today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues','lessons'];
 var _pzQuiet=false; // a background refresh of data Pulse already shows: no status toasts
 var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,jr:{},note:null};
 // a sign-in link from the league owner (/pulse#link=CODE): keep the code for the sign-in form, drop it from the address bar
@@ -9702,6 +10034,9 @@ function pzTab(){ const h=(location.hash||'').slice(1);
   return PZ_TABS.includes(h)?h:'today'; }
 function pzHashArg(){ return (location.hash||'').slice(1).split('/')[1]||''; }
 const PZI={
+  pause:'<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  book:'<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M9 7h6"/>',
+  target:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
   today:'<circle cx="12" cy="12" r="9"/><path d="M12 12l4-3"/>',
   trends:'<path d="M5 20V11M12 20V5M19 20v-6"/>',
   checkin:'<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
@@ -9732,7 +10067,7 @@ function pzFullHref(){ return /^https?:$/.test(location.protocol)?'/':location.p
 
 
 function pzNav(tab, level){
-  const cur=tab==='discipline'||tab==='journal'||tab==='review'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='lginfo'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'?'progress':tab;
+  const cur=tab==='discipline'||tab==='journal'||tab==='review'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='lginfo'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   const items=[['today','Today'],['trends','Stats'],['checkin','Check-in'],['coach','Coach'],['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
   return `<nav class="pz-nav" aria-label="Pulse"><div class="pz-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}Pulse</div>
@@ -9762,15 +10097,17 @@ const pzPct=v=>v==null?'—':Math.round(v*100)+'%';
 // ---- your layout: every screen's sections can be shown or hidden (synced with your settings) ----
 const PZ_SECTIONS={
   today:[['oneThing','Today’s one thing','Your focus from last night’s review',1],['numbers','Today in numbers','Net, entries against your cap, risk used',1],
+    ['tilt','Tilt meter','Losses in a row, re-entry window, size and pace — and quiet mode when it runs hot',1],
     ['session','Your session','P&L curve, trades, and your rules as they stand',1],['positions','Open positions','Size and hold time against your usual',1],
     ['insight','Coach insight','One line on what matters most',1],['next','Next step','Check-in in the morning, review at night',1],
     ['now','Right now','This hour in your history, time since a loss',1],['good','Done right today','Moments you followed a rule that usually costs you',1],
+    ['lesson','A lesson to revisit','One of your own lessons, back when it’s due',1],
     ['xp','Today’s XP','What earns XP today, and what’s due this week',1],['week','Last 7 trading days','Discipline and net, day by day',1],
     ['level','Level and league','Level progress, XP today, league standing',0],['yesterday','Last trading day','Its score, net and lesson in full',0]],
   stats:[['tiles','Headline numbers','Net, win rate, average trade and more',1],['daily','Daily P&L','',1],['findings','What moves your results','Your biggest edges and leaks',1],
     ['insights','Does discipline pay?','Results on good-discipline days vs the rest',1],['markets','Markets and time of day','Best and worst markets and hours',1]],
-  progress:[['xpsources','Where your XP came from','',1],['challenge','Weekly challenge','',1],['habits','Your habits','Streaks for each habit you run',1],['reports','Report cards','Last week and this month',1],
-    ['leaks','Your leaks','What your slips cost, and plugging them',1],['moments','Good moments','',1],['badges','Badges','Your latest badges',1],['bests','Personal bests','',1],['themes','Themes','',1]],
+  progress:[['goals','Process goals','Targets you set for your process, with progress',1],['xpsources','Where your XP came from','',1],['challenge','Weekly challenge','',1],['habits','Your habits','Streaks for each habit you run',1],['reports','Report cards','Last week and this month',1],
+    ['leaks','Your leaks','What your slips cost, and plugging them',1],['lessons','Lessons library','Everything your reviews taught you',1],['moments','Good moments','',1],['badges','Badges','Your latest badges',1],['bests','Personal bests','',1],['themes','Themes','',1]],
 };
 function pzShow(screen,id){ const L=(settings.pzLayout||{})[screen]; if(L&&Object.prototype.hasOwnProperty.call(L,id))return !!L[id];
   const d=(PZ_SECTIONS[screen]||[]).find(x=>x[0]===id); return d?!!d[3]:true; }
@@ -9844,6 +10181,79 @@ function pzTodayStripHtml(D,F){
   </div>`;
 }
 // the session: today's P&L curve over the loss limit, each trade as a bar from entry to exit, and the day's markers
+// ---- the tilt meter on Today, and quiet mode when it runs hot ----
+function pzTiltHtml(D){
+  const T=pzTiltOf(D), col=pzTiltCol(T.band), active=D.risk.closed.length||D.risk.trades;
+  const word=T.band==='hot'?'Running hot — step away':T.band==='warm'?'Heating up':'Calm';
+  const canNotify=typeof Notification!=='undefined', on=!!settings.pzTiltNotify&&canNotify&&Notification.permission==='granted';
+  return `<section class="pz-card pz-tilt" aria-label="Tilt meter"><div class="pz-kvrow"><span class="pz-lbl" style="color:${col}">Tilt · ${T.score}</span>${T.band==='hot'?'<button type="button" class="pz-linkbtn" data-pz-quiet="open">Quiet mode</button>':''}</div>
+    <b style="font-size:17px">${esc(word)}</b>
+    <div class="pz-tiltbar" role="meter" aria-label="Tilt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${T.score}"><i style="left:${T.score}%"></i></div>
+    ${T.reasons.length?T.reasons.slice(0,3).map(r=>`<div class="pz-row-t"><span>${esc(r.text)}</span><b style="color:${col}">+${r.pts}</b></div>`).join('')
+      :`<p class="pz-sub" style="font-size:12px">${active?'No losses in a row, no rushed re-entry, size and pace as usual.':'Nothing pushing you yet today.'}</p>`}
+    ${canNotify?`<div class="pz-toggle" style="min-height:44px"><span style="flex:1"><b id="pzTiltNL" style="font-size:13px">Notify me when it runs hot</b><span class="pz-sub" style="display:block;font-size:11px">While Pulse is open, even in another tab</span></span><button type="button" role="switch" class="pz-switch" id="pzTiltNotify" aria-checked="${on}" aria-labelledby="pzTiltNL"><i></i></button></div>`:''}</section>`;
+}
+const PZ_QUIET_MIN=15;
+// kept in memory too, so quiet mode still closes when storage is blocked (private mode, full disk)
+let _pzQuietMem=null;
+function pzQuietState(){ if(_pzQuietMem)return Object.assign({},_pzQuietMem); try{ return JSON.parse(localStorage.getItem('pzQuiet')||'{}')||{}; }catch(e){ return {}; } }
+function pzQuietSave(q){ _pzQuietMem=Object.assign({},q); try{ localStorage.setItem('pzQuiet',JSON.stringify(q)); }catch(e){} }
+// shown on its own when a new hot episode starts (a new loss or entry pushed the reading past
+// 65), while a break runs, or when opened from the card. One answer covers one episode.
+function pzQuietHtml(D){
+  const q=pzQuietState(), now=Date.now(), T=pzTiltOf(D), onBreak=q.until>now;
+  const fresh=T.band==='hot'&&T.key&&q.ack!==T.key&&D.todayK===dayKey(T.key);
+  if(!onBreak&&!fresh&&!pzS.quiet)return '';
+  if(fresh&&q.notified!==T.key){ q.notified=T.key; pzQuietSave(q); if(now-T.key<10*60000)pzTiltNotify(T); }
+  let lesson=null; try{ lesson=pzLessonFor(T,D); }catch(e){}
+  const left=Math.max(0,q.until-now), mm=String(Math.floor(left/60000)).padStart(2,'0'), ss=String(Math.floor(left/1000)%60).padStart(2,'0');
+  return `<div class="pz-quiet" role="alertdialog" aria-modal="true" aria-labelledby="pzQuietT"><div>
+    <span class="pz-qico">${pzI('pause',34)}</span>
+    <h2 id="pzQuietT" class="pz-h1" style="margin:0">${onBreak?'On a break':'Step away'}</h2>
+    ${onBreak?`<div class="pz-qtime" id="pzQuietLeft" aria-live="off">${mm}:${ss}</div><p class="pz-sub">Away from the screen. Water, a walk, breathe. The market will still be there.</p>`
+      :`<p class="pz-sub" style="font-size:15px">Your tilt reading is <b style="color:${pzTiltCol(T.band)}">${T.score}</b>. This is where most blow-ups start — not with a bad idea, but with the next trade after one.</p>`}
+    ${T.reasons.length?`<ul>${T.reasons.map(r=>`<li><span>${esc(r.text)}</span><b style="color:${PZ_COL.low}">+${r.pts}</b></li>`).join('')}</ul>`:''}
+    ${lesson?`<section class="pz-card" style="width:100%;text-align:left"><span class="pz-lbl" style="color:var(--pz-muted)">${lesson.key?'You wrote, '+esc(dayLabel(lesson.key)):'Your lesson'}</span><p style="margin:6px 0 0;font-size:15px;line-height:1.45">“${esc(lesson.text)}”</p></section>`:''}
+    ${onBreak?`<button type="button" class="pz-ghost" data-pz-quiet="end">End the break early</button>`
+      :`<button type="button" class="pz-cta" data-pz-quiet="break">Start a ${PZ_QUIET_MIN}-minute break</button><button type="button" class="pz-ghost" data-pz-quiet="ack">I’m calm — back to Pulse</button>`}
+  </div></div>`;
+}
+function pzTiltNotify(T){
+  if(!settings.pzTiltNotify||typeof Notification==='undefined'||Notification.permission!=='granted')return;
+  const body=(T.reasons[0]?T.reasons[0].text+'. ':'')+'Step away for '+PZ_QUIET_MIN+' minutes.';
+  const show=()=>{ try{ new Notification('Tilt '+T.score+' — time for a break',{body,tag:'pz-tilt'}); }catch(e){} };
+  if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration)navigator.serviceWorker.getRegistration().then(r=>r?r.showNotification('Tilt '+T.score+' — time for a break',{body,tag:'pz-tilt'}):show()).catch(show);
+  else show();
+}
+let _pzQuietTick=null;
+function pzQuietMount(D){
+  const box=$('pzQuiet'); if(!box)return; let h='';
+  try{ h=D?pzQuietHtml(D):''; }catch(e){ console.warn('quiet mode',e); }
+  // the countdown changes every second: compare without it, so a re-render doesn't rebuild the dialog under focus
+  const sig=h.replace(/<div class="pz-qtime"[^>]*>[^<]*<\/div>/,''), was=box.dataset.sig||'';
+  if(sig!==was){ const wasOpen=!!was; box.innerHTML=h; box.dataset.sig=sig;
+    if(h&&!wasOpen){ const b=box.querySelector('button'); if(b)b.focus(); }
+    if(!h&&wasOpen){ const c=document.querySelector('.pz-tilt'); if(c){ c.setAttribute('tabindex','-1'); c.focus({preventScroll:true}); } } }
+  document.body.classList.toggle('pz-quiet-on',!!h);
+  clearInterval(_pzQuietTick); _pzQuietTick=null;
+  if(pzQuietState().until>Date.now())_pzQuietTick=setInterval(()=>{ const q=pzQuietState(), el=$('pzQuietLeft');
+    if(!(q.until>Date.now())){ clearInterval(_pzQuietTick); pzRender(); return; }
+    const left=q.until-Date.now(); if(el)el.textContent=String(Math.floor(left/60000)).padStart(2,'0')+':'+String(Math.floor(left/1000)%60).padStart(2,'0'); },1000);
+}
+async function pzQuietAction(kind){
+  const q=pzQuietState(), D=pzData(), T=pzTiltOf(D);
+  if(kind==='open'){ pzS.quiet=true; }
+  else if(kind==='ack'){ q.ack=T.key; pzS.quiet=false; pzQuietSave(q); }
+  else if(kind==='end'){ q.until=0; q.ack=T.key; pzS.quiet=false; pzQuietSave(q); }
+  else if(kind==='break'){ q.until=Date.now()+PZ_QUIET_MIN*60000; q.ack=T.key; pzS.quiet=false; pzQuietSave(q);
+    const k='day:'+D.todayK, e=journal[k]=Object.assign({},journal[k]||{}); e.breaks=(Array.isArray(e.breaks)?e.breaks:[]).concat([{at:Date.now(),min:PZ_QUIET_MIN,tilt:T.score}]).slice(-20);
+    e.updatedAt=Date.now(); markJEdit(k); await Store.set(J_KEY,journal); }
+  pzRender(); const f=document.querySelector('#pzQuiet button'); if(f)f.focus();
+}
+document.addEventListener('keydown',ev=>{ const box=$('pzQuiet'); if(!box||!box.firstElementChild)return;
+  if(ev.key==='Escape'){ ev.preventDefault(); if(!(pzQuietState().until>Date.now()))pzQuietAction('ack'); return; }
+  if(ev.key==='Tab'){ const f=[...box.querySelectorAll('button')]; if(!f.length)return; const i=f.indexOf(document.activeElement);
+    if(ev.shiftKey&&(i<=0)){ ev.preventDefault(); f[f.length-1].focus(); } else if(!ev.shiftKey&&(i===-1||i===f.length-1)){ ev.preventDefault(); f[0].focus(); } } },true);
 function pzSessionHtml(D,F){
   const {todayK,dayE,risk,day}=D, now=F.now, nowM=pzDayMin(now,todayK);
   const openIds=new Set(F.open.map(t=>t.id));
@@ -9930,6 +10340,13 @@ function pzNowHtml(D,F){
     lines.push([good?PZ_COL.good:bad?PZ_COL.low:'var(--pz-soft)',`${hh(h)}–${hh((h+1)%24)} is ${good?'one of your best hours':bad?'one of your worst hours':'an ordinary hour for you'}`,
       `${me.n} trades over 6 months · avg ${signedPlain(me.avg)}${me.wr!=null?' · '+pzPct(me.wr)+' win rate':''}`]); }
   else if(hrs.length)lines.push(['var(--pz-soft)',`Few trades at ${hh(h)} in your history`,`Your best hour: ${hh(hrs[0].h)} (avg ${signedPlain(hrs[0].avg)}).`]);
+  pzRegimeWant();
+  const rg=pzRegimeOf(F.now);
+  if(rg&&(rg.vol||rg.trend)){ const like=rg.vol?(D.ctx.closed||[]).filter(t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.vol===rg.vol&&t.closeTime<F.now-3600000; }):[];
+    const avg=like.length?like.reduce((a,t)=>a+t.net,0)/like.length:null;
+    lines.push([avg==null||like.length<5?'var(--pz-soft)':avg<0?PZ_COL.low:PZ_COL.good,
+      `BTC today: ${rg.vol?PZ_VOL[rg.vol].replace(' days','').toLowerCase():''}${rg.vol&&rg.trend?', ':''}${rg.trend?PZ_TREND[rg.trend].toLowerCase():''} so far`,
+      like.length>=5?`On ${PZ_VOL[rg.vol].toLowerCase()} you average ${signedPlain(avg)} over ${like.length} trades.`:'Not enough of your trades on days like this to say how you do.']); }
   if(F.lastLoss){ const m=Math.round((F.now-F.lastLoss.closeTime)/60000);
     lines.push([m<15?PZ_COL.low:m<60?PZ_COL.mid:'var(--pz-soft)',m<15?`${m} min since a loss — the re-entry window`:`${m<120?m+' min':(m/60).toFixed(1)+'h'} since your last loss`,
       m<15?'Most revenge entries happen in the first 15 minutes. Let it pass.':'Losses today: '+F.losses+'.']); }
@@ -10051,8 +10468,8 @@ function pzTodayHtml(D){
   return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g))}
     ${sec('oneThing',()=>pzOneThingHtml(D))}
     <div class="pz-wide">${ringsHtml}${more('numbers',pzTodayStripHtml)}${sec('level',()=>pzProgressRowHtml(D))}
-      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${detail}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
-      <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
+      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${sec('tilt',()=>pzTiltHtml(D))}${detail}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
+      <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${sec('lesson',()=>pzLessonDueHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
     ${pzCustomizeLink('today')}`;
 }
 
@@ -10263,7 +10680,9 @@ function pzDeepHtml(D){
   const head=`${back}${pzHead(R==='all'?'All time':'Last '+R+' days','In-depth stats',seg)}${pzMkSeg()}`;
   const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t));
   const X=pzDeepStats(tr,{isWin,isLoss,coin:dcoin,hourOf:tzHour,dowOf:tzDow,monthOf:ms=>dayKey(ms).slice(0,7),
-    setupOf:t=>journal[t.id]&&journal[t.id].setup?String(journal[t.id].setup).trim():null,ratingOf:t=>journal[t.id]&&+journal[t.id].rating||null});
+    setupOf:t=>journal[t.id]&&journal[t.id].setup?String(journal[t.id].setup).trim():null,ratingOf:t=>journal[t.id]&&+journal[t.id].rating||null,
+    volOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.vol; },trendOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.trend; }});
+  pzRegimeWant();
   if(!X)return `${head}<section class="pz-card"><p class="pz-sub">No closed trades in this range.</p></section>`;
   const s=computeStats(tr,tr);
   const hr=h=>String(h).padStart(2,'0')+':00';
@@ -10336,11 +10755,14 @@ function pzDeepHtml(D){
     ['size','Size',X.bySize,r=>r.label+' · '+pzShort(r.from)+'–'+pzShort(r.to),'A quarter of your trades each, smallest to biggest. Position size is the largest notional the trade reached.'],
     ['hold','Hold time',X.byHold,r=>r.label,''],['month','Month',X.months,r=>MONTHS[+r.k.slice(5)-1]+' '+r.k.slice(0,4),''],
     ['setup','Setup',X.setups,r=>r.label||r.k,tagged+' of '+s.n+' trades tagged. Tag the rest in the journal — chips keep one spelling per setup.'],
-    ['rating','Your rating',X.ratings,r=>'★'.repeat(r.k)+' '+r.k,rated+' rated trades. Rating is how well you executed, not how it paid — if 5s don’t beat 2s, your idea of a good trade needs a look.']].filter(x=>x[2].length);
+    ['rating','Your rating',X.ratings,r=>'★'.repeat(r.k)+' '+r.k,rated+' rated trades. Rating is how well you executed, not how it paid — if 5s don’t beat 2s, your idea of a good trade needs a look.'],
+    ['vol','Volatility',X.vol,r=>PZ_VOL[r.k],'How wild BTC was on the day you entered: its high–low range against its previous 30 days.'],
+    ['trend','Trend',X.trend,r=>PZ_TREND[r.k],'How cleanly BTC moved over the 7 days to your entry: a trend goes one way, chop goes nowhere.']].filter(x=>x[2].length);
   const bk=BK.find(x=>x[0]===pzS.bk)||BK[0];
   const breakdown=bk?`<div class="pz-span pz-kv"><div class="pz-chiprow" role="group" aria-label="Break down by">${BK.map(x=>`<button type="button" class="pz-chipbtn" data-pz-bk="${x[0]}" aria-pressed="${x===bk}">${esc(x[1])}</button>`).join('')}</div>
+    ${(()=>{ const ins=bk[0]==='vol'?pzRegimeInsight(X.vol,PZ_VOL):bk[0]==='trend'?pzRegimeInsight(X.trend,PZ_TREND):null; return ins?`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('bolt',18)}</span><p>${esc(ins.text)}</p></section>`:''; })()}
     ${pzTbl('By '+bk[1].toLowerCase(),bk[2],bk[3],bk[4]||undefined)}${tagHint}</div>`:'';
-  return `${head}<div class="pz-wide">${eq}<div class="pz-col">${results}${cons}${slipHtml}</div><div class="pz-col">${risk}${planHtml}${distHtml}</div>${hourHtml}${excHtml?`<div class="pz-col">${dowHtml}</div><div class="pz-col">${excHtml}</div>`:dowHtml.replace('pz-card pz-kv','pz-card pz-span pz-kv')}${breakdown}
+  return `${head}<div class="pz-wide">${eq}<div class="pz-col">${results}${cons}${slipHtml}</div><div class="pz-col">${risk}${planHtml}${distHtml}${pzCostHtml(tr)}</div>${hourHtml}${excHtml?`<div class="pz-col">${dowHtml}</div><div class="pz-col">${excHtml}</div>`:dowHtml.replace('pz-card pz-kv','pz-card pz-span pz-kv')}${breakdown}
     <section class="pz-span" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"><a class="pz-link" href="#how">How the scores are worked out ›</a><a class="pz-link" href="${esc(pzFullHref())}">Pattern miner, excursions and Diagnostic in the full journal ›</a></section></div>`;
 }
 function pzHowHtml(){
@@ -10355,6 +10777,9 @@ function pzHowHtml(){
     ${sec('Form · 50 is your usual',`<p>Your recent trades against your own earlier ones. Recent = the last 7 days if they hold 5+ trades, else your last 5 trades; the baseline is up to 90 trades before that.</p>
       <p>Form = 50 + 20 × (difference in average trade ÷ your typical result, the median size of a win or loss, capped at ±1.5) + 40 × (difference in win rate, capped at ±0.5) − 20 × (how far below your 30-day high you are, in units of 5 typical results, capped at 1). Needs 15 closed trades, at least 10 of them before the recent window, and a trade in the last 30 days.</p>`)}
     ${sec('Load · 50 is a usual day',`<p>Today against your usual trading day (median of the last 30 days you traded): trades opened, and total size traded. Load = 50 × the larger of the two ratios, up to 100. 1.0× usual reads 50; twice your usual reads 100. Needs 5 earlier trading days.</p>`)}
+    ${sec('Tilt · 65 turns on quiet mode',`<p>Today’s triggers, added up: losses in a row (9 for one, 21 for two, 30 for three or more), a loss in the last 15 minutes (20; 10 up to 30 minutes), entries at 1.5× your usual size (15; 8 from 1.2×), four entries in an hour (15; 9 for three, or for twice your usual number of trades), your risk budget three quarters used (6; 10 when spent) and readiness under 40 (10; 5 under 60). Profit plays no part.</p>
+      <p>From 35 it reads “heating up”; at 65 a new loss or entry opens quiet mode. One break or “I’m calm” covers that episode.</p>`)}
+    ${sec('Market conditions · from BTC',`<p>Each UTC day, from BTC’s daily candle: <b>volatile</b> when its high–low range is 1.4× the median of the 30 days before, <b>quiet</b> at 0.7× or less. <b>Trending</b> when the 7-day net move is at least half the sum of the daily moves, <b>choppy</b> at a quarter or less.</p>`)}
     </div><div class="pz-col">
     ${sec('Readiness · from the check-in',`<p>Your 1–5 answers: sleep counts 40%, calm 20%, focus 40%. All 5s = 100. It never changes your Discipline score; Stats shows whether your discipline is better on high-readiness days.</p>`)}
     ${sec('XP and levels',`<p>Each trading day earns its Discipline score in XP (up to 100), plus optional bonus XP: check-in 10, a plan before your first trade 15 (half if written after), today’s trades journaled 15, stops written while trades were open 10, respecting your loss limit (nothing new opened after hitting it) 10. Plus 50 per achievement, 150 per weekly challenge kept, 25 per focus-habit day. Logging only ever adds.</p>
@@ -10434,6 +10859,7 @@ function pzJournalHtml(D){
     const p=tzParts(t.closeTime);
     return `<section class="pz-card pz-trade" data-pz-trade="${esc(t.id)}"><div class="pz-trade-h"><b>${esc(dispMarket(dcoin(t)))} ${esc(String(t.dir||'').toLowerCase())}</b><span style="font-family:var(--pz-num);font-size:20px;font-weight:600;color:${isBE(t.net)?'var(--pz-soft)':t.net>=0?PZ_COL.good:PZ_COL.low}">${isBE(t.net)?'B/E':signedPlain(t.net)}</span></div>
       <span class="pz-sub" style="font-size:12px">${esc(dayLabel(dayKey(t.closeTime)))} · ${String(p.h).padStart(2,'0')}:${String(p.min).padStart(2,'0')}</span>
+      <div class="pz-snap" data-pz-snap="${esc(t.id)}">${pzSnapHtml(t)}</div>
       <div role="radiogroup" aria-label="How well did you execute it, 1 to 5"><div class="pz-stars">${[1,2,3,4,5].map(n=>`<button type="button" role="radio" data-pz-rate="${n}" aria-checked="${r===n}" aria-label="${n} of 5">${n}</button>`).join('')}</div></div>
       <input type="text" id="pzSetup_${esc(t.id)}" aria-label="Setup" placeholder="Setup (breakout, fade, retest…)" autocomplete="off">
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-setupchip="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
@@ -10515,6 +10941,7 @@ function pzNote(m, kind){
   // the first-run and loading screens show the message inline too
   if(!allTrades.length&&$('pzView'))pzRender();
 }
+let _pzLastD=null;
 function pzRender(){
   if(!PZ)return; const view=$('pzView'); if(!view)return;
   // keep what's typed across re-renders (a background sync or auto-refresh can land mid-edit)
@@ -10524,17 +10951,18 @@ function pzRender(){
   let html;
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
-    try{ D=pzData(); }catch(e){ console.error(e); view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
+    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
     socBoot();
     const lv=D.g.level.level;
     const body=tab==='trends'?pzTrendsHtml(D):tab==='deep'?pzDeepHtml(D):tab==='how'?pzHowHtml():tab==='badges'?pzBadgesHtml(D):tab==='report'?pzReportHtml(D)
       :tab==='review'?pzReviewHtml(D):tab==='coach'?pzCoachHtml(D):tab==='leagues'?socFindHtml(D):tab==='lginfo'?socLeagueInfoHtml(D,pzHashArg()):tab==='checkin'?pzCheckinHtml(D):tab==='progress'?pzProgressHtml(D)
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
-      :tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
+      :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
     pzApplyTheme(lv); socSync(D.g); }
   view.innerHTML=html;
+  pzQuietMount(allTrades.length?_pzLastD:null);
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
   const f=(actId&&$(actId))||(actSel&&root.querySelector(actSel)); if(f&&f.focus)f.focus({preventScroll:true});
@@ -10598,6 +11026,7 @@ function wirePulse(){
   });
   root.addEventListener('input',ev=>{ const t=ev.target; if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; }
     if(t.id==='socLq'){ clearTimeout(SOC.lqT); SOC.lqT=setTimeout(()=>{ SOC.lq=t.value.trim(); pzRender(); const el=$('socLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
+    if(t.id==='pzLq'){ clearTimeout(pzS.lqT); pzS.lqT=setTimeout(()=>{ pzS.lq=t.value.trim(); pzRender(); const el=$('pzLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },250); return; }
     if(pzS.ck&&t.id==='pzUntil'){ (pzS.ck.rules=pzS.ck.rules||{}).until=t.value; return; }
     if(pzS.ck&&t.id==='pzMaxPos'){ (pzS.ck.rules=pzS.ck.rules||{}).maxPos=parseFloat(t.value)||null; return; }
     if(pzS.ck&&t.dataset.pzAm){ (pzS.ck.am=pzS.ck.am||{})[t.dataset.pzAm]=t.value; return; }
@@ -10606,6 +11035,9 @@ function wirePulse(){
   root.addEventListener('change',async ev=>{ const t=ev.target;
     if(t.id==='socBoardSel'){ SOC.board=t.value; pzRender(); return; }
     if(t.id==='socGboardSel'){ SOC.gboard=t.value; pzRender(); return; }
+    if(pzS.goalNew&&(t.id==='pzGk'||t.id==='pzGt'||t.id==='pzGs')){ const f=pzS.goalNew;
+      if(t.id==='pzGk'){ f.kind=t.value; const T=PZ_GOAL_KINDS[f.kind].targets; f.target=T[1]||T[0]; } else if(t.id==='pzGt')f.target=+t.value; else f.slip=t.value;
+      pzRender(); const n=$(t.id); if(n)n.focus(); return; }
     if(t.id==='pzProf'){ settings.pzProfile=t.value==='auto'?null:t.value; await Store.set(S_KEY,settings); pzNote('Profile set: '+pzProfile(gameContext().ctx.closed).name+'.'); pzRender(); } });
   root.addEventListener('keydown',ev=>{
     if(ev.key==='Enter'&&(ev.target.id==='pzAddr'||ev.target.id==='pzAddr2')){ ev.preventDefault(); pzConnect(ev.target.id); }
@@ -11047,7 +11479,7 @@ async function vaultMerge(d){
   await applySnapshot(theirs);
   const theirsS=vaultSnapS();
   for(const id of ids){ if(mineJ[id]!==undefined)journal[id]=mineJ[id]; else delete journal[id]; }
-  for(const k of _SYNC_S_FIELDS)if(changed(k))settings[k]=mine[k];
+  for(const k of _SYNC_S_FIELDS)if(changed(k))settings[k]=_syncMerge(k,mine[k],settings[k]);
   const wk=w=>String(w&&w.address).toLowerCase();
   if(!base)settings.wallets=mine.wallets;
   else { const was=new Set((base.wallets||[]).map(wk)), now=new Set(mine.wallets.map(wk));
@@ -11319,8 +11751,9 @@ function pzProgressHtml(D){
   const P=(id,h)=>pzShow('progress',id)?h:'';
   return `${pzHead('Earned by process','Progress',pzChips(g))}
   <div class="pz-wide">${hero}
+    ${P('goals',(()=>{ try{ return pzGoalsHtml(g); }catch(e){ console.warn('goals',e); return ''; } })())}
     <div class="pz-col">${P('xpsources',xpCard)}${P('challenge',chHtml)}${P('habits',habitsHtml)}${P('reports',reportHtml)}</div>
-    <div class="pz-col">${P('leaks',leakHtml)}${P('moments',gmHtml)}${P('badges',badgeHtml)}${P('bests',pb)}</div>
+    <div class="pz-col">${P('leaks',leakHtml)}${P('lessons',(()=>{ try{ return pzLessonsCardHtml(); }catch(e){ console.warn('lessons',e); return ''; } })())}${P('moments',gmHtml)}${P('badges',badgeHtml)}${P('bests',pb)}</div>
     ${P('themes',pzThemesHtml(g))}
     <section class="pz-span" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${share?`<span class="pz-fine">${pzI('lock',14)} Share cards unlock at level ${share}</span>`:'<button type="button" class="pz-ghost pz-sm" id="pzShare" style="width:auto;padding:0 16px">Share this week</button>'}</section>
     <div class="pz-span" id="gmOut"></div>
@@ -11556,6 +11989,10 @@ function pzCoachFacts(D){
       tradesOpened:D.risk.trades,tradeCap:D.risk.cap||null,net:r(D.risk.net),lossLimit:D.risk.limit||null,plan:e.plan||null,rules:pzPlanCheck(D.todayK).rules.map(x=>({rule:x.label,kept:x.ok,detail:x.detail})),
       review:e.eod?{rating:e.eod.rating,lesson:e.eod.lesson,tomorrow:e.eod.tomorrow,answers:e.eod.answers}:null},
     yesterday:ye?{lesson:ye.lesson,focusForToday:ye.tomorrow}:null,
+    tilt:(()=>{ try{ const T=pzTiltOf(D); return {score:T.score,band:T.band,why:T.reasons.map(x=>x.text)}; }catch(err){ return null; } })(),
+    marketToday:(()=>{ const rg=pzRegimeOf(Date.now()); return rg?{btcVolatility:rg.vol,btcTrend:rg.trend}:null; })(),
+    goals:(()=>{ try{ const x=pzGoalsCtx(g); return (settings.pzGoals||[]).filter(go=>!go.cleared&&!go.done&&!go.missed).map(go=>{ const ev=pzGoalEval(go,x); return {goal:PZ_GOAL_KINDS[go.kind].title(go),progress:ev.now,status:ev.status}; }); }catch(err){ return []; } })(),
+    lessons:(()=>{ try{ return pzLessonsAll().slice(0,8).map(l=>({lesson:l.text,written:l.key,about:l.tag?PZ_SLIP_TOPIC[l.tag]:null})); }catch(err){ return []; } })(),
     profile:{name:prof.name,chosen:prof.chosen},
     level:{level:g.level.level,title:g.level.title,xp:g.level.xp},streak:{current:g.streak.current,best:g.streak.best,shields:g.streak.shields},
     last14days:g.days.slice(-14).map(d=>({date:d.key,discipline:d.score,trades:d.n,net:r(d.net),slips:Object.keys(d.behavior.flags).filter(k=>d.behavior.flags[k]).map(k=>PZ_BEH[k])})),
@@ -11751,6 +12188,27 @@ async function pzGrowthAction(t){
   const ds=t.dataset;
   try{
     if(ds.pzBk){ pzS.bk=ds.pzBk; pzRender(); return true; }
+    if(ds.pzQuiet){ await pzQuietAction(ds.pzQuiet); return true; }
+    if(ds.pzLesson){ if(ds.pzLesson==='off'&&!confirm('Remove this lesson from your library?'))return true;
+      await pzLessonMark(ds.id,ds.pzLesson); pzNote(ds.pzLesson==='got'?'Kept. It comes back later.':ds.pzLesson==='again'?'It comes back tomorrow.':ds.pzLesson==='back'?'Back in rotation.':'Removed.'); pzRender(); return true; }
+    if(ds.pzLf){ pzS.lf=ds.pzLf; pzRender(); return true; }
+    if(ds.pzGoaldel){ const go=pzGoalList().find(x=>x.id===ds.pzGoaldel); if(!go)return true;
+      if(!go.done&&!go.missed&&!confirm('Drop this goal?'))return true;
+      if(go.done)go.cleared=Date.now(); else go.dropped=Date.now(); go.at=Date.now(); await Store.set(S_KEY,settings); pzRender(); return true; }
+    if(t.id==='pzGnew'){ pzS.goalNew={kind:'disc',target:80,slip:'revenge'}; pzRender(); const n=$('pzGk'); if(n)n.focus(); return true; }
+    if(t.id==='pzGcancel'){ pzS.goalNew=null; pzRender(); return true; }
+    if(t.id==='pzGsave'&&pzS.goalNew){ const f=pzS.goalNew, K=PZ_GOAL_KINDS[f.kind], today=dayKey(Date.now());
+      const go={id:'g'+Date.now().toString(36),kind:f.kind,target:+f.target||K.targets[0],start:today,createdAt:Date.now()};
+      if(K.month)go.month=today.slice(0,7); if(f.kind==='noslip')go.slip=f.slip||'revenge';
+      settings.pzGoals=(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&typeof x==='object').concat([go]).slice(-40); pzS.goalNew=null;
+      await Store.set(S_KEY,settings); pzNote('Goal set: '+K.title(go)+'.'); pzRender(); return true; }
+    if(t.id==='pzLadd'){ const el=$('pzLnew'), v=(el&&el.value||'').trim(); if(v.length<3)return true;
+      const st=settings.pzLessons=pzLessonsNorm(settings.pzLessons); st.own=st.own.concat([{id:'u:'+Date.now().toString(36),text:v.slice(0,200),at:Date.now()}]).slice(-300);
+      await Store.set(S_KEY,settings); if(el)el.value=''; pzNote('Added. It comes back tomorrow.'); pzRender(); return true; }
+    if(t.id==='pzTiltNotify'){ const on=t.getAttribute('aria-checked')!=='true';
+      if(on&&typeof Notification!=='undefined'&&Notification.permission!=='granted'){ const r=await Notification.requestPermission();
+        if(r!=='granted'){ pzNote('Notifications are blocked for this site — allow them in your browser’s site settings.','err'); return true; } }
+      settings.pzTiltNotify=on; await Store.set(S_KEY,settings); pzRender(); return true; }
     if(ds.pzMk){ settings.pzMarket=ds.pzMk; await Store.set(S_KEY,settings); pzRender(); return true; }
     if(ds.pzPg!=null){ PZ_PAGES[ds.pzPg]=Math.max(0,(PZ_PAGES[ds.pzPg]||0)+(+ds.d||0)); pzRender(); const n=document.querySelector('[data-pz-pg="'+CSS.escape(ds.pzPg)+'"]'); if(n){ const list=n.closest('nav').previousElementSibling; if(list&&list.scrollIntoView)list.scrollIntoView({block:'nearest'}); } return true; }
     if(ds.pzPlug){ await pzPlugStart(ds.pzPlug); pzNote('Plugging “'+PZ_BEH[ds.pzPlug].toLowerCase()+'”. It’s checked from your fills — three clean weeks plugs it.'); pzRender(); return true; }
