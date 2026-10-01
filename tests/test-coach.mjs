@@ -162,8 +162,8 @@ t('coach mode defaults on and only an explicit false turns it off', () => {
 t('every coaching surface checks the switch; sync and backups carry it', () => {
   for (const fn of ['renderCoach', 'habitsSectionHtml', 'processSectionHtml', 'lastWeekFocusHtml', 'loadCoachLetter', 'findingCardHtml'])
     ok(grabFn(fn).includes('coachOn()'), fn + ' ignores coach mode');
-  ok(html.includes("'calWeeks','coachMode','pzTheme'];"), 'synced settings field');
-  ok(html.includes('coachMode:settings.coachMode}'), 'in backups');
+  ok(html.includes("'calWeeks','coachMode','pzTheme','pzPlugs','pzProfile'];"), 'synced settings field');
+  ok(html.includes('coachMode:settings.coachMode, pzTheme'), 'in backups');
   ok(html.includes("typeof data.settings.coachMode==='boolean'"), 'restored from backups/sync');
 });
 

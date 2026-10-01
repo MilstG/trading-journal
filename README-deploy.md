@@ -13,6 +13,11 @@ ledger.html     the app (unchanged single file — still works from file:// too)
 server.js       companion server: persistence + read-only analytics API (/api/v1),
                 scheduled refresh, webhook alerts, weekly digests, server backups
 help.html       built-in user guide, served at /help (a Help button appears in the app)
+social.js       Pulse's leagues, competitions, feed, badges and member accounts (/api/social)
+social-config.js  the admin panel's settings and their sanitizers (levels, XP, features, coach, routines)
+admin.html      the owner's admin panel, served at /admin
+badges.html     a member's public badge page, served at /b/<name>
+vendor/         eth-sig.js — signature recovery for wallet claims (bundled, no install)
 tech.html       technical reference, served at /docs
 package.json    start script + node version (one optional dependency, the Anthropic SDK, used only with COACH_AI)
 tests/          test suites (`npm test`; CI runs them on every push)
@@ -63,7 +68,10 @@ tests/          test suites (`npm test`; CI runs them on every push)
 - **Social + admin:** Pulse's leagues, competitions and feed live in
   `DATA_DIR/social.json` on the same volume, plus 50 days of each verifying
   member's public fills in `DATA_DIR/social-fills/`. The owner's panel is at `/admin`
-  and needs `AUTH_TOKEN` (without it the admin API refuses every request).
+  and needs `AUTH_TOKEN` (without it the admin API refuses every request). It manages
+  members (add, edit, XP boosts, full unlocks, sign-in codes), leagues, reward badges,
+  levels and XP, feature levels, the AI coach's allowances and routines. Public badge
+  pages (`/b/<name>`, opt-in per member) need `badges.html` deployed next to `server.js`.
   Members' encrypted journals (ciphertext only; the server can't read them) live in
   `DATA_DIR/vault/`. Wallet claims need `vendor/eth-sig.js` deployed next to
   `social.js` — it's in the repo, with no install step.
@@ -92,9 +100,9 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `NUDGE_HOUR`           | *(unset = off)*                  | End-of-day journaling nudge after this hour (0–23); needs `REFRESH_INTERVAL_MIN` and a delivery channel |
 | `NUDGE_TZ`             | `UTC`                            | Fallback IANA zone for `NUDGE_HOUR` and "today" until the app reports its own (it follows the app's clock setting) |
 | `TELEGRAM_SHARE_CHAT_ID` | *(unset)*                     | Accountability partner/group chat(s) for Review → Progress → "Send to partner" (needs `TELEGRAM_BOT_TOKEN`) |
-| `COACH_AI`             | *(unset = off)*                  | `1` enables the AI weekly letter in Review (needs `ANTHROPIC_API_KEY`; Railway's `npm install` pulls the optional SDK) |
+| `COACH_AI`             | *(unset = off)*                  | `1` enables the AI weekly letter in Review and the AI coach chat in Pulse (needs `ANTHROPIC_API_KEY`; Railway's `npm install` pulls the optional SDK). Chat allowances are set in `/admin` → Coach |
 | `ANTHROPIC_API_KEY`    | *(unset)*                        | Claude API key, only read when `COACH_AI=1` |
-| `COACH_AI_MODEL`       | `claude-opus-5-5`                | Model for the weekly letter |
+| `COACH_AI_MODEL`       | `claude-opus-5-5`                | Model for the weekly letter and the coach chat |
 
 The analytics API, scheduled refresh, alerts, and weekly digests are documented
 in the main [README](README.md).

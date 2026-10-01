@@ -76,6 +76,7 @@ const signFlow = async (purpose, priv, address, key) => {
 };
 let A, Bk, Aid;
 try {
+  await call('/admin/config', { method: 'PUT', admin: true, body: { unlocksOn: false } }); // competitions open at level 1 here
   await t('joining with a wallet: nothing is proven yet', async () => {
     A = (await call('/join', { method: 'POST', body: { handle: 'alpha', address: W1, share: { ret: true } } })).d.key;
     Bk = (await call('/join', { method: 'POST', body: { handle: 'bravo', address: W1 } })).d.key;
@@ -265,7 +266,7 @@ await t('fixes from review: the message names only the pinned site, no claim ora
     eq(stale.status, 409); eq(stale.d.blob.salt, 'BBBB');
     // “claimed wallets only” explains itself in discipline competitions
     const ad = { Authorization: 'Bearer owner-token' };
-    await c2('/admin/config', { method: 'PUT', headers: ad, body: { requireClaim: true } });
+    await c2('/admin/config', { method: 'PUT', headers: ad, body: { requireClaim: true, unlocksOn: false } });
     const cid = (await c2('/admin/competitions', { method: 'POST', headers: ad, body: { title: 'Cup', type: 'discipline', start: '2026-09-28', end: '2026-10-30' } })).d.id;
     const k3 = (await c2('/join', { method: 'POST', ip: '8.8.8.8', body: { handle: 'thirdone', address: '0x' + 'd'.repeat(40) } })).d.key;
     await c2('/competitions/' + cid + '/join', { method: 'POST', key: k3 });

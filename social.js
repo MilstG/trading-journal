@@ -29,6 +29,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const SC = require('./social-config.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
 let ethSig = null; try { ethSig = require('./vendor/eth-sig.js'); } catch (e) { /* claims and wallet sign-in answer 501 */ }
 
@@ -50,11 +51,15 @@ const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, vaultOn: true,
   unlocks: { trends: 2, share: 3, compete: 4 }, themes: { ember: 3, aurora: 5, gold: 8 } };
-const SHARE_KEYS = ['profile', 'boards', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr'];
-const DEFAULT_SHARE = { profile: true, boards: true, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false };
+const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr'];
+// global: appear on the server-wide leaderboards (every member, every league) — opt-in
+// page: a public badge page at /b/<name> that anyone with the link can open — opt-in
+const DEFAULT_SHARE = { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false };
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const clampNum = (v, lo, hi) => { const n = +v; return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
+// invite codes are compared in constant time
+const sameText = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 const cleanText = (s, max) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
 const utcDayKey = ms => new Date(ms).toISOString().slice(0, 10);
 const addDaysKey = (k, n) => utcDayKey(Date.parse(k + 'T00:00:00Z') + n * 86400000);
@@ -71,8 +76,10 @@ function sanitizeStats(b) {
   b = b || {};
   const days = (Array.isArray(b.days) ? b.days : []).slice(-60)
     .filter(d => d && DAY_RE.test(d.k)).map(d => ({ k: d.k, s: clampNum(d.s, 0, 100) || 0, b: !!d.b, j: !!d.j }));
-  const badges = (Array.isArray(b.badges) ? b.badges : []).slice(0, 60)
-    .filter(x => x && BADGE_RE.test(x.id)).map(x => ({ id: x.id, t: cleanText(x.t, 40) }));
+  // earned badges: id, title, category, tier (0 bronze … 5 legend), day earned
+  const seenB = new Set();
+  const badges = (Array.isArray(b.badges) ? b.badges : []).slice(0, 400)
+    .filter(x => x && BADGE_RE.test(x.id) && !seenB.has(x.id) && seenB.add(x.id)).map(x => ({ id: x.id, t: cleanText(x.t, 60), c: cleanText(x.c, 20), r: Math.round(clampNum(x.r, 0, 5) || 0), k: DAY_RE.test(x.k) ? x.k : null }));
   const habits = (Array.isArray(b.habits) ? b.habits : []).slice(0, 20).map(h => cleanText(h, 140)).filter(Boolean).slice(0, 5);
   return {
     xp: clampNum(b.xp, 0, 1e8) || 0, level: clampNum(b.level, 1, 500) || 1,
@@ -80,7 +87,7 @@ function sanitizeStats(b) {
     streak: clampNum(b.streak, 0, 10000) || 0, best: clampNum(b.best, 0, 10000) || 0, shields: clampNum(b.shields, 0, 2) || 0,
     challengesDone: clampNum(b.challengesDone, 0, 10000) || 0, lastChallenge: cleanText(b.lastChallenge, 140),
     tz: typeof b.tz === 'string' && /^[A-Za-z_+\-/0-9]{1,40}$/.test(b.tz) ? b.tz : 'UTC',
-    badges, badgeN: clampNum(b.badgeN, 0, 100) || badges.length, habits, days,
+    badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days,
   };
 }
 function sanitizeShare(s, prev) {
@@ -97,14 +104,18 @@ function disciplineOver(days, fromKey, toKey, minDays) {
 }
 
 // ---- feed events from the change between two stats posts ----
-function eventsFromStats(prev, next, share) {
+function eventsFromStats(prev, next, share, titles) {
   if (!prev || !share || !share.feed) return [];
-  const E = [];
-  if (next.level > prev.level) E.push({ type: 'level', text: 'reached level ' + next.level + ' · ' + LEVELS[Math.min(next.level, LEVELS.length) - 1] });
+  const E = [], T = titles && titles.length ? titles : LEVELS;
+  if (next.level > prev.level) E.push({ type: 'level', text: 'reached level ' + next.level + ' · ' + T[Math.min(next.level, T.length) - 1] });
   const mark = STREAK_MARKS.filter(m => prev.streak < m && next.streak >= m).pop();
   if (mark) E.push({ type: 'streak', text: 'hit a ' + mark + '-day discipline streak' });
   const had = new Set((prev.badges || []).map(b => b.id));
-  for (const b of next.badges) if (!had.has(b.id)) E.push({ type: 'badge', text: 'unlocked ' + (b.t || b.id) });
+  const fresh = next.badges.filter(b => !had.has(b.id));
+  // a handful post one by one; a burst (a first sync, a big day) posts once, naming the best ones
+  if (fresh.length <= 2) for (const b of fresh) E.push({ type: 'badge', text: 'unlocked ' + (b.t || b.id) });
+  else { const top = [...fresh].sort((a, b) => (b.r || 0) - (a.r || 0)).slice(0, 3).map(b => b.t || b.id);
+    E.push({ type: 'badge', text: 'unlocked ' + fresh.length + ' badges', quote: top.join(' · ') }); }
   if (next.challengesDone > prev.challengesDone)
     E.push({ type: 'challenge', text: 'completed the weekly challenge', quote: next.lastChallenge || '' });
   if (share.habits) {
@@ -135,19 +146,30 @@ function portfolioStats(res, label, fromMs, toMs) {
 
 // ---- league: weekly promotion and relegation by XP earned that week ----
 const leagueMoveCount = n => n >= 4 ? Math.min(5, Math.floor(n / 4)) : 0;
-function leagueRollover(members, week) {
+// entries: [{id, tier, value, banned}] — everyone in a tier is ranked by the league's measure; a
+// week with nothing posted counts as 0, so sitting out never protects a spot. Only a positive value
+// earns promotion.
+function leagueRolloverBy(entries) {
   const moves = [];
   for (let t = 0; t < TIERS.length; t++) {
-    // everyone in the tier is ranked: a week with no posted XP counts as 0, so sitting out never
-    // protects a spot that an active member with low XP would lose
-    const xpOf = m => (m.weekXp && m.weekXp[week]) || 0;
-    const inTier = members.filter(m => !m.banned && (m.tier || 0) === t);
+    const val = e => (isFinite(e.value) && e.value != null ? e.value : 0);
+    const inTier = entries.filter(e => !e.banned && (e.tier || 0) === t);
     const n = inTier.length; const k = leagueMoveCount(n); if (!k) continue;
-    const sorted = [...inTier].sort((a, b) => xpOf(b) - xpOf(a) || a.id.localeCompare(b.id));
-    if (t < TIERS.length - 1) for (const m of sorted.slice(0, k)) if (xpOf(m) > 0) moves.push({ id: m.id, from: t, to: t + 1 });
-    if (t > 0) for (const m of sorted.slice(-k)) moves.push({ id: m.id, from: t, to: t - 1 });
+    const sorted = [...inTier].sort((a, b) => val(b) - val(a) || a.id.localeCompare(b.id));
+    if (t < TIERS.length - 1) for (const e of sorted.slice(0, k)) if (val(e) > 0) moves.push({ id: e.id, from: t, to: t + 1 });
+    if (t > 0) for (const e of sorted.slice(-k)) moves.push({ id: e.id, from: t, to: t - 1 });
   }
   return moves;
+}
+// the original weekly-XP rollover, kept for its callers and tests
+function leagueRollover(members, week) {
+  return leagueRolloverBy(members.map(m => ({ id: m.id, tier: m.tier || 0, banned: m.banned, value: (m.weekXp && m.weekXp[week]) || 0 })));
+}
+// Monday's day key of an ISO week ('2026-W40' -> '2026-09-28')
+function isoWeekMonday(week) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(week || ''); if (!m) return null;
+  const jan4 = new Date(Date.UTC(+m[1], 0, 4)), mon = jan4.getTime() - ((jan4.getUTCDay() + 6) % 7) * 86400000;
+  return utcDayKey(mon + (+m[2] - 1) * 7 * 86400000);
 }
 
 // ---- leaderboards ----
@@ -162,20 +184,20 @@ const BOARDS = {
 };
 function boardRows(members, board, opts) {
   opts = opts || {};
-  const B = BOARDS[board]; if (!B) return null;
+  const B = Object.prototype.hasOwnProperty.call(BOARDS, board) ? BOARDS[board] : null; if (!B) return null;
   const todayK = opts.todayKey || utcDayKey(Date.now());
   const week = opts.week || isoWeekOfKey(todayK);
   // process boards read posted stats; money boards read only what the server fetched from the chain
   let pool = members.filter(m => !m.banned && m.share && m.share[B.needs] && (B.needs !== 'boards' || m.stats)
     && (!B.verified || (m.share.verify && Array.isArray(m.vdays))));
-  if (B.scope === 'league' && opts.tier != null) pool = pool.filter(m => (m.tier || 0) === opts.tier);
+  if (opts.tier != null && (B.scope === 'league' || opts.tierAll)) pool = pool.filter(m => (m.tier || 0) === opts.tier);
   const rows = [];
   for (const m of pool) {
     let v = null, sub = '';
-    if (board === 'xp') { v = (m.weekXp && m.weekXp[week]) || 0; sub = 'Level ' + m.stats.level; }
+    if (board === 'xp') { v = opts.weeks ? opts.weeks.reduce((a, w) => a + ((m.weekXp && m.weekXp[w]) || 0), 0) : (m.weekXp && m.weekXp[week]) || 0; sub = 'Level ' + m.stats.level; }
     else if (board === 'level') { v = m.stats.xp; sub = 'Level ' + m.stats.level; }
     else if (board === 'streak') { v = m.stats.streak; sub = 'Best ' + m.stats.best; }
-    else if (board === 'discipline') { const d = disciplineOver(m.vdays, addDaysKey(todayK, -6), todayK, 3); if (d.avg == null) continue; v = Math.round(d.avg); sub = 'verified · ' + d.n + ' trading days'; }
+    else if (board === 'discipline') { const d = disciplineOver(m.vdays, addDaysKey(todayK, -((opts.days || 7) - 1)), todayK, 3); if (d.avg == null) continue; v = Math.round(d.avg); sub = 'verified · ' + d.n + ' trading days'; }
     else {
       const mo = m.money; if (!mo || mo.ret == null) continue;
       if (board === 'ret') { if (mo.dd > 0.25) continue; v = mo.ret; sub = 'DD ' + (mo.dd * 100).toFixed(1) + '%'; }
@@ -230,7 +252,7 @@ function sanitizeComp(b) {
   const title = cleanText(b.title, 60), rule = cleanText(b.rule, 280);
   if (!type || !title || !DAY_RE.test(b.start) || !DAY_RE.test(b.end) || b.end < b.start) return null;
   if (Date.parse(b.end) - Date.parse(b.start) > 92 * 86400000) return null;
-  return { type, title, rule, start: b.start, end: b.end,
+  return { type, title, rule, start: b.start, end: b.end, league: typeof b.league === 'string' && /^[a-z0-9-]{1,30}$/.test(b.league) ? b.league : null,
     minDays: clampNum(b.minDays, 1, 90) || (type === 'journal' ? 10 : 3),
     ddCap: type === 'return' ? (clampNum(b.ddCap, 0.01, 0.9) || 0.08) : null };
 }
@@ -264,6 +286,22 @@ function createSocial(opts) {
   S.config = Object.assign({}, DEFAULT_CONFIG, S.config, {
     unlocks: Object.assign({}, DEFAULT_CONFIG.unlocks, S.config && S.config.unlocks),
     themes: Object.assign({}, DEFAULT_CONFIG.themes, S.config && S.config.themes) });
+  // v0.4 sections; v0.3's three unlock levels carry over into the feature map
+  S.config.modules = SC.sanitizeModules(S.config.modules || S.config.unlocks, null);
+  S.config.levels = SC.sanitizeLevels(S.config.levels, null);
+  S.config.xp = SC.sanitizeXp(S.config.xp, null);
+  S.config.coach = SC.sanitizeCoachCfg(S.config.coach, null);
+  S.config.profiles = SC.sanitizeProfiles(S.config.profiles, null);
+  if (!S.badges || typeof S.badges !== 'object') S.badges = {};
+  if (!S.ownerCoach) S.ownerCoach = { k: null, n: 0 };
+  if (!S.leagues || typeof S.leagues !== 'object') { // one league for everyone until the owner makes more
+    S.leagues = { main: Object.assign({ id: 'main', createdAt: Date.now(), members: {}, week: S.league.week },
+      SC.sanitizeLeague({ name: 'Main league', metric: 'xp', tiers: true, open: true, autoJoin: true })) };
+    for (const m of Object.values(S.members)) S.leagues.main.members[m.id] = { tier: m.tier || 0, at: m.createdAt || Date.now() };
+  }
+  // every league has a short number people can search for (#1001, #1002, …)
+  if (!(S.leagueSeq > 1000)) S.leagueSeq = 1000;
+  for (const L of Object.values(S.leagues)) if (!L.num) L.num = ++S.leagueSeq;
   const sig = opts.sig !== undefined ? opts.sig : ethSig;
   const vaultDir = path.join(opts.dataDir, 'vault');
   const vaultFile = id => path.join(vaultDir, String(id).replace(/[^a-f0-9]/g, '') + '.json');
@@ -295,6 +333,80 @@ function createSocial(opts) {
   // revisions never go back, even across a delete: a device holding an old copy can't overwrite a new one
   const vaultRev = m => m.vault ? m.vault.rev : (m.vaultRev || 0);
   const vaultTotal = () => members().reduce((a, m) => a + (m.vault ? m.vault.size || 0 : 0), 0);
+  // ---- leagues ----
+  const leaguesOf = m => Object.values(S.leagues).filter(L => own(L.members, m.id));
+  const joinLeague = (L, m) => { if (!own(L.members, m.id)) L.members[m.id] = { tier: 0, at: now() }; };
+  const leagueTier = (L, m) => (own(L.members, m.id) ? L.members[m.id].tier || 0 : 0);
+  // a league's own measure for one member over one week (rollover) or its current period (boards)
+  // a monthly league's period: the weeks so far whose Monday is in the same month as this one's
+  const monthOf = wk => isoWeekMonday(wk).slice(0, 7);
+  const monthWeeks = wk => weeksBack(wk, 5).filter(w => monthOf(w) === monthOf(wk));
+  const weeksBack = (wk, n) => { const mon = isoWeekMonday(wk); const out = []; for (let i = n - 1; i >= 0; i--) out.push(isoWeekOfKey(addDaysKey(mon, -7 * i))); return out; };
+  const leagueValue = (m, L, wk) => {
+    const st = m.stats || {}, mo = m.money;
+    switch (L.metric) {
+      case 'xp': return (L.period === 'month' ? monthWeeks(wk) : [wk]).reduce((a, w) => a + ((m.weekXp && m.weekXp[w]) || 0), 0);
+      case 'discipline': { if (!(m.share.verify && Array.isArray(m.vdays))) return 0; const mon = isoWeekMonday(wk);
+        const d = disciplineOver(m.vdays, L.period === 'month' ? isoWeekMonday(monthWeeks(wk)[0]) : mon, addDaysKey(mon, 6), 1); return d.avg || 0; }
+      case 'streak': return st.streak || 0;
+      case 'level': return st.xp || 0;
+      case 'ret': return mo && mo.ret != null && m.share.ret ? mo.ret : 0;
+      case 'usd': return mo && mo.usd != null && m.share.usd ? mo.usd : 0;
+      case 'riskadj': return mo && mo.ret != null && m.share.ret ? mo.ret / Math.max(mo.dd, 0.005) : 0;
+    } return 0; };
+  // members of a league as boardRows sees them: their tier is the one in that league
+  const leagueMembers = L => members().filter(m => own(L.members, m.id)).map(m => Object.assign({}, m, { tier: L.members[m.id].tier || 0 }));
+  const leagueBoard = (L, board, viewer) => boardRows(leagueMembers(L), board, {
+    tier: L.tiers && board === L.metric && viewer ? leagueTier(L, viewer) : undefined, tierAll: true, week: S.league.week,
+    weeks: L.period === 'month' && board === 'xp' ? monthWeeks(S.league.week) : undefined, days: L.period === 'month' ? monthDays() : 7 });
+  // a monthly league's boards cover the month so far: the same window its rollover ranks on
+  const monthDays = () => Math.max(1, Math.round((Date.parse(todayKey()) - Date.parse(isoWeekMonday(monthWeeks(S.league.week)[0]))) / 86400000) + 1);
+  const leagueOut = (L, viewer) => ({ id: L.id, num: L.num, name: L.name, desc: L.desc, metric: L.metric, metricLabel: SC.LEAGUE_METRICS[L.metric], period: L.period,
+    tiers: L.tiers, open: L.open, inviteRequired: !!L.invite, members: members().filter(m => own(L.members, m.id) && !m.banned).length,
+    joined: !!viewer && own(L.members, viewer.id), tier: viewer && own(L.members, viewer.id) ? leagueTier(L, viewer) : null,
+    tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null });
+  // ---- levels, XP grants, reward badges ----
+  const levelTitle = n => { const t = S.config.levels.titles; return t[Math.min(n, t.length) - 1] || ('Level ' + n); };
+  const zoneKey = (tz, ms) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms); }
+    catch (e) { return utcDayKey(ms); } };
+  const badgeValue = (m, metric) => {
+    const st = m.stats || {}, mo = m.money;
+    switch (metric) {
+      case 'level': return st.level || 1;
+      case 'xp': return st.xp || 0;
+      case 'weekXp': return (m.weekXp && m.weekXp[S.league.week]) || 0;
+      case 'streak': return st.streak || 0;
+      case 'best': return st.best || 0;
+      case 'discipline30': { const ver = m.share.verify && Array.isArray(m.vdays); const d = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3); return d.avg; }
+      case 'badges': return st.badgeN || 0;
+      case 'challenges': return st.challengesDone || 0;
+      case 'ret30': return mo && mo.ret != null && m.share.ret ? mo.ret * 100 : null;
+      case 'usd30': return mo && mo.usd != null && m.share.usd ? mo.usd : null;
+      case 'members': return Math.floor((now() - (m.createdAt || now())) / 86400000);
+    } return null; };
+  // earned automatically once a badge's measure crosses its value; kept from then on
+  const awardCheck = m => {
+    let changed = false;
+    for (const b of Object.values(S.badges)) {
+      if (!b.metric || (m.awards && own(m.awards, b.id)) || (m.revoked && own(m.revoked, b.id))) continue;
+      const v = badgeValue(m, b.metric); if (v == null || !isFinite(v)) continue;
+      if (b.op === 'lte' ? v <= b.value : v >= b.value) { m.awards = m.awards || {}; m.awards[b.id] = now(); changed = true;
+        if (m.share.feed) pushEvent(m, { type: 'badge', text: 'earned the ' + b.name + ' badge ' + b.icon }); }
+    }
+    return changed; };
+  const awardsOut = m => Object.keys(m.awards || {}).filter(id => own(S.badges, id)).map(id => ({ id, name: S.badges[id].name, icon: S.badges[id].icon, desc: S.badges[id].desc, xp: S.badges[id].xp, at: m.awards[id] }));
+  // ---- AI coach allowance: per member per day (their own clock), or the owner's own budget ----
+  const coachLimitFor = m => m.coachDaily != null ? m.coachDaily : m.unlocked ? S.config.coach.dailyUnlocked : S.config.coach.daily;
+  // A member's coach day follows their own clock, but the zone is fixed for the day once they've
+  // asked: changing time zones mid-day doesn't start a new count.
+  const coachTz = m => (m.coachUse && m.coachUse.tz) || (m.stats && m.stats.tz) || 'UTC';
+  const coachUsed = m => { if (!m.coachUse) return 0; const k = zoneKey(coachTz(m), now()); return m.coachUse.k === k ? m.coachUse.n : 0; };
+  const coachStatusFor = m => {
+    const c = S.config.coach, lvl = (m.stats && m.stats.level) || 1, need = S.config.unlocksOn && !m.unlocked && S.config.modules.coach > 1 ? S.config.modules.coach : 0;
+    const limit = coachLimitFor(m), used = coachUsed(m);
+    const reason = !c.members ? 'The owner hasn’t opened the coach to members.' : m.banned ? 'This profile was removed from the league.'
+      : need && lvl < need ? 'The coach unlocks at level ' + need + '.' : limit <= 0 ? 'The coach is switched off for your profile.' : used >= limit ? 'You’ve used today’s ' + limit + ' coach message' + (limit === 1 ? '' : 's') + '. More tomorrow.' : null;
+    return { allowed: !reason, reason, limit, used, remaining: Math.max(0, limit - used), detail: !!(c.detail && m.coachDetail), detailAllowed: !!c.detail, unlockLevel: need || null }; };
   const byHandle = h => members().find(m => m.handle.toLowerCase() === String(h || '').toLowerCase()) || null;
   const EVENTS_PER_DAY = 12;
   const pushEvent = (m, e) => {
@@ -311,6 +423,7 @@ function createSocial(opts) {
   const dropMember = (id) => { const gone = own(S.members, id) ? S.members[id].address : null;
     if (own(S.members, id) && S.members[id].vault) try { fs.unlinkSync(vaultFile(id)); } catch (e) {}
     delete S.members[id]; delete S.follows[id];
+    for (const L of Object.values(S.leagues)) delete L.members[id];
     if (gone && opts.forgetAddress && !members().some(o => o.address === gone)) opts.forgetAddress(gone);
     for (const k in S.follows) S.follows[k] = S.follows[k].filter(x => x !== id);
     S.events = S.events.filter(e => e.member !== id); for (const e of S.events) e.kudos = e.kudos.filter(x => x !== id);
@@ -318,10 +431,21 @@ function createSocial(opts) {
   // weekly league rollover runs lazily on the first request of a new ISO week
   const ensureWeek = () => {
     const wk = isoWeekOfKey(todayKey());
-    if (S.league.week === wk) return;
-    if (S.league.week) for (const mv of leagueRollover(members(), S.league.week)) {
-      const m = S.members[mv.id]; if (!m) continue; m.tier = mv.to;
-      if (mv.to > mv.from && m.share && m.share.feed) pushEvent(m, { type: 'league', text: 'moved up to ' + TIERS[mv.to] + ' league' });
+    if (S.league.week === wk && Object.values(S.leagues).every(L => L.week === wk)) return;
+    // each tiered league promotes and relegates on its own measure, once, on the first request of a new week
+    for (const L of Object.values(S.leagues)) {
+      if (L.week === wk) continue;
+      // a monthly league promotes and relegates once, when the month changes, on the month it closed
+      if (L.week && L.period === 'month' && monthOf(L.week) === monthOf(wk)) { L.week = wk; continue; }
+      if (L.week && L.tiers) {
+        const entries = members().filter(m => own(L.members, m.id)).map(m => ({ id: m.id, tier: leagueTier(L, m), banned: m.banned, value: leagueValue(m, L, L.week) }));
+        for (const mv of leagueRolloverBy(entries)) {
+          const m = S.members[mv.id]; if (!m) continue; L.members[mv.id].tier = mv.to;
+          if (L.id === 'main') m.tier = mv.to;
+          if (mv.to > mv.from && m.share && m.share.feed) pushEvent(m, { type: 'league', text: 'moved up to ' + TIERS[mv.to] + (L.id === 'main' ? ' league' : ' in ' + L.name) });
+        }
+      }
+      L.week = wk;
     }
     S.league.week = wk; save();
   };
@@ -347,7 +471,7 @@ function createSocial(opts) {
         const s2 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(c.end + 'T23:59:59Z'));
         if (s2) { c.money = c.money || {}; c.money[m.id] = { ret: s2.ret, dd: s2.dd }; }
       }
-      save();
+      awardCheck(m); save();
       m.moneyFailAt = 0;
     } catch (e) { m.moneyFailAt = now(); /* retried after the backoff; boards show what they have */ }
     finally { moneyBusy.delete(m.id); }
@@ -368,7 +492,7 @@ function createSocial(opts) {
       // the member may have changed wallet (or left) while this was running
       const live = own(S.members, m.id) ? S.members[m.id] : null; if (!live || !live.share.verify || walletFor(live) !== addr) return;
       live.vdays = days.filter(d => d && DAY_RE.test(d.k)).slice(-60).map(d => ({ k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 }));
-      live.vAt = now(); live.vFailAt = 0; save();
+      live.vAt = now(); live.vFailAt = 0; awardCheck(live); save();
     } catch (e) { m.vFailAt = now(); }
     finally { behaviorBusy.delete(m.id); }
   };
@@ -376,17 +500,19 @@ function createSocial(opts) {
   const tierOf = m => ({ tier: m.tier || 0, tierName: TIERS[m.tier || 0] });
   const publicMember = (m, viewer) => {
     const st = m.stats || {};
-    const out = { id: m.id, handle: m.handle, ...tierOf(m), level: st.level || 1, title: LEVELS[Math.min(st.level || 1, LEVELS.length) - 1],
+    const out = { id: m.id, handle: m.handle, ...tierOf(m), level: st.level || 1, title: levelTitle(st.level || 1),
       followers: members().filter(x => (S.follows[x.id] || []).includes(m.id)).length,
       following: (S.follows[m.id] || []).length, isFollowing: !!viewer && (S.follows[viewer.id] || []).includes(m.id), isMe: !!viewer && viewer.id === m.id,
       claimed: !!m.claimed };
     if (out.isMe) Object.assign(out, { claimedAddress: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
-      vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn });
+      vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
+      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
+      leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })) });
     if (!m.share.profile && !out.isMe) return Object.assign(out, { private: true });
     const ver = m.share.verify && Array.isArray(m.vdays);
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
     Object.assign(out, { xp: st.xp || 0, streak: st.streak || 0, best: st.best || 0, discipline30: d30.avg == null ? null : Math.round(d30.avg), verified: ver,
-      badges: (st.badges || []).map(b => b.t || b.id), badgeN: st.badgeN || 0 });
+      badges: (st.badges || []).map(b => b.t || b.id), badgeN: st.badgeN || 0, awards: awardsOut(m) });
     if (m.share.habits || out.isMe) out.habits = st.habits || [];
     if ((m.share.ret || out.isMe) && m.money && m.money.ret != null) { out.ret = m.money.ret; out.dd = m.money.dd; }
     if ((m.share.usd || out.isMe) && m.money && m.money.usd != null) out.usd = m.money.usd;
@@ -400,6 +526,7 @@ function createSocial(opts) {
     const rows = compStandings(c, members(), todayKey(), !!S.config.requireClaim);
     const mine = viewer ? rows.find(r => r.id === viewer.id) || null : null;
     const o = { id: c.id, title: c.title, type: c.type, rule: c.rule, start: c.start, end: c.end, minDays: c.minDays, ddCap: c.ddCap,
+      league: c.league && own(S.leagues, c.league) ? { id: c.league, name: S.leagues[c.league].name } : null,
       status: st, entrants: rows.length, joined: !!(viewer && c.entrants[viewer.id]), me: mine };
     if (full) o.standings = rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, note: r.note, out: r.out, score: r.score, me: !!viewer && r.id === viewer.id }));
     return o; };
@@ -417,7 +544,7 @@ function createSocial(opts) {
     const parts = url.split('/').slice(3); // ['', 'api', 'social', ...]
     const head = parts[0] || '';
     let body = {};
-    const limit = head === 'vault' ? MAX_VAULT_BODY + 4096 : MAX_SOCIAL_BODY;
+    const limit = head === 'vault' ? MAX_VAULT_BODY + 4096 : head === 'stats' ? 4 * MAX_SOCIAL_BODY : MAX_SOCIAL_BODY;
     if (head === 'vault' && M === 'PUT') { // a member, with sync on, before reading up to 6 MB
       const who = byKey(req); if (!who) return json(res, 401, { error: 'not a member' });
       if (who.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
@@ -433,7 +560,11 @@ function createSocial(opts) {
     if (head === 'config' && M === 'GET')
       return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
         unlocks: S.config.unlocks, themes: S.config.themes, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
-        claims: !!sig, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn });
+        claims: !!sig, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
+        modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles,
+        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail },
+        badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),
+        leagues: Object.values(S.leagues).filter(L => L.open).length });
 
     // ---------- owner: admin ----------
     if (head === 'admin') {
@@ -447,22 +578,72 @@ function createSocial(opts) {
           events: S.events.length, comps: Object.keys(S.comps).length, week: wk, config: S.config,
           claimed: members().filter(m => m.claimed).length, vaults: members().filter(m => m.vault).length, vaultBytes: vaultTotal(), claims: !!sig,
           originPinned: origins.length > 0 || !!opts.hostVetted,
-          tiers: TIERS.map((t, i) => ({ tier: t, n: members().filter(m => !m.banned && (m.tier || 0) === i).length })) });
+          leagues: Object.keys(S.leagues).length, badges: Object.keys(S.badges).length, coachAi: !!opts.coachAvailable,
+          coachToday: members().reduce((a, m) => a + coachUsed(m), 0) + (S.ownerCoach.k === utcDayKey(now()) ? S.ownerCoach.n : 0),
+          meta: { modules: SC.MODULES, leagueMetrics: SC.LEAGUE_METRICS, badgeMetrics: SC.BADGE_METRICS, profiles: SC.PROFILES },
+          tiers: TIERS.map((t, i) => ({ tier: t, n: S.leagues.main ? members().filter(m => !m.banned && own(S.leagues.main.members, m.id) && leagueTier(S.leagues.main, m) === i).length : 0 })) });
       }
       if (sub === 'members' && M === 'GET' && !parts[2])
         return json(res, 200, { members: members().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(m => ({ id: m.id, handle: m.handle,
           tier: m.tier || 0, level: (m.stats && m.stats.level) || 1, xp: (m.stats && m.stats.xp) || 0, streak: (m.stats && m.stats.streak) || 0,
           address: m.address || null, claimed: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
-          vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, verified: !!(m.share.verify && Array.isArray(m.vdays)), createdAt: m.createdAt, lastSeen: m.lastSeen || null,
+          vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: !!m.unlocked, coachDaily: m.coachDaily != null ? m.coachDaily : null,
+          coachUsed: coachUsed(m), coachLimit: coachLimitFor(m), grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
+          leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), createdAt: m.createdAt, lastSeen: m.lastSeen || null,
           money: m.money && m.money.ret != null ? { ret: m.money.ret, dd: m.money.dd } : null })) });
+      if (sub === 'members' && !parts[2] && M === 'POST') { // the owner adds someone; they sign in with the code it returns
+        const handle = cleanText(body.handle, 20).replace(/^@/, '');
+        if (!HANDLE_RE.test(handle)) return json(res, 400, { error: 'A name is 3–20 letters, numbers or underscores.' });
+        if (byHandle(handle)) return json(res, 409, { error: 'That name is taken.' });
+        if (members().length >= MAX_MEMBERS) return json(res, 403, { error: 'The league is full.' });
+        let address = typeof body.address === 'string' && ADDR_RE.test(body.address) ? body.address.toLowerCase() : null; if (claimedBy(address)) address = null;
+        const id = crypto.randomBytes(6).toString('hex'), A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let code = ''; for (const x of crypto.randomBytes(10)) code += A[x % 32];
+        const m = { id, handle, keyHash: null, keyHashes: [], createdAt: now(), lastSeen: 0, tier: 0, share: sanitizeShare(body.share), address, stats: null, weekXp: {}, money: null,
+          banned: false, adminMade: true, unlocked: !!body.unlocked, pendingCodes: [{ h: sha(code), exp: now() + 7 * 86400000 }] };
+        S.members[id] = m; S.follows[id] = [];
+        const ls = body.leagues != null ? [].concat(body.leagues) : Object.values(S.leagues).filter(L => L.autoJoin).map(L => L.id);
+        for (const lid of ls) if (own(S.leagues, lid)) joinLeague(S.leagues[lid], m);
+        save(); refreshAll(m);
+        return json(res, 200, { ok: true, id, code, expiresAt: now() + 7 * 86400000 });
+      }
       if (sub === 'members' && parts[2] && M === 'POST') {
         const m = own(S.members, parts[2]) ? S.members[parts[2]] : null; if (!m) return json(res, 404, { error: 'no such member' });
-        const a = body.action;
+        const a = body.action; let extra = {};
         if (a === 'ban' || a === 'unban') m.banned = a === 'ban';
-        else if (a === 'tier') { const t = clampNum(body.tier, 0, TIERS.length - 1); if (t == null) return json(res, 400, { error: 'bad tier' }); m.tier = Math.round(t); }
+        else if (a === 'tier') { const t = clampNum(body.tier, 0, TIERS.length - 1); if (t == null) return json(res, 400, { error: 'bad tier' });
+          const L = own(S.leagues, body.league || 'main') ? S.leagues[body.league || 'main'] : null; if (!L || !own(L.members, m.id)) return json(res, 400, { error: 'not in that league' });
+          L.members[m.id].tier = Math.round(t); if (L.id === 'main') m.tier = Math.round(t); }
         else if (a === 'remove') dropMember(m.id);
+        else if (a === 'edit') {
+          if (body.handle != null) { const h = cleanText(body.handle, 20).replace(/^@/, '');
+            if (!HANDLE_RE.test(h)) return json(res, 400, { error: 'A name is 3–20 letters, numbers or underscores.' });
+            const o = byHandle(h); if (o && o.id !== m.id) return json(res, 409, { error: 'That name is taken.' }); m.handle = h; }
+          if (body.address !== undefined && !m.claimed) { const ad = typeof body.address === 'string' && ADDR_RE.test(body.address) ? body.address.toLowerCase() : null;
+            if (ad && claimedBy(ad, m.id)) return json(res, 409, { error: 'That wallet is claimed by another profile.' });
+            if (ad !== m.address) { m.address = ad; m.vdays = null; m.vAt = 0; m.money = null; refreshAll(m); } }
+          if (body.share && typeof body.share === 'object') m.share = sanitizeShare(body.share, m.share);
+        }
+        else if (a === 'unlock' || a === 'lock') m.unlocked = a === 'unlock'; // every feature, theme and the bigger coach allowance
+        else if (a === 'coach') { if (body.daily === null || body.daily === '') m.coachDaily = null;
+          else { const d = clampNum(body.daily, 0, 1000); if (d == null || body.daily === undefined) return json(res, 400, { error: 'How many coach messages a day?' }); m.coachDaily = Math.round(d); } }
+        else if (a === 'grant') { // XP boost (or a correction, if negative): the member's app adds it to their total
+          const xp = Math.round(clampNum(body.xp, -100000, 100000) || 0); if (!xp) return json(res, 400, { error: 'How much XP?' });
+          m.grants = [...(m.grants || []), { id: crypto.randomBytes(4).toString('hex'), xp, why: cleanText(body.why, 80) || 'Bonus from the league owner', at: now() }].slice(-200);
+          if (xp > 0 && m.share.feed && body.announce) pushEvent(m, { type: 'grant', text: 'got +' + xp + ' XP: ' + (cleanText(body.why, 80) || 'bonus from the league owner') }); }
+        else if (a === 'ungrant') m.grants = (m.grants || []).filter(g => g.id !== body.id);
+        else if (a === 'award' || a === 'revoke') { if (!own(S.badges, body.badge)) return json(res, 404, { error: 'no such badge' });
+          m.awards = m.awards || {}; if (a === 'award') { if (!own(m.awards, body.badge)) { m.awards[body.badge] = now();
+            if (m.share.feed) pushEvent(m, { type: 'badge', text: 'earned the ' + S.badges[body.badge].name + ' badge ' + S.badges[body.badge].icon }); } }
+          else delete m.awards[body.badge];
+          m.revoked = m.revoked || {}; if (a === 'revoke') m.revoked[body.badge] = now(); else delete m.revoked[body.badge]; }
+        else if (a === 'leagues') { for (const id of [].concat(body.join || [])) if (own(S.leagues, id)) { if (id === 'main' && !own(S.leagues.main.members, m.id)) m.tier = 0; joinLeague(S.leagues[id], m); }
+          for (const id of [].concat(body.leave || [])) if (own(S.leagues, id)) { delete S.leagues[id].members[m.id]; if (id === 'main') m.tier = 0; } }
+        else if (a === 'code') { // a sign-in code for this member, good for 7 days: how the owner hands out admin-made profiles or recovers a lost one
+          const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let code = ''; for (const x of crypto.randomBytes(10)) code += A[x % 32];
+          m.pendingCodes = [...(m.pendingCodes || []).filter(c => c.exp > now()), { h: sha(code), exp: now() + 7 * 86400000 }].slice(-3);
+          extra = { code, expiresAt: now() + 7 * 86400000 }; }
         else return json(res, 400, { error: 'unknown action' });
-        save(); return json(res, 200, { ok: true });
+        save(); return json(res, 200, Object.assign({ ok: true }, extra));
       }
       if (sub === 'config' && M === 'PUT') {
         const c = S.config;
@@ -470,6 +651,12 @@ function createSocial(opts) {
         if (typeof body.inviteCode === 'string') c.inviteCode = cleanText(body.inviteCode, 40);
         if (typeof body.unlocksOn === 'boolean') c.unlocksOn = body.unlocksOn;
         if (typeof body.vaultOn === 'boolean') c.vaultOn = body.vaultOn;
+        if (body.modules) c.modules = SC.sanitizeModules(body.modules, c.modules);
+        if (body.unlocks) c.modules = SC.sanitizeModules(body.unlocks, c.modules); // v0.3 panels send this name
+        if (body.levels) c.levels = SC.sanitizeLevels(body.levels, c.levels);
+        if (body.xp) c.xp = SC.sanitizeXp(body.xp, c.xp);
+        if (body.coach) c.coach = SC.sanitizeCoachCfg(body.coach, c.coach);
+        if (body.profiles) c.profiles = SC.sanitizeProfiles(body.profiles, c.profiles);
         if (typeof body.requireClaim === 'boolean' && body.requireClaim !== c.requireClaim) {
           c.requireClaim = body.requireClaim;
           // numbers read from wallets nobody signed for stop counting at once, and come back after a claim
@@ -477,14 +664,54 @@ function createSocial(opts) {
             if (c.requireClaim && !walletFor(m)) { m.vdays = null; m.money = null;
               for (const cc of Object.values(S.comps)) if (cc.money) delete cc.money[m.id]; } }
         }
-        for (const [grp, keys] of [['unlocks', ['trends', 'share', 'compete']], ['themes', ['ember', 'aurora', 'gold']]])
+        for (const [grp, keys] of [['themes', ['ember', 'aurora', 'gold']]])
           if (body[grp] && typeof body[grp] === 'object') for (const k of keys) { const v = clampNum(body[grp][k], 1, 100); if (v != null) c[grp][k] = Math.round(v); }
+        c.unlocks = { trends: c.modules.trends, share: c.modules.share, compete: c.modules.compete };
         save(); return json(res, 200, { ok: true, config: c });
+      }
+      // ---- leagues ----
+      if (sub === 'leagues' && M === 'GET') return json(res, 200, { leagues: Object.values(S.leagues).map(L => Object.assign(leagueOut(L, null), { invite: L.invite, autoJoin: L.autoJoin, week: L.week,
+        roster: members().filter(m => own(L.members, m.id)).map(m => ({ id: m.id, handle: m.handle, tier: leagueTier(L, m) })) })) });
+      if (sub === 'leagues' && M === 'POST' && !parts[2]) {
+        if (Object.keys(S.leagues).length >= 50) return json(res, 400, { error: 'That’s a lot of leagues — 50 at most.' });
+        const L = SC.sanitizeLeague(body, null); if (!L) return json(res, 400, { error: 'A league needs a name.' });
+        let id = String(L.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'league';
+        while (own(S.leagues, id)) id += '-' + crypto.randomBytes(2).toString('hex');
+        S.leagues[id] = Object.assign({ id, num: ++S.leagueSeq, createdAt: now(), members: {}, week: S.league.week }, L);
+        if (body.everyone) for (const m of members()) joinLeague(S.leagues[id], m);
+        save(); return json(res, 200, { ok: true, id });
+      }
+      if (sub === 'leagues' && parts[2] && (M === 'PUT' || M === 'DELETE' || M === 'POST')) {
+        const L = own(S.leagues, parts[2]) ? S.leagues[parts[2]] : null; if (!L) return json(res, 404, { error: 'no such league' });
+        if (M === 'DELETE') { if (L.id === 'main') return json(res, 400, { error: 'The main league stays; rename or reshape it instead.' });
+          delete S.leagues[L.id]; for (const c of Object.values(S.comps)) if (c.league === L.id) c.league = null; save(); return json(res, 200, { ok: true }); }
+        if (M === 'PUT') { const n = SC.sanitizeLeague(body, L); if (!n) return json(res, 400, { error: 'A league needs a name.' }); Object.assign(L, n); save(); return json(res, 200, { ok: true }); }
+        // POST /admin/leagues/:id/members {add, remove}
+        for (const id of [].concat(body.add || [])) if (own(S.members, id)) { if (L.id === 'main' && !own(L.members, id)) S.members[id].tier = 0; joinLeague(L, S.members[id]); }
+        for (const id of [].concat(body.remove || [])) { delete L.members[id]; if (L.id === 'main' && own(S.members, id)) S.members[id].tier = 0; }
+        save(); return json(res, 200, { ok: true });
+      }
+      // ---- reward badges ----
+      if (sub === 'badges' && M === 'GET') return json(res, 200, { badges: Object.values(S.badges).map(b => Object.assign({}, b, { earned: members().filter(m => m.awards && own(m.awards, b.id)).length })) });
+      if (sub === 'badges' && M === 'POST' && !parts[2]) {
+        if (Object.keys(S.badges).length >= 100) return json(res, 400, { error: '100 badges at most.' });
+        const b = SC.sanitizeBadge(body, null); if (!b) return json(res, 400, { error: 'A badge needs a name.' });
+        const id = crypto.randomBytes(4).toString('hex'); S.badges[id] = Object.assign({ id, createdAt: now() }, b);
+        for (const m of members()) awardCheck(m);
+        save(); return json(res, 200, { ok: true, id });
+      }
+      if (sub === 'badges' && parts[2] && (M === 'PUT' || M === 'DELETE')) {
+        const b = own(S.badges, parts[2]) ? S.badges[parts[2]] : null; if (!b) return json(res, 404, { error: 'no such badge' });
+        if (M === 'DELETE') { delete S.badges[b.id]; for (const m of members()) if (m.awards) delete m.awards[b.id]; save(); return json(res, 200, { ok: true }); }
+        const n = SC.sanitizeBadge(body, b); if (!n) return json(res, 400, { error: 'A badge needs a name.' }); Object.assign(b, n);
+        for (const m of members()) awardCheck(m);
+        save(); return json(res, 200, { ok: true });
       }
       if (sub === 'competitions' && M === 'POST' && !parts[2]) {
         const c = sanitizeComp(body); if (!c) return json(res, 400, { error: 'needs a title, a type (' + COMP_TYPES.join(', ') + '), and start ≤ end dates within 92 days' });
+        if (c.league && !own(S.leagues, c.league)) return json(res, 400, { error: 'no such league' });
         c.id = crypto.randomBytes(5).toString('hex'); c.createdAt = now(); c.entrants = {};
-        S.comps[c.id] = c; pushEvent(null, { type: 'announce', text: 'New competition: ' + c.title, quote: c.rule }); save();
+        S.comps[c.id] = c; pushEvent(null, { type: 'announce', text: 'New competition: ' + c.title + (c.league && S.leagues[c.league].open && !S.leagues[c.league].invite ? ' · ' + S.leagues[c.league].name : ''), quote: c.rule }); save();
         return json(res, 200, { ok: true, id: c.id });
       }
       if (sub === 'competitions' && parts[2] && M === 'DELETE') {
@@ -506,13 +733,27 @@ function createSocial(opts) {
       return json(res, 404, { error: 'not found' });
     }
 
+    // ---------- a member's public badge page (no sign-in; only if they switched it on) ----------
+    if (head === 'public' && parts[1] && M === 'GET') {
+      if (limited(req, 'public', 240, 600000)) return json(res, 429, { error: 'Too many requests.' });
+      const m = byHandle(arg);
+      if (!m || m.banned || !m.share.page) return json(res, 404, { error: 'No public badge page here.' });
+      const st = m.stats || {}, ver = m.share.verify && Array.isArray(m.vdays);
+      const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
+      return json(res, 200, { handle: m.handle, level: st.level || 1, title: levelTitle(st.level || 1), xp: st.xp || 0, streak: st.streak || 0, best: st.best || 0,
+        since: utcDayKey(m.createdAt || now()), discipline30: d30.avg == null ? null : Math.round(d30.avg), verified: ver, claimed: !!m.claimed,
+        badges: st.badges || [], badgeN: st.badgeN || 0, badgeTotal: st.badgeTotal || 0, awards: awardsOut(m).map(a => ({ name: a.name, icon: a.icon, desc: a.desc, at: a.at })),
+        leagues: leaguesOf(m).filter(L => L.open && !L.invite).map(L => ({ name: L.name, tier: L.tiers ? TIERS[leagueTier(L, m)] : null })) });
+    }
+
     // ---------- joining ----------
     if (head === 'join' && M === 'POST') {
       // without AUTH_TOKEN the owner's journal (wallets included) is open to anyone with the link:
       // the league stays closed until the owner protects it
       if (!adminConfigured) return json(res, 403, { error: 'The owner needs to set an access token on the server before the league can open.' });
       if (!S.config.open) return json(res, 403, { error: 'This league isn’t taking new members right now.' });
-      if (S.config.inviteCode && cleanText(body.invite, 40) !== S.config.inviteCode) return json(res, 403, { error: 'That invite code isn’t right.' });
+      if (S.config.inviteCode && limited(req, 'invite', 20, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
+      if (S.config.inviteCode && !sameText(cleanText(body.invite, 40), S.config.inviteCode)) return json(res, 403, { error: 'That invite code isn’t right.' });
       if (members().length >= MAX_MEMBERS) return json(res, 403, { error: 'The league is full.' });
       const ip = ipOf(req);
       const recent = (joinTimes.get(ip) || []).filter(t => now() - t < 3600000);
@@ -526,6 +767,7 @@ function createSocial(opts) {
       const m = { id, handle, keyHash: sha(key), createdAt: now(), lastSeen: now(), tier: 0, share: sanitizeShare(body.share),
         address, stats: null, weekXp: {}, money: null, banned: false };
       S.members[id] = m; S.follows[id] = [];
+      for (const L of Object.values(S.leagues)) if (L.autoJoin) joinLeague(L, m);
       recent.push(now()); joinTimes.set(ip, recent);
       if (m.share.feed) pushEvent(m, { type: 'join', text: 'joined the league' });
       save(); refreshMoney(m, true); refreshBehavior(m, true);
@@ -594,9 +836,12 @@ function createSocial(opts) {
     if (head === 'link' && parts[1] === 'finish' && M === 'POST') {
       if (limited(req, 'link', 20, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
       const code = String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
-      const l = code && links.get(code);
-      if (!l || l.exp < now()) return json(res, 400, { error: 'That code didn’t work. Codes last 10 minutes and work once.' });
-      links.delete(code);
+      let l = code && links.get(code);
+      if (l && l.exp >= now()) links.delete(code);
+      else { l = null; const h = code ? sha(code) : null; // a 7-day code the owner made in the admin panel
+        const om = h && members().find(x => (x.pendingCodes || []).some(c => c.h === h && c.exp >= now()));
+        if (om) { om.pendingCodes = om.pendingCodes.filter(c => c.h !== h); l = { memberId: om.id }; } }
+      if (!l) return json(res, 400, { error: 'That code didn’t work. Codes work once, for 10 minutes (or 7 days when the owner made them).' });
       const m = own(S.members, l.memberId) ? S.members[l.memberId] : null;
       if (!m) return json(res, 400, { error: 'That code didn’t work.' });
       if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
@@ -619,6 +864,7 @@ function createSocial(opts) {
         const other = byHandle(h); if (other && other.id !== me.id) return json(res, 409, { error: 'That name is taken.' }); me.handle = h; }
       const prevAddr = me.address, prevVerify = !!me.share.verify, prevMoney = !!(me.share.ret || me.share.usd);
       if (body.share) me.share = sanitizeShare(body.share, me.share);
+      if (typeof body.coachDetail === 'boolean') me.coachDetail = body.coachDetail;
       // a claimed wallet stays put: only releasing it (or claiming another) changes the address
       if (newAddr !== undefined) me.address = newAddr;
       if (!(me.share.ret || me.share.usd)) me.money = null;
@@ -682,7 +928,7 @@ function createSocial(opts) {
     if (head === 'stats' && M === 'POST') {
       const next = sanitizeStats(body);
       const posted = new Set(me.postedHabits || []);
-      for (const e of eventsFromStats(me.stats, next, me.share)) {
+      for (const e of eventsFromStats(me.stats, next, me.share, S.config.levels.titles)) {
         if (e.type === 'habit') { if (posted.has(e.quote)) continue; posted.add(e.quote); }
         pushEvent(me, e);
       }
@@ -690,23 +936,63 @@ function createSocial(opts) {
       me.stats = next; me.statsAt = now();
       if (next.week) { me.weekXp = me.weekXp || {}; me.weekXp[next.week] = next.weekXp;
         const keep = Object.keys(me.weekXp).sort().slice(-8); for (const k of Object.keys(me.weekXp)) if (!keep.includes(k)) delete me.weekXp[k]; }
+      awardCheck(me);
       save(); refreshAll(me);
       return json(res, 200, { ok: true, tier: me.tier || 0 });
     }
+    // ---- leagues: browse, join, leave ----
+    // ?q= finds open leagues by name or number (#1042 or 1042); without q: yours first, then the open ones, biggest first
+    if (head === 'leagues' && M === 'GET' && !parts[1]) {
+      const q = cleanText(query.q, 40).toLowerCase().replace(/^#/, '');
+      let list = Object.values(S.leagues).filter(L => L.open || own(L.members, me.id));
+      if (q) list = list.filter(L => String(L.num) === q || L.name.toLowerCase().includes(q) || (L.desc || '').toLowerCase().includes(q));
+      const size = L => members().filter(m => own(L.members, m.id) && !m.banned).length;
+      list.sort((a, b) => (own(b.members, me.id) ? 1 : 0) - (own(a.members, me.id) ? 1 : 0) || size(b) - size(a) || a.num - b.num);
+      return json(res, 200, { q, leagues: list.slice(0, 50).map(L => leagueOut(L, me)) });
+    }
+    // a league's page before (or after) joining: what it ranks, its top five, its competitions
+    if (head === 'leagues' && parts[1] && !parts[2] && M === 'GET') {
+      const L = own(S.leagues, arg) ? S.leagues[arg] : Object.values(S.leagues).find(x => String(x.num) === arg.replace(/^#/, '')) || null;
+      if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
+      const top = boardRows(leagueMembers(L), L.metric, { week: S.league.week, weeks: L.period === 'month' && L.metric === 'xp' ? monthWeeks(S.league.week) : undefined, days: L.period === 'month' ? monthDays() : 7 });
+      return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt,
+        top: top.slice(0, 5).map(r => ({ rank: r.rank, handle: r.handle, value: r.value, sub: r.sub, me: r.id === me.id })),
+        tiersCount: L.tiers ? TIERS.map((t, i) => ({ tier: t, n: members().filter(m => own(L.members, m.id) && !m.banned && leagueTier(L, m) === i).length })) : null,
+        comps: Object.values(S.comps).filter(c => c.league === L.id && compStatus(c, todayKey()) !== 'finished').map(c => ({ id: c.id, title: c.title, start: c.start, end: c.end, type: c.type })) }) });
+    }
+    if (head === 'leagues' && parts[1] && parts[2] === 'join' && (M === 'POST' || M === 'DELETE')) {
+      const L = own(S.leagues, arg) ? S.leagues[arg] : null; if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
+      if (M === 'DELETE') { delete L.members[me.id]; if (L.id === 'main') me.tier = 0; }
+      else { if (L.invite && !own(L.members, me.id)) { if (limited(req, 'invite', 20, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
+          if (!sameText(cleanText(body.invite, 40), L.invite)) return json(res, 403, { error: 'That invite code isn’t right.' }); }
+        const was = own(L.members, me.id); joinLeague(L, me); if (L.id === 'main' && !was) me.tier = 0;
+        if (!was && L.open && !L.invite && me.share.feed) pushEvent(me, { type: 'league', text: 'joined ' + L.name }); }
+      save(); return json(res, 200, { league: leagueOut(L, me) });
+    }
+    // one league's own ranking (its measure, by tier when it has tiers); default: main, else the first one you're in
     if (head === 'league' && M === 'GET') {
-      const rows = boardRows(members(), 'xp', { tier: me.tier || 0, week: S.league.week });
-      const n = members().filter(m => !m.banned && (m.tier || 0) === (me.tier || 0)).length, k = leagueMoveCount(n);
-      return json(res, 200, { tier: me.tier || 0, tierName: TIERS[me.tier || 0], week: S.league.week, size: n, promote: me.tier < TIERS.length - 1 ? k : 0, demote: me.tier > 0 ? k : 0,
+      const L = own(S.leagues, query.id) && own(S.leagues[query.id].members, me.id) ? S.leagues[query.id]
+        : own(S.leagues.main ? S.leagues.main.members : {}, me.id) ? S.leagues.main : leaguesOf(me)[0] || null;
+      if (!L) return json(res, 200, { league: null, rows: [], me: null, mine: [] });
+      const tier = leagueTier(L, me), rows = leagueBoard(L, L.metric, me);
+      const n = L.tiers ? members().filter(m => !m.banned && own(L.members, m.id) && leagueTier(L, m) === tier).length : rows.length, k = L.tiers ? leagueMoveCount(n) : 0;
+      return json(res, 200, { league: leagueOut(L, me), tier, tierName: TIERS[tier], week: S.league.week, size: n, promote: tier < TIERS.length - 1 ? k : 0, demote: tier > 0 ? k : 0,
+        board: L.metric, label: BOARDS[L.metric].label, mine: leaguesOf(me).map(x => ({ id: x.id, name: x.name })),
         rows: rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, value: r.value, sub: r.sub, me: r.id === me.id })), me: rows.find(r => r.id === me.id) || null });
     }
+    // boards: scope=global (everyone who opted in to global boards) or a league's members
     if (head === 'leaderboard' && M === 'GET') {
-      const board = BOARDS[query.board] ? query.board : 'discipline';
+      const board = own(BOARDS, query.board) ? query.board : 'discipline', global = query.scope === 'global';
       for (const m of members()) refreshAll(m); // background; boards show what's cached
-      const rows = boardRows(members(), board, { tier: me.tier || 0, week: S.league.week });
+      let rows, L = null;
+      if (global) rows = boardRows(members().filter(m => m.share.global), board, { week: S.league.week });
+      else { L = own(S.leagues, query.league) && own(S.leagues[query.league].members, me.id) ? S.leagues[query.league] : own((S.leagues.main || {}).members || {}, me.id) ? S.leagues.main : leaguesOf(me)[0] || null;
+        rows = L ? leagueBoard(L, board, me) : []; }
       const mine = rows.find(r => r.id === me.id) || null;
-      return json(res, 200, { board, label: BOARDS[board].label, rows: rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, tier: r.tier, value: r.value, sub: r.sub, me: r.id === me.id })),
-        me: mine, total: rows.length, optedIn: !!me.share[BOARDS[board].needs] && (!BOARDS[board].verified || !!me.share.verify),
-        need: !me.share[BOARDS[board].needs] ? BOARDS[board].needs : BOARDS[board].verified && !me.share.verify ? 'verify' : null,
+      const needKey = global && !me.share.global ? 'global' : !me.share[BOARDS[board].needs] ? BOARDS[board].needs : BOARDS[board].verified && !me.share.verify ? 'verify' : null;
+      return json(res, 200, { board, label: BOARDS[board].label, scope: global ? 'global' : 'league', league: L ? { id: L.id, name: L.name } : null,
+        rows: rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, tier: r.tier, value: r.value, sub: r.sub, me: r.id === me.id })),
+        me: mine, total: rows.length, optedIn: !needKey, need: needKey,
         verifyState: !BOARDS[board].verified || !me.share.verify ? null : !canVerify ? 'unavailable' : !me.address ? 'no-wallet' : !walletFor(me) ? 'claim' : !Array.isArray(me.vdays) ? 'pending' : 'ok' });
     }
     if (head === 'feed' && M === 'GET') {
@@ -736,19 +1022,23 @@ function createSocial(opts) {
       if (M === 'POST') f.push(m.id);
       save(); return json(res, 200, { following: M === 'POST' });
     }
+    const compVisible = c => !c.league || (own(S.leagues, c.league) && own(S.leagues[c.league].members, me.id)) || !!c.entrants[me.id];
     if (head === 'competitions' && M === 'GET' && !parts[1]) {
       for (const c of Object.values(S.comps)) if (c.entrants[me.id]) { if (c.type === 'return') refreshMoney(me); if (c.type === 'discipline') refreshBehavior(me); }
-      return json(res, 200, { competitions: Object.values(S.comps).sort((a, b) => a.start < b.start ? 1 : -1).map(c => compOut(c, me, false)) });
+      return json(res, 200, { competitions: Object.values(S.comps).filter(compVisible).sort((a, b) => a.start < b.start ? 1 : -1).map(c => compOut(c, me, false)) });
     }
     if (head === 'competitions' && parts[1] && M === 'GET') {
-      const c = own(S.comps, arg) ? S.comps[arg] : null; if (!c) return json(res, 404, { error: 'no such competition' });
+      const c = own(S.comps, arg) ? S.comps[arg] : null; if (!c || !compVisible(c)) return json(res, 404, { error: 'no such competition' });
       return json(res, 200, { competition: compOut(c, me, true) });
     }
     if (head === 'competitions' && parts[1] && parts[2] === 'join' && (M === 'POST' || M === 'DELETE')) {
-      const c = own(S.comps, arg) ? S.comps[arg] : null; if (!c) return json(res, 404, { error: 'no such competition' });
+      const c = own(S.comps, arg) ? S.comps[arg] : null; if (!c || !compVisible(c)) return json(res, 404, { error: 'no such competition' });
       if (compStatus(c, todayKey()) === 'finished') return json(res, 400, { error: 'This competition has finished.' });
+      if (M === 'POST' && c.league && !own(S.leagues[c.league].members, me.id)) return json(res, 403, { error: 'This competition is for ' + S.leagues[c.league].name + ' — join that league first.' });
       if (M === 'DELETE') delete c.entrants[me.id];
       else {
+        const need = S.config.unlocksOn && !me.unlocked && S.config.modules.compete > 1 ? S.config.modules.compete : 0;
+        if (need && ((me.stats && me.stats.level) || 1) < need) return json(res, 403, { error: 'Competitions unlock at level ' + need + '.' });
         if (c.type === 'return' && !(me.address && me.share.ret)) return json(res, 400, { error: 'Return competitions read your wallet on chain: add your address and switch on “Show % return” in What you share.' });
         if (c.type === 'return' && !walletFor(me)) return json(res, 400, { error: 'This league only counts claimed wallets. Claim yours under Profile & privacy first.' });
         c.entrants[me.id] = { joinedAt: now() };
@@ -759,8 +1049,18 @@ function createSocial(opts) {
     }
     return json(res, 404, { error: 'not found' });
   }
-  return { handle, state: () => S };
+  // for the AI coach in server.js: who is asking, and whether today's allowance has room
+  const coach = {
+    statusFor: req => { const m = byKey(req); return m ? { who: 'member', member: m, ...coachStatusFor(m) } : null; },
+    ownerStatus: () => { const lim = S.config.coach.ownerDaily, k = utcDayKey(now()), used = S.ownerCoach.k === k ? S.ownerCoach.n : 0;
+      return { who: 'owner', allowed: !lim || used < lim, reason: lim && used >= lim ? 'You’ve used today’s ' + lim + ' coach messages.' : null, limit: lim || null, used, remaining: lim ? Math.max(0, lim - used) : null, detail: true, detailAllowed: true }; },
+    // reserve a message before asking the model (so parallel requests can't all pass), and give it back if no answer came
+    count: (m, d = 1) => { if (m) { const used = coachUsed(m), tz = used ? coachTz(m) : (m.stats && m.stats.tz) || 'UTC';
+        m.coachUse = { k: zoneKey(tz, now()), tz, n: Math.max(0, used + d) }; }
+      else { const k = utcDayKey(now()); S.ownerCoach = { k, n: Math.max(0, (S.ownerCoach.k === k ? S.ownerCoach.n : 0) + d) }; } save(); },
+  };
+  return { handle, coach, state: () => S };
 }
 
-module.exports = { createSocial, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, portfolioStats, leagueRollover,
+module.exports = { createSocial, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
   boardRows, compStandings, compStatus, disciplineOver, isoWeekOfKey, TIERS, DEFAULT_CONFIG, DEFAULT_SHARE };

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<title>@__HANDLE__’s badges · Pulse</title>
+<meta name="description" content="Trading badges @__HANDLE__ earned on Pulse — for discipline, habits and consistency, not luck.">
+<meta property="og:title" content="@__HANDLE__’s badges on Pulse">
+<meta property="og:description" content="Earned for discipline, habits and consistency — process, not profit.">
+<meta name="theme-color" content="#0A0C0F">
+<link rel="icon" href="/pulse-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0A0C0F;--card:#121519;--card2:#171B20;--line:#232930;--text:#F3F5F7;--soft:#C9D0D7;--muted:#8A95A1;--acc:#3FE0A0;
+  --t0:#C98A5B;--t1:#B8C2CC;--t2:#F4C04E;--t3:#7FE0D2;--t4:#8FA8FF;--t5:#FF8AD8}
+*{box-sizing:border-box}
+html{color-scheme:dark;background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:980px;margin:0 auto;padding:28px 16px 64px;display:flex;flex-direction:column;gap:22px}
+a{color:var(--acc)}
+.hero{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.av{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font:700 26px Inter;color:#0A0C0F;flex:none}
+.who{flex:1;min-width:200px}
+.who h1{margin:0;font:600 34px/1.05 'Barlow Condensed',Inter,sans-serif;letter-spacing:.01em}
+.who p{margin:4px 0 0;color:var(--soft);font-size:14px}
+.kick{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.share{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:22px;border:1px solid var(--line);background:var(--card);color:var(--text);font:600 14px Inter;cursor:pointer}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.tile b{font:600 30px/1.1 'Barlow Condensed',Inter,sans-serif}
+.tile span{font-size:12px;color:var(--muted)}
+.bar{height:6px;border-radius:3px;background:#1E242B;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:var(--acc);border-radius:3px}
+h2{margin:0 0 10px;font-size:15px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+h2 small{font-weight:500;font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.b{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 12px 12px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;min-width:0}
+.medal{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;position:relative}
+.medal::before{content:"";position:absolute;inset:0;border-radius:50%;border:3px solid var(--tc);opacity:.95}
+.medal::after{content:"";position:absolute;inset:6px;border-radius:50%;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--tc) 40%,#0000),#0000 70%),var(--card2)}
+.medal svg,.medal em{position:relative;z-index:1}
+.medal em{font-style:normal;font-size:26px}
+.b strong{font-size:13px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
+.b .tier{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--tc)}
+.b .when{font-size:11px;color:var(--muted)}
+.cat{background:#0E1114;border:1px solid var(--line);border-radius:22px;padding:16px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{width:10px;height:10px;border-radius:50%;background:var(--tc)}
+.state{padding:40px 16px;text-align:center;color:var(--soft)}
+footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1B1F25;border:1px solid var(--line);padding:10px 16px;border-radius:14px;font-size:13px;display:none}
+@media (max-width:640px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.who h1{font-size:30px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<main id="app"><div class="state">Loading @__HANDLE__’s badges…</div></main>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(function(){
+  var HANDLE = location.pathname.split('/').pop();
+  var TIERS = ['Bronze','Silver','Gold','Platinum','Diamond','Legend'];
+  var CATS = {discipline:'Discipline',habits:'Habits',consistency:'Consistency',journal:'Journaling',routine:'Routines',risk:'Risk control',results:'Results',milestones:'Milestones',social:'League',other:'Other'};
+  var ICON = {
+    discipline:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+    habits:'<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>',
+    consistency:'<path d="M12 22c4 0 7-3 7-7 0-4-3-6-4-10-2 2-3 4-3 6-1-1-2-2-2-4-2 2-5 5-5 8 0 4 3 7 7 7z"/>',
+    journal:'<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    routine:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    risk:'<path d="M12 2l9 5v5c0 5-4 9-9 10-5-1-9-5-9-10V7l9-5z"/><path d="M12 8v5M12 16h.01"/>',
+    results:'<path d="M4 19l5-6 4 3 7-9"/><path d="M15 7h5v5"/>',
+    milestones:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+    social:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.6a3.5 3.5 0 0 1 0 6.8"/>',
+    other:'<circle cx="12" cy="9" r="6"/><path d="M8.5 14L7 22l5-3 5 3-1.5-8"/>'};
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function svg(cat,col){ return '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" style="stroke:'+col+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(ICON[cat]||ICON.other)+'</svg>'; }
+  function day(k){ if(!k)return ''; var d=new Date(k+'T12:00:00Z'); return isNaN(d)?'':d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+  function avColor(h){ var P=['#B69CFF','#5AA9FF','#FFB25A','#3FE0A0','#F4C04E','#FF9A7E','#9FB4C8'],x=0; for(var i=0;i<h.length;i++)x=(x*31+h.charCodeAt(i))>>>0; return P[x%P.length]; }
+  function badge(b){ var r=Math.max(0,Math.min(5,b.r||0)), col='var(--t'+r+')', cat=CATS[b.c]?b.c:'other';
+    return '<div class="b" style="--tc:'+col+'" title="'+esc(b.t)+' · '+TIERS[r]+'"><span class="medal">'+svg(cat,col)+'</span><strong>'+esc(b.t)+'</strong><span class="tier">'+TIERS[r]+'</span>'+(b.k?'<span class="when">'+esc(day(b.k))+'</span>':'')+'</div>'; }
+  function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.style.display='block'; setTimeout(function(){ t.style.display='none'; },2400); }
+  fetch('/api/social/public/'+encodeURIComponent(HANDLE)).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok,status:r.status,d:d}; }); }).then(function(x){
+    var app=document.getElementById('app');
+    if(!x.ok){ app.innerHTML='<div class="state"><p>'+(x.status===404?'<b>@'+esc(HANDLE)+'</b> doesn’t have a public badge page.':'This page couldn’t load right now. Try again in a minute.')+'</p><p><a href="/pulse">Open Pulse</a></p></div>'; return; }
+    var d=x.d; document.title='@'+d.handle+'’s badges · Pulse';
+    var bs=(d.badges||[]).slice();
+    var byCat={}; bs.forEach(function(b){ var c=CATS[b.c]?b.c:'other'; (byCat[c]=byCat[c]||[]).push(b); });
+    var best=bs.slice().sort(function(a,b){ return (b.r||0)-(a.r||0)||String(b.k||'').localeCompare(String(a.k||'')); }).slice(0,6);
+    var pct=d.badgeTotal?Math.round(100*bs.length/d.badgeTotal):null;
+    var html='<header class="hero"><span class="av" style="background:'+avColor(d.handle)+'">'+esc(d.handle.slice(0,2).toUpperCase())+'</span>'
+      +'<div class="who"><span class="kick">Pulse · badge case</span><h1>@'+esc(d.handle)+(d.claimed?' <span title="Wallet claimed" style="font-size:18px;color:var(--acc)">✓</span>':'')+'</h1>'
+      +'<p>Level '+d.level+' · '+esc(d.title)+' · trading the process since '+esc(day(d.since))+'</p></div>'
+      +'<button type="button" class="share" id="share">Share this page</button></header>'
+      +'<section class="tiles"><div class="tile"><b>'+bs.length+'</b><span>badges'+(d.badgeTotal?' of '+d.badgeTotal:'')+'</span>'+(pct!=null?'<div class="bar"><i style="width:'+pct+'%"></i></div>':'')+'</div>'
+      +'<div class="tile"><b>'+d.streak+'</b><span>day discipline streak</span></div><div class="tile"><b>'+d.best+'</b><span>best streak</span></div>'
+      +'<div class="tile"><b>'+(d.discipline30==null?'—':d.discipline30)+'</b><span>discipline, 30 days'+(d.verified&&d.discipline30!=null?' · verified':'')+'</span></div></section>';
+    if((d.awards||[]).length) html+='<section class="cat"><h2>From the league <small>awarded by the league owner</small></h2><div class="grid">'+d.awards.map(function(a){
+        return '<div class="b" style="--tc:var(--t2)"><span class="medal"><em>'+esc(a.icon)+'</em></span><strong>'+esc(a.name)+'</strong>'+(a.desc?'<span class="when">'+esc(a.desc)+'</span>':'')+'</div>'; }).join('')+'</div></section>';
+    if(best.length) html+='<section><h2>Highlights</h2><div class="grid">'+best.map(badge).join('')+'</div></section>';
+    Object.keys(CATS).forEach(function(c){ var l=byCat[c]; if(!l)return; l.sort(function(a,b){ return (b.r||0)-(a.r||0); });
+      html+='<section class="cat"><h2>'+CATS[c]+' <small>'+l.length+' earned</small></h2><div class="grid">'+l.map(badge).join('')+'</div></section>'; });
+    if(!bs.length&&!(d.awards||[]).length) html+='<div class="state">No badges yet — the first ones come with the first clean trading days.</div>';
+    html+='<div class="legend">'+TIERS.map(function(t,i){ return '<span style="--tc:var(--t'+i+')"><i></i>'+t+'</span>'; }).join('')+'</div>'
+      +'<footer><span>Badges on Pulse are earned for process — discipline, habits, consistency — never for luck.</span><a href="/pulse">Start your own on Pulse →</a></footer>';
+    app.innerHTML=html;
+    document.getElementById('share').onclick=function(){ var u=location.href, t='@'+d.handle+'’s trading badges on Pulse';
+      if(navigator.share)navigator.share({title:t,url:u}).catch(function(){});
+      else if(navigator.clipboard)navigator.clipboard.writeText(u).then(function(){ toast('Link copied'); },function(){ toast(u); });
+      else toast(u); };
+  }).catch(function(){ document.getElementById('app').innerHTML='<div class="state">Couldn’t load this page. Try again in a moment.</div>'; });
+})();
+</script>
+</body>
+</html>

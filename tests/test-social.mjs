@@ -22,12 +22,12 @@ t('stats are clamped and filtered: bad days, badges and oversized text never get
     habits: ['a'.repeat(500), '', 'b', 'c', 'd', 'e', 'f'] });
   eq(s.xp, 0); eq(s.level, 500); eq(s.streak, 0); eq(s.week, null); eq(s.weekXp, 1e6);
   eq(s.days, [{ k: '2026-09-01', s: 100, b: true, j: false }]);
-  eq(s.badges, [{ id: 'ok-1', t: 'Fine' }]);
+  eq(s.badges, [{ id: 'ok-1', t: 'Fine', c: '', r: 0, k: null }]);
   eq(s.habits.length, 5); eq(s.habits[0].length, 140);
 });
 t('sharing defaults keep money and the address private', () => {
   const sh = S.sanitizeShare({ usd: true, profile: 'yes' });
-  eq(sh, { profile: true, boards: true, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false });
+  eq(sh, { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false });
 });
 t('a sharing key added later (verify) stays off for existing members until they switch it on', () => {
   const old = { profile: true, boards: true, feed: true, habits: true, ret: false, usd: false, addr: false };
@@ -158,6 +158,8 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
 const tick = () => new Promise(r => setTimeout(r, 30));
 let A, Bk;
 try {
+  // competitions unlock at level 4 by default; these tests join at level 1
+  await call('/admin/config', { method: 'PUT', admin: true, body: { unlocksOn: false } });
   await t('joining: names are validated and unique; the key is returned once and only its hash is stored', async () => {
     eq((await call('/join', { method: 'POST', body: { handle: 'no spaces' } })).status, 400);
     const a = await call('/join', { method: 'POST', body: { handle: 'alpha_1', address: '0x' + 'a'.repeat(40), share: { ret: true } } });
@@ -353,7 +355,7 @@ t('only process numbers go out: no trades, notes, P&L or addresses in the stats 
     achievements: [{ id: 'x', title: 'X', at: '2026-09-01' }, { id: 'y', title: 'Y', at: null }],
     days: [{ key: '2026-09-30', score: 88, breached: false, parts: { journal: 1 }, net: -500, n: 3 }] };
   const p = ctx.pzSocialStats(g, ['When a, b.']);
-  eq(Object.keys(p).sort(), ['badgeN', 'badges', 'best', 'challengesDone', 'days', 'habits', 'lastChallenge', 'level', 'shields', 'streak', 'tz', 'week', 'weekXp', 'xp']);
+  eq(Object.keys(p).sort(), ['badgeN', 'badgeTotal', 'badges', 'best', 'challengesDone', 'days', 'habits', 'lastChallenge', 'level', 'shields', 'streak', 'tz', 'week', 'weekXp', 'xp']);
   eq(p.days, [{ k: '2026-09-30', s: 88, b: false, j: true }], 'a day carries its score and flags — never its P&L');
   eq(p.badges, [{ id: 'x', t: 'X' }]); eq(p.lastChallenge, 'When a, b.');
 });

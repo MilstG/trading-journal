@@ -342,6 +342,74 @@ function sanitizeCoachFacts(f) {
   if (JSON.stringify(out).length > 12000) return null;
   return out;
 }
+/* ---------------- AI coach chat (Pulse): opt-in, per-member daily allowance ---------------- */
+// The app sends a summary it built from the member's own journal (scores, stats, slips, plan vs
+// execution, habits, today's routine) and, only if the member switched it on, their recent trades
+// and notes. Wallet addresses are scrubbed from both. Nothing is stored on the server.
+const COACH_CHAT_SYSTEM = [
+  'You are the coach inside Pulse, a trading journal. You talk with one trader about their own trading,',
+  'using the data their journal app attached (JSON). Their process scores are explained below; profit is',
+  'never part of a process score.',
+  '',
+  'How you coach: calm, warm, direct, second person. Put process before profit. Prefer one concrete next',
+  'step over a list. Praise specific good behaviour you can see in the data. When something went wrong,',
+  'name the pattern without judgement and tie it to their own numbers and their current focus habit or',
+  'leak. Use only numbers present in the data; never invent figures. If the data cannot answer, say so',
+  'and say what they could log to find out.',
+  '',
+  'Never give trade signals, price predictions, entries, targets, coin picks or position sizes for',
+  'future trades, and never tell them to trade more. You may discuss past trades and their own rules.',
+  'If they seem to be in distress or chasing losses, suggest stepping away first.',
+  '',
+  'Keep answers short: usually 60-180 words, plain text, at most a few short lines or a short list.',
+  'No headings. When asked for an end-of-day review: what went well, the one thing to fix, and one',
+  'focus for tomorrow. When asked to plan the day: their limits, their focus habit, and one if-then rule.',
+  '',
+  'Scores, for reference: Discipline 0-100 = share of the day\'s closed trades without any of six slips',
+  '(revenge entry within 15 min of a loss, trading on after two losses in a row, sizing up after a loss,',
+  'adding to a loser, overtrading past 1.5x their usual day, holding a loser over 3x their usual winner).',
+  'Form: 50 = their usual recent results. Load: 50 = their usual day\'s activity. Readiness: from their',
+  'morning check-in (sleep, calm, focus).',
+].join('\n');
+// Deep-copies an attached JSON summary within limits, scrubbing wallet addresses.
+function scrubCoachData(v, depth) {
+  if (depth > 6) return undefined;
+  if (typeof v === 'string') return v.replace(/0x[0-9a-fA-F]{40}/g, '[wallet]').slice(0, 1200);
+  if (typeof v === 'number') return isFinite(v) ? Math.round(v * 1000) / 1000 : undefined;
+  if (typeof v === 'boolean' || v === null) return v;
+  if (Array.isArray(v)) return v.slice(0, 120).map(x => scrubCoachData(x, depth + 1));
+  if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v).slice(0, 80)) { if (/^(address|wallet|addr)$/i.test(k)) continue; o[k.slice(0, 40)] = scrubCoachData(v[k], depth + 1); } return o; }
+  return undefined;
+}
+// -> {messages, facts, detail} or {error}
+function sanitizeCoachChat(b, detailAllowed) {
+  if (!b || typeof b !== 'object') return { error: 'invalid body' };
+  let msgs = (Array.isArray(b.messages) ? b.messages : []).filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+    .map(m => ({ role: m.role, content: m.content.slice(0, 4000) })).slice(-16);
+  while (msgs.length && msgs[0].role !== 'user') msgs.shift();
+  if (!msgs.length || msgs[msgs.length - 1].role !== 'user') return { error: 'expected a conversation ending with your message' };
+  const facts = JSON.stringify(scrubCoachData(b.facts && typeof b.facts === 'object' ? b.facts : {}, 0));
+  if (facts.length > 40000) return { error: 'the attached summary is too large' };
+  let detail = null;
+  if (detailAllowed && b.detail && typeof b.detail === 'object') { detail = JSON.stringify(scrubCoachData(b.detail, 0)); if (detail.length > 60000) detail = detail.slice(0, 60000); }
+  return { messages: msgs, facts, detail };
+}
+function coachChatRequest(chat, model) {
+  const m = model || 'claude-opus-5-5';
+  const req = {
+    model: m,
+    max_tokens: 2000, // answers are a short paragraph or two
+    system: [
+      { type: 'text', text: COACH_CHAT_SYSTEM, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'Trader data from their journal app (JSON):\n' + chat.facts
+        + (chat.detail ? '\n\nTheir recent trades and journal notes (they chose to share these):\n' + chat.detail : '') },
+    ],
+    messages: chat.messages,
+  };
+  if (!/haiku|claude-3|sonnet-4-[05]|opus-4-[015]\b|opus-4-0|sonnet-4-5/.test(m)) req.output_config = { effort: 'low' }; // conversational: quick answers
+  if (/^claude-(opus-5|fable-5|mythos-5|sonnet-5-5)/.test(m)) { req.betas = ['server-side-fallback-2026-07-01']; req.fallbacks = 'default'; }
+  return req;
+}
 // Options are gated by model, so COACH_AI_MODEL can point anywhere: effort is rejected by
 // Haiku 4.5 and older Sonnet/Opus generations, and server-side fallbacks exist only for the
 // Claude 5-generation models (on a safety decline they retry on Anthropic's recommended model).
@@ -882,6 +950,22 @@ function createApp(opts) {
     const r = coachLetterText(msg);
     if (r.error) throw { code: 502, msg: r.error };
     return { text: r.text, model: (msg && msg.model) || coachCfg.model }; // a fallback may have served it
+  }
+  async function coachChat(chat) {
+    const client = coachClient();
+    let msg;
+    try { msg = await client.beta.messages.create(coachChatRequest(chat, coachCfg.model)); }
+    catch (e) {
+      const SDK = (() => { try { const m = require('@anthropic-ai/sdk'); return m.default || m; } catch (e2) { return null; } })();
+      if (SDK && e instanceof SDK.AuthenticationError) throw { code: 502, msg: 'The server’s Anthropic API key was rejected.' };
+      if (SDK && e instanceof SDK.RateLimitError) throw { code: 429, msg: 'The coach is busy — try again in a minute.' };
+      if (SDK && e instanceof SDK.APIError) throw { code: 502, msg: 'The coach hit an error (' + (e.status || '') + ').' };
+      throw { code: 502, msg: 'The coach couldn’t be reached.' };
+    }
+    if (msg && msg.stop_reason === 'refusal') throw { code: 422, msg: 'The coach can’t help with that one. Try asking about your own trading process.' };
+    const r = coachLetterText(msg);
+    if (r.error) throw { code: 502, msg: 'The coach returned an empty answer — try again.' };
+    return { text: r.text, model: (msg && msg.model) || coachCfg.model };
   }
 
   /* ---------------- Telegram bot: delivery channel + read-only commands ---------------- */
@@ -1734,10 +1818,11 @@ function createApp(opts) {
     } catch (e) { return fail(e); }
   }
 
-  const readBody = (req) => new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
+  const readBody = (req, max = MAX_BODY) => new Promise((resolve, reject) => {
+    let size = 0, tooBig = false; const chunks = [];
     req.on('data', c => { size += c.length;
-      if (size > MAX_BODY) { reject(new Error('payload too large')); req.destroy(); return; }
+      // stop buffering but keep reading, so the 413 can still be written back
+      if (size > max) { if (!tooBig) { tooBig = true; chunks.length = 0; reject(new Error('payload too large')); } return; }
       chunks.push(c); });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
@@ -1793,7 +1878,7 @@ function createApp(opts) {
     if (xf) { const last = String(xf).split(',').map(x => x.trim()).filter(Boolean).pop(); if (last) return last.slice(0, 64); }
     return (req.socket && req.socket.remoteAddress) || ''; };
   const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now,
-    behaviorFor, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp });
+    behaviorFor, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled });
 
   const server = http.createServer((req, res) => {
     const [url, qs] = (req.url || '/').split('?');
@@ -1911,6 +1996,19 @@ function createApp(opts) {
       return;
     }
 
+    // --- a member's public badge page: /b/<name> (the page reads /api/social/public/<name>) ---
+    const bM = req.method === 'GET' && url.match(/^\/b\/([A-Za-z0-9_]{3,20})$/);
+    if (bM) {
+      fs.readFile(path.join(__dirname, 'badges.html'), 'utf8', (err, page) => {
+        if (err) return json(res, 404, { error: 'badges.html not deployed alongside server.js' });
+        // the name goes into the title and link-preview tags; it's [A-Za-z0-9_] by the route, so no escaping is needed
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
+          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+        res.end(page.split('__HANDLE__').join(bM[1]));
+      });
+      return;
+    }
+
     // --- health: unauthenticated so the client can detect the server and whether auth is on ---
     if (req.method === 'GET' && url === '/api/health') {
       return json(res, 200, { ok: true, auth: !!auth, appSyncCapable });
@@ -1997,6 +2095,34 @@ function createApp(opts) {
         if (!text) return json(res, 400, { error: 'expected {text}' });
         try { const sent = await tgBroadcast(text, telegramCfg.shareChats); return json(res, 200, { ok: true, sent }); }
         catch (e) { return json(res, 502, { error: 'telegram: ' + ((e && e.message) || 'send failed') }); }
+      })();
+      return;
+    }
+    // --- AI coach chat: a member (X-Pulse-Key) within today's allowance, or the owner (AUTH_TOKEN) ---
+    if (url === '/api/coach/chat') {
+      const memberAsk = !!req.headers['x-pulse-key'];
+      const st = memberAsk ? social.coach.statusFor(req) : authOk(req) && auth ? social.coach.ownerStatus() : null;
+      if (!st) return json(res, 401, { error: memberAsk ? 'not a member' : 'unauthorized' });
+      const pub = { enabled: coachCfg.enabled, allowed: st.allowed, reason: st.reason, limit: st.limit, used: st.used, remaining: st.remaining,
+        detail: st.detail, detailAllowed: st.detailAllowed, who: st.who };
+      if (req.method === 'GET') return json(res, 200, pub);
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+      if (!coachCfg.enabled) return json(res, 404, { error: 'The AI coach isn’t switched on for this server yet. The owner turns it on with COACH_AI=1 and an Anthropic API key.' });
+      if (!st.allowed) return json(res, 429, Object.assign(pub, { error: st.reason }));
+      (async () => {
+        let body; try { body = JSON.parse(await readBody(req, 256 * 1024)); } catch (e) { return json(res, e.message === 'payload too large' ? 413 : 400, { error: e.message === 'payload too large' ? 'That’s too much to send at once.' : 'invalid JSON' }); }
+        const chat = sanitizeCoachChat(body, st.detail);
+        if (chat.error) return json(res, 400, { error: chat.error });
+        // check and reserve in one step, after the body arrived: requests sent in parallel can't all pass
+        const now = memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus();
+        if (!now || !now.allowed) return json(res, 429, { error: (now && now.reason) || 'not allowed' });
+        const who = now.who === 'member' ? now.member : null;
+        social.coach.count(who, 1);
+        try {
+          const r = await coachChat(chat);
+          const after = memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus();
+          return json(res, 200, { text: r.text, remaining: after.remaining, limit: after.limit, used: after.used });
+        } catch (e) { social.coach.count(who, -1); return json(res, e.code || 500, { error: e.msg || e.message || String(e) }); } // only answered messages count
       })();
       return;
     }
@@ -2121,6 +2247,7 @@ function createApp(opts) {
   server._weeklyDigest = weeklyDigest;       // exposed for tests — generation is time-gated in production
   server._gatherAlertState = gatherAlertState; // exposed for tests
   server._buildBotState = buildBotState;       // exposed for tests — the loop itself needs a live bot
+  server._social = social; // tests reach the coach allowance through this
   return server;
 }
 
@@ -2155,5 +2282,5 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook, telegramReply, nudgeFrom, zonedDayHour,
+module.exports = { sanitizeCoachChat, coachChatRequest, scrubCoachData, createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook, telegramReply, nudgeFrom, zonedDayHour,
   sanitizeCoachFacts, coachLetterRequest, coachLetterText };

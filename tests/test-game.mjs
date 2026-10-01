@@ -10,11 +10,11 @@ const { grabFn } = makeExtractor(html);
 const grabConst = (name) => { const i = html.indexOf('const ' + name + '='); if (i < 0) throw new Error(name);
   return html.slice(i, html.indexOf(';\n', i) + 1); };
 
-const ctx = { Date, Math, Object, Set, Map, JSON, isFinite, journal: {}, settings: {} };
+const ctx = { Date, Math, Object, Set, Map, JSON, isFinite, journal: {}, settings: {}, PZ_CFG: { rev: 0, levels: null } };
 Object.assign(ctx, { isWin: n => n > 50, isLoss: n => n < -50, _avg: a => a.reduce((s, x) => s + x, 0) / a.length });
 vm.createContext(ctx);
 vm.runInContext(['PROCESS_W', 'LEVELS', 'GRADE', 'PART_NAME', 'HABIT_LIBRARY', 'CHALLENGE_DEFAULTS'].map(grabConst).join('\n') + '\n'
-  + ['_erf', 'levelFor', 'isoWeekOfKey', 'disciplineStreak', 'xpLedger', 'nthKey', 'isJournaled', 'gameAchievements', 'ruleFollowThrough',
+  + ['_erf', 'pzLevelCfg', 'levelFor', 'isoWeekOfKey', 'disciplineStreak', 'xpLedger', 'nthKey', 'isJournaled', 'gameAchievements', 'ruleFollowThrough',
      'disciplineSaved', 'personalBests', 'monthlyReport', 'resolveHabitSpec', 'specKey', 'challengeCandidates', 'challengeStatus', 'nfPlan', 'nfMedian', 'planAdherence', 'processDays'].map(grabFn).join('\n')
   + '\nconst _normCdf=z=>0.5*(1+_erf(z/Math.SQRT2));', ctx);
 
@@ -28,6 +28,10 @@ t('levels start at 200·n·(n−1) XP and carry titles', () => {
   eq(ctx.levelFor(399).level, 1); eq(ctx.levelFor(400).level, 2); eq(ctx.levelFor(1200).level, 3);
   const l = ctx.levelFor(1500); eq(l.level, 3); eq(l.into, 300); eq(l.need, 1200);
   eq(ctx.levelFor(1e9).title, 'Legend');
+  // a league owner's own table and titles
+  ctx.PZ_CFG.levels = { mode: 'table', thresholds: [100, 300], titles: ['Pup', 'Wolf', 'Alpha'] };
+  eq([ctx.levelFor(99).level, ctx.levelFor(100).title, ctx.levelFor(5000).level, ctx.levelFor(5000).max], [1, 'Wolf', 3, true]);
+  ctx.PZ_CFG.levels = null;
 });
 t('XP is the day’s process score plus bonuses — trade count never enters it', () => {
   const led = ctx.xpLedger([day('2026-06-01', 80, { n: 1 }), day('2026-06-02', 80, { n: 12 })], [{ key: '2026-06-02', xp: 150 }]);

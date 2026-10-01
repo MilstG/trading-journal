@@ -130,8 +130,9 @@ activity:
 
 - **XP and levels** — a trading day earns its process score (0–100) in XP,
   however many trades it had; +25 for each day the focus habit holds, +150 per
-  completed weekly challenge, +50 per achievement. Ten levels, Rookie → Legend
-  (level n starts at 200·n·(n−1) XP).
+  completed weekly challenge, +50 per achievement. Levels by default start at
+  200·n·(n−1) XP, titled Rookie → Legend (the tenth title stays from level 10 on);
+  on a server, the owner can change the curve, the titles and every XP amount.
 - **Discipline streak with shields** — consecutive trading days at process 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
@@ -191,8 +192,10 @@ your fills — and gets sharper the more you log.
   Load also tracks them.
 - **Bonus XP** for what you choose to log, never a penalty for skipping it:
   check-in +10, plan before your first trade +15, trades journaled +15, stops
-  written +10, loss limit respected +10. A day's XP is its Discipline score plus
-  that bonus.
+  written +10, loss limit respected +10, end-of-day review +15. A day's XP is its
+  Discipline score plus that bonus, plus achievements, kept challenges and focus
+  habits. The league owner can change every one of these numbers and the level
+  curve (see the admin panel).
 
 Five tabs: **Today**, **Stats** (P&L, win rate, average trade, profit factor,
 fees, daily P&L, best and worst markets and hours; deeper insights unlock with
@@ -204,6 +207,57 @@ weekday, and tables by market, side, position size, holding time and month;
 loss limit and plan) and **Progress** (level, XP, streak and shields, the
 weekly challenge, badges, share cards). A quick journal screen rates and notes
 unjournaled trades. On a wide screen the tabs become a sidebar.
+
+**Today, in depth.** Under the dials: the day in numbers (net, trades against
+your cap, win rate, fees, open positions with unrealized P&L, risk used against
+your loss limit), your level, today's XP, streak and league standing; **your
+session** (today's P&L curve over your loss-limit line, each trade drawn from
+entry to exit, slips circled, your plan time, stop time and "now" marked);
+**your plan, live** (each structured rule kept, broken or not yet tested, with a
+countdown to your stop time); open positions against your usual size and winner
+hold time, flagged when there's no stop; **right now** (whether this hour is one
+of your best or worst, minutes since your last loss and the re-entry window);
+the last trading day's score and the lesson you wrote; the last seven trading
+days; and what's coming up (challenge, habits due, leaks being plugged,
+competitions ending).
+
+**Plans the app can check.** Besides the free-text plan, the check-in takes
+structured rules that are checked against your fills at the end of the day:
+which setups and markets you'll trade, a stop time, a maximum number of open
+positions and "stop after two losses". Setups are picked from chips (your own
+past tags, kept consistent), so **See in-depth stats** can break results down
+**by setup** and **by your own execution rating**. Notes themselves are not
+read by any model; only these structured fields are compared with results.
+
+**Routines.** Pulse detects how you trade from the last 90 days (scalper, day,
+swing or position trader; you can override it, and the league owner can add
+profiles of their own) and adapts the morning questions and the **end-of-day
+review**: a rating, a few profile-specific questions, the lesson and tomorrow's
+one thing. The review pays XP and feeds the report cards and the coach.
+
+**Report cards.** Weekly and monthly, with a letter grade, habit-by-habit
+results, the period's best and worst trade, slips and what they cost, and how
+it compares with the previous period; shareable as an image.
+
+**Building habits.** Progress shows a **leak map** (each recurring slip, what it
+cost, and whether it's shrinking), a one-tap **plug it** loop that turns a leak
+into a two-week habit and graduates to a badge, **per-habit streaks** with
+shields, **good moments** (the times you followed a rule that usually costs you)
+and **saved you** estimates. Today shows **live nudges** when a trigger you
+tend to slip after is happening right now (a fresh loss, a fast re-entry).
+
+**Badges.** About 280 badges in 44 families (discipline, consistency,
+journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
+Legend; new ones are revealed as you earn the earlier ones. Members can switch
+on a public **badge page** at `/b/<name>` to share.
+
+**AI coach.** With `COACH_AI=1`, a **Coach** tab lets members chat with Claude
+about their trading, within a daily allowance (10 messages by default; the owner
+sets a server-wide default, overrides it per member, and has a larger default for fully unlocked
+members). The coach receives a summary of the member's numbers, habits and
+leaks; trades and notes are added only when the member switches that on (and
+the owner allows it). Wallet addresses are scrubbed. Messages aren't stored on
+the server, only the daily count.
 
 Pulse is the same `ledger.html`: the page switches on its own path (or `?pulse`
 when opened from disk), so every loader, cache and sync path is shared. It
@@ -224,9 +278,17 @@ Pulse has a **Social** tab that runs entirely on your own server (`social.js`,
 stored in `DATA_DIR/social.json`). There is no central service: the people you
 send your `/pulse` link to join *your* league.
 
-- **Leagues.** Five tiers (Bronze → Diamond). Each ISO week, traders in a tier are
-  ranked by the XP they earned that week; the top quarter (up to 5) move up and the
-  bottom quarter move down, once at least four traders are in the tier.
+- **Leagues.** New members join the main league by default: five tiers (Bronze → Diamond). Each ISO
+  week, traders in a tier are ranked by the XP they earned that week; the top quarter
+  (up to 5) move up and the bottom quarter move down, once at least four traders are
+  in the tier. The owner can add more leagues, each ranked on its own metric (XP,
+  verified discipline, streak, all-time XP, % return, $ P&L or return/drawdown),
+  weekly or monthly, with or without tiers, listed or behind an invite code. Members
+  can be in several at once, and find listed leagues under **Social → Find leagues**
+  by name or number, with a page showing the rules and top five before joining.
+- **Global leaderboards** (opt-in). Under Social → Leaderboards, the same categories
+  across every member regardless of league — only for members who switch on
+  **Show me on global leaderboards**.
 - **Leaderboards.** Weekly XP (your league), discipline (7-day average, minimum 3
   trading days, **verified**: the server recomputes each member's Discipline from
   their public fills with the app's own code, so it can't be typed in), streak, all-time XP, and — only for traders who opt in — return /
@@ -284,15 +346,34 @@ the owner can switch it off.
 **Unlocks.** Pulse features unlock with level — by default deeper Stats insights at level 2, share
 cards at 3 and joining competitions at 4 — plus colour themes (Ember 3, Aurora 5,
 Gold 8). XP only comes from process, so unlocking rewards good habits. The owner can
-change the levels or switch unlocks off. Sample data shows everything. The full
-journal at `/` is never locked.
+map every feature (insights, in-depth stats, share cards, competitions, AI coach,
+end-of-day review, report cards) to a level, switch unlocks off, or **fully unlock**
+chosen members. Sample data shows everything. The full journal at `/` is never locked.
 
-**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` to see members (with
-addresses, which only you see, marked claimed or unproven, plus their device count and
-synced-journal size), require claimed wallets, switch journal sync on or off, move someone's league, suspend or delete a member,
-open or close the league, set an invite code, change unlock levels, create and delete
-competitions, post announcements, and remove feed posts. Without `AUTH_TOKEN` the
-admin API refuses every request instead of opening to everyone.
+**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN`. Tabs:
+
+- **Overview** — members, activity, tiers, top XP, coach use and setup warnings.
+- **Members** — search and filter; **add a member** (you get a 7-day sign-in code and a
+  `/pulse#link=CODE` link to send them); per member: rename, set or clear the wallet
+  (unless claimed), **boost XP** (or correct it) with a reason they see, fully unlock,
+  their coach allowance, leagues and tiers, award or take back reward badges, a new
+  sign-in code, suspend or delete. Members' addresses are visible to you; others see them only if the member chose to show theirs.
+- **Leagues** — create, edit and delete leagues (metric, period, tiers, listed,
+  invite code, auto-join), and add or remove members.
+- **Competitions** — create them for everyone or one league; delete.
+- **Badges** — your own reward badges: earned automatically when a metric crosses a
+  value (level, XP, streak, 30-day discipline or return, days in the league …) or
+  awarded by hand, each paying the XP you set.
+- **Levels & XP** — levels on a curve or a table of thresholds, level titles, a live
+  preview, and the XP every action pays.
+- **Features** — the level each feature and theme unlocks at.
+- **Coach** — on/off for members, daily allowances, your own limit, whether members
+  may share trades and notes, today's usage.
+- **Routines** — replace the built-in profiles' questions and add your own profiles.
+- **Feed** — announcements and moderation. **Settings** — open/closed, invite code,
+  claimed wallets only, encrypted sync.
+
+Without `AUTH_TOKEN` the admin API refuses every request instead of opening to everyone.
 
 ## The Trades view
 
@@ -713,7 +794,9 @@ All opt-in via environment variables, still zero dependencies:
   needs `REFRESH_INTERVAL_MIN`. "Today" is the same calendar day the day
   journal uses, so a review you wrote is always found.
 - `COACH_AI=1` + `ANTHROPIC_API_KEY` — the **coach's weekly letter** (see
-  The coach). Uses the official `@anthropic-ai/sdk`, installed as an *optional*
+  The coach) and the **AI coach chat** in Pulse (`/api/coach/chat`: a member's
+  key or the owner token; per-day allowances from the admin panel; low effort
+  for quick replies). Uses the official `@anthropic-ai/sdk`, installed as an *optional*
   dependency: without `COACH_AI` the server never loads it and stays
   dependency-free. Model `COACH_AI_MODEL` (default `claude-opus-5-5`), medium
   effort, with the API's default refusal fallback. `POST /api/share` (full

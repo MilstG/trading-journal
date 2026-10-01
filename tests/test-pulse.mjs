@@ -95,8 +95,9 @@ t('the bonus card offers what’s left today and marks what’s earned; nothing 
   const trades = [mk('a', 0, 10), mk('b', 0, 10)];
   ctx.journal = { a: { setup: 'x' } };
   const D = { dayE: null, todayTrades: trades, risk: { trades: 2, limit: 0 }, day: { bonus: { parts: {} } } };
+  ctx.pzXpCfg = () => ({ checkin: 10, plan: 15, journal: 15, stops: 10, limit: 10, review: 15 }); ctx.pzLocked = () => 0;
   const items = ctx.pzBonusItems(D);
-  eq(items.map(x => x.k), ['checkin', 'plan', 'journal']);
+  eq(items.map(x => x.k), ['checkin', 'plan', 'journal', 'review'], 'the end-of-day review is on offer too');
   eq(items.find(x => x.k === 'journal').partial, true); eq(items.find(x => x.k === 'journal').hint, '1 of 2 journaled');
   const D2 = { dayE: { sleep: 4, plan: 'p', plannedAt: 1 }, todayTrades: [], risk: { trades: 0, limit: 400 }, day: null };
   const i2 = ctx.pzBonusItems(D2);
@@ -160,4 +161,13 @@ await t('/pulse serves the app, /pulse/ redirects, and Pulse has its own manifes
   } finally { await new Promise(res => app.close(res)); }
 });
 
+t('lists longer than ten page through ten at a time, and the page is kept in range', () => {
+  const c = { esc: x => String(x), pzI: () => '', PZ_PAGES: {} }; vm.createContext(c);
+  vm.runInContext('var PZ_PAGES={};\n' + grabFn('pzPage'), c);
+  const list = Array.from({ length: 25 }, (_, i) => i);
+  let p = c.pzPage('k', list); eq([p.items.length, p.items[0], p.pages], [10, 0, 3]); ok(/1–10 of 25/.test(p.html));
+  c.PZ_PAGES.k = 2; p = c.pzPage('k', list); eq(p.items, [20, 21, 22, 23, 24]); ok(/disabled aria-label="Next page"/.test(p.html));
+  c.PZ_PAGES.k = 9; p = c.pzPage('k', list.slice(0, 12)); eq([p.page, p.items.length], [1, 2], 'a shorter list pulls the page back in range');
+  eq(c.pzPage('s', list.slice(0, 10)).html, '', 'ten or fewer: no pager');
+});
 report('pulse');

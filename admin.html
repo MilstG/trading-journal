@@ -7,136 +7,109 @@
 <meta name="robots" content="noindex">
 <title>Pulse admin</title>
 <style>
-:root{--bg:#0A0C0F;--card:#14171C;--line:#1F242B;--line2:#2C333C;--text:#F3F5F7;--muted:#A1AAB5;--soft:#D5DBE1;--good:#3FE0A0;--mid:#F4C04E;--low:#FF7A59;--risk:#5AA9FF;--xp:#B69CFF}
+:root{--bg:#0A0C0F;--card:#14171C;--card2:#101318;--line:#1F242B;--line2:#2C333C;--text:#F3F5F7;--muted:#A1AAB5;--soft:#D5DBE1;--good:#3FE0A0;--mid:#F4C04E;--low:#FF7A59;--risk:#5AA9FF;--xp:#B69CFF}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}
 a{color:var(--good)}
-main{max-width:1120px;margin:0 auto;padding:28px 20px 60px;display:flex;flex-direction:column;gap:18px}
+code{font-size:12.5px;background:#1B1F25;padding:1px 5px;border-radius:6px}
+main{max-width:1120px;margin:0 auto;padding:24px 16px 80px;display:flex;flex-direction:column;gap:18px}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-h1{margin:0;font-size:28px;letter-spacing:-.01em}
+h1{margin:0;font-size:26px;letter-spacing:-.01em}
 h2{margin:0 0 12px;font-size:16px}
+h3{margin:16px 0 8px;font-size:14px}
 .muted{color:var(--muted)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px}
+.small{font-size:12.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;min-width:0}
+.sub{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:14px;min-width:0}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
-.tile b{display:block;font-size:26px;line-height:1.1}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;min-width:0}
+.tile b{display:block;font-size:24px;line-height:1.15;overflow-wrap:anywhere}
 .tile span{font-size:12px;color:var(--muted)}
-.two{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.two{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))}
+.stack{display:flex;flex-direction:column;gap:18px}
 label{display:block;font-size:13px;font-weight:600;margin:10px 0 6px}
+label.inline{display:flex;align-items:center;gap:8px;font-weight:600;margin:10px 0}
 input,select,textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border-radius:12px;border:1px solid var(--line2);background:#0F1216;color:var(--text)}
-input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--risk);outline-offset:1px}
-input[type=checkbox]{width:auto;margin-right:8px;accent-color:var(--good)}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+textarea{resize:vertical}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--risk);outline-offset:1px}
+input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:var(--good);flex:0 0 auto}
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 .row>*{flex:1;min-width:120px}
+.row>.fit{flex:0 0 auto;min-width:0}
 button{font:inherit;font-weight:700;border-radius:999px;border:1px solid var(--line2);background:none;color:var(--text);padding:9px 16px;cursor:pointer;min-height:40px}
 button.primary{background:var(--good);border-color:var(--good);color:#07140E}
 button.danger{border-color:#6A2E20;color:#FFB39E}
+button.sm{min-height:32px;padding:4px 12px;font-size:12.5px}
+button.x{min-height:0;padding:0 4px;border:0;font-size:14px;line-height:1}
 button:disabled{opacity:.5;cursor:default}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-th{color:var(--muted);font-weight:600;font-size:12px}
-td .acts{display:flex;gap:6px;flex-wrap:wrap}
-td button{min-height:32px;padding:4px 10px;font-size:12px}
-.scroll{overflow-x:auto}
-.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:#1B1F25;color:var(--soft)}
+th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:#1B1F25;color:var(--soft);white-space:nowrap}
 .pill.ban{background:#3A1E16;color:#FFB39E}
-.note{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#1B1F25;border:1px solid var(--line2);border-radius:14px;padding:10px 16px;color:var(--soft);max-width:92vw}
+.pill.ok{background:#12301F;color:var(--good)}
+.pill.xp{background:#231C3A;color:var(--xp)}
+.note{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#1B1F25;border:1px solid var(--line2);border-radius:14px;padding:10px 16px;color:var(--soft);max-width:92vw;z-index:20}
 .note.err{border-color:#6A2E20;color:#FFB39E}
 .note:empty{display:none}
 .ev{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
-.ev div{flex:1}
+.ev div{flex:1;min-width:0;overflow-wrap:anywhere}
 .hide{display:none!important}
-.warn{padding:12px 14px;border-radius:14px;background:#2B2413;border:1px solid #4A3C18;color:#F9DC8E}
+.warn{padding:12px 14px;border-radius:14px;background:#2B2413;border:1px solid #4A3C18;color:#F9DC8E;margin:0}
+.okbox{padding:12px 14px;border-radius:14px;background:#0F2A1D;border:1px solid #1E5B3F;color:#BDF5DC;overflow-wrap:anywhere}
+nav.tabs{display:flex;gap:6px;overflow-x:auto;padding:4px;background:var(--card);border:1px solid var(--line);border-radius:999px;position:sticky;top:8px;z-index:10;scrollbar-width:none}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs a{flex:0 0 auto;padding:8px 14px;border-radius:999px;color:var(--muted);text-decoration:none;font-weight:700;font-size:13px;white-space:nowrap}
+nav.tabs a[aria-current=page]{background:#1F2630;color:var(--text)}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px}
+.hint{margin:4px 0 0;font-size:12.5px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chk{display:flex;flex-wrap:wrap;gap:8px}
+.chk label{display:flex;align-items:center;gap:8px;margin:0;padding:8px 12px;border:1px solid var(--line2);border-radius:12px;font-weight:600;cursor:pointer}
+.lcard{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.lcard>div:first-child{flex:1;min-width:min(220px,100%)}
+.bicon{font-size:26px;line-height:1;width:40px;text-align:center;flex:0 0 auto}
+.blist{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr))}
+.bitem{display:flex;gap:10px;align-items:flex-start}
+.bitem>div{flex:1;min-width:0}
+.mhead h2{margin:6px 0 0;font-size:20px;overflow-wrap:anywhere}
+.stat3{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));margin:12px 0 0}
+.stat3>div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px;min-width:0}
+.stat3 b{display:block;font-size:18px}
+.stat3 span{font-size:12px;color:var(--muted)}
+.bar{height:8px;border-radius:999px;background:#1B1F25;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--good);border-radius:999px}
+.lvtbl td,.lvtbl th{padding:6px 8px}
+.code{font:700 20px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}
+summary{cursor:pointer;color:var(--soft);font-weight:600}
+@media (max-width:560px){
+  main{padding:16px 16px 80px}
+  h1{font-size:22px}
+  .card{padding:14px;border-radius:16px}
+  .hide-sm{display:none}
+  .row>*{min-width:100%}
+  .row>.fit{min-width:0}
+}
 </style>
 </head>
 <body>
 <main>
   <header>
-    <div><h1>Pulse admin</h1><div class="muted">Members, leagues, competitions and unlocks for this server.</div></div>
-    <div class="row" style="flex:0 0 auto"><a href="/pulse">Open Pulse</a><a href="/">Full journal</a><button id="signout" class="hide">Sign out</button></div>
+    <div><h1>Pulse admin</h1><div class="muted">Members, leagues, badges, levels and everything members can unlock.</div></div>
+    <div class="row" style="flex:0 0 auto;align-items:center"><a class="fit" href="/pulse">Open Pulse</a><a class="fit" href="/">Full journal</a><button id="signout" class="hide fit sm">Sign out</button></div>
   </header>
 
   <section class="card" id="login">
     <h2>Sign in</h2>
     <p class="muted" style="margin:0">Use the access token set as <code>AUTH_TOKEN</code> on the server. It’s remembered in this browser.</p>
-    <div class="row" style="margin-top:10px"><input type="password" id="tok" autocomplete="current-password" placeholder="access token" aria-label="Access token"><button class="primary" id="go" style="flex:0 0 auto">Sign in</button></div>
-    <p id="loginErr" class="warn hide" style="margin:12px 0 0"></p>
+    <div class="row" style="margin-top:10px"><input type="password" id="tok" autocomplete="current-password" placeholder="access token" aria-label="Access token"><button class="primary fit" id="go">Sign in</button></div>
+    <p id="loginErr" class="warn hide" role="alert" style="margin:12px 0 0"></p>
   </section>
 
-  <div id="app" class="hide" style="display:flex;flex-direction:column;gap:18px">
-    <div class="grid" id="tiles"></div>
-
-    <div class="two">
-      <section class="card">
-        <h2>League settings</h2>
-        <label><input type="checkbox" id="cOpen">Open for new members</label>
-        <label for="cInvite">Invite code (leave empty for anyone with the link)</label>
-        <input id="cInvite" maxlength="40" autocomplete="off">
-        <label><input type="checkbox" id="cClaim">Only count claimed wallets</label>
-        <p class="muted" style="margin:2px 0 8px;font-size:13px">Verified Discipline, returns and return competitions then only use wallets a member proved are theirs by signing with them. Anyone can type an address; only the owner of the wallet can claim it.</p>
-        <p class="muted hide" id="originWarn" style="margin:2px 0 8px;font-size:13px;color:#F9DC8E">Wallet sign-in isn’t pinned to your address yet. Set <code>PUBLIC_ORIGIN</code> on the server (e.g. <code>https://pulse.example.com</code>) so a look-alike site can’t collect members’ signatures.</p>
-        <label><input type="checkbox" id="cVault">Encrypted journal sync for members</label>
-        <p class="muted" style="margin:2px 0 8px;font-size:13px">Members’ journals are encrypted in their browser with their own passphrase. This server stores ciphertext only — you can’t read them.</p>
-        <label><input type="checkbox" id="cUnlocks">Unlock Pulse features with XP</label>
-        <div class="row">
-          <div><label for="uTrends">Deeper insights at level</label><input id="uTrends" type="number" min="1" max="100"></div>
-          <div><label for="uShare">Share cards at level</label><input id="uShare" type="number" min="1" max="100"></div>
-          <div><label for="uCompete">Competitions at level</label><input id="uCompete" type="number" min="1" max="100"></div>
-        </div>
-        <div class="row">
-          <div><label for="tEmber">Ember theme</label><input id="tEmber" type="number" min="1" max="100"></div>
-          <div><label for="tAurora">Aurora theme</label><input id="tAurora" type="number" min="1" max="100"></div>
-          <div><label for="tGold">Gold theme</label><input id="tGold" type="number" min="1" max="100"></div>
-        </div>
-        <div style="margin-top:14px"><button class="primary" id="saveCfg">Save settings</button></div>
-      </section>
-
-      <section class="card">
-        <h2>New competition</h2>
-        <label for="nTitle">Title</label><input id="nTitle" maxlength="60" placeholder="Discipline Cup · Week 41">
-        <label for="nType">Type</label>
-        <select id="nType">
-          <option value="discipline">Discipline — best average process score</option>
-          <option value="survivor">Survivor — never breach your loss limit</option>
-          <option value="journal">Journal streak — journal every trade N days running</option>
-          <option value="return">Return — best % return under a drawdown cap (read from chain)</option>
-        </select>
-        <div class="row">
-          <div><label for="nStart">Starts</label><input id="nStart" type="date"></div>
-          <div><label for="nEnd">Ends</label><input id="nEnd" type="date"></div>
-        </div>
-        <div class="row">
-          <div><label for="nMin">Minimum / target days</label><input id="nMin" type="number" min="1" max="90" value="3"></div>
-          <div><label for="nDd">Drawdown cap % (return only)</label><input id="nDd" type="number" min="1" max="90" value="8"></div>
-        </div>
-        <label for="nRule">Rules, in a sentence or two</label><textarea id="nRule" rows="2" maxlength="280"></textarea>
-        <div style="margin-top:14px"><button class="primary" id="mkComp">Create and announce</button></div>
-      </section>
-    </div>
-
-    <section class="card">
-      <h2>Competitions</h2>
-      <div class="scroll"><table><thead><tr><th>Title</th><th>Type</th><th>Dates</th><th>Status</th><th>Entrants</th><th>Leader</th><th></th></tr></thead><tbody id="comps"></tbody></table></div>
-    </section>
-
-    <section class="card">
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0;flex:0 0 auto">Members</h2><input id="q" placeholder="Search by name or address" aria-label="Search members" style="max-width:320px"></div>
-      <p class="muted" style="margin:8px 0 0">Addresses are visible to you as the owner. Members see them only if the member chose to show theirs.</p>
-      <div class="scroll"><table><thead><tr><th>Name</th><th>League</th><th>Level</th><th>Streak</th><th>30d return</th><th>Address</th><th>Devices</th><th>Last seen</th><th></th></tr></thead><tbody id="members"></tbody></table></div>
-    </section>
-
-    <div class="two">
-      <section class="card">
-        <h2>Announcement</h2>
-        <p class="muted" style="margin:0 0 8px">Posts to everyone’s feed from the league.</p>
-        <textarea id="ann" rows="3" maxlength="280" placeholder="Survivor starts Monday — set your loss limit in the check-in."></textarea>
-        <div style="margin-top:10px"><button class="primary" id="postAnn">Post</button></div>
-      </section>
-      <section class="card">
-        <h2>Recent feed</h2>
-        <div id="events" style="max-height:360px;overflow:auto"></div>
-      </section>
-    </div>
+  <div id="app" class="hide stack">
+    <nav class="tabs" id="tabs" aria-label="Admin sections"></nav>
+    <div id="view" class="stack"></div>
   </div>
 </main>
 <div class="note" id="note" role="status" aria-live="polite"></div>
@@ -145,48 +118,479 @@ td button{min-height:32px;padding:4px 10px;font-size:12px}
   const $=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const TIERS=['Bronze','Silver','Gold','Platinum','Diamond'];
+  // The built-in routines' default questions, shown faded on the Routines tab. Kept equal to
+  // PZ_ROUTINES in ledger.html by tests/test-admin.mjs.
+  const ROUTINES={
+    scalper:{name:'Scalper',morning:['Which one setup are you trading today?','When does your session end?'],
+      eod:['Did you stop at your trade cap? If not, what pulled you back in?','Which trade broke your rules, and what triggered it?','Your cleanest trade today — what made it clean?']},
+    day:{name:'Day trader',morning:['What’s your bias today, and what would prove it wrong?','Which setup are you waiting for?'],
+      eod:['Did you follow your plan? Where did you drift?','What did the market do against your bias, and how did you react?','The one mistake not to repeat tomorrow']},
+    swing:{name:'Swing trader',morning:['Is every open position’s thesis still intact?','Any stop you’re tempted to move — by plan or by fear?'],
+      eod:['Did anything today change a thesis? Which one?','Did you move a stop? Was that the plan?','What would make you exit tomorrow?']},
+    position:{name:'Position trader',morning:['What would change your long-term view this week?','Is your size still right for the risk?'],
+      eod:['Did today’s noise change anything that matters?','Are you still sized for the worst case?','What do you need to check before the week ends?']},
+  };
+  const XP_LABELS={discipline:['Per Discipline point','× each day’s 0–100 score'],checkin:['Morning check-in',''],plan:['Plan set before trading',''],
+    journal:['Every trade journaled',''],stops:['A stop on every trade',''],limit:['Stayed inside the loss limit',''],review:['End-of-day review',''],
+    achievement:['Achievement','The base: badge tiers pay ×0.1 to ×3.2 of it'],challenge:['Weekly challenge kept',''],focus:['Focus habit kept','Per kept day']};
+  const TABS=[['overview','Overview'],['members','Members'],['leagues','Leagues'],['competitions','Competitions'],['badges','Badges'],['levels','Levels & XP'],
+    ['features','Features'],['coach','Coach'],['routines','Routines'],['feed','Feed'],['settings','Settings']];
   let tok=''; try{ tok=localStorage.getItem('srv_token')||''; }catch(e){}
   let noteT=null;
-  const note=(m,err)=>{ const n=$('note'); n.className='note'+(err?' err':''); n.textContent=m||''; clearTimeout(noteT); if(m&&!err)noteT=setTimeout(()=>{ n.textContent=''; },3500); };
-  async function api(p,o){ o=o||{}; o.headers=Object.assign({'Authorization':'Bearer '+tok},o.body?{'Content-Type':'application/json'}:{},o.headers||{});
-    const r=await fetch('/api/social/admin'+p,o); const d=await r.json().catch(()=>({}));
+  const note=(m,err)=>{ const n=$('note'); n.className='note'+(err?' err':''); n.textContent=m||''; clearTimeout(noteT); if(m)noteT=setTimeout(()=>{ n.textContent=''; },err?6000:3500); };
+  async function api(p,o){ o=o||{}; const body=o.body!==undefined?JSON.stringify(o.body):undefined;
+    const r=await fetch('/api/social/admin'+p,{method:o.method||(body?'POST':'GET'),body,headers:Object.assign({'Authorization':'Bearer '+tok},body?{'Content-Type':'application/json'}:{})});
+    const d=await r.json().catch(()=>({}));
     if(!r.ok){ const e=new Error(d.error||('HTTP '+r.status)); e.status=r.status; throw e; } return d; }
-  const ago=ms=>{ if(!ms)return '—'; const m=Math.round((Date.now()-ms)/60000); return m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago'; };
+  const ago=ms=>{ if(!ms)return 'never'; const m=Math.round((Date.now()-ms)/60000); return m<1?'just now':m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago'; };
   const size=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
-  let MEMBERS=[];
-  function drawMembers(){
-    const q=$('q').value.trim().toLowerCase();
-    const list=MEMBERS.filter(m=>!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q));
-    $('members').innerHTML=list.map(m=>`<tr>
-      <td><b>@${esc(m.handle)}</b>${m.claimed?' <span class="pill">claimed ✓</span>':''}${m.verified?' <span class="pill">verified</span>':''}${m.banned?' <span class="pill ban">removed from boards</span>':''}</td>
-      <td><select data-tier="${esc(m.id)}" aria-label="League for ${esc(m.handle)}">${TIERS.map((t,i)=>`<option value="${i}"${i===m.tier?' selected':''}>${t}</option>`).join('')}</select></td>
-      <td>${m.level}</td><td>${m.streak}</td>
-      <td>${m.money?(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)+'% · DD '+(m.money.dd*100).toFixed(1)+'%':'<span class="muted">—</span>'}</td>
-      <td>${m.address?`<code>${esc(m.address.slice(0,6)+'…'+m.address.slice(-4))}</code>${m.claimed&&m.claimed===m.address?'':' <span class="muted">unproven</span>'}`:'<span class="muted">—</span>'}</td>
-      <td>${m.devices||1}${m.vault?` <span class="muted">· sync ${size(m.vault)}</span>`:''}</td>
-      <td>${esc(ago(m.lastSeen))}</td>
-      <td><div class="acts"><button data-act="${m.banned?'unban':'ban'}" data-id="${esc(m.id)}">${m.banned?'Restore':'Suspend'}</button><button class="danger" data-act="remove" data-id="${esc(m.id)}" data-h="${esc(m.handle)}">Delete</button></div></td></tr>`).join('')
-      ||'<tr><td colspan="9" class="muted">No members yet. Share your /pulse link and people join from the Social tab.</td></tr>';
-  }
+  const fmt=n=>(+n||0).toLocaleString('en-US');
+  const lines=s=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  const val=id=>$(id)?$(id).value:'';
+  const chk=id=>!!($(id)&&$(id).checked);
+  const sel=(id,opts,cur,attrs)=>`<select id="${esc(id)}"${attrs||''}>${opts.map(([v,l])=>`<option value="${esc(v)}"${String(v)===String(cur)?' selected':''}>${esc(l)}</option>`).join('')}</select>`;
+  const field=(id,label,input,hint)=>`<div><label for="${esc(id)}">${esc(label)}</label>${input}${hint?`<p class="hint">${hint}</p>`:''}</div>`;
+  const box=(id,label,on,hint)=>`<label class="inline"><input type="checkbox" id="${id}"${on?' checked':''}>${esc(label)}</label>${hint?`<p class="hint" style="margin:-6px 0 6px 26px">${hint}</p>`:''}`;
+  const tiles=list=>`<div class="grid">${list.map(([l,v,s])=>`<div class="tile"><b>${esc(v)}</b><span>${esc(l)}</span>${s?`<div class="muted small">${esc(s)}</div>`:''}</div>`).join('')}</div>`;
+  // lists longer than ten show ten at a time
+  const pager=(key,list,size)=>{ size=size||10; const n=list.length, pages=Math.max(1,Math.ceil(n/size)), p=Math.max(0,Math.min(UI.pages[key]||0,pages-1)); UI.pages[key]=p;
+    return {items:list.slice(p*size,(p+1)*size), html:n>size?`<div class="pager"><button class="sm" data-pg="${esc(key)}" data-d="-1"${p?'':' disabled'} aria-label="Previous page">‹ Prev</button><span class="muted small">${p*size+1}–${Math.min(n,(p+1)*size)} of ${n}</span><button class="sm" data-pg="${esc(key)}" data-d="1"${p<pages-1?'':' disabled'} aria-label="Next page">Next ›</button></div>`:''}; };
+  const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
+  const D={ov:null,members:[],leagues:[],badges:[],comps:[],events:[]};
+  const UI={tab:'overview',member:null,q:'',filter:'all',leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
+  const linkFor=code=>location.origin+'/pulse#link='+encodeURIComponent(code);
+  const leagueName=id=>{ const L=D.leagues.find(x=>x.id===id); return L?L.name:id; };
+  // level n starts at base·n·(n−1) XP, or at a table entry — mirrors social-config.js levelStart
+  const levelStart=(c,n)=>n<=1?0:c.mode==='table'?(n-2<c.thresholds.length?c.thresholds[n-2]:Infinity):c.base*n*(n-1);
+
   async function load(){
-    const ov=await api('/overview');
+    const [ov,ms,ls,bs,cs,ev]=await Promise.all([api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events')]);
+    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events});
     $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide');
-    $('tiles').innerHTML=[['Members',ov.members],['Active this week',ov.active7],['Competitions',ov.comps],['Feed posts',ov.events],['Claimed wallets',ov.claimed||0],['Synced journals',ov.vaults?ov.vaults+' · '+size(ov.vaultBytes):0],['League week',ov.week?ov.week.slice(-3):'—']]
-      .concat(ov.tiers.map(t=>[t.tier+' league',t.n])).map(([l,v])=>`<div class="tile"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('');
-    const c=ov.config; $('cOpen').checked=c.open; $('cInvite').value=c.inviteCode||''; $('cUnlocks').checked=c.unlocksOn;
-    $('cClaim').checked=!!c.requireClaim; $('cClaim').disabled=!ov.claims; $('originWarn').classList.toggle('hide',!ov.claims||!!ov.originPinned); $('cVault').checked=c.vaultOn!==false;
-    $('uTrends').value=c.unlocks.trends; $('uShare').value=c.unlocks.share; $('uCompete').value=c.unlocks.compete;
-    $('tEmber').value=c.themes.ember; $('tAurora').value=c.themes.aurora; $('tGold').value=c.themes.gold;
-    const [ms,cs,ev]=await Promise.all([api('/members'),api('/competitions'),api('/events')]);
-    MEMBERS=ms.members; drawMembers();
-    $('comps').innerHTML=cs.competitions.map(x=>`<tr><td><b>${esc(x.title)}</b><div class="muted">${esc(x.rule||'')}</div></td><td>${esc(x.type)}</td><td>${esc(x.start)} → ${esc(x.end)}</td><td>${esc(x.status)}</td><td>${x.entrants}</td>
-      <td>${x.standings&&x.standings[0]?'@'+esc(x.standings[0].handle)+' · '+esc(x.standings[0].note):'<span class="muted">—</span>'}</td>
-      <td><button class="danger" data-delcomp="${esc(x.id)}" data-t="${esc(x.title)}">Delete</button></td></tr>`).join('')||'<tr><td colspan="7" class="muted">None yet.</td></tr>';
-    $('events').innerHTML=ev.events.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}<div class="muted" style="font-size:12px">${esc(ago(e.at))} · ${e.kudos} kudos</div></div><button class="danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>';
+    render();
   }
+  // run an admin call, then reload everything; returns the call's result, or undefined after showing the error
+  // one action at a time: a double click must not grant XP twice or create two competitions
+  let BUSY=false;
+  async function act(fn,msg){ if(BUSY)return; BUSY=true; $('view').setAttribute('aria-busy','true');
+    try{ const r=await fn(); if(msg)note(msg); await load(); return r||{}; }catch(e){ note(e.message,true); }
+    finally{ BUSY=false; $('view').removeAttribute('aria-busy'); } }
+  const ADDR=/^0x[0-9a-fA-F]{40}$/;
+
+  function route(){ const h=location.hash.slice(1).split('/'); UI.tab=TABS.some(t=>t[0]===h[0])?h[0]:'overview';
+    let id=null; if(UI.tab==='members'&&h[1]){ try{ id=decodeURIComponent(h[1]); }catch(e){} } UI.member=id; }
+  // Re-rendering after an action keeps what was typed elsewhere on the same screen; only the
+  // card the action came from shows the server's fresh values.
+  let lastView='';
+  function render(){
+    const view=UI.tab+'/'+UI.member, keep=[], foc=document.activeElement&&document.activeElement.id;
+    if(view===lastView&&!UI.fresh)for(const el of $('view').querySelectorAll('input[id],textarea[id],select[id]')){
+      if(UI.submitted&&UI.submitted.contains(el))continue;
+      if(el.type==='checkbox'?el.checked!==el.defaultChecked:el.tagName==='SELECT'?[...el.options].some(o=>o.selected!==o.defaultSelected):el.value!==el.defaultValue)
+        keep.push([el.id,el.type==='checkbox'?el.checked:el.value]); }
+    lastView=view; UI.submitted=null; UI.fresh=false;
+    $('tabs').innerHTML=TABS.map(([k,l])=>`<a href="#${k}"${k===UI.tab?' aria-current="page"':''}>${l}</a>`).join('');
+    const tabs=$('tabs'), cur=tabs.querySelector('[aria-current]'); if(cur)tabs.scrollLeft=Math.max(0,cur.offsetLeft-(tabs.clientWidth-cur.offsetWidth)/2);
+    const f={overview:vOverview,members:vMembers,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,settings:vSettings}[UI.tab];
+    $('view').innerHTML=f();
+    for(const [id,v] of keep){ const el=$(id); if(!el)continue; if(el.type==='checkbox')el.checked=v; else el.value=v; }
+    const back=foc&&$(foc); if(back&&$('view').contains(back))back.focus({preventScroll:true});
+  }
+
+  // ---------------- overview ----------------
+  function vOverview(){
+    const o=D.ov, c=o.config, warn=[];
+    if(!c.open)warn.push('The league is closed to new members (Settings).');
+    if(o.claims&&!o.originPinned)warn.push('Wallet sign-in isn’t pinned to your address yet. Set <code>PUBLIC_ORIGIN</code> on the server so a look-alike site can’t collect members’ signatures.');
+    if(!o.coachAi)warn.push('The AI coach is off. Set <code>COACH_AI=1</code> and <code>ANTHROPIC_API_KEY</code> on the server to switch it on.');
+    const main=D.leagues.find(L=>L.id==='main'), live=Math.max(1,o.members-o.banned);
+    const top=D.members.filter(m=>!m.banned).sort((a,b)=>b.xp-a.xp).slice(0,5);
+    return `${tiles([['Members',fmt(o.members),o.banned?o.banned+' suspended':''],['Active this week',fmt(o.active7)],['Leagues',o.leagues],['Reward badges',o.badges],
+      ['Competitions',o.comps],['Coach messages today',fmt(o.coachToday),o.coachAi?'AI on':'AI off'],['Claimed wallets',o.claimed||0],['Synced journals',o.vaults?o.vaults+' · '+size(o.vaultBytes):0],['League week',o.week?o.week.slice(-3):'—']])}
+    ${warn.length?`<div class="stack" style="gap:8px">${warn.map(w=>`<p class="warn">${w}</p>`).join('')}</div>`:''}
+    <div class="two">
+      <section class="card"><h2>${esc(main?main.name:'Main league')} · tiers</h2>
+        ${o.tiers.map(t=>`<div style="margin:8px 0"><div class="row" style="justify-content:space-between;align-items:center"><span class="fit">${esc(t.tier)}</span><span class="fit muted">${t.n}</span></div><div class="bar"><i style="width:${Math.round(100*t.n/live)}%"></i></div></div>`).join('')}
+      </section>
+      <section class="card"><h2>Top by XP</h2>
+        ${top.length?`<table><tbody>${top.map((m,i)=>`<tr><td class="muted">${i+1}</td><td><a href="${mlink(m)}">@${esc(m.handle)}</a></td><td>Lv ${m.level}</td><td>${fmt(m.xp)} XP</td></tr>`).join('')}</tbody></table>`:'<p class="muted">No members yet.</p>'}
+      </section>
+    </div>
+    <section class="card"><h2>Quick actions</h2><div class="row" style="align-items:center">
+      <a class="fit" href="#members" data-open="member">Add a member</a><a class="fit" href="#leagues" data-open="league">New league</a><a class="fit" href="#badges" data-open="badge">New badge</a><a class="fit" href="#competitions">New competition</a><a class="fit" href="#feed">Post an announcement</a></div></section>`;
+  }
+
+  // ---------------- members ----------------
+  const pills=m=>[m.claimed?'<span class="pill ok">claimed ✓</span>':'',m.verified?'<span class="pill ok">verified</span>':'',m.unlocked?'<span class="pill xp">unlocked</span>':'',
+    m.adminMade&&!m.keys?'<span class="pill">not signed in yet</span>':'',m.banned?'<span class="pill ban">suspended</span>':''].filter(Boolean).join(' ');
+  const codeBox=c=>`<div class="okbox" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><div><div class="small">Sign-in code for @${esc(c.handle)} · good for 7 days</div><div class="code">${esc(c.code)}</div></div>
+      <div class="fit row" style="align-items:center"><button class="sm fit" data-copy="${esc(linkFor(c.code))}">Copy link</button><button class="sm fit" data-copy="${esc(c.code)}">Copy code</button><button class="sm fit" id="codeDone">Done</button></div></div>
+      <div class="small" style="margin-top:6px">${esc(linkFor(c.code))}</div><div class="small muted" style="margin-top:4px">Shown once. You can make a new one any time from their page.</div></div>`;
+  function vMembers(){
+    if(UI.member){ const m=D.members.find(x=>x.id===UI.member); if(m)return vMember(m); }
+    return `<section class="card">
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 class="fit" style="margin:0">Members <span class="muted">· ${D.members.length}</span></h2><button class="${UI.addOpen?'':'primary '}fit" id="addToggle">${UI.addOpen?'Close':'Add member'}</button></div>
+      ${UI.addOpen?`<div class="sub" style="margin-top:12px">
+        <div class="row">${field('nmHandle','Name','<input id="nmHandle" maxlength="20" placeholder="sam_trades" autocomplete="off">')}${field('nmAddr','Wallet (optional)','<input id="nmAddr" maxlength="42" placeholder="0x…" autocomplete="off">')}</div>
+        <fieldset style="border:0;padding:0;margin:0"><legend style="font-size:13px;font-weight:600;margin:10px 0 6px">Leagues</legend><div class="chk">${D.leagues.map(L=>`<label><input type="checkbox" name="nmLeague" value="${esc(L.id)}" id="nmL_${esc(L.id)}"${L.autoJoin?' checked':''}>${esc(L.name)}</label>`).join('')}</div></fieldset>
+        ${box('nmUnlocked','Fully unlocked — every feature, theme and the bigger coach allowance from day one',false)}
+        <div style="margin-top:10px"><button class="primary" id="nmCreate">Create and get a sign-in code</button></div>
+        <p class="hint">They open the link, or paste the code in Pulse → Social → Account → “Link a device”. It works once, within 7 days.</p>
+      </div>`:''}
+      ${UI.code&&!UI.member?codeBox(UI.code):''}
+      <div class="row" style="margin-top:12px;align-items:center">
+        <input id="q" placeholder="Search by name or address" aria-label="Search members" value="${esc(UI.q)}">
+        <div class="fit">${sel('mFilter',[['all','Everyone'],['suspended','Suspended'],['unlocked','Fully unlocked'],['added','Added by you'],['coach','Used the coach today']],UI.filter,' aria-label="Filter"')}</div>
+      </div>
+      <p class="hint">Addresses are visible to you as the owner. Members see them only if the member chose to show theirs.</p>
+      <div class="scroll"><table><thead><tr><th>Name</th><th>Level</th><th class="hide-sm">Streak</th><th class="hide-sm">Leagues</th><th class="hide-sm">Coach today</th><th class="hide-sm">30d return</th><th>Last seen</th></tr></thead><tbody id="mRows">${memberRows()}</tbody></table></div><div id="mPager">${memberPg().html}</div></section>`;
+  }
+  function memberPg(){
+    const q=UI.q.toLowerCase(), f=UI.filter;
+    return pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q))
+      &&(f==='all'||(f==='suspended'&&m.banned)||(f==='unlocked'&&m.unlocked)||(f==='added'&&m.adminMade)||(f==='coach'&&m.coachUsed>0))));
+  }
+  function memberRows(){
+    const list=memberPg().items;
+    return `${list.map(m=>`<tr>
+        <td><a href="${mlink(m)}"><b>@${esc(m.handle)}</b></a> ${pills(m)}</td>
+        <td>${m.level}<div class="muted small">${fmt(m.xp)} XP</div></td><td class="hide-sm">${m.streak}</td>
+        <td class="hide-sm">${m.leagues.map(l=>`<span class="pill">${esc(leagueName(l.id))}</span>`).join(' ')||'<span class="muted">—</span>'}</td>
+        <td class="hide-sm">${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td>
+        <td class="hide-sm">${m.money?(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)+'% · DD '+(m.money.dd*100).toFixed(1)+'%':'<span class="muted">—</span>'}</td>
+        <td class="small">${esc(ago(m.lastSeen))}</td></tr>`).join('')
+        ||`<tr><td colspan="7" class="muted">${D.members.length?(UI.q||UI.filter!=='all'?'Nobody matches.':''):'No members yet. Add one above, or share your /pulse link and people join from the Social tab.'}</td></tr>`}`;
+  }
+  function vMember(m){
+    const grants=(m.grants||[]).slice().reverse(), grantSum=grants.reduce((a,g)=>a+g.xp,0);
+    const tierRows=m.leagues.filter(x=>{ const L=D.leagues.find(y=>y.id===x.id); return L&&L.tiers; });
+    const cc=D.ov.config.coach;
+    return `<section class="card mhead"><a href="#members">← All members</a><h2>@${esc(m.handle)} ${pills(m)}</h2>
+      <div class="muted small">Joined ${esc(new Date(m.createdAt).toISOString().slice(0,10))} · last seen ${esc(ago(m.lastSeen))} · ${m.keys} device${m.keys===1?'':'s'}${m.vault?' · sync '+size(m.vault):''}</div>
+      <div class="stat3"><div><b>${m.level}</b><span>Level</span></div><div><b>${fmt(m.xp)}</b><span>XP${grantSum?' · '+(grantSum>0?'+':'')+fmt(grantSum)+' from you':''}</span></div><div><b>${m.streak}</b><span>Streak</span></div>
+        <div><b>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</b><span>Coach today</span></div><div><b>${m.awards.length}</b><span>Reward badges</span></div></div>
+      ${UI.code&&UI.code.id===m.id?codeBox(UI.code):''}
+    </section>
+    <div class="two">
+      <section class="card"><h2>Profile</h2>
+        ${field('mHandle','Name',`<input id="mHandle" maxlength="20" value="${esc(m.handle)}">`)}
+        ${field('mAddr','Wallet',`<input id="mAddr" maxlength="42" placeholder="0x…" value="${esc(m.address||'')}"${m.claimed?' disabled':''}>`,m.claimed?'Claimed by signature — only the member can change it.':'Used for verified Discipline and returns. Leave empty to remove it.')}
+        <div style="margin-top:12px"><button class="primary" data-m="edit">Save profile</button></div>
+      </section>
+      <section class="card"><h2>Boost XP</h2>
+        <div class="row">${field('gXp','XP','<input id="gXp" type="number" step="10" placeholder="250">','Negative to correct a mistake.')}${field('gWhy','Reason they’ll see','<input id="gWhy" maxlength="80" placeholder="Won the October mentoring session">')}</div>
+        ${box('gAnn','Also post it to the feed',false)}
+        <div class="row" style="align-items:center;margin-top:4px"><button class="primary fit" data-m="grant">Give XP</button>${[100,250,500,1000].map(n=>`<button class="sm fit" data-quickxp="${n}">+${n}</button>`).join('')}</div>
+        ${grants.length?`<h3>History</h3><div class="scroll"><table><tbody>${pager('grants:'+m.id,grants).items.map(g=>`<tr><td><b>${g.xp>0?'+':''}${fmt(g.xp)}</b></td><td>${esc(g.why)}</td><td class="muted small">${esc(ago(g.at))}</td><td><button class="sm danger" data-ungrant="${esc(g.id)}">Undo</button></td></tr>`).join('')}</tbody></table></div>${pager('grants:'+m.id,grants).html}`:''}
+      </section>
+      <section class="card"><h2>Access</h2>
+        ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature and theme regardless of level, and the unlocked coach allowance.')}
+        ${field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
+        <div style="margin-top:12px"><button class="primary" data-m="access">Save access</button></div>
+      </section>
+      <section class="card"><h2>Leagues</h2>
+        <div class="chk">${D.leagues.map(L=>`<label><input type="checkbox" name="mLeague" value="${esc(L.id)}"${m.leagues.some(x=>x.id===L.id)?' checked':''}>${esc(L.name)} <span class="muted small">#${L.num}</span></label>`).join('')}</div>
+        ${tierRows.map(x=>`<div class="row" style="align-items:center;margin-top:10px"><span>${esc(leagueName(x.id))} tier</span><div class="fit">${sel('tier_'+x.id,TIERS.map((t,i)=>[i,t]),x.tier,` data-tier-league="${esc(x.id)}" aria-label="Tier in ${esc(leagueName(x.id))}"`)}</div></div>`).join('')}
+        <div style="margin-top:12px"><button class="primary" data-m="leagues">Save leagues</button></div>
+      </section>
+      <section class="card"><h2>Reward badges</h2>
+        ${D.badges.length?`<div class="stack" style="gap:10px">${pager('mb:'+m.id,D.badges).items.map(b=>{ const has=m.awards.includes(b.id); return `<div class="bitem"><div class="bicon">${esc(b.icon)}</div><div><b>${esc(b.name)}</b><div class="muted small">${esc(b.metric?ruleText(b):'Awarded by hand')}</div></div>
+          <button class="sm fit${has?' danger':''}" data-award="${esc(b.id)}" data-on="${has?1:0}">${has?'Take back':'Award'}</button></div>`; }).join('')}</div>${pager('mb:'+m.id,D.badges).html}`:'<p class="muted" style="margin:0">No reward badges yet. Create them under <a href="#badges">Badges</a>.</p>'}
+      </section>
+      <section class="card"><h2>Sign-in &amp; account</h2>
+        <p class="muted" style="margin-top:0">A sign-in code links a new device to this profile — for a member you added, or someone who lost theirs.</p>
+        <button data-m="code">New sign-in code</button>
+        <h3>Suspend or delete</h3>
+        <p class="muted" style="margin-top:0">Suspended members disappear from boards and the feed and can’t post. Deleting removes the profile, posts and competition entries.</p>
+        <div class="row" style="align-items:center"><button class="fit" data-m="${m.banned?'unban':'ban'}">${m.banned?'Restore':'Suspend'}</button><button class="danger fit" data-m="remove">Delete @${esc(m.handle)}</button></div>
+      </section>
+    </div>`;
+  }
+  async function memberAct(m,a){
+    const post=b=>api('/members/'+encodeURIComponent(m.id),{body:b});
+    if(a==='edit'){ const b={action:'edit',handle:val('mHandle').trim()}, ad=val('mAddr').trim();
+      if(!m.claimed){ if(ad&&!ADDR.test(ad))return note('That isn’t a wallet address (0x and 40 hex characters).',true); b.address=ad||null; }
+      return act(()=>post(b),'Saved.'); }
+    if(a==='grant'){ const xp=Math.round(+val('gXp')); if(!xp)return note('How much XP?',true);
+      return act(()=>post({action:'grant',xp,why:val('gWhy').trim(),announce:chk('gAnn')}),(xp>0?'+':'')+fmt(xp)+' XP for @'+m.handle+'. Their app adds it on its next sync.'); }
+    if(a==='access'){ const v=val('mCoach').trim(), un=chk('mUnlocked');
+      return act(async()=>{ if(un!==m.unlocked)await post({action:un?'unlock':'lock'}); await post({action:'coach',daily:v===''?null:+v}); },'Access saved.'); }
+    if(a==='leagues'){ const want=[...document.querySelectorAll('input[name=mLeague]')].filter(i=>i.checked).map(i=>i.value), had=m.leagues.map(x=>x.id);
+      const tiers=[...document.querySelectorAll('[data-tier-league]')].map(s=>[s.dataset.tierLeague,+s.value]);
+      return act(async()=>{ await post({action:'leagues',join:want.filter(x=>!had.includes(x)),leave:had.filter(x=>!want.includes(x))});
+        for(const [lid,t] of tiers){ const cur=m.leagues.find(x=>x.id===lid); if(want.includes(lid)&&cur&&t!==cur.tier)await post({action:'tier',tier:t,league:lid}); } },'Leagues saved.'); }
+    if(a==='code'){ const r=await act(()=>post({action:'code'})); if(r&&r.code){ UI.code={id:m.id,handle:m.handle,code:r.code}; render(); } return; }
+    if(a==='remove'){ if(!confirm('Delete @'+m.handle+'? Their profile, posts and competition entries are removed. This can’t be undone.'))return;
+      if(await act(()=>post({action:'remove'}),'Deleted.'))location.hash='#members'; return; }
+    if(a==='ban'&&!confirm('Suspend @'+m.handle+'? They disappear from boards and the feed and can’t post until you restore them.'))return;
+    if(a==='ban'||a==='unban') return act(()=>post({action:a}),a==='ban'?'Suspended.':'Restored.');
+  }
+
+  // ---------------- leagues ----------------
+  function leagueForm(L){
+    const n=!L, M=D.ov.meta.leagueMetrics;
+    return `<div class="sub" id="leagueForm" style="margin-top:12px"><h3 style="margin-top:0">${n?'New league':'Edit '+esc(L.name)}</h3>
+      <div class="row">${field('lgName','Name',`<input id="lgName" maxlength="40" value="${esc(L?L.name:'')}" placeholder="Risk-adjusted Masters">`)}${field('lgMetric','Ranks members by',sel('lgMetric',Object.entries(M),L?L.metric:'xp'))}${field('lgPeriod','Resets every',sel('lgPeriod',[['week','Week'],['month','Month']],L?L.period:'week'))}</div>
+      ${field('lgDesc','Description members see before joining',`<textarea id="lgDesc" rows="2" maxlength="200" placeholder="Best return per unit of drawdown. Verified wallets only.">${esc(L?L.desc:'')}</textarea>`)}
+      ${box('lgTiers','Tiers — Bronze to Diamond, with promotion and relegation each period',L?L.tiers:true)}
+      ${box('lgOpen','Listed — anyone can find it under Social → Find leagues',L?L.open:true)}
+      ${field('lgInvite','Invite code (optional)',`<input id="lgInvite" maxlength="40" value="${esc(L?L.invite||'':'')}" autocomplete="off">`,'Members need it to join. Empty: anyone can.')}
+      ${box('lgAuto','New members join it automatically',L?L.autoJoin:false)}
+      ${n?box('lgEveryone','Add everyone who’s already a member',false):''}
+      <div class="row" style="margin-top:10px;align-items:center"><button class="primary fit" id="lgSave" data-id="${L?esc(L.id):''}">${n?'Create league':'Save'}</button><button class="fit" id="lgCancel">Cancel</button></div></div>`;
+  }
+  function vLeagues(){
+    const ed=UI.leagueEdit, L0=ed&&ed!=='new'?D.leagues.find(x=>x.id===ed):null;
+    return `<section class="card"><div class="row" style="justify-content:space-between;align-items:center"><h2 class="fit" style="margin:0">Leagues</h2>${ed?'':'<button class="primary fit" id="lgNew">New league</button>'}</div>
+      <p class="hint">Each league ranks its members on its own metric. Members can be in several at once, and find listed ones by name or number.</p>
+      ${ed?leagueForm(L0):''}</section>
+      ${D.leagues.map(L=>{ const out=D.members.filter(m=>!L.roster.some(r=>r.id===m.id));
+        return `<section class="card"><div class="lcard"><div><h2 style="margin:0">${esc(L.name)} <span class="muted">#${L.num}</span></h2>
+          <div class="chips" style="margin:8px 0">${[esc(L.metricLabel),L.period==='month'?'Monthly':'Weekly',L.tiers?'Tiers':'',L.open?'Listed':'Unlisted',L.inviteRequired?'Invite code':'',L.autoJoin?'Auto-join':''].filter(Boolean).map(x=>`<span class="pill">${x}</span>`).join('')}</div>
+          ${L.desc?`<p class="muted" style="margin:0">${esc(L.desc)}</p>`:''}</div>
+          <div class="row fit" style="align-items:center"><button class="sm fit" data-lgedit="${esc(L.id)}">Edit</button>${L.id==='main'?'':`<button class="sm danger fit" data-lgdel="${esc(L.id)}" data-n="${esc(L.name)}">Delete</button>`}</div></div>
+          <details style="margin-top:10px"${UI.rosterOpen===L.id?' open':''}><summary>${L.roster.length} member${L.roster.length===1?'':'s'}</summary>
+            <div class="chips" style="margin-top:10px">${pager('roster:'+L.id,L.roster).items.map(r=>`<span class="pill">@${esc(r.handle)}${L.tiers?' · '+TIERS[r.tier]:''} <button class="x" data-lgrm="${esc(L.id)}" data-mid="${esc(r.id)}" aria-label="Remove @${esc(r.handle)}">×</button></span>`).join('')||'<span class="muted">Nobody yet.</span>'}</div>${pager('roster:'+L.id,L.roster).html}
+            ${out.length?`<div class="row" style="margin-top:10px;align-items:center"><div>${sel('lgAdd_'+L.id,out.map(m=>[m.id,'@'+m.handle]),'',' aria-label="Member to add"')}</div><button class="sm fit" data-lgadd="${esc(L.id)}">Add</button></div>`:''}
+          </details></section>`; }).join('')}`;
+  }
+
+  // ---------------- competitions ----------------
+  function vComps(){
+    const today=new Date(), iso=d=>d.toISOString().slice(0,10);
+    return `<div class="two"><section class="card"><h2>New competition</h2>
+      ${field('nTitle','Title','<input id="nTitle" maxlength="60" placeholder="Discipline Cup · Week 41">')}
+      ${field('nType','Type',sel('nType',[['discipline','Discipline — best average process score'],['survivor','Survivor — never breach your loss limit'],['journal','Journal streak — journal every trade N days running'],['return','Return — best % return under a drawdown cap (read from chain)']],'discipline'))}
+      ${field('nLeague','Who can enter',sel('nLeague',[['','Everyone']].concat(D.leagues.map(L=>[L.id,'Members of '+L.name])),''))}
+      <div class="row">${field('nStart','Starts',`<input id="nStart" type="date" value="${iso(today)}">`)}${field('nEnd','Ends',`<input id="nEnd" type="date" value="${iso(new Date(today.getTime()+6*86400000))}">`)}</div>
+      <div class="row">${field('nMin','Minimum / target days','<input id="nMin" type="number" min="1" max="90" value="3">')}${field('nDd','Drawdown cap % (return only)','<input id="nDd" type="number" min="1" max="90" value="8">')}</div>
+      ${field('nRule','Rules, in a sentence or two','<textarea id="nRule" rows="2" maxlength="280"></textarea>')}
+      <div style="margin-top:14px"><button class="primary" id="mkComp">Create and announce</button></div></section>
+      <section class="card"><h2>All competitions</h2><div class="scroll"><table><thead><tr><th>Title</th><th>Dates</th><th>Entrants</th><th>Leader</th><th></th></tr></thead><tbody>
+      ${pager('comps',D.comps).items.map(x=>`<tr><td><b>${esc(x.title)}</b><div class="muted small">${esc(x.type)} · ${esc(x.status)}${x.league?' · '+esc(x.league.name||leagueName(x.league)):''}</div>${x.rule?`<div class="muted small">${esc(x.rule)}</div>`:''}</td><td class="small">${esc(x.start)} → ${esc(x.end)}</td><td>${x.entrants}</td>
+        <td class="small">${x.standings&&x.standings[0]?'@'+esc(x.standings[0].handle)+' · '+esc(x.standings[0].note):'<span class="muted">—</span>'}</td>
+        <td><button class="sm danger" data-delcomp="${esc(x.id)}" data-t="${esc(x.title)}">Delete</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">None yet.</td></tr>'}
+      </tbody></table></div>${pager('comps',D.comps).html}</section></div>`;
+  }
+
+  // ---------------- badges ----------------
+  const ruleText=b=>{ const lbl=D.ov.meta.badgeMetrics[b.metric]||b.metric; return lbl+(b.op==='lte'?' ≤ ':' ≥ ')+fmt(b.value); };
+  const BADGE_IDEAS=[['🔥','Iron Streak','A 30-day discipline streak','best','gte',30,300],['🎯','Sharpshooter','Average Discipline of 85+ over 30 days','discipline30','gte',85,250],
+    ['🧭','Explorer','Reached level 10','level','gte',10,200],['🏛️','Founding member','90 days in the league','members','gte',90,150],['🧠','Coach’s pick','For a trade review worth sharing',null,'gte',0,100]];
+  function badgeForm(b){
+    const n=!b, M=D.ov.meta.badgeMetrics;
+    return `<div class="sub" id="badgeForm" style="margin-top:12px"><h3 style="margin-top:0">${n?'New reward badge':'Edit '+esc(b.name)}</h3>
+      ${n?`<div class="chips" style="margin-bottom:8px;align-items:center"><span class="muted small">Start from:</span>${BADGE_IDEAS.map((x,i)=>`<button class="sm" data-bidea="${i}">${x[0]} ${esc(x[1])}</button>`).join('')}</div>`:''}
+      <div class="row"><div style="flex:0 0 90px;min-width:90px">${field('bIcon','Icon',`<input id="bIcon" maxlength="4" value="${esc(b?b.icon:'🏅')}">`)}</div>${field('bName','Name',`<input id="bName" maxlength="40" value="${esc(b?b.name:'')}">`)}${field('bXp','XP when earned',`<input id="bXp" type="number" min="0" max="10000" value="${b?b.xp:100}">`)}</div>
+      ${field('bDesc','What it’s for',`<input id="bDesc" maxlength="200" value="${esc(b?b.desc:'')}">`)}
+      <div class="row">${field('bMetric','Earned',sel('bMetric',[['','By hand — you award it']].concat(Object.entries(M).map(([k,l])=>[k,'Automatically: '+l])),b&&b.metric?b.metric:''))}
+        <div class="fit" style="min-width:90px">${field('bOp','When',sel('bOp',[['gte','≥'],['lte','≤']],b?b.op:'gte'))}</div>${field('bValue','Value',`<input id="bValue" type="number" step="any" value="${b&&b.metric?b.value:''}">`)}</div>
+      <p class="hint">Automatic badges are checked whenever a member’s app syncs, and for everyone when you save. Percent metrics are in % (5 = 5%).</p>
+      <div class="row" style="margin-top:10px;align-items:center"><button class="primary fit" id="bSave" data-id="${b?esc(b.id):''}">${n?'Create badge':'Save'}</button><button class="fit" id="bCancel">Cancel</button></div></div>`;
+  }
+  function vBadges(){
+    const ed=UI.badgeEdit, b0=ed&&ed!=='new'?D.badges.find(x=>x.id===ed):null;
+    return `<section class="card"><div class="row" style="justify-content:space-between;align-items:center"><h2 class="fit" style="margin:0">Reward badges</h2>${ed?'':'<button class="primary fit" id="bNew">New badge</button>'}</div>
+      <p class="hint">Your own badges for this league, on top of the app’s built-in catalog of ~280. They show on members’ badge pages and pay the XP you set.</p>
+      ${ed?badgeForm(b0):''}</section>
+      <section class="card">${D.badges.length?`<div class="blist">${pager('badges',D.badges).items.map(b=>`<div class="sub bitem"><div class="bicon">${esc(b.icon)}</div><div><b>${esc(b.name)}</b>${b.xp?` <span class="pill xp">+${fmt(b.xp)} XP</span>`:''}
+        <div class="muted small">${esc(b.metric?ruleText(b):'Awarded by hand')}</div>${b.desc?`<div class="small" style="margin-top:4px">${esc(b.desc)}</div>`:''}
+        <div class="muted small" style="margin-top:4px">${b.earned} earned</div>
+        <div class="row" style="margin-top:8px;align-items:center"><button class="sm fit" data-bedit="${esc(b.id)}">Edit</button><button class="sm danger fit" data-bdel="${esc(b.id)}" data-n="${esc(b.name)}">Delete</button></div></div></div>`).join('')}</div>`
+        :'<p class="muted" style="margin:0">No reward badges yet.</p>'}${pager('badges',D.badges).html}</section>`;
+  }
+
+  // ---------------- levels & XP ----------------
+  function vLevels(){
+    const c=UI.levelDraft||D.ov.config.levels, x=D.ov.config.xp;
+    const empty=c.mode==='table'&&!c.thresholds.length, pc=empty?Object.assign({},c,{mode:'curve'}):c; // the server keeps the curve until the table has numbers
+    const rows=[]; for(let n=1;n<=20;n++){ const s=levelStart(pc,n); if(!isFinite(s))break; rows.push([n,s,c.titles[Math.min(n,c.titles.length)-1]]); }
+    return `<div class="two"><section class="card"><h2>How levels work</h2>
+      ${field('lvMode','Level thresholds',sel('lvMode',[['curve','A curve — each level a little further than the last'],['table','A table — you set the XP for each level']],c.mode))}
+      <div class="${c.mode==='table'?'hide':''}">${field('lvBase','Curve steepness',`<input id="lvBase" type="number" min="10" max="5000" value="${c.base}">`,'Level n starts at steepness × n × (n − 1) XP. 200 puts level 2 at 400 XP, level 5 at 4,000 and level 10 at 18,000.')}</div>
+      <div class="${c.mode==='table'?'':'hide'}">${field('lvTable','XP to reach level 2, 3, 4, …',`<textarea id="lvTable" rows="3" placeholder="300, 800, 1500, 2500, 4000">${esc((c.thresholds||[]).join(', '))}</textarea>`,'Ascending, separated by commas. The last one is the top level.'+(empty?' Until you add some, the curve stays in place.':''))}</div>
+      ${field('lvTitles','Level titles, one per line',`<textarea id="lvTitles" rows="6">${esc(c.titles.join('\n'))}</textarea>`,'Up to 30 characters each. Levels past the last title keep it.')}
+      <div class="row" style="margin-top:12px;align-items:center"><button class="fit" id="lvPreview">Preview</button><button class="primary fit" id="lvSave">Save levels</button></div>
+      <p class="hint">Nobody loses XP — only where the levels fall changes. Members’ apps pick it up when they next open Pulse.</p></section>
+      <section class="card"><h2>Preview${UI.levelDraft?' <span class="pill">not saved</span>':''}</h2><div class="scroll"><table class="lvtbl"><thead><tr><th>Level</th><th>Starts at</th><th>Title</th><th>Members</th></tr></thead><tbody>
+        ${rows.map(([n,s,t])=>{ const k=D.members.filter(m=>!m.banned&&m.xp>=s&&m.xp<levelStart(pc,n+1)).length; return `<tr><td>${n}</td><td>${fmt(s)} XP</td><td>${esc(t)}</td><td class="muted">${k||''}</td></tr>`; }).join('')}
+      </tbody></table></div></section></div>
+      <section class="card"><h2>How members earn XP</h2>
+        <p class="hint" style="margin-top:0">Per day unless noted. Set any to 0 to stop paying it.</p>
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">${Object.keys(XP_LABELS).map(k=>field('xp_'+k,XP_LABELS[k][0],`<input id="xp_${k}" type="number" min="0" max="${k==='discipline'?5:1000}" step="${k==='discipline'?0.1:5}" value="${x[k]}">`,XP_LABELS[k][1]?esc(XP_LABELS[k][1]):'')).join('')}</div>
+        <div style="margin-top:14px"><button class="primary" id="xpSave">Save XP rules</button></div></section>`;
+  }
+  const levelBody=()=>({mode:val('lvMode'),base:val('lvBase'),thresholds:val('lvTable'),titles:lines(val('lvTitles'))});
+  // what the server's sanitizer will make of the form, for the preview
+  function levelDraft(){ const b=levelBody(), t=[]; for(const v of String(b.thresholds).split(/[\s,]+/).map(Number))if(isFinite(v)&&v>0&&(!t.length||Math.round(v)>t[t.length-1]))t.push(Math.round(v));
+    const titles=b.titles.map(x=>x.slice(0,30)); return {mode:b.mode==='table'?'table':'curve',base:Math.min(5000,Math.max(10,Math.round(b.base)||200)),thresholds:t,titles:titles.length?titles:D.ov.config.levels.titles}; }
+
+  // ---------------- features ----------------
+  function vFeatures(){
+    const c=D.ov.config, mods=D.ov.meta.modules;
+    return `<section class="card"><h2>Unlock features by level</h2>
+      ${box('fOn','Unlock Pulse features with levels',c.unlocksOn,'Off: every member gets every feature. Fully unlocked members, and you, always do.')}
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">${Object.entries(mods).map(([k,l])=>field('mod_'+k,l,`<input id="mod_${k}" type="number" min="1" max="100" value="${c.modules[k]}">`,c.modules[k]<=1?'Everyone':'From level '+c.modules[k])).join('')}</div>
+      <h3>Themes</h3>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">${['ember','aurora','gold'].map(k=>field('th_'+k,k[0].toUpperCase()+k.slice(1)+' theme',`<input id="th_${k}" type="number" min="1" max="100" value="${c.themes[k]}">`)).join('')}</div>
+      <div style="margin-top:14px"><button class="primary" id="fSave">Save</button></div>
+      <p class="hint">Members see a lock with the level it opens at. The server enforces it for competitions and the coach too.</p></section>`;
+  }
+
+  // ---------------- coach ----------------
+  function vCoach(){
+    const o=D.ov, c=o.config.coach, users=D.members.filter(m=>m.coachUsed>0).sort((a,b)=>b.coachUsed-a.coachUsed);
+    return `${o.coachAi?'':'<p class="warn">The AI coach is off on this server. Set <code>COACH_AI=1</code> and <code>ANTHROPIC_API_KEY</code>, then restart. These settings apply once it’s on.</p>'}
+      <div class="two"><section class="card"><h2>AI coach</h2>
+        ${box('cMembers','Members can use the coach',c.members)}
+        <div class="row">${field('cDaily','Messages a day, per member',`<input id="cDaily" type="number" min="0" max="500" value="${c.daily}">`)}${field('cDailyU','…for fully unlocked members',`<input id="cDailyU" type="number" min="0" max="1000" value="${c.dailyUnlocked}">`)}</div>
+        ${field('cOwner','Your own daily limit',`<input id="cOwner" type="number" min="0" max="1000" value="${c.ownerDaily}">`,'0 = no limit. Each member’s day resets at their local midnight.')}
+        ${box('cDetail','Members may share their trades and notes with the coach',c.detail,'Each member still chooses, and it’s off until they switch it on. Off here: the coach only ever sees summaries.')}
+        <p class="hint">The coach opens at level ${o.config.modules.coach} (see Features). Per-member limits are on each member’s page.</p>
+        <div style="margin-top:14px"><button class="primary" id="cSave">Save coach settings</button></div></section>
+      <section class="card"><h2>Today</h2>${tiles([['Messages today',fmt(o.coachToday)],['Members who asked',users.length]])}
+        ${users.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${pager('coachusers',users).items.map(m=>`<tr><td><a href="${mlink(m)}">@${esc(m.handle)}</a></td><td>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td></tr>`).join('')}</tbody></table></div>${pager('coachusers',users).html}`:''}
+        <p class="hint">Messages go to Claude and aren’t stored on this server; only the count is.</p></section></div>`;
+  }
+
+  // ---------------- routines ----------------
+  function vRoutines(){
+    const p=D.ov.config.profiles||{custom:[],overrides:{}}, ov=UI.overrides||p.overrides||{};
+    const custom=UI.custom||(UI.custom=JSON.parse(JSON.stringify(p.custom||[])));
+    return `<section class="card"><h2>Built-in routines</h2>
+      <p class="hint" style="margin-top:0">Members get the routine that fits how they trade — detected from their trades, or picked by them. Leave a box empty to keep the default questions (shown faded). One question per line.</p>
+      <div class="stack" style="gap:12px;margin-top:10px">${Object.entries(ROUTINES).map(([k,r])=>`<div class="sub"><h3 style="margin-top:0">${esc(r.name)}</h3><div class="two" style="gap:12px">
+        ${field('ro_'+k+'_m','Morning check-in',`<textarea id="ro_${k}_m" rows="3" placeholder="${esc(r.morning.join('\n'))}">${esc(((ov[k]||{}).morning||[]).join('\n'))}</textarea>`)}
+        ${field('ro_'+k+'_e','End-of-day review',`<textarea id="ro_${k}_e" rows="4" placeholder="${esc(r.eod.join('\n'))}">${esc(((ov[k]||{}).eod||[]).join('\n'))}</textarea>`)}</div></div>`).join('')}</div></section>
+      <section class="card"><div class="row" style="justify-content:space-between;align-items:center"><h2 class="fit" style="margin:0">Your own profiles</h2><button class="fit" id="rAdd"${custom.length>=12?' disabled':''}>Add profile</button></div>
+        <p class="hint">For example “Funded-account trader”, built on Day trader, with questions about the daily loss rule. Members pick them in Pulse → Check-in.</p>
+        <div class="stack" style="gap:12px;margin-top:10px">${custom.map((c,i)=>{ const base=ROUTINES[c.base]?c.base:'day'; return `<div class="sub"><div class="row">${field('rc_'+i+'_n','Name',`<input id="rc_${i}_n" maxlength="40" value="${esc(c.name)}">`)}${field('rc_'+i+'_b','Based on',sel('rc_'+i+'_b',Object.entries(ROUTINES).map(([k,r])=>[k,r.name]),base))}</div>
+          ${field('rc_'+i+'_d','Who it’s for',`<input id="rc_${i}_d" maxlength="200" value="${esc(c.desc||'')}">`)}
+          <div class="two" style="gap:12px">${field('rc_'+i+'_m','Morning questions',`<textarea id="rc_${i}_m" rows="3" placeholder="${esc(ROUTINES[base].morning.join('\n'))}">${esc((c.morning||[]).join('\n'))}</textarea>`)}
+          ${field('rc_'+i+'_e','End-of-day questions',`<textarea id="rc_${i}_e" rows="4" placeholder="${esc(ROUTINES[base].eod.join('\n'))}">${esc((c.eod||[]).join('\n'))}</textarea>`)}</div>
+          <div style="margin-top:8px"><button class="sm danger" data-rdel="${i}">Remove</button></div></div>`; }).join('')||'<p class="muted" style="margin:0">None yet.</p>'}</div>
+      </section>
+      <div><button class="primary" id="rSave">Save routines</button></div>`;
+  }
+  // the form as it stands, so adding or removing a profile doesn't lose unsaved edits
+  const readOverrides=()=>{ const o={}; for(const k of Object.keys(ROUTINES)){ const mo=lines(val('ro_'+k+'_m')), eo=lines(val('ro_'+k+'_e')); if(mo.length||eo.length)o[k]=Object.assign(mo.length?{morning:mo}:{},eo.length?{eod:eo}:{}); } return o; };
+  const keepRoutines=()=>{ UI.custom=readCustom(); UI.overrides=readOverrides(); };
+  const readCustom=()=>(UI.custom||[]).map((c,i)=>({id:c.id,name:val('rc_'+i+'_n').trim(),base:val('rc_'+i+'_b'),desc:val('rc_'+i+'_d').trim(),morning:lines(val('rc_'+i+'_m')),eod:lines(val('rc_'+i+'_e'))}));
+
+  // ---------------- feed ----------------
+  function vFeed(){
+    return `<div class="two"><section class="card"><h2>Announcement</h2>
+      <p class="muted" style="margin:0 0 8px">Posts to everyone’s feed from the league.</p>
+      <textarea id="ann" rows="3" maxlength="280" placeholder="Survivor starts Monday — set your loss limit in the check-in." aria-label="Announcement"></textarea>
+      <div style="margin-top:10px"><button class="primary" id="postAnn">Post</button></div></section>
+      <section class="card"><h2>Recent feed</h2><div style="max-height:520px;overflow:auto">
+      ${pager('events',D.events).items.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}<div class="muted small">${esc(ago(e.at))} · ${e.kudos} kudos</div></div><button class="sm danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>'}
+      </div>${pager('events',D.events).html}</section></div>`;
+  }
+
+  // ---------------- settings ----------------
+  function vSettings(){
+    const o=D.ov, c=o.config;
+    return `<section class="card"><h2>Joining</h2>
+      ${box('sOpen','Open for new members',c.open)}
+      ${field('sInvite','Invite code (leave empty for anyone with the link)',`<input id="sInvite" maxlength="40" autocomplete="off" value="${esc(c.inviteCode||'')}">`)}
+      <h3>Wallets</h3>
+      <label class="inline"><input type="checkbox" id="sClaim"${c.requireClaim?' checked':''}${o.claims?'':' disabled'}>Only count claimed wallets</label>
+      <p class="hint" style="margin:-6px 0 6px 26px">Verified Discipline, returns and return competitions then only use wallets a member proved are theirs by signing with them.${o.claims?'':' (Wallet sign-in isn’t available on this server.)'}</p>
+      ${o.claims&&!o.originPinned?'<p class="warn small">Wallet sign-in isn’t pinned to your address yet. Set <code>PUBLIC_ORIGIN</code> on the server (e.g. <code>https://pulse.example.com</code>) so a look-alike site can’t collect members’ signatures.</p>':''}
+      <h3>Sync</h3>
+      ${box('sVault','Encrypted journal sync for members',c.vaultOn!==false,'Members’ journals are encrypted in their browser with their own passphrase. This server stores ciphertext only — you can’t read them.')}
+      <div style="margin-top:14px"><button class="primary" id="sSave">Save settings</button></div></section>`;
+  }
+
+  // ---------------- events ----------------
+  const put=b=>api('/config',{method:'PUT',body:b});
+  // number fields left empty keep their saved value instead of becoming 0
+  const nums=(keys,pre)=>{ const o={}; for(const k of keys){ const v=val(pre+k).trim(); if(v!=='')o[k]=+v; } return o; };
+  document.addEventListener('input',ev=>{ const t=ev.target;
+    if(t.id==='q'){ UI.q=t.value; UI.pages.members=0; $('mRows').innerHTML=memberRows(); $('mPager').innerHTML=memberPg().html; } });
+  document.addEventListener('change',ev=>{ const t=ev.target;
+    if(t.id==='mFilter'){ UI.filter=t.value; UI.pages.members=0; $('mRows').innerHTML=memberRows(); $('mPager').innerHTML=memberPg().html; }
+    else if(t.id==='lvMode'){ UI.levelDraft=levelDraft(); render(); }
+    else if(t.id&&/^rc_\d+_b$/.test(t.id)){ keepRoutines(); UI.fresh=true; render(); } });
+  document.addEventListener('click',async ev=>{
+    const qa=ev.target.closest('a[data-open]'); if(qa){ UI.open=qa.dataset.open; return; }
+    const b=ev.target.closest('button'); if(!b||!$('app').contains(b)||BUSY)return;
+    const d=b.dataset, id=b.id; UI.submitted=b.closest('.sub,.card');
+    const m=UI.member&&D.members.find(x=>x.id===UI.member);
+    { const lc=b.closest('details'); if(lc&&(d.pg||d.lgadd||d.lgrm)){ const m2=/^roster:(.+)$/.exec(d.pg||'')||[0,d.lgadd||d.lgrm]; UI.rosterOpen=m2[1]; } }
+    if(d.pg){ UI.pages[d.pg]=Math.max(0,(UI.pages[d.pg]||0)+(+d.d||0)); if(d.pg==='members'&&$('mRows')){ $('mRows').innerHTML=memberRows(); $('mPager').innerHTML=memberPg().html; return; } UI.fresh=false; return render(); }
+    if(id==='addToggle'){ UI.addOpen=!UI.addOpen; UI.code=null; return render(); }
+    if(id==='codeDone'){ UI.code=null; return render(); }
+    if(d.copy){ try{ await navigator.clipboard.writeText(d.copy); note('Copied.'); }catch(e){ note('Couldn’t copy — select it by hand.',true); } return; }
+    if(id==='nmCreate'){ const handle=val('nmHandle').trim().replace(/^@/,''); if(!handle)return note('Give them a name.',true);
+      if(val('nmAddr').trim()&&!ADDR.test(val('nmAddr').trim()))return note('That isn’t a wallet address (0x and 40 hex characters).',true);
+      const leagues=[...document.querySelectorAll('input[name=nmLeague]')].filter(i=>i.checked).map(i=>i.value);
+      const r=await act(()=>api('/members',{body:{handle,address:val('nmAddr').trim()||undefined,unlocked:chk('nmUnlocked'),leagues}}));
+      if(r&&r.code){ UI.addOpen=false; UI.code={id:r.id,handle,code:r.code}; render(); } return; }
+    if(m&&d.m) return memberAct(m,d.m);
+    if(m&&d.quickxp){ $('gXp').value=d.quickxp; $('gXp').focus(); return; }
+    if(m&&d.ungrant){ if(!confirm('Undo this XP grant?'))return; } if(m&&d.ungrant) return act(()=>api('/members/'+encodeURIComponent(m.id),{body:{action:'ungrant',id:d.ungrant}}),'Undone.');
+    if(m&&d.award) return act(()=>api('/members/'+encodeURIComponent(m.id),{body:{action:d.on==='1'?'revoke':'award',badge:d.award}}),d.on==='1'?'Taken back.':'Awarded.');
+    // leagues
+    if(id==='lgNew'){ UI.leagueEdit='new'; return render(); }
+    if(d.lgedit){ UI.leagueEdit=d.lgedit; render(); const f=$('leagueForm'); if(f&&f.scrollIntoView)f.scrollIntoView({block:'center'}); return; }
+    if(id==='lgCancel'){ UI.leagueEdit=null; return render(); }
+    if(id==='lgSave'){ const body={name:val('lgName').trim(),desc:val('lgDesc').trim(),metric:val('lgMetric'),period:val('lgPeriod'),tiers:chk('lgTiers'),open:chk('lgOpen'),invite:val('lgInvite').trim(),autoJoin:chk('lgAuto')};
+      if(!body.name)return note('A league needs a name.',true);
+      if(!d.id)body.everyone=chk('lgEveryone');
+      UI.leagueEdit=null;
+      if(!await act(()=>d.id?api('/leagues/'+encodeURIComponent(d.id),{method:'PUT',body}):api('/leagues',{body}),d.id?'Saved.':'League created.')){ UI.leagueEdit=d.id||'new'; }
+      return; }
+    if(d.lgdel){ if(!confirm('Delete the league “'+d.n+'”? Its members stay; its competitions become open to everyone.'))return; return act(()=>api('/leagues/'+encodeURIComponent(d.lgdel),{method:'DELETE'}),'Deleted.'); }
+    if(d.lgadd){ const v=val('lgAdd_'+d.lgadd); if(!v)return; return act(()=>api('/leagues/'+encodeURIComponent(d.lgadd),{body:{add:[v]}}),'Added.'); }
+    if(d.lgrm&&!confirm('Remove this member from the league?'))return;
+    if(d.lgrm) return act(()=>api('/leagues/'+encodeURIComponent(d.lgrm),{body:{remove:[d.mid]}}),'Removed.');
+    // competitions
+    if(id==='mkComp') return act(()=>api('/competitions',{body:{title:val('nTitle'),type:val('nType'),league:val('nLeague')||null,start:val('nStart'),end:val('nEnd'),minDays:+val('nMin'),ddCap:(+val('nDd')||8)/100,rule:val('nRule')}}),'Competition created and announced.');
+    if(d.delcomp){ if(!confirm('Delete “'+d.t+'”?'))return; return act(()=>api('/competitions/'+encodeURIComponent(d.delcomp),{method:'DELETE'}),'Deleted.'); }
+    // badges
+    if(id==='bNew'){ UI.badgeEdit='new'; return render(); }
+    if(d.bedit){ UI.badgeEdit=d.bedit; render(); const f=$('badgeForm'); if(f&&f.scrollIntoView)f.scrollIntoView({block:'center'}); return; }
+    if(id==='bCancel'){ UI.badgeEdit=null; return render(); }
+    if(d.bidea){ const x=BADGE_IDEAS[+d.bidea]; $('bIcon').value=x[0]; $('bName').value=x[1]; $('bDesc').value=x[2]; $('bMetric').value=x[3]||''; $('bOp').value=x[4]; $('bValue').value=x[3]?x[5]:''; $('bXp').value=x[6]; return; }
+    if(id==='bSave'){ const metric=val('bMetric')||null, body={name:val('bName').trim(),icon:val('bIcon').trim(),desc:val('bDesc').trim(),metric,op:val('bOp'),value:+val('bValue')||0,xp:+val('bXp')||0};
+      if(!body.name)return note('A badge needs a name.',true);
+      if(metric&&val('bValue').trim()==='')return note('Pick the value that earns it.',true);
+      UI.badgeEdit=null;
+      if(!await act(()=>d.id?api('/badges/'+encodeURIComponent(d.id),{method:'PUT',body}):api('/badges',{body}),d.id?'Saved.':'Badge created.')){ UI.badgeEdit=d.id||'new'; }
+      return; }
+    if(d.bdel){ if(!confirm('Delete the “'+d.n+'” badge? Members who earned it lose it.'))return; return act(()=>api('/badges/'+encodeURIComponent(d.bdel),{method:'DELETE'}),'Deleted.'); }
+    // levels & xp
+    if(id==='lvPreview'){ UI.levelDraft=levelDraft(); return render(); }
+    if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
+    if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Pulse.'); }
+    // features
+    if(id==='fSave') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),themes:nums(['ember','aurora','gold'],'th_')}),'Saved.');
+    // coach
+    if(id==='cSave') return act(()=>put({coach:Object.assign({members:chk('cMembers'),detail:chk('cDetail')},...[['daily','cDaily'],['dailyUnlocked','cDailyU'],['ownerDaily','cOwner']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))}),'Coach settings saved.');
+    // routines
+    if(id==='rAdd'){ keepRoutines(); UI.fresh=true; UI.custom.push({name:'',base:'day',desc:'',morning:[],eod:[]}); return render(); }
+    if(d.rdel!=null){ keepRoutines(); UI.fresh=true; UI.custom.splice(+d.rdel,1); return render(); }
+    if(id==='rSave'){ const custom=readCustom();
+      if(custom.some(c=>!c.name))return note('Every profile needs a name (or remove the empty one).',true);
+      const overrides=readOverrides(), keep=[UI.custom,UI.overrides]; UI.custom=null; UI.overrides=null;
+      if(!await act(()=>put({profiles:{custom,overrides}}),'Routines saved.')){ [UI.custom,UI.overrides]=keep; } return; }
+    // feed
+    if(id==='postAnn'){ const t=val('ann').trim(); if(!t)return; return act(()=>api('/announce',{body:{text:t}}),'Posted.'); }
+    if(d.delev&&!confirm('Remove this post from the feed?'))return;
+    if(d.delev) return act(()=>api('/events/'+encodeURIComponent(d.delev),{method:'DELETE'}),'Removed.');
+    // settings
+    if(id==='sSave') return act(()=>put({open:chk('sOpen'),inviteCode:val('sInvite').trim(),requireClaim:chk('sClaim'),vaultOn:chk('sVault')}),'Settings saved.');
+  });
+  window.addEventListener('hashchange',()=>{ const was=UI.tab+'/'+UI.member; route();
+    if(UI.tab+'/'+UI.member!==was){ UI.code=null; UI.leagueEdit=null; UI.badgeEdit=null; UI.levelDraft=null; UI.custom=null; UI.overrides=null; }
+    if(UI.open){ if(UI.open==='member')UI.addOpen=true; else if(UI.open==='league')UI.leagueEdit='new'; else if(UI.open==='badge')UI.badgeEdit='new'; UI.open=null; }
+    if(D.ov){ render(); window.scrollTo(0,0); } });
+
   async function start(){
-    if(!tok){ return; }
-    try{ await load(); }
+    if(!tok)return;
+    try{ route(); await load(); }
     catch(e){ $('login').classList.remove('hide'); $('app').classList.add('hide');
       const el=$('loginErr'); el.classList.remove('hide');
       el.textContent=e.status===401?'That token isn’t right.':e.status===403?e.message:'Couldn’t reach the admin API ('+e.message+').'; }
@@ -194,30 +598,6 @@ td button{min-height:32px;padding:4px 10px;font-size:12px}
   $('go').onclick=()=>{ tok=$('tok').value.trim(); try{ localStorage.setItem('srv_token',tok); }catch(e){} start(); };
   $('tok').addEventListener('keydown',e=>{ if(e.key==='Enter')$('go').click(); });
   $('signout').onclick=()=>{ try{ localStorage.removeItem('srv_token'); }catch(e){} location.reload(); };
-  $('q').addEventListener('input',drawMembers);
-  $('saveCfg').onclick=async()=>{ try{
-    await api('/config',{method:'PUT',body:JSON.stringify({open:$('cOpen').checked,inviteCode:$('cInvite').value.trim(),unlocksOn:$('cUnlocks').checked,requireClaim:$('cClaim').checked,vaultOn:$('cVault').checked,
-      unlocks:{trends:+$('uTrends').value,share:+$('uShare').value,compete:+$('uCompete').value},themes:{ember:+$('tEmber').value,aurora:+$('tAurora').value,gold:+$('tGold').value}})});
-    note('Settings saved.'); load(); }catch(e){ note(e.message,true); } };
-  const today=new Date(), iso=d=>d.toISOString().slice(0,10);
-  $('nStart').value=iso(today); $('nEnd').value=iso(new Date(today.getTime()+6*86400000));
-  $('nType').onchange=()=>{ $('nMin').value=$('nType').value==='journal'?10:3; };
-  $('mkComp').onclick=async()=>{ try{
-    await api('/competitions',{method:'POST',body:JSON.stringify({title:$('nTitle').value,type:$('nType').value,start:$('nStart').value,end:$('nEnd').value,
-      minDays:+$('nMin').value,ddCap:(+$('nDd').value||8)/100,rule:$('nRule').value})});
-    $('nTitle').value=''; $('nRule').value=''; note('Competition created and announced.'); load(); }catch(e){ note(e.message,true); } };
-  $('postAnn').onclick=async()=>{ const t=$('ann').value.trim(); if(!t)return; try{ await api('/announce',{method:'POST',body:JSON.stringify({text:t})}); $('ann').value=''; note('Posted.'); load(); }catch(e){ note(e.message,true); } };
-  document.addEventListener('change',async ev=>{ const s=ev.target.closest('[data-tier]'); if(!s)return;
-    try{ await api('/members/'+encodeURIComponent(s.dataset.tier),{method:'POST',body:JSON.stringify({action:'tier',tier:+s.value})}); note('League changed.'); }catch(e){ note(e.message,true); } });
-  document.addEventListener('click',async ev=>{
-    const b=ev.target.closest('button'); if(!b)return;
-    try{
-      if(b.dataset.act){ if(b.dataset.act==='remove'&&!confirm('Delete @'+b.dataset.h+'? Their profile, posts and competition entries are removed. This can’t be undone.'))return;
-        await api('/members/'+encodeURIComponent(b.dataset.id),{method:'POST',body:JSON.stringify({action:b.dataset.act})}); note('Done.'); load(); }
-      else if(b.dataset.delcomp){ if(!confirm('Delete “'+b.dataset.t+'”?'))return; await api('/competitions/'+encodeURIComponent(b.dataset.delcomp),{method:'DELETE'}); note('Deleted.'); load(); }
-      else if(b.dataset.delev){ await api('/events/'+encodeURIComponent(b.dataset.delev),{method:'DELETE'}); note('Removed.'); load(); }
-    }catch(e){ note(e.message,true); }
-  });
   start();
 })();
 </script>
