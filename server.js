@@ -95,7 +95,7 @@ const ENGINE_FNS = [
   'openRiskModel', 'whatIfStats', 'whatIfModel', 'walkForward', 'riskConcentration',
   'cusumDrift', 'decayAssess',
   // capital flows -> return on capital
-  'fetchLedgerUpdates', 'capitalFlows', 'capitalModel', 'xirrFromFlows',
+  'ledgerRowId', 'fetchLedgerUpdates', 'capitalFlows', 'capitalModel', 'xirrFromFlows',
   // goals (Telegram /goals + future endpoints)
   'monthlyGoalModel',
   // the end-of-day nudge counts unjournaled trades with the app's own definition
@@ -646,12 +646,15 @@ function createApp(opts) {
         fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills });
         res.fills = fills.length;
 
-        // funding: full refetch each refresh — matches the client, keeps semantics identical
-        const frows = await E.fetchFunding(w.address);
+        // funding and capital flows: only what's new since the cached watermark (unless a full
+        // refetch was asked for), merged and deduped by the same keys the client uses
+        const merge = (cached, rows, key) => { const out = cached ? cached.slice() : [], seen = new Set(out.map(key));
+          for (const r of rows) { const k = key(r); if (!seen.has(k)) { seen.add(k); out.push(r); } } return out; };
+        const lastOf = rows => rows.reduce((m, r) => r.time > m ? r.time : m, 0);
+        const fuC = body.full ? null : readFundingCache(w.address), leC = body.full ? null : readLedgerCache(w.address);
+        const frows = merge(fuC && fuC.rows, await E.fetchFunding(w.address, fuC ? lastOf(fuC.rows) : 0), r => r.time + '|' + r.coin);
         fresh(); gzWrite(fundingFile(w.address), { v: 1, savedAt: Date.now(), rows: frows });
-
-        // capital flows (deposits/withdrawals/transfers) — small, full refetch like funding
-        const led = await E.fetchLedgerUpdates(w.address);
+        const led = merge(leC && leC.rows, await E.fetchLedgerUpdates(w.address, leC ? lastOf(leC.rows) : 0), r => E.ledgerRowId(r));
         fresh(); gzWrite(ledgerFile(w.address), { v: 1, savedAt: Date.now(), rows: led });
 
         const hip3 = E.hip3DexsFromFills(fills);
@@ -699,6 +702,7 @@ function createApp(opts) {
   }
 
   /* ---------------- trades: rebuilt from caches, memoized ---------------- */
+  let _appHtml = null; // the app HTML, its gzip and ETag, rebuilt when the file changes
   let _tradesMemo = null; // {sig, trades, builtAt}
   function cacheSig() {
     const parts = [];
@@ -1287,6 +1291,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/projection', auth: 'read', desc: 'Monte Carlo forward sim; horizon (days, default 90), paths (<=2000, default 400), block, seed, lookback (days); filters' },
     { method: 'GET',  path: '/api/v1/kelly', auth: 'read', desc: 'Kelly sizing from filtered closed trades' },
     { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model and money-weighted xirr; account-wide — ignores filters; wallet= optional' },
+    { method: 'GET', path: '/api/v1/cache/:addr', auth: 'full', desc: 'one wallet\'s server caches (fills, funding, capital flows) as JSON, gzipped when accepted — how a new device seeds its browser caches' },
     { method: 'DELETE', path: '/api/v1/cache/:addr', auth: 'full', desc: 'evict one wallet\'s server caches (fills/funding/ledger) — cleans up body.wallets experiments and removed wallets' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
@@ -1375,6 +1380,18 @@ function createApp(opts) {
     // body.wallets experiment or a removed wallet haunting capital/alert aggregates
     const cacheM = url.match(/^\/api\/v1\/cache\/(0x[0-9a-fA-F]{40})$/);
     if (cacheM) {
+      if (req.method === 'GET') {
+        // a new device seeds its browser caches from these in one gzip download instead of
+        // paging the wallet's whole history from Hyperliquid (owner token: these are the journal's wallets)
+        if (!authOk(req)) return send(401, { error: 'unauthorized' });
+        const fc = readFillCache(cacheM[1]);
+        if (!fc) return send(404, { error: 'no server cache for that wallet' });
+        const fu = readFundingCache(cacheM[1]), le = readLedgerCache(cacheM[1]);
+        const body = JSON.stringify({ fills: { last: fc.last || 0, truncated: !!fc.truncated, fills: fc.fills }, funding: fu ? { rows: fu.rows } : null, ledger: le ? { rows: le.rows } : null });
+        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+        res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
+        return res.end(gz ? zlib.gzipSync(body) : body);
+      }
       if (req.method !== 'DELETE') return send(405, { error: 'method not allowed' });
       if (!authOk(req)) return send(401, { error: 'unauthorized' });
       const a = cacheM[1];
@@ -1901,17 +1918,20 @@ function createApp(opts) {
       return res.end();
     }
     if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/pulse')) {
-      fs.readFile(htmlPath, (err, buf) => {
-        if (err) return json(res, 500, { error: 'app HTML not found on server' });
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-cache',
-          'X-Content-Type-Options': 'nosniff',
-          'Referrer-Policy': 'no-referrer',
-        });
-        res.end(buf);
-      });
-      return;
+      // the app is ~1.4 MB: sent gzipped (~0.55 MB), and a browser that already has this
+      // version gets a 304 instead of the whole file on every open
+      let st; try { st = fs.statSync(htmlPath); } catch (e) { return json(res, 500, { error: 'app HTML not found on server' }); }
+      if (!_appHtml || _appHtml.mtime !== st.mtimeMs || _appHtml.size !== st.size) {
+        try { const buf = fs.readFileSync(htmlPath);
+          _appHtml = { mtime: st.mtimeMs, size: st.size, buf, gz: zlib.gzipSync(buf, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20) + '"' };
+        } catch (e) { return json(res, 500, { error: 'app HTML not found on server' }); }
+      }
+      const head = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'ETag': _appHtml.etag, 'Vary': 'Accept-Encoding',
+        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
+      if ((req.headers['if-none-match'] || '') === _appHtml.etag) { res.writeHead(304, head); return res.end(); }
+      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
+      return res.end(gz ? _appHtml.gz : _appHtml.buf);
     }
 
     // --- built-in documentation: /help (user guide) and /docs (technical reference).
@@ -1936,19 +1956,20 @@ function createApp(opts) {
     // --- PWA assets (tiny, inline — no extra files to deploy) ---
     if (req.method === 'GET' && url === '/sw.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' });
-      // network-first for the app shell so updates land immediately; cached copy = offline fallback.
-      // API and exchange calls are never intercepted.
+      // the app shell opens from the cached copy at once and is refreshed in the background
+      // (the server answers 304 when nothing changed), so a new version shows on the next open;
+      // with no cached copy yet it comes from the network. API and exchange calls are never intercepted.
       return res.end(
         // Only the app shell is cached: '/' and '/pulse' serve the same file, so either one
         // refreshes the copy; other pages (help, docs) pass through and never overwrite it.
-        "const C='ledger-v2',S=['/','/index.html','/ledger.html','/pulse'];" +
+        "const C='ledger-v3',S=['/','/index.html','/ledger.html','/pulse'];" +
         "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.add('/')))});" +
         "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>clients.claim()))});" +
         "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);" +
         "if(u.origin!==location.origin||u.pathname.startsWith('/api/')||e.request.method!=='GET')return;" +
-        "if(S.includes(u.pathname)){e.respondWith(" +
-        "fetch(e.request).then(r=>{if(r.ok){const cp=r.clone();caches.open(C).then(c=>c.put('/',cp));}return r;})" +
-        ".catch(()=>caches.match('/')));}});");
+        "if(S.includes(u.pathname)){const net=fetch(e.request).then(r=>{if(r.ok){const cp=r.clone();caches.open(C).then(c=>c.put('/',cp));}return r;});" +
+        "e.waitUntil(net.then(()=>{},()=>{}));" +
+        "e.respondWith(caches.match('/').then(c=>c||net).catch(()=>net));}});");
     }
     if (req.method === 'GET' && url === '/manifest.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });

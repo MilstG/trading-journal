@@ -649,6 +649,17 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-pos{display:flex;flex-direction:column;gap:3px;padding:8px 0;border-top:1px solid var(--pz-line)}
 .pz-nowrow{display:flex;gap:10px;align-items:flex-start;padding:6px 0}
 .pz-nowrow>i{width:8px;height:8px;border-radius:50%!important;margin-top:6px;flex:0 0 auto}
+.pz-wk{display:flex;flex-direction:column}
+.pz-wkr{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--pz-line);text-decoration:none;color:var(--pz-text)!important;font-size:13px}
+.pz-wkh{border-top:0;padding-top:2px;font-size:11px;color:var(--pz-muted)!important;text-transform:uppercase;letter-spacing:.04em}
+.pz-wkh span:nth-child(3),.pz-wkn{text-align:right}
+.pz-wks,.pz-wkn{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pz-wkn{align-items:flex-end}
+.pz-wks b,.pz-wkn b{font-family:var(--pz-num);font-size:15px;line-height:1}
+.pz-wks i,.pz-wkn i{display:block;width:100%;height:5px;border-radius:999px!important;background:var(--pz-track);overflow:hidden}
+.pz-wkn i{display:flex;justify-content:flex-start}
+.pz-wkn i.neg{justify-content:flex-end}
+.pz-wks em,.pz-wkn em{display:block;height:100%;border-radius:999px!important}
 .pz-spark{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end}
 .pz-spark>div{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
 .pz-spark b{display:flex;width:100%;justify-content:center}
@@ -662,6 +673,16 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-pager button{width:40px;height:40px;border-radius:50%!important;border:1px solid var(--pz-line2);background:var(--pz-card);color:var(--pz-text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .pz-pager button:disabled{opacity:.35;cursor:default}
 .pz-pager button[data-d="1"] svg{transform:none}
+.pz-mkseg{margin:-4px 0 12px;max-width:360px}
+.pz-tipbox{position:fixed;z-index:60;max-width:260px;padding:10px 12px;border-radius:12px!important;background:#1B1F25;border:1px solid var(--pz-line2);color:var(--pz-soft);font-size:12.5px;line-height:1.45;white-space:pre-line;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.pz-tipbox b{color:var(--pz-text);font-size:13px}
+.pz-rrow{display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid var(--pz-line)}
+.pz-rrow>span{display:flex;flex-direction:column;gap:2px}
+.pz-rrow b{font-size:14px}
+.pz-rrow small{font-size:12px;color:var(--pz-muted)}
+.pz-rseg{max-width:320px}
+.pz-addrow{display:flex;gap:8px}
+.pz-addrow input{flex:1;min-width:0}
 .pz-tile{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);min-width:0}
 .pz-tile .pz-n{font-family:var(--pz-num);font-size:28px;font-weight:600;line-height:1.05;overflow-wrap:anywhere}
 .pz-tile .pz-t{font-size:12px;color:var(--pz-soft)}
@@ -1205,8 +1226,15 @@ const labelFor=w=>w&&(w.label||walletShort(w.address))||'';
 // yours — drop it in a Dropbox/iCloud/Drive folder to sync across devices.
 const FSA = ('showSaveFilePicker' in window);
 let linkedHandle=null, linkedName='', _writeTimer=null, _applying=false;
-function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('ledger_fs',1);
-  r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+// one connection for the page's life (opening a new one per read was a measurable boot cost);
+// a failed open, or another tab upgrading the database, clears it so the next call reopens
+let _idbP=null;
+function idb(){ if(_idbP)return _idbP;
+  _idbP=new Promise((res,rej)=>{ const r=indexedDB.open('ledger_fs',1);
+    r.onupgradeneeded=()=>r.result.createObjectStore('kv');
+    r.onsuccess=()=>{ const db=r.result; db.onversionchange=()=>{ db.close(); _idbP=null; }; db.onclose=()=>{ _idbP=null; }; res(db); };
+    r.onerror=()=>{ _idbP=null; rej(r.error); }; });
+  return _idbP; }
 // IndexedDB write failures (quota above all) used to resolve as success — the fill cache,
 // the one thing preserving history beyond the API's page cap, could silently stop saving.
 // idbSet still never throws (call sites are fire-and-forget by design), but the first
@@ -1267,14 +1295,14 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     if(data.settings){ if('riskDefault' in data.settings)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -1321,7 +1349,7 @@ function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMa
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
 // wins there, as before).
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket'];
 function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; return JSON.parse(JSON.stringify(o)); }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); vaultSchedule(); }
 // A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min).
@@ -1390,12 +1418,16 @@ async function writeServer(){
 async function initServerSync(){
   if(!/^https?:$/.test(location.protocol))return false;
   try{
+    // with a remembered token, ask for the data at the same time as the health check instead of after it
+    let tok=null; try{ tok=localStorage.getItem('srv_token')||null; }catch(e){}
+    if(tok)SRV.token=tok;
+    const early=tok?srvFetch('/api/data').catch(()=>null):null;
     const h=await fetch('/api/health'); if(!h.ok)return false;
     const info=await h.json(); if(!info||info.ok!==true)return false;
     SRV.enabled=true; SRV.needsAuth=!!info.auth;
-    if(SRV.needsAuth){ try{ SRV.token=localStorage.getItem('srv_token')||null; }catch(e){}
+    if(SRV.needsAuth){ SRV.token=tok;
       if(!SRV.token){ renderDatafile(); return true; } }
-    const d=await srvFetch('/api/data');
+    const d=(early&&await early)||await srvFetch('/api/data');
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
       if(j.snapshot)await applySnapshot(j.snapshot);
@@ -1547,7 +1579,7 @@ async function fetchAllFills(addr, since=0){
     // didn't fit in this batch are picked up next page and removed by the dedupe set above.
     // Only when an entire page is one millisecond (start can't advance) is +1 unavoidable.
     const mx=Math.max(...batch.map(f=>f.time));
-    start=mx>start?mx:mx+1; pages++; await sleep(160);
+    start=mx>start?mx:mx+1; pages++; await sleep(40);
     if(pages>=60) truncated=true; // hit the hard page cap with a full final batch — older history is missing
   }
   // The exchange only serves the 10,000 most recent fills: a fetch that reaches that many
@@ -1560,14 +1592,16 @@ async function fetchAllFills(addr, since=0){
   }catch(e){}
   return {fills:all, truncated};
 }
-async function fetchFunding(addr){
+async function fetchFunding(addr, since){
   // userFunding caps each response (~500 rows). One call with startTime:0 silently drops
   // everything past the cap, and funding feeds net = pnl - fees + funding — so heavy
   // accounts got corrupted headline numbers. Page forward exactly like fetchAllFills:
   // resume AT the boundary time (dupes straddling a page edge are keyed out below) and
   // only skip a millisecond when a whole page shares one timestamp and start can't advance.
+  // since: resume at the cached watermark (the caller merges and dedupes), so a returning
+  // user fetches one page instead of their whole funding history
   const out=[]; const seen=new Set();
-  let start=0, pages=0, partial=false;
+  let start=since>0?since:0, pages=0, partial=false;
   try{
     while(pages<200){
       const rows=await hlPost({type:'userFunding',user:addr,startTime:start});
@@ -1579,7 +1613,7 @@ async function fetchFunding(addr){
       }
       if(rows.length<500) break;
       const mx=Math.max(...rows.map(r=>r.time));
-      start=mx>start?mx:mx+1; pages++; await sleep(160);
+      start=mx>start?mx:mx+1; pages++; await sleep(40);
     }
   }catch(e){ partial=true; } // keep what we have, but say so — silent 0 looked like "no funding"
   if(partial||pages>=200){
@@ -1592,21 +1626,20 @@ async function fetchFunding(addr){
 // Capital flows — deposits, withdrawals, vault and cross-account transfers — from
 // userNonFundingLedgerUpdates. These are what turn PnL into a RETURN: without them every
 // percentage in the app is notional-based, because fills alone cannot see capital.
-async function fetchLedgerUpdates(addr){
+// one key per capital flow: amount + destination belong in it — two same-type transfers batched
+// into one block (same ms, equal/empty hash) are distinct flows, not duplicates
+function ledgerRowId(r){ const d=(r&&r.delta)||{}; return (r.hash||'')+'|'+r.time+'|'+(d.type||'')+'|'+(d.usdc||'')+'|'+(d.destination||''); }
+async function fetchLedgerUpdates(addr, since){
   const out=[]; const seen=new Set();
-  let start=0, pages=0;
+  let start=since>0?since:0, pages=0;
   try{
     while(pages<120){
       const rows=await hlPost({type:'userNonFundingLedgerUpdates',user:addr,startTime:start});
       if(!Array.isArray(rows)||rows.length===0)break;
-      for(const r of rows){ const d=r.delta||{};
-        // amount + destination belong in the key: two same-type transfers batched into one
-        // block (same ms, equal/empty hash) are distinct capital flows, not duplicates
-        const id=(r.hash||'')+'|'+r.time+'|'+(d.type||'')+'|'+(d.usdc||'')+'|'+(d.destination||'');
-        if(!seen.has(id)){ seen.add(id); out.push(r); } }
+      for(const r of rows){ const id=ledgerRowId(r); if(!seen.has(id)){ seen.add(id); out.push(r); } }
       if(rows.length<500)break;
       const mx=Math.max(...rows.map(r=>r.time));
-      start=mx>start?mx:mx+1; pages++; await sleep(160);
+      start=mx>start?mx:mx+1; pages++; await sleep(40);
     }
   }catch(e){ if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.ledger=true; }
   if(pages>=120){ if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.ledger=true; }
@@ -1724,10 +1757,10 @@ function mapClearinghouse(s,dex){
   });
 }
 async function fetchPositions(addr, hip3Dexs){
-  let positions=[], accountValue=null;
+  let positions=[], accountValue=null; const okDex=new Set(); // which clearinghouses actually answered
   try{
     const s=await hlPost({type:'clearinghouseState',user:addr});
-    positions=mapClearinghouse(s,'');
+    positions=mapClearinghouse(s,''); okDex.add('');
     // main-dex USDC equity only; HIP-3 margin is siloed per dex and may be non-USDC collateral,
     // so it is deliberately NOT summed into account value.
     accountValue=s.marginSummary?parseFloat(s.marginSummary.accountValue):null;
@@ -1735,26 +1768,30 @@ async function fetchPositions(addr, hip3Dexs){
   for(const dex of (hip3Dexs||[])){
     try{
       const s=await hlPost({type:'clearinghouseState',user:addr,dex});
-      positions=positions.concat(mapClearinghouse(s,dex));
+      positions=positions.concat(mapClearinghouse(s,dex)); okDex.add(dex);
     }catch(e){} // a dead/renamed dex shouldn't sink the whole load
   }
-  return {positions,accountValue};
+  return {positions,accountValue,okDex};
 }
 // Pure builder so the mapping logic is testable. Fill coins name spot pairs "@N" where N is
 // the pair's own `index` field in the registry — NOT its position in the universe array.
-// The two coincide only while the array is dense and ordered; delistings/gaps break that,
-// which is exactly how pairs like @210 ended up unresolved. Asset contexts, by contrast,
-// ARE parallel to the array, so marks key off position.
+// Tokens are looked up by their own `index` too (the tokens array has gaps, so position is
+// wrong for dozens of them), and asset contexts by their `coin` field: the contexts array is
+// far longer than the universe and does NOT line up with it, which priced HYPE at $0.08.
 function spotMapsFrom(meta,ctxs){
-  const nameByCoin={}, markBySym={'USDC':1};
+  const nameByCoin={}, quoteByCoin={}, markBySym={'USDC':1}, tk={}, cx={};
+  for(const t of ((meta&&meta.tokens)||[]))if(t&&t.index!=null)tk[t.index]=t;
+  for(const c of (ctxs||[]))if(c&&c.coin!=null)cx[c.coin]=c;
   ((meta&&meta.universe)||[]).forEach((u,i)=>{
-    const sym=((meta.tokens||[])[u.tokens&&u.tokens[0]]||{}).name||u.name;
-    const idx=(u.index!=null)?u.index:i;
-    nameByCoin['@'+idx]=sym; if(u.name)nameByCoin[u.name]=sym;
-    const q=((meta.tokens||[])[u.tokens&&u.tokens[1]]||{}).name;
-    if(q==='USDC'&&ctxs&&ctxs[i])markBySym[sym]=parseFloat(ctxs[i].markPx);
+    const tok=j=>tk[j]||((meta.tokens||[])[j])||{};
+    const sym=tok(u.tokens&&u.tokens[0]).name||u.name, q=tok(u.tokens&&u.tokens[1]).name;
+    const idx=(u.index!=null)?u.index:i, coin='@'+idx;
+    nameByCoin[coin]=sym; if(u.name)nameByCoin[u.name]=sym;
+    if(q){ quoteByCoin[coin]=q; if(u.name)quoteByCoin[u.name]=q; }
+    const c=cx[u.name]||cx[coin]||(ctxs&&ctxs[i]&&ctxs[i].coin==null?ctxs[i]:null); // contexts without a coin field: the old parallel shape
+    if(q==='USDC'&&c&&isFinite(parseFloat(c.markPx))&&!(sym in markBySym&&sym!=='USDC'&&markBySym[sym]>0))markBySym[sym]=parseFloat(c.markPx);
   });
-  return {nameByCoin,markBySym};
+  return {nameByCoin,quoteByCoin,markBySym};
 }
 async function fetchSpotMaps(){
   try{ const res=await hlPost({type:'spotMetaAndAssetCtxs'});
@@ -1791,21 +1828,43 @@ function tallyFill(t,f,fee,portion){ const notl=(portion!=null?portion:Math.abs(
   else { t.unkFills=(t.unkFills||0)+1; t.unkNotional=(t.unkNotional||0)+notl; }
   if(f.liquidation || /liquidat/i.test(f.dir||'')) t.liquidated=true; }
 function reconstructTrades(fills, addr, market){
+  // Spot fees paid in a stable quote are dollars; anything else (a buy's fee comes out of the
+  // token bought) is in the base token and is converted at the fill price.
+  const SPOT_QUOTES={USDC:1,USDT0:1,USDT:1,USDH:1,USDE:1};
   const pred = market==='spot' ? (c=>!isPerp(c)) : (c=>isPerp(c));
   const sorted=fills.filter(f=>pred(f.coin)).sort((a,b)=>a.time-b.time);
-  const open={}, trades=[], EPS=1e-9;
+  const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={};
+  // Spot only: a sell run followed by more buying (or the end of the history) is a realized
+  // trade for the amount sold, at the position's average cost; what's still held carries on.
+  // Without it, anyone who never sells down to zero had no closed spot trades at all.
+  const realize=(t,coin,f,held)=>{
+    const avg=t.openSz>0?t.openNotional/t.openSz:null;
+    const r=Object.assign({},t,{events:t.events.slice(),openSz:t.closeSz,openNotional:avg!=null?t.closeSz*avg:t.closeNotional});
+    if(avg==null)r.partialHistory=true;
+    r.avgEntry=avg!=null?avg:(t.closeSz>0?t.closeNotional/t.closeSz:0); r.avgExit=t.closeSz>0?t.closeNotional/t.closeSz:0; r.durationMs=r.closeTime-r.openTime;
+    trades.push(r);
+    const nt=newTrade(coin,f,'Long',held,avg!=null?held*avg:0,0); nt.openTime=r.closeTime+1; nt.closeTime=r.closeTime+1; nt.maxSize=held;
+    if(avg==null)nt.partialHistory=true; nt.firstEntryPx=avg!=null?avg:t.firstEntryPx; nt.carried=true;
+    return nt; };
   for(const f of sorted){
     const coin=f.coin, sz=Math.abs(parseFloat(f.sz));
     const signed=f.side==='B'?sz:-sz;
-    const before=parseFloat(f.startPosition), after=before+signed;
-    const px=parseFloat(f.px), fee=parseFloat(f.fee||'0'), pnl=parseFloat(f.closedPnl||'0');
+    const before=parseFloat(f.startPosition);
+    const px=parseFloat(f.px), pnl=parseFloat(f.closedPnl||'0');
+    let fee=parseFloat(f.fee||'0'), feeBasis=0;
+    if(spot&&f.feeToken&&(f.side==='B'?f.feeToken!=='USDC':!SPOT_QUOTES[f.feeToken])){ fee=fee*px; feeBasis=fee; } // a buy's fee is in the token bought; closedPnl already counts it in the cost basis
+    let after=before+signed;
+    // spot exits leave dust (fees come out of the token bought): under $1 or 1/10,000 of the position counts as flat
+    if(spot&&Math.abs(after)>EPS&&Math.abs(after)<Math.abs(before)&&(Math.abs(after)*px<1||Math.abs(after)<=1e-4*Math.abs(before)))after=0;
+    lastAfter[coin]=after;
     let t=open[coin];
+    if(spot&&t&&signed>0&&t.closeSz>0&&Math.abs(before)>EPS)t=open[coin]=realize(t,coin,f,Math.abs(before));
     if(!t){ t=open[coin]=newTrade(coin,f,after>0?'Long':'Short',0,0,0); }
     const flipped=Math.abs(before)>EPS&&Math.abs(after)>EPS&&(before>0)!==(after>0);
     // a flip fill's notional and fee are split by size between the closing and opening trade —
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
     const feeHere=flipped&&sz>0?fee*Math.abs(before)/sz:fee;
-    t.fills++; t.fees+=feeHere; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null);
+    t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null);
     if(flipped){
       // one fill that closes the whole |before| position AND opens |after| the other way:
       // only the closing portion belongs to this trade; the opening portion seeds the next trade.
@@ -1826,7 +1885,12 @@ function reconstructTrades(fills, addr, market){
         nt.maxSize=Math.abs(after); nt.fills++; nt.fees+=fee-feeHere; tallyFill(nt,f,fee-feeHere,Math.abs(after)); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
     }
   }
-  for(const c in open){ const t=open[c]; t.isOpen=true; if(!(t.openSz>0))t.partialHistory=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
+  for(const c in open){ let t=open[c];
+    // spot: what was sold since the last buy is realized even though some is still held
+    // the real balance is what stays open: tokens that arrived by transfer count too
+    if(spot&&t.closeSz>0){ const held=Math.abs(lastAfter[c]||0); const last=t.events[t.events.length-1]||[t.closeTime];
+      t=realize(t,c,{time:last[0],px:String(t.openSz>0?t.openNotional/t.openSz:0),sz:'0'},held); if(!(held>EPS))continue; }
+    t.isOpen=true; if(!(t.openSz>0))t.partialHistory=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
     t.avgExit=null; t.durationMs=Date.now()-t.openTime; trades.push(t); }
   trades.forEach(t=>{ t.market=market; if(market==='spot')t.dir='Spot';
     // entry drift: how far your size-weighted entry landed from your first fill, in the adverse direction
@@ -1849,11 +1913,12 @@ function attributeFunding(trades,fundingRows){
   const lb=(rows,x)=>{ let lo=0,hi=rows.length; while(lo<hi){ const m=(lo+hi)>>1; if(rows[m].time<x)lo=m+1; else hi=m; } return lo; }; // first index with time >= x
   for(const t of trades){
     const rows=byCoin[t.coin];
-    if(!rows||!rows.length){ t.funding=0; t.net=t.pnl-t.fees; continue; }
+    // a spot buy's fee is in the token and already inside closedPnl's cost basis: shown in fees, not subtracted twice
+    if(!rows||!rows.length){ t.funding=0; t.net=t.pnl-t.fees+(t.feesInBasis||0); continue; }
     const end=t.isOpen?Date.now():t.closeTime;
     const a=lb(rows,t.openTime), b=lb(rows,end+1); // [openTime, end] inclusive
     const f=pre[t.coin][b]-pre[t.coin][a];
-    t.funding=f; t.net=t.pnl - t.fees + f;   // all-in realized (funding usdc: +received / -paid)
+    t.funding=f; t.net=t.pnl - t.fees + (t.feesInBasis||0) + f;   // all-in realized (funding usdc: +received / -paid)
   }
   return trades;
 }
@@ -1869,7 +1934,9 @@ let activeTab='dash';
 let view='perp';
 let period=0, sortKey='openTime', sortDir=-1, expandedId=null;
 let page=1, pageSize=10, _tblSig='';
-const dcoin=t=>{ const s=t.symbol; if(s&&!/^@\d+$/.test(s))return s; return (spotMaps.nameByCoin&&spotMaps.nameByCoin[t.coin])||s||t.coin; };
+// spot trades read as pairs ("HYPE/USDC") so they never merge with the perp of the same name
+const dcoin=t=>{ const s=t.symbol; const base=(s&&!/^@\d+$/.test(s))?s:((spotMaps.nameByCoin&&spotMaps.nameByCoin[t.coin])||s||t.coin);
+  if(t.market!=='spot'||String(base).includes('/'))return base; return base+'/'+(t.quote||(spotMaps.quoteByCoin&&spotMaps.quoteByCoin[t.coin])||'USDC'); };
 // display-only: HIP-3 markets arrive as "dex:COIN" — show the coin first with the builder dex in parens.
 const dispMarket=k=>{ const s=String(k); const m=s.match(/^([A-Za-z0-9_-]+):(.+)$/); return m?m[2]+' ('+m[1]+' dex)':s; };
 const $=id=>document.getElementById(id);
@@ -2614,7 +2681,7 @@ function knownDexes(){ const s=new Set();
   for(const p of openPositions){ if(p.dex)s.add(p.dex); }
   return [...s].sort(); }
 function dexPositions(){ return dexView==='all'?openPositions:openPositions.filter(p=>dexOk(p.dex||'')); }
-function viewFilter(t){ return (view==='combined' ? true : t.market===view) && dexFilter(t); }
+function viewFilter(t){ return !t.orphan && (view==='combined' ? true : t.market===view) && dexFilter(t); }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
 function inRange(t){ if(customRange.from!=null&&t.closeTime<customRange.from)return false; if(customRange.to!=null&&t.closeTime>customRange.to)return false; return true; }
@@ -4920,6 +4987,8 @@ async function autoRatchet(){
     const recent=allTrades.filter(t=>!t.isOpen&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0
       &&t.closeTime>now-21*86400e3&&!have[t.id]&&!_ratchetTried.has(t.id));
     if(!recent.length)return;
+    // the newest 25 per run: the rest follow on the next refresh instead of queueing a hundred candle requests at start
+    recent.sort((a,b)=>b.closeTime-a.closeTime); recent.length=Math.min(recent.length,25);
     setStatus('Locking in MAE/MFE for '+recent.length+' recent trade'+(recent.length===1?'':'s')+'…',true);
     const out=await runExcursions(recent,[]);
     const got=new Set(out.rows.map(r=>r.id));
@@ -5544,20 +5613,24 @@ function restoreDrafts(list){
 function render(){
   if(PZ){ // Pulse draws only its own view; the hidden full dashboard isn't rebuilt
     // spot-only history under the default perps view would show empty dials: widen it (not saved)
-    if(view==='perp'&&allTrades.length&&!allTrades.some(t=>t.market==='perp'))view='combined';
+    view='combined'; // Pulse reads every market: XP, streaks and Today never depend on the full app's view switch
     _be=(settings.beThreshold!=null?settings.beThreshold:50); _oneR=computeOneR(periodTrades());
     try{ renderTripwire(); }catch(e){} // still arms the loss-limit notification
     pzRender(); return; }
   const _drafts=captureDrafts();
   try{ renderInner(); } finally { restoreDrafts(_drafts); }
 }
+let _coachFirst=true, _orphSeen='';
 function renderInner(){
   syncDexTog(); syncCoachMode(); // a sync pull or backup restore can flip coach mode
   const pt=periodTrades(); const ptAll=periodTradesAll();
   _be=(settings.beThreshold!=null?settings.beThreshold:50);
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
-  renderPositions(); renderRiskPanel(); renderStats(computeStats(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails(); renderCoach(); renderTripwire(); renderEdge(pt);
+  renderPositions(); renderRiskPanel(); renderStats(computeStats(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
+  // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
+  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); } else renderCoach();
+  renderTripwire(); renderEdge(pt);
   const coins=[...new Set(allTrades.filter(viewFilter).map(dcoin))].sort(); const csel=$('fCoin'),cur=csel.value;
   csel.innerHTML='<option value="">All markets</option>'+coins.map(c=>`<option value="${esc(c)}">${esc(dispMarket(c))}</option>`).join(''); csel.value=cur;
   const wsel=$('fWallet');
@@ -5970,6 +6043,8 @@ function renderDataHealth(){
   if(_fetchHealth.funding)items.push('funding history partial — net PnL may be missing funding for this load');
   if(_fetchHealth.ledger)items.push('capital-flow history partial — return-on-capital may be incomplete');
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
+  const orph=allTrades.filter(t=>t.orphan);
+  if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
   if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
   el.classList.remove('hide');
   el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ');
@@ -6041,6 +6116,116 @@ async function removeWallet(i){
   if(allTrades.length||openPositions.length||spotHoldings.length){ render(); } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); }
   setStatus('Removed '+labelFor(w)+(settings.wallets.length?'':' · list empty'));
 }
+// ---- loading one wallet: cached first, then only what's new, everything independent in parallel ----
+// a new device on a synced server: seed this browser's caches from the server's copy in one download
+async function srvSeed(a){
+  if(!(typeof SRV!=='undefined'&&SRV.enabled&&(SRV.token||!SRV.needsAuth)&&!SRV.badAuth))return null;
+  try{ const r=await srvFetch('/api/v1/cache/'+a); if(!r.ok)return null; const j=await r.json();
+    const lastOf=rows=>rows.reduce((m,x)=>x.time>m?x.time:m,0);
+    if(!j||!j.fills||!Array.isArray(j.fills.fills)||!j.fills.fills.length)return null;
+    return {truncated:!!j.fills.truncated,fills:{v:2,fills:j.fills.fills,last:j.fills.last||lastOf(j.fills.fills),seeded:true},
+      funding:j.funding&&Array.isArray(j.funding.rows)?{v:1,rows:j.funding.rows,last:lastOf(j.funding.rows),seeded:true}:null,
+      ledger:j.ledger&&Array.isArray(j.ledger.rows)?{v:1,rows:j.ledger.rows,last:lastOf(j.ledger.rows),seeded:true}:null};
+  }catch(e){ return null; } }
+// what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
+const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
+function saveLastView(){ try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:Date.now(),positions:openPositions,accountValue,spotHoldings,spotAccountValue,hlPnl,ledFlows,ledSkipped}); }catch(e){} }
+// Opening the app shows your saved data at once — trades rebuilt from the cached fills and funding,
+// positions as they were last time — and the refresh runs quietly behind it.
+async function bootFromCache(){
+  if(!settings.wallets.length||allTrades.length)return false;
+  try{
+    const [view,sm0]=await Promise.all([idbGet(VIEW_KEY),idbGet('spotMaps')]);
+    const sm=sm0&&sm0.nameByCoin?sm0:{nameByCoin:{},markBySym:{USDC:1}};
+    const per=await Promise.all(settings.wallets.map(async w=>{ const a=w.address;
+      const [fc,fd]=await Promise.all([idbGet('flc:'+a).then(unpackFillCache).catch(()=>null),idbGet('fnd:'+a).catch(()=>null)]);
+      if(!fc||!Array.isArray(fc.fills)||!fc.fills.length)return null;
+      const frows=fd&&fd.v===1&&Array.isArray(fd.rows)?fd.rows:[], lastF=fd&&fd.last||0;
+      const r=await reconstructCompute(fc.fills,frows,a);
+      r.spot.forEach(t=>{ t.symbol=sm.nameByCoin[t.coin]||t.coin; t.quote=(sm.quoteByCoin||{})[t.coin]||null; }); [...r.perp,...r.spot].forEach(t=>t.wallet={address:a,label:w.label});
+      _recMemo[a.toLowerCase()]={sig:recSig(fc.fills,fc.last||fc.fills.reduce((m,f)=>f.time>m?f.time:m,0),frows,lastF),perp:r.perp,spot:r.spot};
+      return r.perp.concat(r.spot); }));
+    if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
+    allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm;
+    if(view&&view.v===1&&view.key===walletsSig()){ openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
+      spotAccountValue=view.spotAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
+    $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
+    try{ render(); }catch(e){ console.warn('cached render',e); }
+    // the saved positions are hours or days old: the intraday open-P&L baseline waits for live ones
+    if(typeof _uPnlBase!=='undefined')_uPnlBase={day:null,val:0};
+    if(PZ)pzRender();
+    const mins=view&&view.at?Math.round((Date.now()-view.at)/60000):null;
+    const ago=mins==null?'':mins<1?'just now':mins<60?mins+' min ago':mins<2880?Math.round(mins/60)+'h ago':Math.round(mins/1440)+' days ago';
+    if(PZ)pzNote('Showing your saved data'+(ago?' from '+ago:'')+' — refreshing…'); else setStatus('Showing your saved data'+(ago?' from '+ago:'')+' — checking for anything new…',true);
+    return true;
+  }catch(e){ console.warn('cached start',e); return false; }
+}
+async function mapLimit(list,n,fn){ const out=new Array(list.length); let k=0;
+  await Promise.all(Array.from({length:Math.min(n,list.length)},async()=>{ while(k<list.length){ const i=k++; out[i]=await fn(list[i],i); } })); return out; }
+// merge freshly fetched rows into a cached list by key; the watermark is the newest time seen
+function mergeRows(cached,fresh,keyOf){ const rows=(cached||[]).slice(), seen=new Set(rows.map(keyOf)); let added=0;
+  for(const r of (fresh||[])){ const k=keyOf(r); if(!seen.has(k)){ seen.add(k); rows.push(r); added++; } }
+  return {rows,added,last:rows.reduce((m,r)=>r.time>m?r.time:m,0)}; }
+const fundKey=r=>r.time+'|'+r.coin;
+// rebuilding trades is skipped when a wallet's fills and funding haven't changed since the last rebuild
+var _recMemo={};
+const recSig=(fills,lastF,frows,lastR)=>fills.length+'|'+lastF+'|'+frows.length+'|'+lastR;
+async function loadWallet(w,fresh,spotP){
+  const a=w.address, fcKey='flc:'+a, fdKey='fnd:'+a, lgKey='lgu:'+a;
+  const [fc0,fd0,lg0]=fresh?[null,null,null]:await Promise.all([idbGet(fcKey).then(unpackFillCache).catch(()=>null),idbGet(fdKey).catch(()=>null),idbGet(lgKey).catch(()=>null)]);
+  let fcache=fc0&&fc0.v===2&&Array.isArray(fc0.fills)?fc0:null;
+  let fdc=fd0&&fd0.v===1&&Array.isArray(fd0.rows)?fd0:null, lgc=lg0&&lg0.v===1&&Array.isArray(lg0.rows)?lg0:null;
+  // a new device on a synced server: start from the server's copy instead of the whole history
+  let seededTrunc=false;
+  if(!fcache&&!fresh){ const seed=await srvSeed(a); if(seed){ fcache=seed.fills; fdc=fdc||seed.funding; lgc=lgc||seed.ledger; seededTrunc=seed.truncated; } }
+  // everything that doesn't need the fills starts now
+  const fundP=fetchFunding(a,fdc?fdc.last:0), ledP=fetchLedgerUpdates(a,lgc?lgc.last:0), spotStP=fetchSpotState(a), portP=fetchPortfolio(a);
+  const fr=await fetchAllFills(a,fcache&&fcache.last?fcache.last:0); // resume AT the watermark — the merge dedupes, boundary-ms fills are never skipped
+  let fills, added=0, truncNote=null;
+  if(fcache){
+    const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time));
+    fills=fcache.fills.slice();
+    for(const f of fr.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fills.push(f); added++; } }
+    // A truncated incremental fetch means a gap between the cache and now that the
+    // advancing watermark would otherwise paper over permanently — say so loudly.
+    if(fr.truncated)truncNote=labelFor(w)+' (since last load — Shift-click Load all for a full refetch)';
+    else if(seededTrunc)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
+  } else { fills=fr.fills; added=fills.length; if(fr.truncated)truncNote=labelFor(w); }
+  const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
+  // nothing new: the stored copy is already current, so skip re-compressing it
+  if(!fcache||added>0||fcache.seeded){ try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){} }
+  const posP=fetchPositions(a,hip3DexsFromFills(fills));
+  const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
+  const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);
+  if(!fdc||fm.added||fdc.seeded)idbSet(fdKey,{v:1,rows:fm.rows,last:fm.last,savedAt:Date.now()});
+  if(!lgc||lm.added||lgc.seeded)idbSet(lgKey,{v:1,rows:lm.rows,last:lm.last,savedAt:Date.now()});
+  const cf=capitalFlows(lm.rows,a);
+  // a transfer BETWEEN two loaded wallets appears as -X in one and +X in the other, which correctly nets to zero for combined capital
+  const flows=cf.flows.map(f=>({...f,wallet:a}));
+  const sig=recSig(fills,lastT,fm.rows,fm.last), memo=_recMemo[a.toLowerCase()];
+  let perpTr, spotTr;
+  if(memo&&memo.sig===sig&&!fresh){ perpTr=memo.perp; spotTr=memo.spot; }
+  else { setStatus(`Reconstructing trades for ${labelFor(w)}…`,true);
+    // reconstruction runs in the compute worker — large wallets don't freeze the UI
+    ({perp:perpTr,spot:spotTr}=await reconstructCompute(fills,fm.rows,a)); }
+  const sm=await spotP;
+  spotTr.forEach(t=>{ t.symbol=sm.nameByCoin[t.coin]||t.coin; t.quote=(sm.quoteByCoin||{})[t.coin]||null; });
+  [...perpTr,...spotTr].forEach(t=>t.wallet={address:a,label:w.label});
+  _recMemo[a.toLowerCase()]={sig,perp:perpTr,spot:spotTr};
+  ch.positions.forEach(p=>p.wallet={address:a,label:w.label});
+  // An "open" trade the exchange says you no longer hold lost its closing fill (a liquidation, ADL,
+  // settlement, or a gap in the history). It's closed, but its result is incomplete: kept out of the
+  // stats and named in the data-health note. Only judged against clearinghouses that answered.
+  const live=new Set(ch.positions.map(p=>p.coin)), ok=ch.okDex||new Set(['']);
+  for(const t of perpTr){ const dex=/^([A-Za-z0-9_-]+):/.exec(t.coin); t.orphan=!!(t.isOpen&&ok.has(dex?dex[1]:'')&&!live.has(t.coin)); }
+  const heldUsd=new Map(sbal.map(b=>[b.coin,b.total*(sm.markBySym[b.coin]||0)]));
+  for(const t of spotTr){ t.orphan=!!(t.isOpen&&sbal.length&&!(heldUsd.get(t.symbol)>=1)); }
+  let spotVal=0; const spotHold=[];
+  sbal.forEach(b=>{ const mark=sm.markBySym[b.coin]||(b.coin==='USDC'?1:0); const value=b.total*mark; spotVal+=value;
+    if(b.coin!=='USDC' && b.total>1e-9 && (value>=1 || b.entry>=1)){ spotHold.push({coin:b.coin,total:b.total,entry:b.entry,mark,value,uPnl:value-b.entry,wallet:{address:a,label:w.label}}); } });
+  return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
+    accountValue:ch.accountValue,port,spotHold,spotVal,spotHas:sbal.length>0};
+}
 async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!opts.auto;
   if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
@@ -6051,56 +6236,22 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0;
   _fetchHealth={funding:false,ledger:false}; // fresh load, fresh health
   try{
-    setStatus('Fetching spot metadata…',true);
-    spotMaps=await fetchSpotMaps();
-    for(let i=0;i<settings.wallets.length;i++){
-      const w=settings.wallets[i];
-      setStatus(`Loading ${labelFor(w)} (${i+1}/${settings.wallets.length})…`,true);
-      try{
-        // incremental fill cache (per wallet address): only fetch fills newer than what we already have.
-        const fcKey='flc:'+w.address;
-        let fcache=null;
-        if(!fresh){ try{ fcache=await unpackFillCache(await idbGet(fcKey)); }catch(e){} if(fcache&&(fcache.v!==2||!Array.isArray(fcache.fills)))fcache=null; }
-        const since=(fcache&&fcache.last)?fcache.last:0; // resume AT the watermark — the merge below dedupes, and boundary-ms fills are never skipped
-        const fr=await fetchAllFills(w.address, since);
-        let fills;
-        if(fcache){
-          const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time));
-          fills=fcache.fills.slice(); let added=0;
-          for(const f of fr.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fills.push(f); added++; } }
-          newFills+=added; cachedN++;
-          // A truncated incremental fetch means a gap between the cache and now that the
-          // advancing watermark would otherwise paper over permanently — say so loudly.
-          if(fr.truncated)truncated.push(labelFor(w)+' (since last load — Shift-click Load all for a full refetch)');
-        } else { fills=fr.fills; if(fr.truncated)truncated.push(labelFor(w)); }
-        const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
-        try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){}
-        const hip3=hip3DexsFromFills(fills);
-        const [frows,ch,sbal,port,led]=await Promise.all([fetchFunding(w.address),fetchPositions(w.address,hip3),fetchSpotState(w.address),fetchPortfolio(w.address),fetchLedgerUpdates(w.address)]);
-        { const cf=capitalFlows(led,w.address);
-          // a transfer BETWEEN two loaded wallets appears as -X in one and +X in the other,
-          // which correctly nets to zero for combined capital
-          for(const f of cf.flows)flowsAcc.push({...f,wallet:w.address});
-          skippedAcc+=cf.skipped; }
-        totalFills+=fills.length;
-        // reconstruction runs in the compute worker — large wallets no longer freeze the UI
-        setStatus(`Reconstructing trades for ${labelFor(w)}…`,true);
-        const {perp:perpTr,spot:spotTr}=await reconstructCompute(fills,frows,w.address);
-        spotTr.forEach(t=>t.symbol=spotMaps.nameByCoin[t.coin]||t.coin);
-        [...perpTr,...spotTr].forEach(t=>t.wallet={address:w.address,label:w.label});
-        trades=trades.concat(perpTr,spotTr);
-        ch.positions.forEach(p=>p.wallet={address:w.address,label:w.label});
-        positions=positions.concat(ch.positions);
-        if(ch.accountValue!=null)accVals.push(ch.accountValue);
-        if(port.all!=null){portAll+=port.all;portAllHas=true;}
-        if(port.perp!=null){portPerp+=port.perp;portPerpHas=true;}
-        // spot holdings
-        let spotVal=0;
-        sbal.forEach(b=>{ const mark=spotMaps.markBySym[b.coin]||(b.coin==='USDC'?1:0); const value=b.total*mark; spotVal+=value;
-          if(b.coin!=='USDC' && b.total>1e-9 && (value>=1 || b.entry>=1)){ spotHold.push({coin:b.coin,total:b.total,entry:b.entry,mark,value,uPnl:value-b.entry,wallet:{address:w.address,label:w.label}}); } });
-        if(sbal.length)spotAccVals.push(spotVal);
-      }catch(e){ failed.push(labelFor(w)); }
-    }
+    // spot metadata and every wallet load side by side — two wallets at a time, so a long list
+    // stays inside the exchange's rate limit
+    setStatus('Loading '+settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+'…',true);
+    const spotP=fetchSpotMaps().then(m=>{ if(m&&Object.keys(m.nameByCoin||{}).length)idbSet('spotMaps',m); return m; });
+    const results=await mapLimit(settings.wallets,2,w=>loadWallet(w,fresh,spotP).catch(e=>{ console.warn('wallet load',e); return {failed:true}; }));
+    spotMaps=await spotP;
+    results.forEach((r,i)=>{ const w=settings.wallets[i];
+      if(r.failed){ failed.push(labelFor(w)); return; }
+      newFills+=r.added; if(r.cached)cachedN++; if(r.truncNote)truncated.push(r.truncNote);
+      for(const f of r.flows)flowsAcc.push(f); skippedAcc+=r.skipped; totalFills+=r.nFills;
+      trades=trades.concat(r.trades); positions=positions.concat(r.positions);
+      if(r.accountValue!=null)accVals.push(r.accountValue);
+      if(r.port.all!=null){portAll+=r.port.all;portAllHas=true;}
+      if(r.port.perp!=null){portPerp+=r.port.perp;portPerpHas=true;}
+      spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal);
+    });
     if(!trades.length && !positions.length && !spotHold.length){
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
       // (offline laptop) must keep the current view instead of blanking the dashboard
@@ -6119,6 +6270,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
+    saveLastView();
     const perpN=allTrades.filter(t=>!t.isOpen&&t.market==='perp').length, spotN=allTrades.filter(t=>!t.isOpen&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
     setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
@@ -6129,8 +6281,13 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     else setErr('Couldn\u2019t reach Hyperliquid from the browser ('+e.message+'). Use “Paste data” instead.'); }
   finally{ $('loadAll').disabled=false; }
 
-  } finally { _loading=false; _pzQuiet=false; if(PZ)pzRender(); }
-  autoRatchet();
+  } finally { _loading=false; _pzQuiet=false; if(PZ&&pzS.note&&pzS.note.kind==='busy')pzS.note=null;
+    // Pulse has no data-health strip: say once when an open trade turned out to be closed off the record
+    if(PZ){ const o=allTrades.filter(t=>t.orphan), k=o.map(t=>t.id).join('|'); if(o.length&&k!==_orphSeen){ _orphSeen=k;
+      pzNote(o.length+' position'+(o.length===1?'':'s')+' ('+o.slice(0,3).map(t=>dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()).join(', ')+') closed without a closing fill in your history — likely a liquidation. Left out of your stats.'); } }
+    if(PZ)pzRender(); }
+  // measuring excursions fetches candles: wait until the browser is idle so it never competes with the first paint
+  if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }
 /* ============================ generic CSV fill import ============================ */
 // RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF.
@@ -6277,7 +6434,7 @@ async function loadFromPaste(fills,opts){
     try{ setStatus('Fetching spot metadata…',true); spotMaps=await fetchSpotMaps(); }catch(e){}
   }
   const {perp:perpTr,spot:spotTr}=await reconstructCompute(fills,[],'paste');
-  spotTr.forEach(t=>t.symbol=spotMaps.nameByCoin[t.coin]||t.coin);
+  spotTr.forEach(t=>{ t.symbol=spotMaps.nameByCoin[t.coin]||t.coin; t.quote=(spotMaps.quoteByCoin||{})[t.coin]||null; });
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; hlPnl={all:null,perp:null};
@@ -8939,17 +9096,19 @@ function pzBehaviorDays(closed, opts){
     const pastDays=keys.slice(Math.max(0,ki-30),ki), medN=pastDays.length>=5?nfMedian(pastDays.map(x=>perDay[x])):null;
     const cap=medN!=null?Math.max(3,Math.ceil(medN*1.5)):null;
     const winHold=nfMedian(prior.slice(-60).filter(t=>t.net>0&&!loss(t.net)).map(dur).filter(x=>x>0));
-    const flags={revenge:0,afterTwo:0,sizeUp:0,addLoser:0,overtrade:0,heldLoser:0}, slips=[]; let clean=0;
-    arr.forEach((t,i)=>{
+    const flags={revenge:0,afterTwo:0,sizeUp:0,addLoser:0,overtrade:0,heldLoser:0}, slips=[]; let clean=0, entries=0;
+    arr.forEach((t)=>{
+      // a spot position carried on after a partial sale is not a new entry: only the holding checks apply
+      const entry=!t.carried, i=entry?entries++:-1;
       // closes up to and including the entry's millisecond: a stop-and-reverse closes the loser and
       // opens the next trade on the same fill, and that re-entry counts
       const prev=[]; for(let q=before(t.openTime+1)-1;q>=0&&prev.length<2;q--)if(closes[q]!==t)prev.push(closes[q]);
       const p1=prev[0]||null, p2=prev[1]||null, f=[];
-      if(p1&&loss(p1.net)&&t.openTime-p1.closeTime<=M)f.push('revenge');
-      if(p1&&p2&&loss(p1.net)&&loss(p2.net)&&dayOf(p1.closeTime)===dayOf(t.openTime)&&dayOf(p2.closeTime)===dayOf(t.openTime))f.push('afterTwo');
-      if(p1&&loss(p1.net)&&t.openTime-p1.closeTime<=H2&&medSize&&size(t)>1.5*medSize)f.push('sizeUp');
+      if(entry&&p1&&loss(p1.net)&&t.openTime-p1.closeTime<=M)f.push('revenge');
+      if(entry&&p1&&p2&&loss(p1.net)&&loss(p2.net)&&dayOf(p1.closeTime)===dayOf(t.openTime)&&dayOf(p2.closeTime)===dayOf(t.openTime))f.push('afterTwo');
+      if(entry&&p1&&loss(p1.net)&&t.openTime-p1.closeTime<=H2&&medSize&&size(t)>1.5*medSize)f.push('sizeUp');
       if(addedToLoser(t))f.push('addLoser');
-      if(cap!=null&&i>=cap)f.push('overtrade');
+      if(entry&&cap!=null&&i>=cap)f.push('overtrade');
       if(loss(t.net)&&winHold&&dur(t)>3*winHold)f.push('heldLoser');
       for(const x of f)flags[x]++; if(!f.length)clean++; else slips.push({id:t.id,net:t.net,f});
     });
@@ -9569,7 +9728,7 @@ function pzTodayFacts(D){
   const closedT=(risk.closed||[]).slice().sort((a,b)=>a.closeTime-b.closeTime);
   const wins=closedT.filter(t=>isWin(t.net)).length, losses=closedT.filter(t=>isLoss(t.net)).length;
   const fees=closedT.reduce((s,t)=>s+(+t.fees||0),0);
-  const open=(typeof allTrades!=='undefined'&&allTrades.length?allTrades:(ctx.trades||[])).filter(t=>t.isOpen&&t.market!=='spot');
+  const open=(typeof allTrades!=='undefined'&&allTrades.length?allTrades:(ctx.trades||[])).filter(t=>t.isOpen&&!t.orphan&&t.market!=='spot');
   const pos=typeof dexPositions==='function'?dexPositions():[];
   const upnl=pos.reduce((s,p)=>s+(+p.uPnl||0),0);
   let cum=0, hi=0, lo=0; const curve=closedT.map(t=>{ cum+=t.net; hi=Math.max(hi,cum); lo=Math.min(lo,cum); return {t:t.closeTime,v:cum,tr:t}; });
@@ -9709,17 +9868,21 @@ function pzYesterdayHtml(D){
     ${eod.lesson?`<p class="pz-sub" style="font-size:13px"><b>Lesson:</b> ${esc(eod.lesson)}</p>`:''}${eod.tomorrow?`<p class="pz-focusline">${pzI('bolt',14)}<span><b>Today’s one thing:</b> ${esc(eod.tomorrow)}</span></p>`:''}
     ${!eod.at?`<a class="pz-link" href="#review" style="min-height:0">No review that day — the lesson is where you get better</a>`:''}</section>`;
 }
-// the last seven trading days: discipline and net side by side
+// the last seven trading days, one row each: the day, its Discipline score, and what it made or lost
 function pzWeekSparkHtml(D){
-  const days=D.g.days.slice(-7); if(days.length<2)return '';
+  const days=D.g.days.slice(-7).reverse(); if(days.length<2)return '';
   const maxAbs=Math.max(1,...days.map(d=>Math.abs(d.net)));
   const avgS=Math.round(_avg(days.map(d=>d.score))), net=days.reduce((a,d)=>a+d.net,0);
-  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Last ${days.length} trading days</b><span class="pz-sub" style="font-size:12px">avg discipline ${avgS} · ${esc(pzSigned(net))}</span></div>
-    <div class="pz-spark" role="img" aria-label="Discipline and net P&amp;L for the last ${days.length} trading days">${days.map(d=>`<div title="${esc(dayLabel(d.key)+' · discipline '+d.score+' · '+signedPlain(d.net))}">
-      <b class="sb"><span style="height:${Math.max(3,Math.round(d.score*0.4))}px;background:${PZ_COL[pzBand(d.score)]}"></span></b>
-      <b class="nb"><span style="height:${Math.max(2,Math.round(Math.abs(d.net)/maxAbs*28))}px;background:${d.net>=0?PZ_COL.good:PZ_COL.low}"></span></b>
-      <em>${esc(['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(d.key+'T12:00:00Z').getUTCDay()])}</em></div>`).join('')}</div>
-    <div class="pz-legend"><span>Top: discipline (0–100)</span><span>Below the line: net P&amp;L, scaled to the biggest day</span></div></section>`;
+  const dl=k=>new Date(k+'T12:00:00Z').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'});
+  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Last ${days.length} trading days</b><span class="pz-sub" style="font-size:12px">avg discipline ${avgS} · <span style="color:${net>=0?PZ_COL.good:PZ_COL.low}">${esc(pzSigned(net))}</span></span></div>
+    <div class="pz-wk" role="table" aria-label="Your last ${days.length} trading days">
+      <div class="pz-wkr pz-wkh" role="row"><span role="columnheader">Day</span><span role="columnheader">Discipline</span><span role="columnheader">Net</span></div>
+      ${days.map(d=>{ const c=PZ_COL[pzBand(d.score)], w=Math.round(Math.abs(d.net)/maxAbs*100);
+        return `<a class="pz-wkr" role="row" href="#discipline" title="${esc(dl(d.key)+': discipline '+d.score+', '+d.n+' trade'+(d.n===1?'':'s')+', '+signedPlain(d.net))}">
+          <span role="cell" class="pz-wkd">${esc(dl(d.key))}</span>
+          <span role="cell" class="pz-wks"><b style="color:${c}">${d.score}</b><i><em style="width:${d.score}%;background:${c}"></em></i></span>
+          <span role="cell" class="pz-wkn"><b style="color:${d.net>=0?PZ_COL.good:PZ_COL.low}">${esc(pzSigned(d.net))}</b><i class="${d.net<0?'neg':''}"><em style="width:${Math.max(3,w)}%;background:${d.net>=0?PZ_COL.good:PZ_COL.low}"></em></i></span></a>`; }).join('')}
+    </div><p class="pz-fine" style="margin:0">Discipline is 0–100 from your fills (70+ is a good day). Net bars are scaled to your biggest day of the seven.</p></section>`;
 }
 // what's due: the challenge, habits to keep today, plugs in progress, competitions ending, the review
 function pzComingUpHtml(D){
@@ -9823,10 +9986,19 @@ function pzDisciplineHtml(D){
   </div>`;
 }
 
+// Stats can be narrowed to perps or spot; everything else in Pulse counts every market
+// the saved choice applies only while both markets exist; otherwise everything shows
+let _pzMkMemo={n:-1,both:false};
+function pzBothMarkets(){ if(_pzMkMemo.n!==allTrades.length){ _pzMkMemo={n:allTrades.length,both:allTrades.some(t=>t.market==='perp')&&allTrades.some(t=>t.market==='spot')}; } return _pzMkMemo.both; }
+function pzMk(){ const m=settings.pzMarket; return pzBothMarkets()&&(m==='perp'||m==='spot')?m:'all'; }
+const pzInMk=t=>{ const m=pzMk(); return m==='all'||t.market===m; };
+function pzMkSeg(){
+  if(!pzBothMarkets())return '';
+  return `<div class="pz-seg pz-mkseg" role="group" aria-label="Markets">${[['all','All markets'],['perp','Perps'],['spot','Spot']].map(([k,l])=>`<button type="button" data-pz-mk="${k}" aria-pressed="${pzMk()===k}">${l}</button>`).join('')}</div>`; }
 function pzTrendsHtml(D){
   const {g}=D, ctx=g.ctx, R=pzS.range, now=Date.now();
   const from=R==='all'?0:pzRangeStart(R,now), fromKey=dayKey(from);
-  const st=pzStatsFor(ctx.trades,from);
+  const st=pzStatsFor(ctx.trades.filter(pzInMk),from);
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
   const money=v=>v==null||!isFinite(v)?'—':pzSigned(v), exact=v=>v==null||!isFinite(v)?'':signedPlain(v);
   let stats;
@@ -9864,14 +10036,14 @@ function pzTrendsHtml(D){
       <div class="pz-col"><section style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Does discipline pay?</b><div class="pz-grid2">${tile('good','Days 70+',ts.hi)}${tile('hot','Under 70',ts.lo)}</div>
         ${rl?`<div class="pz-tile cool"><span class="pz-t" style="font-size:13px;line-height:1.45">On days you checked in at readiness 70+, your discipline averaged <b>${rl.hi}</b>; on the other check-in days, <b>${rl.lo}</b>.</span></div>`:''}</section></div>
       <div class="pz-col"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results <span class="pz-sub" style="font-weight:400;font-size:12px">· ${R==='all'?'all time':'last '+R+' days'}${RF.n?', '+RF.n+' trades':''}</span></b>${RF.few?`<p class="pz-sub" style="font-size:13px;padding:6px 0 12px">Needs at least 10 closed trades in this range to find patterns — there ${RF.n===1?'is':'are'} ${RF.n}. Try a longer range.</p>`:''}${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(f.action||f.body||'')}</span>${f.evidence?`<span style="display:block;margin-top:4px;font-size:12px;color:var(--pz-muted)">${esc(f.evidence)} · ${esc(confWords(f.conf))}</span>`:''}</span></div>`).join(''):(RF.few?'':'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>')}</section></div>`; }
-  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}<div class="pz-wide">${stats}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p></div>`;
+  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}${pzMkSeg()}<div class="pz-wide">${stats}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p></div>`;
 }
 // The Diagnostic's findings for one range (all time reuses the coach's set). Same engine, only the
 // range's trades; memoized per range so switching back and forth is instant.
 let _pzRF={key:null,v:null};
 function pzRangeFindings(ctx, fromMs){
-  if(!fromMs)return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
-  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs), key=fromMs+'|'+closed.length+'|'+_coachMemo.key+'|'+_jrev;
+  if(!fromMs&&pzMk()==='all')return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
+  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), key=fromMs+'|'+pzMk()+'|'+closed.length+'|'+_coachMemo.key+'|'+_jrev;
   if(_pzRF.key===key)return _pzRF.v;
   let v;
   if(closed.length<10)v={findings:[],n:closed.length,few:true};
@@ -9975,6 +10147,19 @@ function pzEqLeave(w){ if(!w)return; const svg=w.querySelector('svg'); svg.query
 document.addEventListener('pointermove',pzEqHover,{passive:true});
 document.addEventListener('pointerdown',pzEqHover,{passive:true});
 document.addEventListener('pointerleave',ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.pz-eqwrap'); if(w)pzEqLeave(w); },true);
+// Hover (or keyboard focus) on anything with data-pz-tip shows what it means: badges above all.
+// One floating box, kept inside the screen; on a phone the badge's own info card does the job.
+function pzTipShow(el){ const txt=el.getAttribute('data-pz-tip'); if(!txt)return; let box=document.getElementById('pzTip');
+  if(!box){ box=document.createElement('div'); box.id='pzTip'; box.className='pz-tipbox'; box.setAttribute('role','tooltip'); document.body.appendChild(box); }
+  const [head,...rest]=txt.split('\n'); box.innerHTML='<b>'+esc(head)+'</b>'+(rest.length?'<br>'+rest.map(esc).join('<br>'):''); box.hidden=false;
+  const r=el.getBoundingClientRect(), bw=box.offsetWidth, bh=box.offsetHeight;
+  let x=r.left+r.width/2-bw/2, y=r.top-bh-8; if(y<8)y=r.bottom+8;
+  box.style.left=Math.max(8,Math.min(innerWidth-bw-8,x))+'px'; box.style.top=Math.max(8,Math.min(innerHeight-bh-8,y))+'px'; }
+function pzTipHide(){ const box=document.getElementById('pzTip'); if(box)box.hidden=true; }
+document.addEventListener('pointerover',ev=>{ if(ev.pointerType!=='mouse')return; const el=ev.target.closest&&ev.target.closest('[data-pz-tip]'); if(el)pzTipShow(el); },{passive:true});
+document.addEventListener('pointerout',ev=>{ const el=ev.target.closest&&ev.target.closest('[data-pz-tip]'); if(el&&!el.contains(ev.relatedTarget))pzTipHide(); },{passive:true});
+document.addEventListener('focusin',ev=>{ const el=ev.target.closest&&ev.target.closest('[data-pz-tip]'); if(el&&el.matches(':focus-visible'))pzTipShow(el); else pzTipHide(); });
+document.addEventListener('focusout',pzTipHide); addEventListener('scroll',pzTipHide,{passive:true,capture:true}); addEventListener('hashchange',pzTipHide);
 // Midnight (on the app's clock) of the first day of an n-day range ending today — calendar
 // days, not 24-hour steps, so a daylight-saving change doesn't shift the window by an hour.
 function pzRangeStart(n, now){ const p=tzParts(now); return settings.tz==='utc'?Date.UTC(p.y,p.mo,p.day-(n-1)):new Date(p.y,p.mo,p.day-(n-1)).getTime(); }
@@ -9984,8 +10169,8 @@ function pzDeepHtml(D){
   const back=`<a class="pz-back" href="#trends">${pzI('back',20)}Stats</a>`;
   const dlock=pzLocked('deep',g.level.level); if(dlock)return back+pzLockedHtml('In-depth stats',dlock,g);
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
-  const head=`${back}${pzHead(R==='all'?'All time':'Last '+R+' days','In-depth stats',seg)}`;
-  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs);
+  const head=`${back}${pzHead(R==='all'?'All time':'Last '+R+' days','In-depth stats',seg)}${pzMkSeg()}`;
+  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t));
   const X=pzDeepStats(tr,{isWin,isLoss,coin:dcoin,hourOf:tzHour,dowOf:tzDow,monthOf:ms=>dayKey(ms).slice(0,7),
     setupOf:t=>journal[t.id]&&journal[t.id].setup?String(journal[t.id].setup).trim():null,ratingOf:t=>journal[t.id]&&+journal[t.id].rating||null});
   if(!X)return `${head}<section class="pz-card"><p class="pz-sub">No closed trades in this range.</p></section>`;
@@ -10127,8 +10312,10 @@ async function pzSaveCheckin(){
   const k='day:'+ck.key, prev=journal[k]||{};
   const loss=parseFloat(ck.maxLoss);
   const R=ck.rules||{}, rules={};
-  if(Array.isArray(R.setups)&&R.setups.length)rules.setups=R.setups.slice(0,12); if(Array.isArray(R.coins)&&R.coins.length)rules.coins=R.coins.slice(0,12);
-  if(/^\d{2}:\d{2}$/.test(R.until||''))rules.until=R.until; if(R.maxPos>0)rules.maxPos=R.maxPos; if(R.stop2)rules.stop2=true;
+  if(Array.isArray(R.setups)&&R.setups.length)rules.setups=R.setups.slice(0,12);
+  if(/^\d{2}:\d{2}$/.test(R.until||''))rules.until=R.until; if(R.maxPos>0)rules.maxPos=R.maxPos;
+  if(R.lossStreak>1)rules.lossStreak=Math.min(5,Math.round(R.lossStreak)); else if(R.stop2&&R.lossStreak==null)rules.lossStreak=2;
+  if([15,30,60].includes(+R.wait))rules.wait=+R.wait; if(R.noAdd)rules.noAdd=true;
   const am={}; for(const q in (ck.am||{}))if(String(ck.am[q]).trim())am[q]=String(ck.am[q]).trim().slice(0,500);
   const e={...prev, sleep:ck.sleep||null, stress:ck.calm?6-ck.calm:null, focus:ck.focus||null,
     plan:String(ck.plan||'').trim(), maxLoss:loss>0?loss:null, maxTrades:ck.maxTrades>0?ck.maxTrades:null,
@@ -10324,6 +10511,7 @@ function wirePulse(){
     else if(ev.key==='Enter'&&ev.target.id==='pzTok'){ ev.preventDefault(); pzToken(); }
     else if(ev.key==='Enter'&&ev.target.id==='socHandle'){ ev.preventDefault(); const b=$('socJoin'); if(b)b.click(); }
     else if(ev.key==='Enter'&&!ev.shiftKey&&ev.target.id==='pzCoachIn'){ ev.preventDefault(); const b=$('pzCoachSend'); if(b)b.click(); }
+    else if(ev.key==='Enter'&&ev.target.id==='pzSetupAdd'){ ev.preventDefault(); const b=$('pzSetupAddGo'); if(b)b.click(); }
     else if(ev.key==='Enter'&&(ev.target.id==='socLinkIn'||ev.target.id==='vaultPass'||ev.target.id==='vaultPass2')){ ev.preventDefault();
       const b=$(ev.target.id==='socLinkIn'?'socLinkGo':$('vaultUnlock')?'vaultUnlock':'vaultOn'); if(b)b.click(); }
     else if(ev.key==='Escape'&&pzS.sheet){ pzS.sheet=false; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
@@ -10377,7 +10565,7 @@ function pzSocialStats(g, habits){
   return {xp:g.xp.total, level:g.level.level, week:g.nowWeek, weekXp:g.weekXp, tz:pzClockZone(),
     streak:g.streak.current, best:g.streak.best, shields:g.streak.shields,
     challengesDone:done.length, lastChallenge:done.length?habitSentence(done[done.length-1].ch.spec):'',
-    badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
+    badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
     badgeN:g.catalog?g.catalog.earned.length:g.achievements.filter(a=>a.at).length, badgeTotal:g.catalog?g.catalog.total:0,
     habits:(habits||[]).slice(0,5),
     days:g.days.slice(-45).map(d=>({k:d.key,s:d.score,b:!!d.breached,j:d.parts.journal===1}))};
@@ -10933,6 +11121,12 @@ async function acctAction(t){
 
 /* ======================= 13b · PULSE GROWTH SCREENS: progress, badges, reports, review, coach, leagues ======================= */
 const PZ_CAT_ICON={discipline:'saved',habits:'bolt',consistency:'flame',journal:'pen',routine:'today',risk:'shield',results:'trends',milestones:'progress'};
+// what a badge means, for its hover tip: name, tier, what earns it, when, and the XP it paid
+function pzBadgeTip(b, f){
+  const tier=PZ_TIERS[b.r]||'', name=b.t.replace(/ · .*/,''), what=b.desc?b.desc.charAt(0).toUpperCase()+b.desc.slice(1):'';
+  if(b.earned===false||!b.k){ const have=f&&isFinite(f.value)?' You’re at '+pzN(Math.floor(f.value))+' of '+pzN(b.need)+'.':'';
+    return name+(tier?' · '+tier:'')+'\nNot earned yet. '+(what?'Earned for '+what.charAt(0).toLowerCase()+what.slice(1)+'.':'')+have; }
+  return name+(tier&&b.fam!=='a'?' · '+tier:'')+'\n'+(what?what+'.':'')+'\nEarned '+dayLabel(b.k)+(b.xp?' · +'+b.xp+' XP':'')+'.'; }
 function pzMedal(b, size){
   const r=Math.max(0,Math.min(5,b.r||0)), col=PZ_TIER_COL[r], sz=size||56;
   return `<span class="pz-medal${b.earned===false?' off':''}" style="--tc:${b.earned===false?'#3A424C':col};--ms:${sz}px" aria-hidden="true">${pzI(PZ_CAT_ICON[b.c]||'medal',Math.round(sz*0.42),2)}</span>`;
@@ -10997,7 +11191,7 @@ function pzProgressHtml(D){
   const recent=cat.earned.slice(-4).reverse();
   const nextUp=cat.families.filter(f=>f.visible&&f.next).map(f=>({f,p:f.next.need?Math.min(1,f.value/f.next.need):0})).sort((a,b)=>b.p-a.p).slice(0,3);
   const badgeHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Badges</b><a class="pz-link" href="#badges" style="min-height:0">${cat.earned.length} of ${cat.total}${pzI('chev',14)}</a></div>
-    ${recent.length?`<div class="pz-medals">${recent.map(b=>`<a href="#badges" class="pz-mini" title="${esc(b.t)}">${pzMedal(b,48)}<span>${esc(b.t.replace(/ · .*/,''))}</span><small style="color:${PZ_TIER_COL[b.r]}">${PZ_TIERS[b.r]}</small></a>`).join('')}</div>`:''}
+    ${recent.length?`<div class="pz-medals">${recent.map(b=>`<a href="#badges" class="pz-mini" data-pz-tip="${esc(pzBadgeTip(b))}" aria-label="${esc(pzBadgeTip(b).replace(/\n/g,' '))}">${pzMedal(b,48)}<span>${esc(b.t.replace(/ · .*/,''))}</span><small style="color:${PZ_TIER_COL[b.r]}">${PZ_TIERS[b.r]}</small></a>`).join('')}</div>`:''}
     ${nextUp.length?`<span class="pz-lbl" style="color:var(--pz-muted);font-size:11px">Next up</span>${nextUp.map(({f,p})=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(f.next.t)}</span><b>${pzN(Math.floor(f.value))} / ${pzN(f.next.need)}</b></div>${pzBar(p,PZ_TIER_COL[f.next.r])}</div>`).join('')}`:''}
     <a class="pz-ghost pz-sm" href="#badges">See your badge case</a></section>`;
   // report cards
@@ -11027,7 +11221,7 @@ function pzBadgesHtml(D){
   const chips=`<div class="pz-chiprow" role="group" aria-label="Category"><button type="button" class="pz-chipbtn" data-pz-bcat="all" aria-pressed="${sel==='all'}">All · ${cat.earned.length}</button>${Object.keys(PZ_BADGE_CATS).map(c=>`<button type="button" class="pz-chipbtn" data-pz-bcat="${c}" aria-pressed="${sel===c}">${esc(PZ_BADGE_CATS[c])}${counts[c]?' · '+counts[c]:''}</button>`).join('')}</div>`;
   const selB=pzS.badgeSel&&([...cat.earned,...cat.families.flatMap(f=>f.tiers)].find(b=>b.id===pzS.badgeSel))||null;
   const selF=selB&&cat.families.find(f=>f.id===selB.fam);
-  const ladder=selF?`<div class="pz-ladder">${selF.tiers.map(b=>`<span class="${b.earned?'on':''}" style="--tc:${PZ_TIER_COL[b.r]}" title="${esc(b.desc)}">${b.earned?pzI('check',12,3):''}${PZ_TIERS[b.r]} · ${pzN(b.need)}</span>`).join('')}</div>`:'';
+  const ladder=selF?`<div class="pz-ladder">${selF.tiers.map(b=>`<span class="${b.earned?'on':''}" style="--tc:${PZ_TIER_COL[b.r]}" tabindex="0" data-pz-tip="${esc(pzBadgeTip(b,selF))}">${b.earned?pzI('check',12,3):''}${PZ_TIERS[b.r]} · ${pzN(b.need)}</span>`).join('')}</div>`:'';
   const info=selB?`<section class="pz-card pz-binfo" aria-live="polite">${pzMedal(selB,64)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px"><b style="font-size:16px">${esc(selB.t)}</b><span class="pz-sub" style="font-size:13px">${esc(selB.desc||'')}${selB.earned?' · earned '+esc(dayLabel(selB.k)):' · not yet'}</span>${ladder}</span></section>`:'';
   const grid=Object.keys(PZ_BADGE_CATS).filter(c=>sel==='all'||sel===c).map(c=>{
     const fams=vis.filter(f=>f.cat===c), extra=c==='milestones'?cat.earned.filter(b=>b.fam==='a'):[];
@@ -11035,7 +11229,7 @@ function pzBadgesHtml(D){
     // one medal per family: the highest tier you hold (or the first one to chase), the next tier as its progress bar
     const cells=[...extra.map(b=>({b,next:false})),...fams.map(f=>{ const top=f.tiers.filter(b=>b.earned).pop(); return top?{b:top,next:false,f,after:f.next}:{b:f.next,next:true,f}; })];
     return `<section class="pz-span pz-kv"><div class="pz-kvrow"><b class="pz-kvh">${esc(PZ_BADGE_CATS[c])}</b><span class="pz-sub" style="font-size:12px">${counts[c]||0} earned</span></div>
-      <div class="pz-bgrid">${cells.map(({b,next,f,after})=>`<button type="button" class="pz-bcell${next?' next':''}" data-pz-bsel="${esc(b.id)}" aria-pressed="${pzS.badgeSel===b.id}" aria-label="${esc(b.t)}${next?', not yet earned':''}">
+      <div class="pz-bgrid">${cells.map(({b,next,f,after})=>`<button type="button" class="pz-bcell${next?' next':''}" data-pz-bsel="${esc(b.id)}" data-pz-tip="${esc(pzBadgeTip(next?Object.assign({},b,{earned:false}):b,f))}" aria-pressed="${pzS.badgeSel===b.id}" aria-label="${esc(pzBadgeTip(next?Object.assign({},b,{earned:false}):b,f).replace(/\n/g,' '))}">
         ${pzMedal(next?Object.assign({},b,{earned:false}):b,52)}<b>${esc(b.t.replace(/ · .*/,''))}</b><small style="color:${next?'var(--pz-muted)':PZ_TIER_COL[b.r]}">${PZ_TIERS[b.r]||''}</small>
         ${next?`${pzPctBar(f.value/b.need,PZ_TIER_COL[b.r])}<small>${pzN(Math.floor(f.value))} / ${pzN(b.need)}</small>`
           :after?`${pzPctBar(f.value/after.need,PZ_TIER_COL[after.r])}<small>next: ${PZ_TIERS[after.r]} · ${pzN(Math.floor(f.value))}/${pzN(after.need)}</small>`
@@ -11071,33 +11265,49 @@ function pzSetups(){ const n={}, canon={};
 function pzCanonSetup(s){ s=String(s||'').trim().replace(/\s+/g,' '); if(!s)return ''; const hit=pzSetups().find(x=>x.toLowerCase()===s.toLowerCase()); return hit||s; }
 
 // ---- plan rules: a plan you can check. Each rule is graded from the day's fills at the end of the day ----
-const PZ_RULE_LABEL={setups:'Only these setups',coins:'Only these markets',until:'No new trades after',maxPos:'Max position size',stop2:'Stop after two losses in a row'};
+const PZ_RULE_LABEL={setups:'Only my setups',coins:'Only these markets',until:'No new trades after',maxPos:'Max position size',stop2:'Stop after two losses in a row',
+  lossStreak:'Stop after losses in a row',wait:'Wait after a loss',noAdd:'Never add to a losing position'};
+// setups most traders recognise, offered until your own tags take over
+const PZ_SETUP_DEFAULTS=['Breakout','Pullback','Trend continuation','Range fade','Reversal','News'];
 function pzPlanCheck(key){
   const e=journal['day:'+key]||{}, R=e.rules||{}, out=[];
   const opened=allTrades.filter(t=>t.openTime&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
-  const add=(k,ok,detail)=>out.push({k,label:PZ_RULE_LABEL[k],ok,detail});
+  const add=(k,ok,detail)=>out.push({k,label:PZ_RULE_LABEL[k],ok,detail}), lab=(k,label,ok,detail)=>out.push({k,label,ok,detail});
   if(Array.isArray(R.setups)&&R.setups.length){ const want=new Set(R.setups.map(s=>s.toLowerCase())), tagged=opened.filter(t=>journal[t.id]&&journal[t.id].setup);
     const off=tagged.filter(t=>!want.has(String(journal[t.id].setup).trim().toLowerCase())), un=opened.length-tagged.length;
     add('setups',!opened.length?null:off.length?false:un?null:true,R.setups.join(', ')+(off.length?' — '+off.length+' trade'+(off.length===1?'':'s')+' outside them':'')+(un?' · '+un+' not tagged yet':'')); }
-  if(Array.isArray(R.coins)&&R.coins.length){ const want=new Set(R.coins.map(c=>c.toUpperCase())), off=opened.filter(t=>!want.has(String(dispMarket(dcoin(t))).toUpperCase()));
-    add('coins',!opened.length?null:!off.length,R.coins.join(', ')+(off.length?' — traded '+[...new Set(off.map(t=>dispMarket(dcoin(t))))].join(', '):'')); }
   if(/^\d{2}:\d{2}$/.test(R.until||'')){ const [h,m]=R.until.split(':').map(Number), late=opened.filter(t=>{ const p=tzParts(t.openTime); return p.h*60+p.min>h*60+m; });
     add('until',!opened.length?null:!late.length,R.until+(late.length?' — '+late.length+' entr'+(late.length===1?'y':'ies')+' after':'')); }
   if(R.maxPos>0){ const big=opened.filter(t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0))>R.maxPos*1.001);
     add('maxPos',!opened.length?null:!big.length,usdPlain(R.maxPos)+(big.length?' — '+big.length+' trade'+(big.length===1?'':'s')+' bigger':'')); }
-  if(R.stop2){ const b=_pzSlipDays.get(key); add('stop2',!closedD.length?null:!(b&&b.flags&&b.flags.afterTwo),b&&b.flags&&b.flags.afterTwo?'traded on after two losses':''); }
+  // stop after N losses in a row (the older two-loss switch is the same rule with N=2)
+  const N=R.lossStreak>1?+R.lossStreak:R.stop2?2:0;
+  if(N){ const cl=closedD.slice().sort((a,b)=>a.closeTime-b.closeTime); let run=0, hitAt=null;
+    for(const x of cl){ run=PZ_LOSS(x.net)?run+1:0; if(run>=N&&hitAt==null)hitAt=x.closeTime; }
+    const after=hitAt==null?[]:opened.filter(t=>t.openTime>hitAt);
+    lab('lossStreak','Stop after '+N+' losses in a row',hitAt==null?(cl.length?true:null):!after.length,hitAt==null?'':after.length?after.length+' entr'+(after.length===1?'y':'ies')+' after the '+N+'th loss':'stopped when it happened'); }
+  if(R.wait>0){ const M=R.wait*60000, losses=closedD.filter(x=>PZ_LOSS(x.net));
+    const quick=opened.filter(t=>losses.some(x=>t.openTime>x.closeTime&&t.openTime-x.closeTime<=M));
+    lab('wait','Wait '+R.wait+' min after a loss',!losses.length?null:!quick.length,quick.length?quick.length+' entr'+(quick.length===1?'y':'ies')+' within '+R.wait+' min of a loss':losses.length+' loss'+(losses.length===1?'':'es')+', no rushed re-entry'); }
+  if(R.noAdd){ const b=_pzSlipDays.get(key), n=b&&b.flags?b.flags.addLoser||0:0;
+    add('noAdd',!opened.length&&!closedD.length?null:!n,n?n+' trade'+(n===1?'':'s')+' added to while losing':''); }
   const graded=out.filter(x=>x.ok!=null);
   return {rules:out,kept:graded.filter(x=>x.ok).length,graded:graded.length};
 }
 function pzRulesFormHtml(ck){
-  const R=ck.rules||{}, setups=pzSetups().slice(0,8), coins=[...new Set(allTrades.filter(t=>t.openTime>Date.now()-60*86400000).map(t=>dispMarket(dcoin(t))))].slice(0,10);
-  const chipset=(kind,list,on)=>list.length?`<div class="pz-chiprow pz-wrapr">${list.map(x=>`<button type="button" class="pz-chipbtn" data-pz-rule="${kind}" data-v="${esc(x)}" aria-pressed="${(on||[]).includes(x)}">${esc(x)}</button>`).join('')}</div>`:'<p class="pz-fine">Tag a few trades with a setup to pick from them here.</p>';
-  return `<section class="pz-card pz-kv"><b class="pz-kvh">Rules for today <span class="pz-sub" style="font-weight:400;font-size:12px">· checked from your fills tonight</span></b>
-    <span class="pz-lbl" style="color:var(--pz-muted);font-size:11px">${PZ_RULE_LABEL.setups}</span>${chipset('setups',setups,R.setups)}
-    <span class="pz-lbl" style="color:var(--pz-muted);font-size:11px">${PZ_RULE_LABEL.coins}</span>${chipset('coins',coins,R.coins)}
+  const R=ck.rules||{}, mine=pzSetups().slice(0,8), chosen=Array.isArray(R.setups)?R.setups:[];
+  const setups=[...new Set([...chosen,...mine,...(mine.length<4?PZ_SETUP_DEFAULTS:[])])].slice(0,14);
+  const seg=(k,opts,cur)=>`<div class="pz-seg pz-rseg" role="group" aria-label="${esc(PZ_RULE_LABEL[k])}">${opts.map(([v,l])=>`<button type="button" data-pz-rule="${k}" data-v="${v}" aria-pressed="${String(cur||0)===String(v)}">${l}</button>`).join('')}</div>`;
+  const N=R.lossStreak>1?+R.lossStreak:R.stop2?2:0;
+  const row=(label,hint,ctl)=>`<div class="pz-rrow"><span><b>${label}</b>${hint?`<small>${hint}</small>`:''}</span>${ctl}</div>`;
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Rules for today <span class="pz-sub" style="font-weight:400;font-size:12px">· checked from your fills as you trade</span></b>
+    ${row(PZ_RULE_LABEL.setups,'Trades tagged with anything else count as off-plan',`<div class="pz-chiprow pz-wrapr">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-rule="setups" data-v="${esc(x)}" aria-pressed="${chosen.includes(x)}">${esc(x)}</button>`).join('')}</div>
+      <div class="pz-addrow"><label for="pzSetupAdd" class="pz-sr">Add a setup</label><input type="text" id="pzSetupAdd" maxlength="40" placeholder="Add your own setup" autocomplete="off"><button type="button" class="pz-ghost pz-sm" id="pzSetupAddGo">Add</button></div>`)}
+    ${row(PZ_RULE_LABEL.lossStreak,'',seg('lossStreak',[[0,'Off'],[2,'2'],[3,'3']],N))}
+    ${row(PZ_RULE_LABEL.wait,'Before the next entry',seg('wait',[[0,'Off'],[15,'15m'],[30,'30m'],[60,'1h']],R.wait||0))}
+    <div class="pz-toggle"><span style="flex:1"><b id="pzNoAddL">${PZ_RULE_LABEL.noAdd}</b></span><button type="button" role="switch" class="pz-switch" data-pz-rule="noAdd" aria-checked="${!!R.noAdd}" aria-labelledby="pzNoAddL"><i></i></button></div>
     <div class="pz-grid2"><div class="pz-field"><label for="pzUntil" style="font-size:13px">${PZ_RULE_LABEL.until}</label><input type="time" id="pzUntil" value="${esc(R.until||'')}"></div>
-      <div class="pz-field"><label for="pzMaxPos" style="font-size:13px">${PZ_RULE_LABEL.maxPos} ($)</label><input type="number" id="pzMaxPos" inputmode="decimal" min="0" step="any" value="${R.maxPos>0?esc(R.maxPos):''}"></div></div>
-    <div class="pz-toggle"><span style="flex:1"><b id="pzStop2L">${PZ_RULE_LABEL.stop2}</b></span><button type="button" role="switch" class="pz-switch" data-pz-rule="stop2" aria-checked="${!!R.stop2}" aria-labelledby="pzStop2L"><i></i></button></div></section>`;
+      <div class="pz-field"><label for="pzMaxPos" style="font-size:13px">${PZ_RULE_LABEL.maxPos} ($)</label><input type="number" id="pzMaxPos" inputmode="decimal" min="0" step="any" value="${R.maxPos>0?esc(R.maxPos):''}"></div></div></section>`;
 }
 
 // ---- the end-of-day review (#review) ----
@@ -11189,7 +11399,7 @@ function pzReportHtml(D){
         ${h.broke.length?`<span class="pz-fine">Broken on ${h.broke.map(b=>esc(dayLabel(b.key).replace(/,.*/,''))+(b.ready!=null?' (readiness '+b.ready+')':'')).join(', ')}</span>`:''}</div>`).join('')}</section>`:''}
       ${r.challenge?`<section class="pz-card pz-kv"><b class="pz-kvh">Weekly challenge</b><span class="pz-sub" style="font-size:13px">${esc(habitSentence(r.challenge.ch.spec))} — <b style="color:${r.challenge.status==='done'?PZ_COL.good:PZ_COL.mid}">${esc(r.challenge.status)}</b></span></section>`:''}
       <section class="pz-card pz-kv"><b class="pz-kvh">Focus for next ${kind}</b><span style="font-size:14px;line-height:1.45">${esc(focus.t)}</span>${focus.btn}</section>
-      ${r.badges.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Badges earned</b><div class="pz-medals">${r.badges.slice(-6).map(b=>`<span class="pz-mini">${pzMedal(b,40)}<span>${esc(b.t.replace(/ · .*/,''))}</span></span>`).join('')}</div></section>`:''}
+      ${r.badges.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Badges earned</b><div class="pz-medals">${r.badges.slice(-6).map(b=>`<span class="pz-mini" tabindex="0" data-pz-tip="${esc(pzBadgeTip(b))}">${pzMedal(b,40)}<span>${esc(b.t.replace(/ · .*/,''))}</span></span>`).join('')}</div></section>`:''}
     </div>
     <section class="pz-span" style="display:flex;gap:8px;flex-wrap:wrap">${pzLocked('share',g.level.level)?'':`<button type="button" class="pz-ghost pz-sm" id="pzReportShare" style="width:auto;padding:0 16px">Share this report card</button>`}</section>
     <div class="pz-span" id="gmOut"></div></div>`;
@@ -11416,6 +11626,7 @@ function pzProfilePickHtml(){
 async function pzGrowthAction(t){
   const ds=t.dataset;
   try{
+    if(ds.pzMk){ settings.pzMarket=ds.pzMk; await Store.set(S_KEY,settings); pzRender(); return true; }
     if(ds.pzPg!=null){ PZ_PAGES[ds.pzPg]=Math.max(0,(PZ_PAGES[ds.pzPg]||0)+(+ds.d||0)); pzRender(); const n=document.querySelector('[data-pz-pg="'+CSS.escape(ds.pzPg)+'"]'); if(n){ const list=n.closest('nav').previousElementSibling; if(list&&list.scrollIntoView)list.scrollIntoView({block:'nearest'}); } return true; }
     if(ds.pzPlug){ await pzPlugStart(ds.pzPlug); pzNote('Plugging “'+PZ_BEH[ds.pzPlug].toLowerCase()+'”. It’s checked from your fills — three clean weeks plugs it.'); pzRender(); return true; }
     if(ds.pzUnplug){ if(!confirm('Stop plugging this leak? Its habit is retired.'))return true; await pzPlugDrop(ds.pzUnplug); pzRender(); return true; }
@@ -11432,9 +11643,12 @@ async function pzGrowthAction(t){
       else { settings.pzCoachDetail=on; await Store.set(S_KEY,settings); }
       t.setAttribute('aria-checked',String(on)); pzRender(); return true; }
     if(ds.pzRule&&pzS.ck){ const R=pzS.ck.rules=pzS.ck.rules||{}, k=ds.pzRule;
-      if(k==='stop2'){ R.stop2=!R.stop2; t.setAttribute('aria-checked',String(R.stop2)); }
+      if(k==='stop2'||k==='noAdd'){ R[k]=!R[k]; t.setAttribute('aria-checked',String(R[k])); }
+      else if(k==='lossStreak'||k==='wait'){ R[k]=+ds.v||0; if(k==='lossStreak')R.stop2=false; t.parentNode.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===t))); }
       else { const a=R[k]=Array.isArray(R[k])?R[k]:[], v=ds.v, i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); t.setAttribute('aria-pressed',String(i<0)); }
       return true; }
+    if(t.id==='pzSetupAddGo'&&pzS.ck){ const inp=$('pzSetupAdd'), v=pzCanonSetup(inp&&inp.value||''); if(!v)return true;
+      const R=pzS.ck.rules=pzS.ck.rules||{}; R.setups=Array.isArray(R.setups)?R.setups:[]; if(!R.setups.includes(v))R.setups.push(v); inp.value=''; pzRender(); const n=$('pzSetupAdd'); if(n){ n.value=''; n.focus(); } return true; }
     if(ds.pzSetupchip){ const sec=t.closest('[data-pz-trade]'), inp=sec&&sec.querySelector('input[type=text]'); if(inp){ inp.value=ds.pzSetupchip; inp.focus(); } return true; }
     switch(t.id){
       case 'pzRvSave': await pzSaveReview(); return true;
@@ -11451,6 +11665,7 @@ async function pzGrowthAction(t){
 }
 
 /* ============================ boot ============================ */
+try{ if(window.Chart&&Chart.defaults)Chart.defaults.animation=false; }catch(e){}
 (async function(){
   // Ask the browser to exempt our storage from automatic eviction — the fill cache is the
   // only copy of history beyond the API's page cap, so best-effort eviction is not okay.
@@ -11478,7 +11693,7 @@ async function pzGrowthAction(t){
   // the browser's IANA zone rides along with settings so the server's end-of-day nudge reads
   // 'today' on the same calendar as the day journal's 'local' dates
   try{ const z=Intl.DateTimeFormat().resolvedOptions().timeZone; if(z&&settings.tzZone!==z){ settings.tzZone=z; await Store.set(S_KEY,settings); } }catch(e){}
-  view=settings.view||'perp'; dexView=settings.dexView||'all';
+  view=PZ?'combined':(settings.view||'perp'); dexView=settings.dexView||'all';
   document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
   settings.rBasis=settings.rBasis||'avgloss';
   $('rBasis').value=settings.rBasis;
@@ -11514,7 +11729,7 @@ async function pzGrowthAction(t){
   // auto-load on boot: rebuild from the cached fills and pull anything new, so reopening the
   // app refreshes without a manual "Load all". Incremental and _loading-guarded; the 3-minute
   // interval keeps it current from here. Errors surface the same way an auto-tick would.
-  if(settings.wallets.length) loadAll({auto:true});
+  if(settings.wallets.length){ await bootFromCache(); loadAll({auto:true}); }
   if(PZ)pzRender();
 })();
 </script>

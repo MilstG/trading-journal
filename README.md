@@ -92,6 +92,26 @@ correctly split into a closing leg and an opening leg. Perp and spot are
 reconstructed separately — use the **Perp / Spot / Combined** market toggle to
 choose what every view shows.
 
+**Spot trades.** A spot trade closes when you sell out; the dust a full exit
+leaves behind (spot buy fees come out of the token you bought) counts as flat.
+Selling part of a position realizes a closed trade for the amount sold, at the
+position's average cost, and the rest stays open. Buy fees paid in the token are
+priced in dollars, and since the exchange's realized P&L already includes them,
+they're shown in fees but not subtracted twice. Spot trades read as pairs
+(`HYPE/USDC`) so they never merge with the perp of the same name. Pulse counts
+every market for XP, streaks and Today; its Stats screens have their own
+**All markets · Perps · Spot** switch.
+
+**Load time.** Opening the app shows your saved data at once (trades rebuilt
+from the cached fills and funding, positions as they were last time) while a
+refresh runs behind it. Fills, funding and capital flows are each cached with a
+watermark, so a refresh fetches only what's new; spot metadata and every
+wallet's requests run in parallel (two wallets at a time). A new device on a
+server with `AUTH_TOKEN` seeds its caches from the server's copy in one
+download (`GET /api/v1/cache/<address>`). The page itself is served gzipped
+with an ETag, and the installed app opens from its cached copy and updates in
+the background.
+
 ## The coach
 
 Everything Ledger measures is also said in plain words. At the top of the

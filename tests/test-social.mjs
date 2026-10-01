@@ -22,7 +22,7 @@ t('stats are clamped and filtered: bad days, badges and oversized text never get
     habits: ['a'.repeat(500), '', 'b', 'c', 'd', 'e', 'f'] });
   eq(s.xp, 0); eq(s.level, 500); eq(s.streak, 0); eq(s.week, null); eq(s.weekXp, 1e6);
   eq(s.days, [{ k: '2026-09-01', s: 100, b: true, j: false }]);
-  eq(s.badges, [{ id: 'ok-1', t: 'Fine', c: '', r: 0, k: null }]);
+  eq(s.badges, [{ id: 'ok-1', t: 'Fine', c: '', r: 0, k: null, d: '' }]);
   eq(s.habits.length, 5); eq(s.habits[0].length, 140);
 });
 t('sharing defaults keep money and the address private', () => {

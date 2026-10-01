@@ -35,9 +35,9 @@ const FILLS = [
   F('ETH', 'A', 2, 900,  T0 + 26 * H, 2, -200, 2),
   // BTC still open: fees 1 -> net -1
   F('BTC', 'B', 0.5, 30000, T0 + 4 * H, 0, 0,  1),
-  // spot @107 (FOO/USDC): buy 10 @ 2, sell 4 @ 2.5 -> open spot position, partial realized
+  // spot @107 (FOO/USDC): buy 10 @ 2 and hold -> one open spot position (selling part of it
+  // realizes a closed spot trade; that's covered with the engine directly in test-features5)
   F('@107', 'B', 10, 2,   T0 + 5 * H, 0,  0,   0.01),
-  F('@107', 'A', 4,  2.5, T0 + 6 * H, 10, 2,   0.01),
 ];
 const FUNDING = [{ time: T0 + 0.5 * H, delta: { coin: 'ETH', usdc: '1.5' } }];
 const LEDGER = [
@@ -131,7 +131,7 @@ await t('refresh pulls fills/funding/positions and reconstructs trades', async (
   eq(r.status, 200);
   refreshSummary = await r.json();
   eq(refreshSummary.wallets.length, 1);
-  eq(refreshSummary.wallets[0].newFills, 7);
+  eq(refreshSummary.wallets[0].newFills, 6);
   eq(refreshSummary.wallets[0].error, null);
   eq(refreshSummary.trades, { total: 4, perp: 3, spot: 1, open: 2 }); // 2 closed ETH + open BTC + open spot
   ok(hlCalls.includes('userFillsByTime') && hlCalls.includes('userFunding')
@@ -143,7 +143,7 @@ await t('second refresh is rate-limited; force bypasses and is incremental (0 ne
   eq(r.status, 200);
   const s = await r.json();
   eq(s.wallets[0].newFills, 0, 'incremental: nothing new since last');
-  eq(s.wallets[0].fills, 7);
+  eq(s.wallets[0].fills, 6);
 });
 
 console.log('\nAPI v1: trades');
@@ -289,13 +289,12 @@ await t('positions ?live=1 needs full token and refetches', async () => {
   const { status, body } = await jget('/api/v1/positions?live=1');
   eq(status, 200); eq(body.live, true); eq(body.positions.length, 1);
 });
-await t('spot FIFO lots: 4 sold from a 10 @ 2 lot', async () => {
+await t('spot FIFO lots: a 10 @ 2 lot', async () => {
   const { body } = await jget('/api/v1/spot/lots');
-  eq(body.fills, 2);
+  eq(body.fills, 1);
   ok(body.lots, 'lots payload present');
-  const rows = body.lots.rows || body.lots; // shape owned by ledger.html — assert only the economics
-  const flat = JSON.stringify(rows);
-  ok(flat.includes('FOO'), 'symbol resolved in lots output');
+  const lot = (body.lots.open || []).find(l => l.symbol === 'FOO');
+  ok(lot, 'symbol resolved in the open lots'); near(lot.qty, 10); near(lot.unitCost, 2.001, 1e-9); // the fee is part of the cost basis
 });
 await t('whatif: removing ETH zeroes the counterfactual', async () => {
   const { body } = await jget('/api/v1/whatif?field=coin&op=eq&value=ETH');

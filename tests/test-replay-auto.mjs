@@ -97,7 +97,8 @@ t('benchmark never breaks the diagnostic', () =>
 console.log('\nAuto-refresh + automatic ratchet (#6)');
 t('loadAll guarded against overlap and triggers the ratchet', () => {
   ok(html.includes('if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{'));
-  ok(html.includes('} finally { _loading=false; _pzQuiet=false; if(PZ)pzRender(); }\n  autoRatchet();'));
+  ok(html.includes("} finally { _loading=false; _pzQuiet=false; if(PZ&&pzS.note&&pzS.note.kind==='busy')pzS.note=null;"), 'the refresh clears the saved-data note when it finishes');
+  ok(html.includes('requestIdleCallback(()=>autoRatchet(),{timeout:8000})'), 'the ratchet waits for an idle moment');
 });
 t('auto-ratchet: recent unmeasured closed trades only, silent, budget-safe', () => {
   ok(html.includes('t.closeTime>now-21*86400e3&&!have[t.id]'));
@@ -111,7 +112,7 @@ t('3-minute visible-tab interval, persisted toggle, boot wiring', () => {
   ok(html.includes('setupAutoRefresh();'));
 });
 t('auto-load on boot: remembered wallets refresh without a manual Load all', () => {
-  ok(html.includes('if(settings.wallets.length) loadAll({auto:true});'));
+  ok(html.includes('if(settings.wallets.length){ await bootFromCache(); loadAll({auto:true}); }'), 'saved data first, then the refresh');
   // still guarded against overlap and re-entrancy by the _loading flag inside loadAll
   ok(html.includes('if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{'));
   // no longer parks on a "hit Load all" prompt when wallets are remembered

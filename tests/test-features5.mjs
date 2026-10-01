@@ -25,12 +25,12 @@ let _rng=Math.random;
 ` + FEE_TIERS_SRC + '\n';
 
 const { feeTierModel, isoWeekKey, lastCompletedWeekRange, varianceModel, riskCreepModel,
-        unplannedToday, demoFills, reconstructTrades } = await evalModule(
+        unplannedToday, demoFills, reconstructTrades, attributeFunding, spotMapsFrom } = await evalModule(
   ['tzParts', 'tzMidnight', 'dayJKey', '_srand', '_hashSeed', 'nfMedian',
    'feeTierModel', 'isoWeekKey', 'lastCompletedWeekRange', 'varianceModel', 'riskCreepModel',
-   'unplannedToday', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
+   'unplannedToday', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'spotMapsFrom'],
   ['feeTierModel', 'isoWeekKey', 'lastCompletedWeekRange', 'varianceModel', 'riskCreepModel',
-   'unplannedToday', 'demoFills', 'reconstructTrades'], PRELUDE);
+   'unplannedToday', 'demoFills', 'reconstructTrades', 'attributeFunding', 'spotMapsFrom'], PRELUDE);
 
 const DAY = 86400000, H = 3600000;
 const NOW = Date.UTC(2026, 8, 24, 15); // 2026-09-24T15:00Z, a Thursday
@@ -184,6 +184,41 @@ t('demo fills reconstruct into a plausible closed-trade history', () => {
   ok(wr > 0.3 && wr < 0.7, 'win rate plausible, got ' + wr.toFixed(2));
   const spot = reconstructTrades(fills, 'demo', 'spot');
   ok(spot.length >= 1 && spot.some(x => x.coin === 'PURR/USDC'), 'spot position reconstructed');
+});
+
+console.log('\nspot trades (real Hyperliquid fill shapes)');
+const SF = (side, sz, px, t, start, pnl, fee, feeToken, i) => ({ coin: '@210', side, sz: String(sz), px: String(px), time: t,
+  startPosition: String(start), closedPnl: String(pnl), fee: String(fee), feeToken, tid: i, oid: i, crossed: true, dir: side === 'B' ? 'Buy' : 'Sell' });
+t('a full exit that leaves dust closes the spot trade', () => {
+  // buy 29744.5 (the fee comes out of the tokens: 29744.410718 arrive), sell 29744.4 -> 0.0107 left
+  const fills = [SF('B', 29744.5, 0.5, NOW - 5 * H, 0, 0, 0.089282, 'UXPL', 1), SF('A', 29744.4, 0.6, NOW - 2 * H, 29744.410718, 2974.4, 1.2, 'USDC', 2)];
+  const tr = reconstructTrades(fills, 'a', 'spot');
+  eq(tr.filter(x => !x.isOpen).length, 1, 'closed'); eq(tr.filter(x => x.isOpen).length, 0, 'no phantom open position for the dust');
+});
+t('spot buy fees in the token are priced in dollars and not subtracted twice', () => {
+  const fills = [SF('B', 7716, 0.0023, NOW - 5 * H, 0, 0, 7716 * 0.001, 'UPUMP', 1), SF('A', 7708.284, 0.003, NOW - 2 * H, 7708.284, 5.39, 0.02, 'USDC', 2)];
+  const [x] = reconstructTrades(fills, 'a', 'spot'); attributeFunding([x], []);
+  ok(Math.abs(x.fees - (7.716 * 0.0023 + 0.02)) < 1e-9, 'fees in dollars, not 7.7 tokens counted as $7.7: ' + x.fees);
+  ok(Math.abs(x.net - (5.39 - 0.02)) < 1e-9, 'closedPnl already holds the buy fee; only the sell fee comes off: ' + x.net);
+});
+t('selling part of a spot position realizes a closed trade; the rest stays open', () => {
+  const fills = [SF('B', 10, 2, NOW - 9 * H, 0, 0, 0.01, 'USDC', 1), SF('A', 4, 2.5, NOW - 6 * H, 10, 2, 0.01, 'USDC', 2),
+    SF('B', 5, 3, NOW - 3 * H, 6, 0, 0.01, 'USDC', 3)];
+  const tr = reconstructTrades(fills, 'a', 'spot'), closed = tr.filter(x => !x.isOpen), open = tr.filter(x => x.isOpen);
+  eq([closed.length, open.length], [1, 1]);
+  eq(closed[0].closeSz, 4); ok(Math.abs(closed[0].pnl - 2) < 1e-9); ok(Math.abs(closed[0].avgEntry - 2) < 1e-9 && Math.abs(closed[0].avgExit - 2.5) < 1e-9);
+  ok(Math.abs(open[0].openSz - 11) < 1e-9, 'the 6 still held plus the 5 bought'); ok(new Set(tr.map(x => x.id)).size === 2, 'distinct ids');
+  // still holding at the end, after a sale: the sale is realized too
+  const tail = reconstructTrades(fills.slice(0, 2), 'a', 'spot');
+  eq([tail.filter(x => !x.isOpen).length, tail.filter(x => x.isOpen).length], [1, 1]);
+});
+t('spot names and marks: tokens by their index, prices by the pair they belong to', () => {
+  const meta = { tokens: [{ name: 'USDC', index: 0 }, { name: 'HYPE', index: 150 }, { name: 'MAX', index: 333 }],
+    universe: [{ name: '@107', index: 107, tokens: [150, 0] }, { name: '@591', index: 591, tokens: [333, 0] }] };
+  const ctxs = [{ coin: 'PURR/USDC', markPx: '0.2' }, { coin: '@591', markPx: '0.4' }, { coin: '@107', markPx: '88.99' }];
+  const m = spotMapsFrom(meta, ctxs);
+  eq([m.nameByCoin['@107'], m.nameByCoin['@591'], m.quoteByCoin['@107']], ['HYPE', 'MAX', 'USDC']);
+  eq([m.markBySym.HYPE, m.markBySym.MAX], [88.99, 0.4]);
 });
 
 report('features5');

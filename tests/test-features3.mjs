@@ -355,7 +355,8 @@ console.log('\nHIP-3 wiring guards (UI plumbing)');
 // confirmed; the normalizer in mapClearinghouse still handles bare and prefixed coins)
 await t('fill cache read/write routes through pack/unpack in loadAll and backup', () => {
   ok(html.includes('await idbSet(fcKey,await packFillCache(fills,lastT))'), 'write path');
-  ok(html.includes('fcache=await unpackFillCache(await idbGet(fcKey))'), 'read path');
+  ok(html.includes('idbGet(fcKey).then(unpackFillCache)'), 'read path');
+  ok(html.includes("idbGet('flc:'+a).then(unpackFillCache)"), 'the cached start reads the same way');
   ok(html.includes("await unpackFillCache(await idbGet('flc:'+w.address))"), 'backup decompresses');
 });
 await t('UI plumbing present: risk panel, what-if, block toggle, PDF + lots buttons', () => {
