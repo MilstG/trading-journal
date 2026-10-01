@@ -1863,9 +1863,12 @@ function createApp(opts) {
     return behaviorInflight.get(k);
   };
   // the wallet's last 50 days of fills, topped up from the exchange and kept gzipped per address
-  const fillsInflight = new Map();
-  const recentFills = addr => { const a = String(addr).toLowerCase();
-    if (!fillsInflight.has(a)) fillsInflight.set(a, recentFillsOnce(a).finally(() => fillsInflight.delete(a)));
+  const fillsInflight = new Map(), fillsFresh = new Map();
+  // a wallet read in the last two minutes isn't fetched again (a burst of posts or board refreshes shares it)
+  const recentFills = addr => { const a = String(addr).toLowerCase(), f = fillsFresh.get(a);
+    if (f && (opts.now || Date.now)() - f.at < 120000) return Promise.resolve(f.fills);
+    if (!fillsInflight.has(a)) fillsInflight.set(a, recentFillsOnce(a).then(fills => { if (fills) { fillsFresh.set(a, { at: (opts.now || Date.now)(), fills });
+        if (fillsFresh.size > 500) fillsFresh.delete(fillsFresh.keys().next().value); } return fills; }).finally(() => fillsInflight.delete(a)));
     return fillsInflight.get(a); };
   const recentFillsOnce = async (a) => {
     if (!engine.ok || !/^0x[0-9a-f]{40}$/.test(a)) return null;
@@ -1880,14 +1883,15 @@ function createApp(opts) {
     gzWrite(f, { v: 1, fills, savedAt: Date.now() });
     return fills;
   };
-  // A trade a member posts is "on chain" when their wallet has a fill in that coin within a minute
-  // of when they say it opened (and of when it closed, for a closed one). Older than 50 days: unknown.
+  // A trade a member posts is "on chain" when their wallet has fills that match it: a buy for a long's
+  // entry (a sell for a short's) in that coin within a minute of when it opened and within 3% of the
+  // entry price, and for a closed one the opposite side within a minute of the close and 3% of the exit.
+  // Older than 50 days: unknown (null), as is a wallet that can't be read right now.
   const tradeCheck = async (addr, t) => {
     const since = (opts.now || Date.now)() - 50 * 86400000;
-    if (!t || !t.openedAt || t.openedAt < since) return null;
+    if (!t || !t.openedAt || t.openedAt < since || !(t.entry > 0)) return null;
     const fills = await recentFills(addr); if (!Array.isArray(fills)) return null;
-    const near = ms => fills.some(x => x && x.coin === t.coin && Math.abs(x.time - ms) <= 60000);
-    return near(t.openedAt) && (!t.closedAt || near(t.closedAt));
+    return fillsMatchTrade(fills, t);
   };
   const behaviorForOnce = async (addr, tz) => {
     if (!engine.ok || !E.pzBehaviorDays) return null;
@@ -2356,5 +2360,15 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { sanitizeCoachChat, coachChatRequest, scrubCoachData, createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook, telegramReply, nudgeFrom, zonedDayHour,
+// Whether a wallet's fills back up a posted trade (see tradeCheck in createApp)
+function fillsMatchTrade(fills, t) {
+  const near = (ms, buy, px) => fills.some(x => x && x.coin === t.coin && Math.abs(x.time - ms) <= 60000 && (x.side === 'B') === buy
+    && Math.abs(parseFloat(x.px) - px) / px <= 0.03);
+  const long = t.side !== 'short';
+  if (!near(t.openedAt, long, t.entry)) return false;
+  if (t.status !== 'closed') return true;
+  return !!t.closedAt && t.exit > 0 && near(t.closedAt, !long, t.exit);
+}
+
+module.exports = { fillsMatchTrade, sanitizeCoachChat, coachChatRequest, scrubCoachData, createApp, buildEngine, ENGINE_FNS, alertsFrom, postWebhook, telegramReply, nudgeFrom, zonedDayHour,
   sanitizeCoachFacts, coachLetterRequest, coachLetterText };

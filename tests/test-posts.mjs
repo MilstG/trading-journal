@@ -47,7 +47,9 @@ writeFileSync(join(dataDir, 'social.json'), JSON.stringify({ v: 1, config: { ope
   members: { aa11: { id: 'aa11', handle: 'oldtimer', keyHash: 'x', createdAt: 1, tier: 1, share: S.sanitizeShare({}), stats: { xp: 50, level: 2, days: [] }, weekXp: {} } },
   events: [{ id: 'ev1', at: clock - 3600000, member: 'aa11', type: 'level', text: 'reached level 2', quote: '', kudos: ['zz99'] }] }));
 const checks = [];
-const tradeCheck = async (addr, tr) => { checks.push([addr, tr.coin]); return tr.coin === 'BTC'; };
+let checkOk = true;
+const tradeCheck = async (addr, tr) => { checks.push([addr, tr.coin]); return checkOk && tr.coin === 'BTC'; };
+const sig = require('../vendor/eth-sig.js'), KA = '0x' + '11'.repeat(32), WA = sig.addressOfPrivateKey(KA);
 const mk = () => server.createApp({ dataDir, auth: 'owner-token', htmlPath, now: () => clock, pushTick: false, push: false, tradeCheck,
   fetchImpl: async () => ({ ok: true, status: 200, json: async () => [] }) });
 let app = mk(), B = await listen(app);
@@ -72,7 +74,7 @@ try {
   });
   let A, Bk, C;
   await t('members and posts survive a restart; only changed rows are written', async () => {
-    A = await join_('alice', { address: '0x' + 'a'.repeat(40) }); Bk = await join_('bobby');
+    A = await join_('alice', { address: WA }); Bk = await join_('bobby');
     await call('/follow/alice', { method: 'POST', key: Bk });
     const p = await call('/posts', { method: 'POST', key: A, body: { kind: 'note', text: 'Waiting for the open.\n\n\n\nNo trades before 10.' } });
     eq(p.status, 200); eq(p.d.post.text, 'Waiting for the open.\n\nNo trades before 10.', 'line breaks kept, runs of blank lines folded');
@@ -99,17 +101,51 @@ try {
     eq([tr.status, tr.entry, tr.stop, tr.r, tr.pct, tr.usd], ['closed', 60000, 1000 * 59, 2, 3.33, undefined]);
     eq(u.d.post.post.outcome, 'Took two thirds at 62k.');
   });
-  await t('a trade on chain gets the mark (checked against the wallet’s fills in the background)', async () => {
+  await t('the mark needs a wallet proved by signature, and belongs to the trade as it stands', async () => {
     await new Promise(r => setTimeout(r, 30));
-    const p = (await call('/posts/' + planId, { key: Bk })).d.post;
-    eq(p.post.verified, true); eq(checks[0], ['0x' + 'a'.repeat(40), 'BTC']);
-    const r = await call('/posts', { method: 'POST', key: A, body: { kind: 'trade', text: '', trade: { coin: 'ETH', side: 'short', entry: 3000, exit: 2900, status: 'closed', openedAt: clock - 60000, closedAt: clock, r: 1.1 } } });
+    eq((await call('/posts/' + planId, { key: Bk })).d.post.post.verified, false, 'a typed address proves nothing');
+    eq(checks.length, 0, 'and isn’t even checked');
+    // alice signs for the wallet
+    const st = await call('/claim/start', { method: 'POST', key: A, body: { address: WA } });
+    eq((await call('/claim/finish', { method: 'POST', key: A, body: { nonce: st.d.nonce, signature: sig.signPersonal(st.d.message, KA) } })).status, 200);
+    const r = await call('/posts', { method: 'POST', key: A, body: { kind: 'trade', text: '', trade: { coin: 'BTC', side: 'long', entry: 61000, status: 'open', openedAt: clock - 60000 } } });
     eq(r.status, 200, 'a trade from the journal needs no text');
     await new Promise(r2 => setTimeout(r2, 30));
-    eq((await call('/posts/' + r.d.post.id, { key: A })).d.post.post.verified, false);
-    const nb = await call('/posts', { method: 'POST', key: Bk, body: { kind: 'trade', trade: { coin: 'BTC', side: 'long', entry: 1, exit: 2, status: 'closed', openedAt: clock } } });
+    eq((await call('/posts/' + r.d.post.id, { key: Bk })).d.post.post.verified, true); eq(checks[0], [WA.toLowerCase(), 'BTC']);
+    // closing it is a new version: checked again before the mark shows
+    checkOk = false;
+    await call('/posts/' + r.d.post.id, { method: 'PUT', key: A, body: { trade: { status: 'closed', exit: 99999, closedAt: clock } } });
     await new Promise(r2 => setTimeout(r2, 30));
-    eq((await call('/posts/' + nb.d.post.id, { key: Bk })).d.post.post.verified, false, 'no wallet, no mark');
+    eq([(await call('/posts/' + r.d.post.id, { key: Bk })).d.post.post.verified, checks.length], [false, 2]);
+    await call('/posts/' + r.d.post.id, { method: 'PUT', key: A, body: { outcome: 'edit one' } }); await call('/posts/' + r.d.post.id, { method: 'PUT', key: A, body: { outcome: 'edit two' } });
+    await new Promise(r2 => setTimeout(r2, 30)); eq(checks.length, 2, 'editing the words doesn’t fetch fills again');
+    checkOk = true;
+  });
+  await t('a plan can’t be marked as taken before it was posted; results are fixed once known', async () => {
+    const p = (await call('/posts', { method: 'POST', key: A, body: { kind: 'plan', text: 'x', trade: { coin: 'SOL', side: 'long', entry: 100, stop: 95 } } })).d.post;
+    const u = (await call('/posts/' + p.id, { method: 'PUT', key: A, body: { trade: { status: 'closed', exit: 110, openedAt: clock - 5 * 86400000, closedAt: clock - 4 * 86400000 } } })).d.post.post.trade;
+    eq([u.status, u.openedAt, u.closedAt, u.r], ['closed', undefined, undefined, 2]);
+    const t2 = (await call('/posts', { method: 'POST', key: A, body: { kind: 'trade', trade: { coin: 'ETH', side: 'short', entry: 100, exit: 90, status: 'closed', r: 9, usd: 5 } } })).d.post;
+    const again = (await call('/posts/' + t2.id, { method: 'PUT', key: A, body: { trade: { status: 'closed', r: 50, usd: 999 } } })).d.post.post.trade;
+    eq([again.r, again.pct], [9, 10]);
+    eq((await call('/posts', { method: 'POST', key: A, body: { kind: 'plan', text: 'x', trade: { coin: 'SOL', side: 'long', entry: 100, stop: 99.999 } } })).status, 400, 'a stop a hair from the entry');
+    eq(S.sanitizeTrade({ coin: '@107', label: 'PURR/USDC', side: 'long', entry: 1 }, null, {}).label, 'PURR/USDC');
+    eq(S.sanitizeTrade({ coin: 'BTC', label: 'ETH', side: 'long', entry: 1 }, null, {}).label, undefined, 'a perp shows its own name');
+    // an update can be fixed for 15 minutes, then it stands
+    clock += 16 * 60000;
+    eq((await call('/posts/' + p.id, { method: 'PUT', key: A, body: { outcome: 'first' } })).status, 200);
+    eq((await call('/posts/' + p.id, { method: 'PUT', key: A, body: { outcome: 'second' } })).status, 200);
+    clock += 16 * 60000;
+    eq((await call('/posts/' + p.id, { method: 'PUT', key: A, body: { outcome: 'rewritten' } })).status, 409);
+  });
+  t('fills back up a post only on the right side, near the times and prices given', () => {
+    const T0 = Date.UTC(2026, 9, 28, 9), f = (side, px, dt) => ({ coin: 'BTC', side, px: String(px), time: T0 + dt });
+    const t = { coin: 'BTC', side: 'long', entry: 60000, openedAt: T0, status: 'closed', exit: 62000, closedAt: T0 + 3600000 };
+    eq(server.fillsMatchTrade([f('B', 60100, 20000), f('A', 61900, 3600000 - 5000)], t), true);
+    eq(server.fillsMatchTrade([f('A', 60100, 20000), f('A', 61900, 3600000)], t), false, 'a sell isn’t a long’s entry');
+    eq(server.fillsMatchTrade([f('B', 50000, 0), f('A', 61900, 3600000)], t), false, 'the price is off');
+    eq(server.fillsMatchTrade([f('B', 60000, 0), f('A', 70000, 3600000)], t), false, 'the exit is off');
+    eq(server.fillsMatchTrade([f('B', 60000, 0)], Object.assign({}, t, { status: 'open' })), true);
   });
   let img;
   await t('images: WebP, JPEG or PNG by their first bytes, nothing else; served with long caching once used', async () => {
@@ -180,6 +216,9 @@ try {
     eq(cr.length, 1); eq(cr[0].comment.text, 'Nice patience on the retest.');
     await call('/admin/reports/' + cr[0].id, { method: 'POST', admin: true, body: { action: 'dismiss' } });
     eq((await call('/admin/reports', { admin: true })).d.reports.length, 0);
+    eq((await call('/report', { method: 'POST', key: Bk, body: { comment: cid, why: 'still rude' } })).status, 200);
+    eq((await call('/admin/reports', { admin: true })).d.reports.length, 1, 'after the owner kept it, it can be reported again');
+    await call('/admin/reports/' + (await call('/admin/reports', { admin: true })).d.reports[0].id, { method: 'POST', admin: true, body: { action: 'dismiss' } });
     eq((await call('/posts/' + planId, { key: C })).d.comments.length, 1, 'dismissed: the comment stays');
   });
   await t('the owner can switch planned-trade posts and images off', async () => {
@@ -198,6 +237,9 @@ try {
     const fol = (await call('/feed', { key: Bk })).d.events;
     ok(fol.every(e => !e.handle || e.handle === 'alice' || e.handle === 'bobby'), 'following: only people you follow');
     eq((await call('/posts', { method: 'POST', key: C, body: { text: 'eleventh' } })).status, 429, 'ten posts a day');
+    const mine = (await call('/feed?scope=discover&kind=posts', { key: C })).d.events.find(e => e.mine);
+    await call('/posts/' + mine.id, { method: 'DELETE', key: C });
+    eq((await call('/posts', { method: 'POST', key: C, body: { text: 'after a delete' } })).status, 429, 'deleting doesn’t give the slot back');
   });
   await t('a banned author’s posts and pictures disappear; leaving deletes them for good', async () => {
     const list = (await call('/admin/members', { admin: true })).d.members, alice = list.find(m => m.handle === 'alice');

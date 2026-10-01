@@ -325,9 +325,11 @@ function sanitizeTrade(b, prev, opts) {
     const side = b.side === 'short' || b.side === 'Short' ? 'short' : b.side === 'long' || b.side === 'Long' ? 'long' : null; if (!side) return null;
     Object.assign(t, { coin, side, entry: price(b.entry), stop: price(b.stop), target: price(b.target),
       setup: cleanText(b.setup, 40), tf: cleanText(b.tf, 12) });
-    // the name the app shows for the market (spot pairs are '@107' in fills); coin stays as fills name it
-    const label = cleanText(b.label, 40); if (label && label !== coin) t.label = label;
+    // a spot pair is '@107' in fills: the app sends the pair's name to show instead (perps show the coin itself)
+    const label = String(b.label || '').trim(); if (/^@\d+$/.test(coin) && /^[A-Za-z0-9]{1,16}(\/[A-Za-z0-9]{1,12})?$/.test(label)) t.label = label;
     if (t.entry == null) return null;
+    // a stop a hair from the entry would make any move look like a huge R
+    if (t.stop != null && Math.abs(t.entry - t.stop) / t.entry < 0.0005) return null;
     // a stop or target on the wrong side of the entry is a typo, not a plan
     const dir = side === 'long' ? 1 : -1;
     if (t.stop != null && (t.stop - t.entry) * dir >= 0) return null;
@@ -342,15 +344,20 @@ function sanitizeTrade(b, prev, opts) {
       : order[b.status] > order[cur] && (b.status !== 'cancelled' || cur === 'planned');
     if (ok) t.status = b.status;
   }
-  if (t.status === 'closed' || t.status === 'open') { const o = stamp(b.openedAt); if (o != null && t.openedAt == null) t.openedAt = o; }
-  if (t.status === 'closed') { const ex = price(b.exit); if (ex != null && t.exit == null) t.exit = ex; const c = stamp(b.closedAt); if (c != null && t.closedAt == null) t.closedAt = c; }
+  // times: a planned trade can't have opened before it was posted (notBefore), and closes after it opens
+  const nb = opts.notBefore || 0;
+  if (t.status === 'closed' || t.status === 'open') { const o = stamp(b.openedAt); if (o != null && t.openedAt == null && o >= nb) t.openedAt = o; }
+  if (t.status === 'closed') { const ex = price(b.exit); if (ex != null && t.exit == null) t.exit = ex;
+    const c = stamp(b.closedAt); if (c != null && t.closedAt == null && c >= nb && (t.openedAt == null || c >= t.openedAt)) t.closedAt = c; }
   const dir = t.side === 'long' ? 1 : -1;
-  if (t.status === 'closed' && t.exit != null) {
+  // the result is worked out once, when the exit is first known, and never rewritten
+  if (t.status === 'closed' && t.exit != null && t.pct == null) {
     t.pct = Math.round(dir * (t.exit - t.entry) / t.entry * 10000) / 100;
-    if (t.stop != null) t.r = Math.round(dir * (t.exit - t.entry) / Math.abs(t.entry - t.stop) * 100) / 100;
-    else { const r = clampNum(b.r, -100, 100); if (r != null) t.r = Math.round(r * 100) / 100; }
-    const usd = clampNum(b.usd, -1e9, 1e9); if (usd != null && opts.usd) t.usd = Math.round(usd * 100) / 100; else if (!opts.usd) delete t.usd;
-  } else { delete t.pct; delete t.r; delete t.usd; }
+    const r = t.stop != null ? dir * (t.exit - t.entry) / Math.abs(t.entry - t.stop) : clampNum(b.r, -100, 100);
+    if (r != null) t.r = Math.round(Math.max(-100, Math.min(100, r)) * 100) / 100;
+    const usd = clampNum(b.usd, -1e9, 1e9); if (usd != null && opts.usd) t.usd = Math.round(usd * 100) / 100;
+  }
+  if (t.status !== 'closed') { delete t.pct; delete t.r; delete t.usd; }
   return t;
 }
 // ---- the HTTP side ----
@@ -418,15 +425,19 @@ function createSocial(opts) {
   // the last copy written is kept), and each save is one transaction.
   const written = new Map(), dirty = new Set();
   const digest = s => crypto.createHash('sha1').update(s).digest('base64');
-  const writeRow = (key, val) => { if (val === undefined) return; const s = JSON.stringify(val), d = digest(s); if (written.get(key) === d) return; written.set(key, d);
+  // what was written is only remembered once the transaction commits: a failed save is tried again next time
+  let fresh = null;
+  const writeRow = (key, val) => { if (val === undefined) return; const s = JSON.stringify(val), d = digest(s); if (written.get(key) === d) return; fresh.set(key, d);
     if (key.startsWith('m:')) q('INSERT OR REPLACE INTO members (id, data) VALUES (?, ?)').run(key.slice(2), s); else q('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)').run(key, s); };
   const touch = (...xs) => { for (const x of xs) if (typeof x === 'string') dirty.add(x); else if (x && x.id) dirty.add('m:' + x.id); };
   const save = (...xs) => { const all = !xs.length; touch(...xs);
     if (all || dirty.has('follows')) folCount = null;
+    fresh = new Map();
     tx(() => {
       if (all) { for (const k of KV_KEYS) writeRow(k, S[k]); for (const m of members()) writeRow('m:' + m.id, m); }
       else for (const k of dirty) { if (!k.startsWith('m:')) writeRow(k, S[k]); else if (own(S.members, k.slice(2))) writeRow(k, S.members[k.slice(2)]); }
-    }); dirty.clear(); };
+    });
+    for (const [k, d] of fresh) written.set(k, d); dirty.clear(); };
   // lookups by device key and by name, rebuilt after anything that changes keys or names
   let keyIdx = null, handleIdx = null, folCount = null;
   const reindex = () => { keyIdx = null; handleIdx = null; };
@@ -565,7 +576,7 @@ function createSocial(opts) {
   // images: files in DATA_DIR/media, a row each in the media table
   const mediaDir = path.join(opts.dataDir, 'media');
   const mediaFile = id => path.join(mediaDir, String(id).replace(/[^a-f0-9]/g, ''));
-  const dropMedia = rows => { for (const r of rows) { try { fs.unlinkSync(mediaFile(r.id)); } catch (e) {} q('DELETE FROM media WHERE id = ?').run(r.id); } };
+  const dropMedia = rows => { for (const r of rows) { q('DELETE FROM media WHERE id = ?').run(r.id); const f = mediaFile(r.id); store.afterCommit(() => { try { fs.unlinkSync(f); } catch (e) {} }); } };
   // one post (or milestone) and everything hanging off it
   const dropEvent = id => tx(() => {
     q('DELETE FROM kudos WHERE event = ?').run(id);
@@ -706,7 +717,7 @@ function createSocial(opts) {
     if (e.type === 'post') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
       const t = d.trade ? Object.assign({}, d.trade) : null;
       if (t && !(m && m.share.usd)) delete t.usd; // dollar results only for members who share them
-      o.post = { kind: d.kind || 'note', trade: t, media: (d.media || []).map(id => '/api/social/media/' + id), verified: d.verified === true,
+      o.post = { kind: d.kind || 'note', trade: t, media: (d.media || []).map(id => '/api/social/media/' + id), verified: isVerified(d),
         comments: e.comments || 0, edited: e.edited || null, outcome: d.outcome || '', outcomeAt: d.outcomeAt || null }; }
     return o; };
   const eventsOut = (rows, viewer) => { const liked = likedBy(viewer, rows); return rows.map(e => eventOut(e, viewer, liked)); };
@@ -726,20 +737,28 @@ function createSocial(opts) {
     for (const id of ids) { const r = MEDIA_RE.test(id) ? q('SELECT * FROM media WHERE id = ?').get(id) : null;
       if (!r || r.member !== m.id || r.kind !== 'post' || (r.ref && r.ref !== 'post:' + postId)) return false; }
     return ids; };
-  // "On chain": the member's claimed (or, where claims aren't required, named) wallet has a fill in
-  // that coin within a minute of when they say the trade opened. Checked in the background.
-  const verifying = new Set();
-  const verifyPost = async (id, m) => {
-    if (!opts.tradeCheck || verifying.has(id)) return;
-    const addr = walletFor(m); if (!addr) return;
-    const e = eventById(id); let d = {}; try { d = JSON.parse(e && e.data || '{}') || {}; } catch (x) { return; }
-    const t = d.trade; if (!t || d.verified === true || !(t.status === 'open' || t.status === 'closed') || !t.openedAt) return;
-    verifying.add(id);
-    try { const ok = await opts.tradeCheck(addr, t); if (typeof ok !== 'boolean') return;
-      const cur = eventById(id); if (!cur) return; const d2 = JSON.parse(cur.data || '{}');
-      if (!own(S.members, m.id) || walletFor(S.members[m.id]) !== addr || !d2.trade || d2.trade.openedAt !== t.openedAt) return;
-      d2.verified = ok; q('UPDATE events SET data = ? WHERE id = ?').run(JSON.stringify(d2), id);
-    } catch (e2) {} finally { verifying.delete(id); } };
+  // "On chain": the wallet the member proved is theirs by signing (a claimed wallet, never just a
+  // typed address) has fills that match the post: the right side, in that market, within a minute of
+  // the times given, near the prices given (server.js tradeCheck). The mark belongs to one version of
+  // the trade (its times and exit): when those change it's checked again. Checks run in the
+  // background, two at a time, and a check that couldn't get an answer waits ten minutes to retry.
+  const checkedKey = t => [t.openedAt || 0, t.closedAt || 0, t.exit || 0].join(':');
+  const isVerified = d => d.verified === true && !!d.trade && d.checked === checkedKey(d.trade);
+  const vq = [], vlast = new Map(); let vbusy = 0;
+  const verifyPost = (id, m) => { if (!opts.tradeCheck || !m || vq.some(j => j.id === id)) return; vq.push({ id, mid: m.id }); runVerify(); };
+  const runVerify = () => { while (vbusy < 2 && vq.length) { const job = vq.shift(); vbusy++; verifyOne(job).catch(() => {}).finally(() => { vbusy--; runVerify(); }); } };
+  const verifyOne = async ({ id, mid }) => {
+    const m = own(S.members, mid) ? S.members[mid] : null; if (!m || !m.claimed || m.banned) return;
+    const addr = m.claimed, e = eventById(id); let d; try { d = JSON.parse(e && e.data || 'null'); } catch (x) { return; }
+    const t = d && d.trade; if (!t || !(t.status === 'open' || t.status === 'closed') || !t.openedAt) return;
+    const key = checkedKey(t); if (d.checked === key) return;
+    const last = vlast.get(id); if (last && last.key === key && now() - last.at < 10 * 60000) return;
+    vlast.set(id, { key, at: now() }); if (vlast.size > 5000) vlast.delete(vlast.keys().next().value);
+    const ok = await opts.tradeCheck(addr, Object.assign({ kind: d.kind }, t)); if (typeof ok !== 'boolean') return;
+    const cur = eventById(id); if (!cur) return; const d2 = JSON.parse(cur.data || '{}');
+    if (!d2.trade || checkedKey(d2.trade) !== key) { verifyPost(id, m); return; } // it changed meanwhile: check what it is now
+    if (!own(S.members, mid) || S.members[mid].claimed !== addr) return;
+    d2.verified = ok; d2.checked = key; q('UPDATE events SET data = ? WHERE id = ?').run(JSON.stringify(d2), id); };
   // newest first, `limit` the viewer may see, older than the cursor ("<at>.<id>" of the last one shown)
   const feedPage = (viewer, where, args, cursor, limit) => {
     let at = Number.MAX_SAFE_INTEGER, id = '~';
@@ -751,7 +770,8 @@ function createSocial(opts) {
       for (const r of rows) { last = r; if (visible(r, viewer)) out.push(r); if (out.length >= limit) break; }
       if (last) { at = last.at; id = last.id; }
     }
-    return { rows: out, next: out.length >= limit && last ? last.at + '.' + last.id : null };
+    // a short page with more rows behind it (a long run the viewer can't see) still hands on its cursor
+    return { rows: out, next: (out.length >= limit || more) && last ? last.at + '.' + last.id : null };
   };
   const compOut = (c, viewer, full) => { const st = compStatus(c, todayKey());
     const rows = compStandings(c, members(), todayKey(), !!S.config.requireClaim);
@@ -872,6 +892,9 @@ function createSocial(opts) {
         if (!(L.hall || []).some(h => h.season === id)) try { closeSeason(L, id); } catch (e) {} } }
     if (ch) save(); };
 
+  // daily limits kept on the member (posts, uploads): deleting a post or picture doesn't give the slot back
+  const dayLimit = (m, k, n) => { const L = (Array.isArray(m[k]) ? m[k] : []).filter(t => now() - t < 86400000);
+    if (L.length >= n) { m[k] = L; return true; } L.push(now()); m[k] = L; touch(m); return false; };
   const readRaw = (req, limit) => new Promise((resolve, reject) => { let size = 0; const ch = [];
     req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('too large')); req.destroy(); return; } ch.push(c); });
     req.on('end', () => resolve(Buffer.concat(ch))); req.on('error', reject); });
@@ -902,7 +925,9 @@ function createSocial(opts) {
       const kind = query.kind === 'avatar' ? 'avatar' : 'post', max = kind === 'avatar' ? MAX_AVATAR : MAX_IMAGE;
       if (kind === 'post' && !(S.config.posts.on && S.config.posts.images)) return json(res, 403, { error: 'Images on posts are switched off on this server.' });
       if (+req.headers['content-length'] > max) { res.setHeader('Connection', 'close'); return json(res, 413, { error: 'That image is too large.' }); }
-      if (q('SELECT count(*) AS n FROM media WHERE member = ? AND at > ?').get(who.id, now() - 86400000).n >= MEDIA_PER_DAY) return json(res, 429, { error: 'That’s a lot of images today. Try again tomorrow.' });
+      // counted when the upload starts, so parallel uploads can't all slip under the limit
+      if (dayLimit(who, 'mediaLog', MEDIA_PER_DAY)) return json(res, 429, { error: 'That’s a lot of images today. Try again tomorrow.' });
+      save(who);
       let buf; try { buf = await readRaw(req, max); } catch (e) { return json(res, e.message === 'too large' ? 413 : 400, { error: e.message === 'too large' ? 'That image is too large.' : 'invalid body' }); }
       const mime = sniffImage(buf); if (!mime) return json(res, 415, { error: 'Images must be WebP, JPEG or PNG.' });
       // pictures uploaded but never used (a post that wasn't sent) go after a day
@@ -1541,17 +1566,17 @@ function createSocial(opts) {
       if (!text && kind !== 'trade') return json(res, 400, { error: 'Write something first.' });
       const media = sanitizeMediaIds(body.media, me, null); if (media === false) return json(res, 400, { error: 'One of the images is missing. Add it again.' });
       if (media.length && !pc.images) return json(res, 403, { error: 'Images on posts are switched off on this server.' });
-      if (q("SELECT count(*) AS n FROM events WHERE member = ? AND type = 'post' AND at > ?").get(me.id, now() - 86400000).n >= POSTS_PER_DAY) return json(res, 429, { error: POSTS_PER_DAY + ' posts a day is the limit.' });
+      if (dayLimit(me, 'postLog', POSTS_PER_DAY)) return json(res, 429, { error: POSTS_PER_DAY + ' posts a day is the limit.' });
       const id = crypto.randomBytes(6).toString('hex');
       tx(() => { q("INSERT INTO events (id, at, member, type, text, quote, data) VALUES (?, ?, ?, 'post', ?, '', ?)").run(id, now(), me.id, text, JSON.stringify({ kind, trade, media }));
         for (const mid of media) q('UPDATE media SET ref = ? WHERE id = ?').run('post:' + id, mid); });
-      verifyPost(id, me);
+      save(me); verifyPost(id, me);
       return json(res, 200, { post: eventOut(eventById(id), me, null) });
     }
     if (head === 'posts' && parts[1]) {
       const e = eventById(arg); if (!e || e.type !== 'post' || !visible(e, me)) return json(res, 404, { error: 'That post isn’t here any more.' });
       if (!parts[2] && M === 'GET') {
-        const cs = q('SELECT * FROM comments WHERE event = ? ORDER BY at ASC LIMIT 300').all(e.id).filter(c => own(S.members, c.member) && !S.members[c.member].banned);
+        const cs = q('SELECT * FROM comments WHERE event = ? ORDER BY at DESC LIMIT 300').all(e.id).reverse().filter(c => own(S.members, c.member) && !S.members[c.member].banned);
         return json(res, 200, { post: eventOut(e, me, likedBy(me, [e])), comments: cs.map(c => commentRowOut(c, me, e)) }); }
       if (!parts[2] && M === 'PUT') {
         if (e.member !== me.id) return json(res, 403, { error: 'Only its author can change a post.' });
@@ -1560,8 +1585,12 @@ function createSocial(opts) {
         // the thesis can be fixed for 15 minutes; after that only the outcome is added
         if (body.text !== undefined && cleanPost(body.text, 2000) !== e.text) { if (now() - e.at > POST_EDIT_MS) return json(res, 409, { error: 'The thesis can only be edited in the first 15 minutes. Add an update instead.' });
           text = cleanPost(body.text, 2000); edited = now(); }
-        if (body.trade && d.trade) d.trade = sanitizeTrade(body.trade, d.trade, { usd: !!me.share.usd });
-        if (body.outcome !== undefined) { const o = cleanPost(body.outcome, 500); if (o !== (d.outcome || '')) { d.outcome = o; d.outcomeAt = now(); } }
+        // a plan can't have been taken before it was posted
+        if (body.trade && d.trade) d.trade = sanitizeTrade(body.trade, d.trade, { usd: !!me.share.usd, notBefore: d.kind === 'plan' ? e.at - 60000 : 0 });
+        // the update, like the thesis, can be fixed for 15 minutes after it's first written
+        if (body.outcome !== undefined) { const o = cleanPost(body.outcome, 500);
+          if (o !== (d.outcome || '')) { if (d.outcome && now() - (d.outcomeFirst || d.outcomeAt || 0) > POST_EDIT_MS) return json(res, 409, { error: 'The update can only be changed in its first 15 minutes.' });
+            if (!d.outcome) d.outcomeFirst = now(); d.outcome = o; d.outcomeAt = now(); } }
         q('UPDATE events SET text = ?, data = ?, edited = ? WHERE id = ?').run(text, JSON.stringify(d), edited, e.id);
         verifyPost(e.id, me);
         return json(res, 200, { post: eventOut(eventById(e.id), me, likedBy(me, [e])) }); }

@@ -36,7 +36,8 @@ const MIGRATIONS = [
    CREATE INDEX comments_member ON comments (member, at);
    CREATE TABLE reports (id TEXT PRIMARY KEY, event TEXT, comment TEXT, member TEXT NOT NULL, at INTEGER NOT NULL, why TEXT NOT NULL DEFAULT '',
      open INTEGER NOT NULL DEFAULT 1);
-   CREATE UNIQUE INDEX reports_once ON reports (member, ifnull(event, ''), ifnull(comment, ''));
+   -- one open report per member per post or comment; after the owner deals with it, a new one can come in
+   CREATE UNIQUE INDEX reports_once ON reports (member, ifnull(event, ''), ifnull(comment, '')) WHERE open = 1;
    CREATE INDEX reports_open ON reports (open, at);
    -- uploaded images; the bytes are files in DATA_DIR/media named by id
    CREATE TABLE media (id TEXT PRIMARY KEY, member TEXT NOT NULL, at INTEGER NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
@@ -59,10 +60,13 @@ function open(dataDir) {
   // prepared once, reused: the same few statements run on every request
   const stmts = new Map();
   const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
-  let depth = 0; // a transaction inside another one joins it
+  let depth = 0, after = []; // a transaction inside another one joins it
+  // afterCommit: work outside the database (deleting files) that must only happen once the rows are gone
+  const afterCommit = fn => { if (depth) after.push(fn); else fn(); };
   const tx = fn => { if (depth) return fn(); db.exec('BEGIN'); depth++;
-    try { const r = fn(); depth--; db.exec('COMMIT'); return r; } catch (e) { depth = 0; try { db.exec('ROLLBACK'); } catch (e2) {} throw e; } };
-  return { db, file, q, tx, close: () => { try { db.close(); } catch (e) {} } };
+    try { const r = fn(); depth--; db.exec('COMMIT'); const a = after; after = []; for (const f of a) try { f(); } catch (e) {} return r; }
+    catch (e) { depth = 0; after = []; try { db.exec('ROLLBACK'); } catch (e2) {} throw e; } };
+  return { db, file, q, tx, afterCommit, close: () => { try { db.close(); } catch (e) {} } };
 }
 
 // The v0.1–v0.5 file: everything in one JSON object. Events (with their kudos lists) move to

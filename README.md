@@ -394,11 +394,17 @@ link to join *your* league. A server upgraded from an older version imports its
   are fixed once posted; afterwards you add what happened (took it, closed at a price,
   or didn't take it — or link the trade from your journal) and a line on how it went.
   Results show in R (from the stop) and %, and in dollars only if you share dollar
-  P&L. A trade gets an **On chain** mark when the profile's wallet has a fill in that
-  market within a minute of when it opened (and closed), from the last 50 days of
-  fills. Plans carry "A member's own plan, shared for accountability. Not advice."
-  Posts take comments (the author gets a note in their inbox), kudos and reports; ten
-  posts a day per member. The thesis can be edited for 15 minutes.
+  P&L. Results are worked out once, when the exit is known, and never rewritten; R is
+  capped at ±100. A trade gets an **On chain** mark only from a wallet the member
+  *claimed* by signing: it needs a fill on the right side (a buy for a long's entry) in
+  that market within a minute of when it opened and within 3% of the entry price, and
+  for a closed trade the opposite side near the close and the exit, from the last 50
+  days of fills. Changing the trade's times or exit checks it again; a plan can't be
+  marked as taken before it was posted. Plans carry "A member's own plan, shared for
+  accountability. Not advice." Posts take comments (the author gets a note in their
+  inbox), kudos and reports; ten posts and 40 pictures a day per member (deleting
+  doesn't give the slot back). The thesis and the update can each be changed for 15
+  minutes after they're written.
 - **Profile picture and bio.** Under **What you share**: a square picture (shrunk to
   256 px in the browser) and a bio of up to 160 characters, shown on your profile and
   next to your name across Social.

@@ -11114,7 +11114,9 @@ function wirePulse(){
     else if(ev.key==='Enter'&&(ev.target.id==='socLinkIn'||ev.target.id==='vaultPass'||ev.target.id==='vaultPass2')){ ev.preventDefault();
       const b=$(ev.target.id==='socLinkIn'?'socLinkGo':$('vaultUnlock')?'vaultUnlock':'vaultOn'); if(b)b.click(); }
     else if(ev.key==='Escape'&&(pzS.sheet||pzS.custom)){ pzS.sheet=false; pzS.custom=null; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
-  let prevTab=pzTab(); window.addEventListener('hashchange',()=>{ const tb=pzTab(); SOC.confirm=null; if(tb==='checkin')pzS.ck=null; if(tb==='sharing'&&prevTab!=='account')SOC.draft=null; prevTab=tb; pzRender(); window.scrollTo(0,0); });
+  let prevTab=pzTab(); window.addEventListener('hashchange',()=>{ const tb=pzTab(); SOC.confirm=null;
+    // a half-typed comment or update belongs to the post it was written on
+    for(const id of ['socCText','socUNote','socUExit']){ const el=$(id); if(el)el.value=''; } if(tb==='checkin')pzS.ck=null; if(tb==='sharing'&&prevTab!=='account')SOC.draft=null; prevTab=tb; pzRender(); window.scrollTo(0,0); });
   window.addEventListener('beforeinstallprompt',()=>{ if(pzS.sheet)pzRender(); });
 }
 if(PZ)wirePulse();
@@ -11224,7 +11226,7 @@ function pzApplyCfg(c){ if(!c)return; PZ_CFG={rev:PZ_CFG.rev+1,levels:c.levels||
 function socGet(name, p, maxAge){
   const c=SOC.cache[name], fresh=c&&Date.now()-c.at<(maxAge||30000);
   if(!fresh&&!SOC.busy[name]){ SOC.busy[name]=true;
-    socFetch(p).then(d=>{ SOC.cache[name]={at:Date.now(),d,err:null}; },e=>{ SOC.cache[name]={at:Date.now(),d:c?c.d:null,err:e.message}; })
+    socFetch(p).then(d=>{ socKeepOlder(name,c); SOC.cache[name]={at:Date.now(),d,err:null}; },e=>{ SOC.cache[name]={at:Date.now(),d:c?c.d:null,err:e.message}; })
       .finally(()=>{ SOC.busy[name]=false; if(PZ)pzRender(); }); }
   return c||null;
 }
@@ -11351,9 +11353,9 @@ function socProfileHtml(D, handle){
       <span class="pz-sub" style="font-size:13px">Level ${p.level} · ${esc(p.title)} · ${esc(T[p.tier]||p.tierName)} league</span><span class="pz-sub" style="font-size:12px">${p.followers} follower${p.followers===1?'':'s'} · ${p.following} following${p.address?' · '+esc(walletShort(p.address)):''}</span></span></section>
     ${p.bio?`<p class="pz-bio">${esc(p.bio)}</p>`:p.isMe?`<p class="pz-fine"><a href="#sharing">Add a picture and a line about how you trade</a></p>`:''}
     <div class="pz-wide"><div class="pz-col">${follow}${tiles}${money}${badges}</div><div class="pz-col">${habits}${ev?`<section class="pz-card" style="padding:4px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">Recent</b>${ev}</section>`:''}</div>
-      ${(()=>{ const ps=socWithMore('u:'+p.handle,d.posts||[]); if(!ps.length&&!p.isMe)return '';
+      ${(()=>{ const mk='u:'+p.handle.toLowerCase(), ps=socWithMore(mk,d.posts||[]); if(!ps.length&&!p.isMe)return '';
         return `<section class="pz-span" style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b style="font-size:17px">Posts</b>${p.isMe?socNewPostBtn():''}</div>
-          ${ps.length?`<div class="pz-jgrid">${ps.map(e=>socEvHtml(e)).join('')}</div>${socMoreHtml('u:'+p.handle,d.postsNext)}`:'<section class="pz-card"><p class="pz-sub">Share a trade you took or one you’re planning, with your thesis. It shows here and in your followers’ feeds.</p></section>'}</section>`; })()}</div>`;
+          ${ps.length?`<div class="pz-jgrid">${ps.map(e=>socEvHtml(e)).join('')}</div>${socMoreHtml(mk,d.postsNext)}`:'<section class="pz-card"><p class="pz-sub">Share a trade you took or one you’re planning, with your thesis. It shows here and in your followers’ feeds.</p></section>'}</section>`; })()}</div>`;
 }
 function socSharingHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
@@ -11443,7 +11445,13 @@ function socEvHtml(e, full){
 function socMoreHtml(key, next){ const M=SOC.more[key];
   const nx=M?M.next:next; if(!nx)return '';
   return `<button type="button" class="pz-ghost" data-soc-more="${esc(key)}" data-next="${esc(nx)}"${M&&M.busy?' disabled':''}>${M&&M.busy?'<span class="pz-spin"></span>Loading…':'Show older'}</button>`; }
-function socWithMore(key, first){ const M=SOC.more[key]; if(!M)return first; const seen=new Set(first.map(e=>e.id)); return first.concat(M.items.filter(e=>!seen.has(e.id))); }
+function socWithMore(key, first){ const M=SOC.more[key]; if(!M)return first; const seen=new Set(first.map(e=>e.id));
+  return first.concat(M.items.filter(e=>!seen.has(e.id))).sort((a,b)=>b.at-a.at||(a.id<b.id?1:-1)); }
+// a refreshed first page moves down as new posts arrive: what it held before stays listed under it
+// with the older pages already loaded, so nothing between them drops out of sight
+function socKeepOlder(name, c){ const M=SOC.more[name]; if(!M||!c||!c.d)return;
+  const old=(name.startsWith('u:')?c.d.posts:c.d.events)||[], have=new Set(M.items.map(e=>e.id));
+  M.items=old.filter(e=>!have.has(e.id)).concat(M.items); }
 function socNewPostBtn(){ const pc=SOC.cfg&&SOC.cfg.posts; if(pc&&!pc.on)return '';
   return `<a class="pz-cta pz-sm" href="#compose" style="width:auto;min-height:44px;padding:0 18px;display:inline-flex;align-items:center;gap:6px">${pzI('plus',16)}Post a trade</a>`; }
 
