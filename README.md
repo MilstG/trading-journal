@@ -227,7 +227,7 @@ time, month, market volatility and trend;
 **How the scores work** spells out every formula), **Check-in** (readiness, today's trade cap,
 loss limit and plan) and **Progress** (level, XP, streak and shields, the
 weekly challenge, badges, share cards). A quick journal screen rates and notes
-unjournaled trades. On a wide screen the tabs become a sidebar.
+unjournaled trades from the last 30 days — the ✎ count at the top of Today and Progress opens it. On a wide screen the tabs become a sidebar.
 
 **Your layout.** Every Pulse screen (Today, Stats, Progress) has **Customize
 this screen** at the bottom: show or hide each section, or reset to the default.

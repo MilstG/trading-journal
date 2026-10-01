@@ -598,6 +598,7 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-chips{display:flex;gap:8px;align-items:center}
 .pz-chip{display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 14px;border-radius:22px!important;text-decoration:none;font-family:var(--pz-num);font-size:20px;font-weight:600;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);cursor:pointer}
 #pz a.pz-chip.streak{background:#1A1510;border-color:#3A2C18;color:var(--pz-streak)}
+#pz a.pz-chip.pz-jchip{background:#1C1A2E;border-color:#35305E;color:#B69CFF;font-size:17px}
 #pz a.pz-chip.lvl{width:44px;padding:0;justify-content:center;border:2px solid var(--pz-xp);color:var(--pz-text)}
 .pz-chip.icon{width:44px;padding:0;justify-content:center;color:var(--pz-muted)}
 .pz-back{display:inline-flex;align-items:center;gap:2px;min-height:44px;font-size:14px;font-weight:600;text-decoration:none}
@@ -10083,8 +10084,8 @@ function pzNav(tab, level){
 function pzHead(kick,title,extra){
   return `<header class="pz-head"><div><span class="pz-kick">${esc(kick)}</span><h1 class="pz-h1">${esc(title)}</h1></div>${extra||''}</header>`;
 }
-function pzChips(g){
-  return `<div class="pz-chips"><a class="pz-chip streak" href="#progress" aria-label="${g.streak.current}-day discipline streak">${pzI('flame',18)}<span>${g.streak.current}</span></a>
+function pzChips(g, toJournal){
+  return `<div class="pz-chips">${toJournal?`<a class="pz-chip pz-jchip" href="#journal" aria-label="${toJournal} trade${toJournal===1?'':'s'} to journal">${pzI('pen',16)}<span>${toJournal}</span></a>`:''}<a class="pz-chip streak" href="#progress" aria-label="${g.streak.current}-day discipline streak">${pzI('flame',18)}<span>${g.streak.current}</span></a>
     <button type="button" class="pz-chip icon" data-pz-sheet aria-label="Settings and wallets">${pzI('gear',20)}</button></div>`;
 }
 
@@ -10161,6 +10162,7 @@ function pzNextHtml(D){
   const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
   if(!checked&&!traded)return card('#checkin','checkin',PZ_COL.risk,'Morning check-in','Thirty seconds: readiness, limits and today’s rules · +'+pzXpCfg().checkin+' XP');
   if(!lockR&&!reviewed&&(traded||h>=16))return card('#review','pen',PZ_COL.good,'End-of-day review',(D.day?'Five minutes, +'+pzXpCfg().review+' XP. ':'Five minutes. ')+'One lesson, one focus for tomorrow.');
+  if(D.inbox.length)return card('#journal','pen',PZ_COL.xp,D.inbox.length+' trade'+(D.inbox.length===1?'':'s')+' to journal','From the last 30 days: a rating, a setup or one line each'+(reviewed?' · today is reviewed':''));
   if(reviewed)return card('#review','check',PZ_COL.good,'Day reviewed',e.eod.tomorrow?'Tomorrow: '+esc(e.eod.tomorrow):'Edit any time tonight');
   return '';
 }
@@ -10472,10 +10474,10 @@ function pzTodayHtml(D){
   const safe=f=>{ try{ return f(); }catch(err){ console.warn('today section',err); return ''; } };
   const F=safe(()=>pzTodayFacts(D))||null;
   const on=id=>pzShow('today',id), sec=(id,f)=>on(id)?safe(f):'', more=(id,k)=>F&&on(id)?safe(()=>k(D,F)):'';
-  return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g))}
+  return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g,D.inbox.length))}
     ${sec('oneThing',()=>pzOneThingHtml(D))}
-    <div class="pz-wide">${ringsHtml}${more('numbers',pzTodayStripHtml)}${sec('level',()=>pzProgressRowHtml(D))}
-      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${sec('tilt',()=>pzTiltHtml(D))}${detail}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
+    <div class="pz-wide">${ringsHtml}<div class="pz-span" id="pzRingDetail">${detail}</div>${more('numbers',pzTodayStripHtml)}${sec('level',()=>pzProgressRowHtml(D))}
+      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${sec('tilt',()=>pzTiltHtml(D))}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
       <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${sec('inbox',()=>socInboxHtml())}${sec('partners',()=>socPartnerStripHtml())}${sec('lesson',()=>pzLessonDueHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
     ${pzCustomizeLink('today')}`;
 }
@@ -10997,7 +10999,10 @@ function wirePulse(){
   root.addEventListener('click',async ev=>{
     const t=ev.target.closest('button,a,[data-pz-close]'); if(!t||!root.contains(t))return;
     const ds=t.dataset;
-    if(ds.pzRing){ pzS.ring=ds.pzRing; pzRender(); return; }
+    if(ds.pzRing){ pzS.ring=ds.pzRing; pzRender();
+      // the detail opens under the dials; bring it into view when the screen has scrolled
+      const d=$('pzRingDetail'); if(d&&d.getBoundingClientRect().bottom>innerHeight)d.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+      return; }
     if(await pzGrowthAction(t))return;
     if(ds.pzRange){ pzS.range=ds.pzRange==='all'?'all':+ds.pzRange; pzRender(); return; }
     if(ds.pzBadge){ pzS.badge=pzS.badge===ds.pzBadge?null:ds.pzBadge; pzRender(); return; }
@@ -11782,7 +11787,7 @@ function pzProgressHtml(D){
   const pb=`<section class="pz-card pz-kv"><b class="pz-kvh">Personal bests</b>${g.pbs.map(p=>`<div class="pz-row-t"><span>${esc(p.label)}${p.isNew?' <span class="pz-new">new</span>':''}</span><b>${p.value!=null?p.value+(p.unit?' '+p.unit:''):'—'}</b></div>`).join('')}</section>`;
   const share=pzLocked('share',L.level);
   const P=(id,h)=>pzShow('progress',id)?h:'';
-  return `${pzHead('Earned by process','Progress',pzChips(g))}
+  return `${pzHead('Earned by process','Progress',pzChips(g,D.inbox.length))}
   <div class="pz-wide">${hero}
     ${P('goals',(()=>{ try{ return pzGoalsHtml(g); }catch(e){ console.warn('goals',e); return ''; } })())}
     <div class="pz-col">${P('xpsources',xpCard)}${P('challenge',chHtml)}${P('habits',habitsHtml)}${P('reports',reportHtml)}</div>
