@@ -474,8 +474,7 @@ already syncs the whole journal with `AUTH_TOKEN`, so this is for members only, 
 the owner can switch it off.
 
 **Unlocks.** Pulse features unlock with level — by default deeper Stats insights at level 2, share
-cards at 3 and joining competitions at 4 — plus colour themes (Ember 3, Aurora 5,
-Gold 8). XP only comes from process, so unlocking rewards good habits. The owner can
+cards at 3 and joining competitions at 4. XP only comes from process, so unlocking rewards good habits. The owner can
 map every feature (insights, in-depth stats, share cards, competitions, AI coach,
 end-of-day review, report cards) to a level, switch unlocks off, or **fully unlock**
 chosen members. Sample data shows everything. The full journal at `/` is never locked.
@@ -496,7 +495,7 @@ chosen members. Sample data shows everything. The full journal at `/` is never l
   awarded by hand, each paying the XP you set.
 - **Levels & XP** — levels on a curve or a table of thresholds, level titles, a live
   preview, and the XP every action pays.
-- **Features** — the level each feature and theme unlocks at.
+- **Features** — the level each feature unlocks at.
 - **Coach** — on/off for members, daily allowances, your own limit, whether members
   may share trades and notes, today's usage.
 - **Routines** — replace the built-in profiles' questions and add your own profiles.

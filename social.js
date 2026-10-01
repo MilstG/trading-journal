@@ -56,7 +56,7 @@ const MAX_MEMBERS = 5000;
 const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, vaultOn: true,
-  unlocks: { trends: 2, share: 3, compete: 4 }, themes: { ember: 3, aurora: 5, gold: 8 } };
+  unlocks: { trends: 2, share: 3, compete: 4 } };
 const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr', 'mentor'];
 // mentor: the league's mentors can see your trading days (scores, slips, the lesson you wrote) and comment on them — opt-in
 // global: appear on the server-wide leaderboards (every member, every league) — opt-in
@@ -392,8 +392,8 @@ function createSocial(opts) {
   if (!S.comps || typeof S.comps !== 'object') S.comps = {};
   if (!S.league || typeof S.league !== 'object') S.league = { week: null };
   S.config = Object.assign({}, DEFAULT_CONFIG, S.config, {
-    unlocks: Object.assign({}, DEFAULT_CONFIG.unlocks, S.config && S.config.unlocks),
-    themes: Object.assign({}, DEFAULT_CONFIG.themes, S.config && S.config.themes) });
+    unlocks: Object.assign({}, DEFAULT_CONFIG.unlocks, S.config && S.config.unlocks) });
+  delete S.config.themes; // colour themes were dropped
   // v0.4 sections; v0.3's three unlock levels carry over into the feature map
   S.config.modules = SC.sanitizeModules(S.config.modules || S.config.unlocks, null);
   S.config.levels = SC.sanitizeLevels(S.config.levels, null);
@@ -923,7 +923,7 @@ function createSocial(opts) {
 
     if (head === 'config' && M === 'GET')
       return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
-        unlocks: S.config.unlocks, themes: S.config.themes, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
+        unlocks: S.config.unlocks, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
         claims: !!sig, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles,
         coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail }, posts: postCfgOut(),
@@ -1034,8 +1034,6 @@ function createSocial(opts) {
             if (c.requireClaim && !walletFor(m)) { m.vdays = null; m.money = null;
               for (const cc of Object.values(S.comps)) if (cc.money) delete cc.money[m.id]; } }
         }
-        for (const [grp, keys] of [['themes', ['ember', 'aurora', 'gold']]])
-          if (body[grp] && typeof body[grp] === 'object') for (const k of keys) { const v = clampNum(body[grp][k], 1, 100); if (v != null) c[grp][k] = Math.round(v); }
         c.unlocks = { trends: c.modules.trends, share: c.modules.share, compete: c.modules.compete };
         save(); return json(res, 200, { ok: true, config: c });
       }

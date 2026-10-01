@@ -924,11 +924,6 @@ img.pz-av{object-fit:cover;background:#23272E;padding:0}
 .pz-switch[aria-checked="true"]{background:var(--pz-acc)}
 .pz-switch i{position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%!important;background:#F3F5F7;transition:left .15s}
 .pz-switch[aria-checked="true"] i{left:23px}
-.pz-swatches{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.pz-swatch{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border-radius:16px!important;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-soft);font-size:12px;font-weight:600;cursor:pointer}
-.pz-swatch[aria-pressed="true"]{border-color:var(--pz-text)}
-.pz-swatch:disabled{cursor:default;opacity:.65}
-.pz-swatch i{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%!important;color:#A1AAB5}
 .pz-bonus{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--pz-line);text-decoration:none}
 #pz a.pz-bonus{color:var(--pz-text)}
 .pz-bonus b{display:block;font-size:14px;font-weight:600}
@@ -1378,14 +1373,14 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     if(data.settings){ if('riskDefault' in data.settings)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout;
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout;
       if(data.settings.pzLessons&&typeof data.settings.pzLessons==='object')settings.pzLessons=pzLessonsNorm(data.settings.pzLessons);
       if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
@@ -1434,7 +1429,7 @@ function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMa
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
 // wins there, as before).
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals'];
 // lessons and goals are lists edited on several devices: a conflict merges them by id instead of
 // letting one device's copy replace the other's (the newest change to an item wins; removals stick)
 function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }
@@ -10148,7 +10143,7 @@ const PZ_SECTIONS={
   stats:[['tiles','Headline numbers','Net, win rate, average trade and more',1],['daily','Daily P&L','',1],['findings','What moves your results','Your biggest edges and leaks',1],
     ['insights','Does discipline pay?','Results on good-discipline days vs the rest',1],['markets','Markets and time of day','Best and worst markets and hours',1]],
   progress:[['goals','Process goals','Targets you set for your process, with progress',1],['xpsources','Where your XP came from','',1],['challenge','Weekly challenge','',1],['habits','Your habits','Streaks for each habit you run',1],['reports','Report cards','Last week and this month',1],
-    ['leaks','Your leaks','What your slips cost, and plugging them',1],['lessons','Lessons library','Everything your reviews taught you',1],['moments','Good moments','',1],['badges','Badges','Your latest badges',1],['bests','Personal bests','',1],['themes','Themes','',1]],
+    ['leaks','Your leaks','What your slips cost, and plugging them',1],['lessons','Lessons library','Everything your reviews taught you',1],['moments','Good moments','',1],['badges','Badges','Your latest badges',1],['bests','Personal bests','',1]],
 };
 // Today's cards below the dials can also be put in your own order (the top of the screen stays put)
 const PZ_FLOW={today:[['tilt','insight','session','positions'],['next','now','good','inbox','partners','lesson','xp','week','yesterday']]};
@@ -11023,7 +11018,7 @@ function pzRender(){
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
       :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='post'?socPostHtml(D,pzHashArg()):tab==='compose'?socComposeHtml(D):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
-    pzApplyTheme(lv); socSync(D.g); }
+    socSync(D.g); }
   view.innerHTML=html;
   pzQuietMount(allTrades.length?_pzLastD:null);
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
@@ -11158,8 +11153,7 @@ const SOC_COMP_HOW={
   survivor:'Stay under your daily loss limit on every trading day. The first day you hit it, you’re out. Days you don’t trade are safe.',
   journal:'Journal every closed trade, day after day. Your longest run of fully journaled trading days counts.',
   return:'Return over the competition dates, read from your wallet on chain. Cross the drawdown cap at any point and you finish last.'};
-const PZ_THEMES=[['mint','Mint','#3FE0A0'],['ember','Ember','#FF9F5A'],['aurora','Aurora','#8FA8FF'],['gold','Gold','#F4C04E']];
-const PZ_UNLOCK_DEFAULTS={unlocksOn:true,unlocks:{trends:2,share:3,compete:4},themes:{ember:3,aurora:5,gold:8}};
+const PZ_UNLOCK_DEFAULTS={unlocksOn:true,unlocks:{trends:2,share:3,compete:4}};
 var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'league',board:'rank',cfilter:'mine',feed:'following',
   cache:{},busy:{},lastSent:'',lastSentAt:0,timer:null,draft:null,avs:{},more:{},upd:{},compose:null,confirm:null};
 try{ SOC.key=localStorage.getItem(SOC_KEY_STORE)||null; }catch(e){}
@@ -11189,11 +11183,11 @@ function socHabitSpec(sentence){
   const s=String(sentence||'').trim(), m=s.match(/^when (.+?), (.+?)\.?$/i);
   return m?{kind:'self',when:m[1],then:m[2]}:{kind:'self',when:'I trade',then:s.replace(/\.$/,'')};
 }
-// Level-gated features and themes. 0 = available; otherwise the level that unlocks it.
+// Level-gated features. 0 = available; otherwise the level that unlocks it.
 function pzUnlockCfg(){ return SOC.cfg||PZ_UNLOCK_DEFAULTS; }
 function pzNeeds(feature, level, cfg, demo, unlocked){
   cfg=cfg||PZ_UNLOCK_DEFAULTS; if(!cfg.unlocksOn||demo||unlocked)return 0;
-  const need=feature.startsWith('theme:')?(cfg.themes||{})[feature.slice(6)]:((cfg.modules||cfg.unlocks||{})[feature]);
+  const need=(cfg.modules||cfg.unlocks||{})[feature];
   return need>1&&level<need?need:0;
 }
 // Pulse's own check: the league's levels, unless the owner fully unlocked this member (or it's the owner)
@@ -11399,17 +11393,6 @@ function pzLockedHtml(title, need, g){
     <div class="pz-big">${esc(title)} unlocks at level ${need}</div><p class="pz-sub">${pzXpToGo(need,g)} XP comes from process: check in, plan before your first trade, keep your stops and journal every trade.</p>
     <a class="pz-cta" href="#checkin" style="max-width:320px">Earn XP: do today’s check-in</a></section>`;
 }
-function pzThemesHtml(g){
-  const cfg=pzUnlockCfg(), cur=settings.pzTheme||'mint';
-  return `<section class="pz-span" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Themes</b><div class="pz-swatches">${PZ_THEMES.map(([k,l,c])=>{ const need=k==='mint'?0:pzLocked('theme:'+k,g.level.level);
-    return `<button type="button" class="pz-swatch" data-pz-theme="${k}" aria-pressed="${cur===k}"${need?' disabled':''} aria-label="${l} theme${need?', unlocks at level '+need:''}"><i style="background:${need?'#2C333C':c}">${need?pzI('lock',14):''}</i>${l}${need?`<span class="pz-fine" style="font-size:10px">Level ${need}</span>`:''}</button>`; }).join('')}</div></section>`;
-}
-// A theme only applies while its level is reached (a synced choice from a higher-level device, or
-// an owner raising the bar, falls back to Mint instead of showing a locked theme).
-function pzApplyTheme(level){ const r=$('pz'); if(!r)return; const t=PZ_THEMES.find(x=>x[0]===settings.pzTheme);
-  const need=t&&t[0]!=='mint'?pzLocked('theme:'+t[0],level||1):0;
-  r.style.setProperty('--pz-acc',t&&!need?t[2]:'#3FE0A0'); }
-
 // ---- posts: trades members took or plan to take, with the thesis, pictures and comments ----
 // Profile pictures arrive with names in any answer ({handle, av}); socAv draws them wherever a name shows.
 function socLearnAv(x,depth){ if(!x||typeof x!=='object'||depth>6)return;
@@ -11674,7 +11657,6 @@ async function socAction(t){
     if(ds.socJoin){ await socFetch('/competitions/'+encodeURIComponent(ds.socJoin)+'/join',{method:'POST'}); done('You’re in. Good luck — play your process.'); return true; }
     if(ds.socLeave){ if(!confirm('Leave this competition?'))return true; await socFetch('/competitions/'+encodeURIComponent(ds.socLeave)+'/join',{method:'DELETE'}); done('You left the competition.'); return true; }
     if(ds.socAdopt){ await adoptHabit(socHabitSpec(ds.socAdopt)); done('Added to your habits. It’s tracked by the day journal’s “I followed the plan”.'); return true; }
-    if(ds.pzTheme){ settings.pzTheme=ds.pzTheme; await Store.set(S_KEY,settings); pzRender(); return true; }
     if(t.id&&await acctAction(t))return true;
     switch(t.id){
       case 'socJoin': { const h=($('socHandle')||{value:''}).value.trim(), inv=($('socInvite')||{value:''}).value.trim();
@@ -12077,7 +12059,6 @@ function pzProgressHtml(D){
     ${P('goals',(()=>{ try{ return pzGoalsHtml(g); }catch(e){ console.warn('goals',e); return ''; } })())}
     <div class="pz-col">${P('xpsources',xpCard)}${P('challenge',chHtml)}${P('habits',habitsHtml)}${P('reports',reportHtml)}</div>
     <div class="pz-col">${P('leaks',leakHtml)}${P('lessons',(()=>{ try{ return pzLessonsCardHtml(); }catch(e){ console.warn('lessons',e); return ''; } })())}${P('moments',gmHtml)}${P('badges',badgeHtml)}${P('bests',pb)}</div>
-    ${P('themes',pzThemesHtml(g))}
     <section class="pz-span" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${share?`<span class="pz-fine">${pzI('lock',14)} Share cards unlock at level ${share}</span>`:'<button type="button" class="pz-ghost pz-sm" id="pzShare" style="width:auto;padding:0 16px">Share this week</button>'}</section>
     <div class="pz-span" id="gmOut"></div>
     ${pzCustomizeLink('progress')}

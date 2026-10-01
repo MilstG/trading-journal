@@ -333,9 +333,9 @@ t('a cut-off answer from the server is an error, never an empty success that rea
 t('the wallet signs the exact server text, hex-encoded for personal_sign', () => {
   eq(cctx.utf8Hex('Hi ✓'), '0x' + Buffer.from('Hi ✓').toString('hex'));
 });
-t('the Pulse theme now travels with backups and every sync', () => {
-  ok(grabFn('snapshot').includes('pzTheme:settings.pzTheme'));
-  ok(grabFn('applySnapshot').includes("typeof data.settings.pzTheme==='string'"));
+t('the Pulse layout (shown sections and their order) travels with backups and every sync', () => {
+  ok(grabFn('snapshot').includes('pzLayout:settings.pzLayout'));
+  ok(grabFn('applySnapshot').includes("data.settings.pzLayout&&typeof data.settings.pzLayout==='object'"));
 });
 t('every local save reaches the encrypted sync, and the owner never uses it (they already sync the whole journal)', () => {
   ok(grabFn('markJEdit').includes('vaultMark(id)'));

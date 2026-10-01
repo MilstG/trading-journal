@@ -240,7 +240,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       ${UI.addOpen?`<div class="sub" style="margin-top:12px">
         <div class="row">${field('nmHandle','Name','<input id="nmHandle" maxlength="20" placeholder="sam_trades" autocomplete="off">')}${field('nmAddr','Wallet (optional)','<input id="nmAddr" maxlength="42" placeholder="0x…" autocomplete="off">')}</div>
         <fieldset style="border:0;padding:0;margin:0"><legend style="font-size:13px;font-weight:600;margin:10px 0 6px">Leagues</legend><div class="chk">${D.leagues.map(L=>`<label><input type="checkbox" name="nmLeague" value="${esc(L.id)}" id="nmL_${esc(L.id)}"${L.autoJoin?' checked':''}>${esc(L.name)}</label>`).join('')}</div></fieldset>
-        ${box('nmUnlocked','Fully unlocked — every feature, theme and the bigger coach allowance from day one',false)}
+        ${box('nmUnlocked','Fully unlocked — every feature and the bigger coach allowance from day one',false)}
         <div style="margin-top:10px"><button class="primary" id="nmCreate">Create and get a sign-in code</button></div>
         <p class="hint">They open the link, or paste the code in Pulse → Social → Account → “Link a device”. It works once, within 7 days.</p>
       </div>`:''}
@@ -293,7 +293,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
         ${grants.length?`<h3>History</h3><div class="scroll"><table><tbody>${pager('grants:'+m.id,grants).items.map(g=>`<tr><td><b>${g.xp>0?'+':''}${fmt(g.xp)}</b></td><td>${esc(g.why)}</td><td class="muted small">${esc(ago(g.at))}</td><td><button class="sm danger" data-ungrant="${esc(g.id)}">Undo</button></td></tr>`).join('')}</tbody></table></div>${pager('grants:'+m.id,grants).html}`:''}
       </section>
       <section class="card"><h2>Access</h2>
-        ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature and theme regardless of level, and the unlocked coach allowance.')}
+        ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature regardless of level, and the unlocked coach allowance.')}
         ${box('mMentor','Mentor',m.mentor,'Sees the days of members who let mentors in (scores, slips, nightly lesson) and can leave them notes.')}
         ${field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
         <div style="margin-top:12px"><button class="primary" data-m="access">Save access</button></div>
@@ -444,8 +444,6 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     return `<section class="card"><h2>Unlock features by level</h2>
       ${box('fOn','Unlock Pulse features with levels',c.unlocksOn,'Off: every member gets every feature. Fully unlocked members, and you, always do.')}
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">${Object.entries(mods).map(([k,l])=>field('mod_'+k,l,`<input id="mod_${k}" type="number" min="1" max="100" value="${c.modules[k]}">`,c.modules[k]<=1?'Everyone':'From level '+c.modules[k])).join('')}</div>
-      <h3>Themes</h3>
-      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">${['ember','aurora','gold'].map(k=>field('th_'+k,k[0].toUpperCase()+k.slice(1)+' theme',`<input id="th_${k}" type="number" min="1" max="100" value="${c.themes[k]}">`)).join('')}</div>
       <div style="margin-top:14px"><button class="primary" id="fSave">Save</button></div>
       <p class="hint">Members see a lock with the level it opens at. The server enforces it for competitions and the coach too.</p></section>`;
   }
@@ -594,7 +592,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
     if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Pulse.'); }
     // features
-    if(id==='fSave') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),themes:nums(['ember','aurora','gold'],'th_')}),'Saved.');
+    if(id==='fSave') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_')}),'Saved.');
     // coach
     if(id==='cSave') return act(()=>put({coach:Object.assign({members:chk('cMembers'),detail:chk('cDetail')},...[['daily','cDaily'],['dailyUnlocked','cDailyU'],['ownerDaily','cOwner']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))}),'Coach settings saved.');
     // routines

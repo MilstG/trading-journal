@@ -230,9 +230,9 @@ try {
     await call('/admin/members/' + b.id, { method: 'POST', admin: true, body: { action: 'ban' } });
     eq((await call('/me', { key: Bk })).status, 403);
     eq((await call('/league', { key: A })).d.rows.map(r => r.handle), ['alpha_1']);
-    await call('/admin/config', { method: 'PUT', admin: true, body: { open: false, unlocks: { trends: 5 }, themes: { gold: 999 } } });
+    await call('/admin/config', { method: 'PUT', admin: true, body: { open: false, unlocks: { trends: 5 } } });
     const cfg = (await call('/config')).d;
-    eq(cfg.open, false); eq(cfg.unlocks.trends, 5); eq(cfg.themes.gold, 100, 'levels are clamped');
+    eq(cfg.open, false); eq(cfg.unlocks.trends, 5);
     eq((await call('/join', { method: 'POST', body: { handle: 'late' } })).status, 403);
     await call('/admin/announce', { method: 'POST', admin: true, body: { text: 'Survivor starts Monday' } });
     const ev = await call('/admin/events', { admin: true });
@@ -338,12 +338,12 @@ const ctx = { Math, Object, Array, String, JSON, Intl, settings: { tz: "utc" } }
 vm.createContext(ctx);
 vm.runInContext('const PZ_UNLOCK_DEFAULTS=' + html.slice(html.indexOf('const PZ_UNLOCK_DEFAULTS=') + 25, html.indexOf(';\n', html.indexOf('const PZ_UNLOCK_DEFAULTS='))) + ';\n'
   + ['pzNeeds', 'socHabitSpec', 'pzSocialStats', 'pzClockZone'].map(grabFn).join('\n') + '\nfunction habitSentence(s){ return "When "+s.when+", "+s.then+"."; }', ctx);
-t('unlock levels: owner settings, off switch, sample data and themes', () => {
+t('unlock levels: owner settings, off switch and sample data', () => {
   eq(ctx.pzNeeds('trends', 1), 2); eq(ctx.pzNeeds('trends', 2), 0);
   eq(ctx.pzNeeds('compete', 3, { unlocksOn: true, unlocks: { compete: 6 } }), 6);
   eq(ctx.pzNeeds('compete', 1, { unlocksOn: false, unlocks: { compete: 6 } }), 0);
   eq(ctx.pzNeeds('trends', 1, undefined, true), 0, 'sample data shows everything');
-  eq(ctx.pzNeeds('theme:gold', 7), 8); eq(ctx.pzNeeds('theme:unknown', 1), 0);
+  eq(ctx.pzNeeds('unknown', 1), 0);
 });
 t('a shared habit sentence becomes a self-graded habit', () => {
   eq(ctx.socHabitSpec('When I close two losing trades in a row, I stop for the day.'), { kind: 'self', when: 'I close two losing trades in a row', then: 'I stop for the day' });
