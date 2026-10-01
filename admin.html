@@ -9,8 +9,10 @@
 <style>
 :root{--bg:#0A0C0F;--card:#14171C;--card2:#101318;--line:#1F242B;--line2:#2C333C;--text:#F3F5F7;--muted:#A1AAB5;--soft:#D5DBE1;--good:#3FE0A0;--mid:#F4C04E;--low:#FF7A59;--risk:#5AA9FF;--xp:#B69CFF}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}
 a{color:var(--good)}
+a.btnlink{display:inline-flex;align-items:center;min-height:40px;padding:9px 16px;border-radius:999px;border:1px solid var(--line2);color:var(--text);text-decoration:none;font-weight:700}
+a.btnlink:hover{border-color:var(--good)}
 code{font-size:12.5px;background:#1B1F25;padding:1px 5px;border-radius:6px}
 main{max-width:1120px;margin:0 auto;padding:24px 16px 80px;display:flex;flex-direction:column;gap:18px}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -206,7 +208,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     const main=D.leagues.find(L=>L.id==='main'), live=Math.max(1,o.members-o.banned);
     const top=D.members.filter(m=>!m.banned).sort((a,b)=>b.xp-a.xp).slice(0,5);
     return `${tiles([['Members',fmt(o.members),o.banned?o.banned+' suspended':''],['Active this week',fmt(o.active7)],['Leagues',o.leagues],['Reward badges',o.badges],
-      ['Competitions',o.comps],['Coach messages today',fmt(o.coachToday),o.coachAi?'AI on':'AI off'],['Claimed wallets',o.claimed||0],['Synced journals',o.vaults?o.vaults+' · '+size(o.vaultBytes):0],['League week',o.week?o.week.slice(-3):'—']])}
+      ['Competitions',o.comps],['Coach messages today',fmt(o.coachToday),o.coachAi?'AI on':'AI off'],['Claimed wallets',o.claimed||0,o.vaults?o.vaults+' synced journals · '+size(o.vaultBytes):'']])}
     ${warn.length?`<div class="stack" style="gap:8px">${warn.map(w=>`<p class="warn">${w}</p>`).join('')}</div>`:''}
     <div class="two">
       <section class="card"><h2>${esc(main?main.name:'Main league')} · tiers</h2>
@@ -217,7 +219,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       </section>
     </div>
     <section class="card"><h2>Quick actions</h2><div class="row" style="align-items:center">
-      <a class="fit" href="#members" data-open="member">Add a member</a><a class="fit" href="#leagues" data-open="league">New league</a><a class="fit" href="#badges" data-open="badge">New badge</a><a class="fit" href="#competitions">New competition</a><a class="fit" href="#feed">Post an announcement</a></div></section>`;
+      <a class="fit btnlink" href="#members" data-open="member">Add a member</a><a class="fit btnlink" href="#leagues" data-open="league">New league</a><a class="fit btnlink" href="#badges" data-open="badge">New badge</a><a class="fit btnlink" href="#competitions">New competition</a><a class="fit btnlink" href="#feed">Announce</a></div></section>`;
   }
 
   // ---------------- members ----------------

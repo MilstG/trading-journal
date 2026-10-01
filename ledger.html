@@ -627,7 +627,7 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 #pz a.pz-next{color:#F9DC8E}
 .pz-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .pz-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.pz-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.pz-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .pz-strip .pz-tile{padding:10px 12px;gap:2px}
 .pz-strip .pz-n{font-size:22px}
 .pz-strip .pz-n small{font-size:13px;color:var(--pz-muted)}
@@ -668,7 +668,7 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-spark span{display:block;width:70%;max-width:26px;border-radius:4px!important}
 .pz-spark em{font-style:normal;font-size:11px;color:var(--pz-muted)}
 .pz-uprow{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--pz-line);text-decoration:none;color:var(--pz-text)!important}
-@media (max-width:720px){ .pz-strip{grid-template-columns:repeat(3,minmax(0,1fr))} .pz-strip .pz-n{font-size:19px} }
+@media (max-width:720px){ .pz-strip .pz-n{font-size:19px} }
 .pz-pager{display:flex;align-items:center;justify-content:center;gap:12px;padding:6px 0;font-size:13px;color:var(--pz-soft)}
 .pz-pager button{width:40px;height:40px;border-radius:50%!important;border:1px solid var(--pz-line2);background:var(--pz-card);color:var(--pz-text);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .pz-pager button:disabled{opacity:.35;cursor:default}
@@ -683,6 +683,24 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-rseg{max-width:320px}
 .pz-addrow{display:flex;gap:8px}
 .pz-addrow input{flex:1;min-width:0}
+.pz-onething{display:flex;gap:10px;align-items:flex-start;margin:-4px 0 14px;padding:12px 14px;border-radius:16px!important;background:color-mix(in srgb, var(--pz-xp) 12%, transparent);color:var(--pz-soft);font-size:14px;line-height:1.4}
+.pz-onething svg{color:var(--pz-xp);flex:0 0 auto;margin-top:2px}
+.pz-onething b{color:var(--pz-text);margin-right:4px}
+.pz-planchips{display:flex;flex-wrap:wrap;gap:6px;padding-top:4px}
+.pz-sublbl{color:var(--pz-muted);font-size:11px;margin-top:8px}
+.pz-custom{display:flex;justify-content:center;margin:8px 0 0}
+.pz-custom .pz-link{background:none;border:0;padding:6px 10px;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:6px;color:var(--pz-muted)!important;font-size:13px}
+.pz-why{margin-top:4px;font-size:12px;color:var(--pz-muted)}
+.pz-why summary{cursor:pointer;display:inline-block;color:var(--pz-muted);list-style:none}
+.pz-why summary::-webkit-details-marker{display:none}
+.pz-why summary::after{content:' ›'}
+.pz-why[open] summary::after{content:' ⌄'}
+.pz-why span{display:block;margin-top:2px}
+.pz-bprog{display:flex;flex-direction:column;gap:6px;margin-top:-6px}
+.pz-rules>summary{display:flex;justify-content:space-between;align-items:baseline;gap:10px;cursor:pointer;list-style:none}
+.pz-rules>summary::-webkit-details-marker{display:none}
+.pz-rules>summary::after{content:'›';color:var(--pz-muted);font-size:18px;transform:rotate(90deg);transition:transform .15s}
+.pz-rules[open]>summary::after{transform:rotate(-90deg)}
 .pz-tile{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);min-width:0}
 .pz-tile .pz-n{font-family:var(--pz-num);font-size:28px;font-weight:600;line-height:1.05;overflow-wrap:anywhere}
 .pz-tile .pz-t{font-size:12px;color:var(--pz-soft)}
@@ -1295,14 +1313,14 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzTheme:settings.pzTheme, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     if(data.settings){ if('riskDefault' in data.settings)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(typeof data.settings.pzTheme==='string')settings.pzTheme=data.settings.pzTheme; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout; if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
     if(data.fillCaches && typeof data.fillCaches==='object'){
@@ -1349,7 +1367,7 @@ function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMa
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
 // wins there, as before).
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzTheme','pzPlugs','pzProfile','pzMarket','pzLayout'];
 function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; return JSON.parse(JSON.stringify(o)); }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); vaultSchedule(); }
 // A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min).
@@ -9652,7 +9670,7 @@ function pzCoachLine(D){
 // ---- UI state (never stored) ----
 const PZ_TABS=['today','trends','checkin','progress','discipline','journal','social','sharing','deep','how','badges','report','review','coach','leagues'];
 var _pzQuiet=false; // a background refresh of data Pulse already shows: no status toasts
-var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,jr:{},note:null};
+var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,jr:{},note:null};
 // a sign-in link from the league owner (/pulse#link=CODE): keep the code for the sign-in form, drop it from the address bar
 (function(){ const m=/^#link=([A-Za-z0-9-]{4,20})$/.exec(location.hash||''); if(!m)return; pzS.linkCode=m[1].toUpperCase(); pzS.acctOpen=true;
   try{ history.replaceState(null,'',location.pathname+location.search+'#today'); }catch(e){} })();
@@ -9704,7 +9722,6 @@ function pzHead(kick,title,extra){
 }
 function pzChips(g){
   return `<div class="pz-chips"><a class="pz-chip streak" href="#progress" aria-label="${g.streak.current}-day discipline streak">${pzI('flame',18)}<span>${g.streak.current}</span></a>
-    <a class="pz-chip lvl" href="#progress" aria-label="Level ${g.level.level}">${g.level.level}</a>
     <button type="button" class="pz-chip icon" data-pz-sheet aria-label="Settings and wallets">${pzI('gear',20)}</button></div>`;
 }
 
@@ -9720,6 +9737,32 @@ function pzData(){
 }
 const pzLoadCol=s=>s==null?PZ_COL.none:s>=80?PZ_COL.low:s>=62?PZ_COL.mid:PZ_COL.risk;
 const pzPct=v=>v==null?'—':Math.round(v*100)+'%';
+// ---- your layout: every screen's sections can be shown or hidden (synced with your settings) ----
+const PZ_SECTIONS={
+  today:[['oneThing','Today’s one thing','Your focus from last night’s review',1],['numbers','Today in numbers','Net, entries against your cap, risk used',1],
+    ['session','Your session','P&L curve, trades, and your rules as they stand',1],['positions','Open positions','Size and hold time against your usual',1],
+    ['insight','Coach insight','One line on what matters most',1],['next','Next step','Check-in in the morning, review at night',1],
+    ['now','Right now','This hour in your history, time since a loss',1],['good','Done right today','Moments you followed a rule that usually costs you',1],
+    ['xp','Today’s XP','What earns XP today, and what’s due this week',1],['week','Last 7 trading days','Discipline and net, day by day',1],
+    ['level','Level and league','Level progress, XP today, league standing',0],['yesterday','Last trading day','Its score, net and lesson in full',0]],
+  stats:[['tiles','Headline numbers','Net, win rate, average trade and more',1],['daily','Daily P&L','',1],['findings','What moves your results','Your biggest edges and leaks',1],
+    ['insights','Does discipline pay?','Results on good-discipline days vs the rest',1],['markets','Markets and time of day','Best and worst markets and hours',1]],
+  progress:[['xpsources','Where your XP came from','',1],['challenge','Weekly challenge','',1],['habits','Your habits','Streaks for each habit you run',1],['reports','Report cards','Last week and this month',1],
+    ['leaks','Your leaks','What your slips cost, and plugging them',1],['moments','Good moments','',1],['badges','Badges','Your latest badges',1],['bests','Personal bests','',1],['themes','Themes','',1]],
+};
+function pzShow(screen,id){ const L=(settings.pzLayout||{})[screen]; if(L&&Object.prototype.hasOwnProperty.call(L,id))return !!L[id];
+  const d=(PZ_SECTIONS[screen]||[]).find(x=>x[0]===id); return d?!!d[3]:true; }
+const pzLayoutCss=screen=>{ const hid=(PZ_SECTIONS[screen]||[]).filter(x=>!pzShow(screen,x[0])).map(x=>`[data-sec="${screen}:${x[0]}"]`); return hid.length?`<style>${hid.join(',')}{display:none!important}</style>`:''; };
+const pzCustomizeLink=screen=>`<p class="pz-span pz-custom"><button type="button" class="pz-link" data-pz-customize="${screen}">${pzI('gear',14)} Customize this screen</button></p>`;
+function pzCustomizeHtml(screen){
+  const list=PZ_SECTIONS[screen]||[], name={today:'Today',stats:'Stats',progress:'Progress'}[screen]||screen;
+  return `<div class="pz-sheet-bg" data-pz-close><div class="pz-sheet" role="dialog" aria-modal="true" aria-labelledby="pzCustT">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b id="pzCustT" style="font-size:18px">Customize ${esc(name)}</b><button type="button" class="pz-chip icon" data-pz-close aria-label="Close">${pzI('x',20)}</button></div>
+    <p class="pz-sub" style="font-size:13px">Show only what you use. Hidden sections keep working in the background.</p>
+    <section>${list.map(([id,label,hint])=>`<div class="pz-toggle"><span style="flex:1;min-width:0"><b id="pzCu_${id}">${esc(label)}</b>${hint?`<span class="pz-sub" style="display:block;font-size:12px">${esc(hint)}</span>`:''}</span>
+      <button type="button" role="switch" class="pz-switch" data-pz-sect="${screen}:${id}" aria-checked="${pzShow(screen,id)}" aria-labelledby="pzCu_${id}"><i></i></button></div>`).join('')}</section>
+    <button type="button" class="pz-ghost" data-pz-sectreset="${screen}">Reset to default</button></div></div>`;
+}
 // ---- Today, in more depth: the day in numbers, the session, the plan, open positions, context ----
 // Everything here is read from fills and the journal already loaded; nothing new is fetched
 // except the league standing and competitions Social already caches.
@@ -9738,17 +9781,42 @@ function pzTodayFacts(D){
 }
 // minutes into today on the app's clock; earlier days clamp to the start
 function pzDayMin(ms,todayK){ if(dayKey(ms)<todayK)return -1; if(dayKey(ms)>todayK)return 1441; const p=tzParts(ms); return p.h*60+p.min; }
+// Today's one thing: the focus you set in your last review
+function pzOneThingHtml(D){
+  const keys=Object.keys(journal).filter(k=>/^day:\d{4}-\d{2}-\d{2}$/.test(k)&&k.slice(4)<D.todayK).sort();
+  for(let i=keys.length-1;i>=0&&i>=keys.length-7;i--){ const e=journal[keys[i]]&&journal[keys[i]].eod; if(e&&e.tomorrow)
+    return `<p class="pz-onething">${pzI('bolt',15)}<span><b>Today’s one thing</b> ${esc(e.tomorrow)}</span></p>`; }
+  return '';
+}
+// the one next step: the check-in before you trade, the review once you have
+function pzNextHtml(D){
+  const g=D.g, h=tzParts(Date.now()).h, e=D.dayE||{}, traded=D.risk.trades>0||D.todayTrades.length>0;
+  const checked=!!(e.sleep||e.stress||e.focus||e.plan||e.rules), reviewed=!!(e.eod&&e.eod.at), lockR=pzLocked('review',g.level.level);
+  const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
+  if(!checked&&!traded)return card('#checkin','checkin',PZ_COL.risk,'Morning check-in','Thirty seconds: readiness, limits and today’s rules · +'+pzXpCfg().checkin+' XP');
+  if(!lockR&&!reviewed&&(traded||h>=16))return card('#review','pen',PZ_COL.good,'End-of-day review',(D.day?'Five minutes, +'+pzXpCfg().review+' XP. ':'Five minutes. ')+'One lesson, one focus for tomorrow.');
+  if(reviewed)return card('#review','check',PZ_COL.good,'Day reviewed',e.eod.tomorrow?'Tomorrow: '+esc(e.eod.tomorrow):'Edit any time tonight');
+  return '';
+}
+function pzGoodHtml(D){
+  let gm=[]; try{ gm=pzGoodMoments(D.g,D.todayK); }catch(err){} if(!gm.length)return '';
+  return `<section class="pz-card pz-kv pz-goodcard"><b class="pz-kvh" style="color:${PZ_COL.good}">Done right today</b>${gm.slice(0,3).map(m=>`<div class="pz-moment"><span class="pz-bc done">${pzI('check',12,3)}</span><b style="font-size:13px;font-weight:600">${esc(m.text)}</b></div>`).join('')}</section>`;
+}
+// today's rules as one line of chips: kept, broken, or waiting to be tested
+function pzPlanChipsHtml(D){
+  const pc=pzPlanCheck(D.todayK), R=(D.dayE&&D.dayE.rules)||{};
+  if(!pc.rules.length)return `<a class="pz-link" href="#checkin" style="min-height:0">Set today’s rules ›</a>`;
+  const tested=pc.rules.filter(r=>r.ok!=null), waiting=pc.rules.length-tested.length;
+  return `<div class="pz-planchips">${tested.map(r=>`<span class="pz-st ${r.ok?'ok':'bad'}" title="${esc(r.detail||'')}">${r.ok?pzI('check',12,3):pzI('x',12,3)} ${esc(r.label)}</span>`).join('')}${waiting?`<span class="pz-st" title="${esc(pc.rules.filter(r=>r.ok==null).map(r=>r.label).join(', '))}">${waiting} not tested yet</span>`:''}${/^\d{2}:\d{2}$/.test(R.until||'')?`<span class="pz-st">stop at ${esc(R.until)}</span>`:''}</div>`;
+}
 function pzTodayStripHtml(D,F){
   const {risk}=D, X=(lbl,v,sub,col,title)=>`<div class="pz-tile pz-tt"${title?` title="${esc(title)}"`:''}><span class="pz-lbl" style="font-size:11px">${lbl}</span><span class="pz-n"${col?` style="color:${col}"`:''}>${v}</span><span class="pz-t">${sub}</span></div>`;
-  const col=v=>v>0?PZ_COL.good:v<0?PZ_COL.low:null;
+  const col=v=>v>0?PZ_COL.good:v<0?PZ_COL.low:null, n=F.closedT.length;
   const used=risk.used, usedCol=used==null?null:used>=1?PZ_COL.low:used>=0.75?PZ_COL.mid:PZ_COL.good;
   return `<div class="pz-strip pz-span" role="group" aria-label="Today in numbers">
-    ${X('Net today',F.closedT.length?esc(pzSigned(F.net)):'—',F.closedT.length?F.closedT.length+' closed':'nothing closed yet',F.closedT.length?col(F.net):null,F.closedT.length?signedPlain(F.net):'')}
-    ${X('Trades',String(risk.trades)+(risk.cap>0?`<small> / ${risk.cap}</small>`:''),risk.cap>0?(risk.trades>=risk.cap?'at your cap':(risk.cap-risk.trades)+' left'):'opened today')}
-    ${X('Win rate',F.wins+F.losses?pzPct(F.wins/(F.wins+F.losses)):'—',F.wins+' W · '+F.losses+' L')}
-    ${X('Fees',F.fees?esc(pzShort(F.fees)):'—',F.closedT.length&&F.net?Math.round(100*F.fees/Math.max(1,Math.abs(F.net)+F.fees))+'% of gross':'on closed trades')}
-    ${X('Open',String(F.pos.length||F.open.length),F.pos.length?'uPnL '+esc(pzSigned(F.upnl)):F.open.length?'position'+(F.open.length===1?'':'s')+' from fills':'flat',F.pos.length?col(F.upnl):null)}
-    ${X('Risk used',used==null?'—':Math.round(used*100)+'%',risk.limit>0?usdPlain(risk.loss)+' of '+usdPlain(risk.limit):risk.cap>0?'of your trade cap':'set a limit in the check-in',usedCol)}
+    ${X('Net today',n?esc(pzSigned(F.net)):'—',n?n+' closed · '+F.wins+'W '+F.losses+'L':'nothing closed yet',n?col(F.net):null,n?signedPlain(F.net)+(F.fees?' after '+usdPlain(F.fees)+' fees':''):'')}
+    ${X('Entries',String(risk.trades)+(risk.cap>0?`<small> / ${risk.cap}</small>`:''),risk.cap>0?(risk.trades>=risk.cap?'at your cap':(risk.cap-risk.trades)+' left today'):'opened today')}
+    ${X('Risk used',used==null?'—':Math.round(used*100)+'%',risk.limit>0?usdPlain(risk.loss)+' of '+usdPlain(risk.limit):'set a loss limit',usedCol)}
   </div>`;
 }
 // the session: today's P&L curve over the loss limit, each trade as a bar from entry to exit, and the day's markers
@@ -9756,7 +9824,7 @@ function pzSessionHtml(D,F){
   const {todayK,dayE,risk,day}=D, now=F.now, nowM=pzDayMin(now,todayK);
   const openIds=new Set(F.open.map(t=>t.id));
   const trades=(D.ctx.trades||[]).filter(t=>!openIds.has(t.id)&&((t.openTime&&dayKey(t.openTime)===todayK)||(t.closeTime&&!t.isOpen&&dayKey(t.closeTime)===todayK))).concat(F.open);
-  if(!trades.length)return `<section class="pz-card pz-kv"><b class="pz-kvh">Your session</b><p class="pz-sub" style="font-size:13px">No trades yet today. Your entries, exits and P&amp;L curve draw here as you trade.</p></section>`;
+  if(!trades.length)return `<section class="pz-card pz-kv"><b class="pz-kvh">Your session</b><p class="pz-sub" style="font-size:13px">No trades yet today. Your entries, exits and P&amp;L curve draw here as you trade.</p>${pzPlanChipsHtml(D)}</section>`;
   const R=(dayE&&dayE.rules)||{}, until=/^\d{2}:\d{2}$/.test(R.until||'')?(+R.until.slice(0,2))*60+(+R.until.slice(3)):null;
   const planAt=dayE&&dayE.plannedAt&&dayKey(dayE.plannedAt)===todayK?pzDayMin(dayE.plannedAt,todayK):null;
   const mins=trades.flatMap(t=>[pzDayMin(t.openTime||now,todayK),t.isOpen?nowM:pzDayMin(t.closeTime,todayK)]).filter(m=>m>=0&&m<=1440);
@@ -9793,7 +9861,7 @@ function pzSessionHtml(D,F){
     ${mark(planAt,'plan',PZ_COL.xp)}${mark(until,'stop '+(R.until||''),PZ_COL.mid,true)}${mark(nowM,'now','var(--pz-soft)')}
     ${bars.join('')}</svg>`;
   return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your session</b><span class="pz-sub" style="font-size:12px">high ${esc(pzSigned(F.hi))} · low ${esc(pzSigned(F.lo))}</span></div>${svg}
-    <div class="pz-legend"><span><i style="background:${PZ_COL.good}"></i>win</span><span><i style="background:${PZ_COL.low}"></i>loss</span><span><i style="background:${PZ_COL.risk}"></i>open</span><span><i class="ring" style="border-color:${PZ_COL.mid}"></i>slip</span></div></section>`;
+    <div class="pz-legend"><span><i style="background:${PZ_COL.good}"></i>win</span><span><i style="background:${PZ_COL.low}"></i>loss</span><span><i style="background:${PZ_COL.risk}"></i>open</span><span><i class="ring" style="border-color:${PZ_COL.mid}"></i>slip</span></div>${pzPlanChipsHtml(D)}</section>`;
 }
 // the structured plan, live: each rule kept, broken or not yet tested, plus the cap, the limit and the stop time
 function pzPlanLiveHtml(D,F){
@@ -9886,6 +9954,11 @@ function pzWeekSparkHtml(D){
 }
 // what's due: the challenge, habits to keep today, plugs in progress, competitions ending, the review
 function pzComingUpHtml(D){
+  const items=pzDueItems(D); if(!items.length)return '';
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Coming up</b>${pzDueRows(items)}</section>`;
+}
+const pzDueRows=items=>items.map(([ic,c,a,b,href])=>`<a class="pz-uprow" href="${href}"><span class="pz-bc" style="color:${c}">${pzI(ic,13,2.4)}</span><span style="flex:1;min-width:0"><b style="font-size:13px">${esc(a)}</b><span class="pz-sub" style="display:block;font-size:12px">${esc(b)}</span></span></a>`).join('');
+function pzDueItems(D){
   const {g,todayK}=D, items=[], dow=new Date(todayK+'T12:00:00Z').getUTCDay(), daysLeft=dow===0?0:7-dow;
   if(g.current){ const kept=g.current.res.filter(r=>r.kept).length; items.push(['bolt',PZ_COL.xp,'Weekly challenge',`${kept} day${kept===1?'':'s'} kept · ${daysLeft?daysLeft+' day'+(daysLeft===1?'':'s')+' left this week':'ends tonight'}`,'#progress']); }
   for(const h of habitsList().slice(0,3)){ const r=habitProgress(h,g.ctx).res.find(x=>x.key===todayK);
@@ -9895,8 +9968,7 @@ function pzComingUpHtml(D){
     for(const x of (all||[]).filter(x=>x.joined&&x.status==='live').sort((a,b)=>a.end<b.end?-1:1).slice(0,2)){
       const left=Math.round((Date.parse(x.end)-Date.parse(todayK))/86400000);
       items.push(['medal',PZ_COL.mid,x.title,(x.me?'#'+x.me.rank+' of '+x.entrants+' · ':'')+(left<=0?'ends today':left+' day'+(left===1?'':'s')+' left'),'#c/'+x.id]); } }
-  if(!items.length)return '';
-  return `<section class="pz-card pz-kv"><b class="pz-kvh">Coming up</b>${items.map(([ic,c,a,b,href])=>`<a class="pz-uprow" href="${href}"><span class="pz-bc" style="color:${c}">${pzI(ic,13,2.4)}</span><span style="flex:1;min-width:0"><b style="font-size:13px">${esc(a)}</b><span class="pz-sub" style="display:block;font-size:12px">${esc(b)}</span></span></a>`).join('')}</section>`;
+  return items;
 }
 function pzTodayHtml(D){
   const {g,day,last,risk,ready,form,load}=D;
@@ -9943,23 +10015,21 @@ function pzTodayHtml(D){
   const detail=`<section class="pz-card pz-detail" aria-live="polite"><div class="pz-dh"><span class="pz-lbl" style="color:${det.col}">${esc(det.lbl)}</span><a class="pz-link" href="${det.href}">${esc(det.link)}${pzI('chev',16)}</a></div>
     <div><div class="pz-big">${esc(det.head)}</div><p class="pz-sub" style="margin-top:4px">${esc(det.sub)}</p></div>${pzRows(det.rows,det.col)}</section>`;
   const items=pzBonusItems(D), earned=day?day.bonus.total:0, left=items.filter(x=>!x.done).reduce((s,x)=>s+x.xp,0);
-  const bonus=`<section class="pz-card" style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="pz-lbl" style="color:${PZ_COL.xp}">Bonus XP today</span><span style="font-size:12px;font-weight:700;color:${PZ_COL.xp}">${earned?'+'+earned+' earned':''}${earned&&left?' · ':''}${left?'+'+left+' available':''}</span></div>
-    <p class="pz-sub" style="font-size:12px;margin-bottom:4px">Optional. Your dials work without any of it; each one adds XP and sharper insights.</p>
-    ${items.map(x=>`<a class="pz-bonus" href="${x.href}"><span class="pz-bc ${x.done?'done':x.partial?'part':''}">${pzI(x.done?'check':x.partial?'minus':'plus',14,3)}</span><span style="flex:1;min-width:0"><b>${esc(x.label)}</b><span>${esc(x.hint)}</span></span><span class="pz-bx">+${x.xp}</span></a>`).join('')}</section>`;
-  const ch=g.current;
-  const chHtml=ch?(()=>{ const kept=ch.res.filter(r=>r.kept).length, n=ch.res.length;
-      return `<a class="pz-card pz-cardlink" href="#progress"><span class="pz-ico" style="background:#2A2340;color:${PZ_COL.xp}">${pzI('bolt',22)}</span>
-      <span style="flex:1;display:flex;flex-direction:column;gap:6px;min-width:0"><span style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><b style="font-size:15px">${esc(ch.ch.spec.then?ch.ch.spec.then.charAt(0).toUpperCase()+ch.ch.spec.then.slice(1):habitSentence(ch.ch.spec))}</b><span style="font-size:12px;font-weight:700;color:${PZ_COL.xp};white-space:nowrap">+150 XP</span></span>
-      ${pzBar(n?kept/Math.max(n,5):0,PZ_COL.xp)}<span style="font-size:12px;color:var(--pz-muted)">Weekly challenge · ${n?`${kept} of ${n} trading day${n===1?'':'s'} kept`:'starts with your next trading day'}${ch.status==='missed'?' · missed once':''}</span></span></a>`; })():'';
+  let due=[]; try{ due=pzDueItems(D); }catch(err){}
+  const bonus=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Today’s XP</b><span style="font-size:12px;font-weight:700;color:${PZ_COL.xp}">${earned?'+'+earned+' earned':''}${earned&&left?' · ':''}${left?'+'+left+' to go':''}</span></div>
+    ${items.map(x=>`<a class="pz-bonus" href="${x.href}"><span class="pz-bc ${x.done?'done':x.partial?'part':''}">${pzI(x.done?'check':x.partial?'minus':'plus',14,3)}</span><span style="flex:1;min-width:0"><b>${esc(x.label)}</b><span>${esc(x.hint)}</span></span><span class="pz-bx">+${x.xp}</span></a>`).join('')}
+    ${due.length?`<span class="pz-lbl pz-sublbl">This week</span>${pzDueRows(due)}`:''}</section>`;
   const coach=`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('chat',18)}</span><p>${esc(pzCoachLine(D))}</p></section>`;
-  // each extra section fails on its own: a bad record can't blank the whole Today screen
+  // each section fails on its own (a bad record can't blank the screen), and shows only if you keep it on
   const safe=f=>{ try{ return f(); }catch(err){ console.warn('today section',err); return ''; } };
   const F=safe(()=>pzTodayFacts(D))||null;
-  const more=k=>F?safe(()=>k(D,F)):'';
+  const on=id=>pzShow('today',id), sec=(id,f)=>on(id)?safe(f):'', more=(id,k)=>F&&on(id)?safe(()=>k(D,F)):'';
   return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g))}
-    <div class="pz-wide">${ringsHtml}${more(pzTodayStripHtml)}${safe(()=>pzProgressRowHtml(D))}
-      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${detail}${coach}${more(pzSessionHtml)}${more(pzPlanLiveHtml)}${more(pzPositionsHtml)}</div>
-      <div class="pz-col">${safe(()=>pzYesterdayHtml(D))}${more(pzNowHtml)}${pzTodayExtrasHtml(D)}${bonus}${chHtml}${safe(()=>pzWeekSparkHtml(D))}${safe(()=>pzComingUpHtml(D))}</div></div>`;
+    ${sec('oneThing',()=>pzOneThingHtml(D))}
+    <div class="pz-wide">${ringsHtml}${more('numbers',pzTodayStripHtml)}${sec('level',()=>pzProgressRowHtml(D))}
+      <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${detail}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
+      <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
+    ${pzCustomizeLink('today')}`;
 }
 
 function pzDisciplineHtml(D){
@@ -9970,7 +10040,6 @@ function pzDisciplineHtml(D){
   const checks=Object.keys(PZ_BEH).map(k=>{ const c=f[k]||0;
     return `<div class="pz-part"><span class="pz-pc ${c?'miss':'full'}">${pzI(c?'x':'check',15,3)}</span><span class="pz-pt"><b>${esc(PZ_BEH[k])}</b><span>${c?c+' of '+d.n+' trade'+(d.n===1?'':'s'):'None'}</span></span></div>`; }).join('');
   const bp=d.bonus.parts;
-  const bon=Object.keys(PZ_BONUS).map(k=>`<div class="pz-part"><span class="pz-pc ${bp[k]?'full':''}" style="${bp[k]?'':'background:#1B1F25;color:var(--pz-muted)'}">${pzI(bp[k]?'check':'plus',15,3)}</span><span class="pz-pt"><b>${esc(PZ_BONUS[k][0])}</b><span>${bp[k]?'Earned':'Optional'}</span></span><span class="pz-pp" style="color:${bp[k]?PZ_COL.xp:'var(--pz-muted)'}">+${bp[k]||PZ_BONUS[k][1]}</span></div>`).join('');
   const recent=g.days.slice(-14);
   const bars=recent.map(x=>`<i style="height:${Math.max(4,Math.round(x.score*0.96))}px;background:${PZ_COL[pzBand(x.score)]}" title="${esc(dayLabel(x.key))}: ${x.score}"></i>`).join('');
   return `${back}${pzHead(isToday?'Today':dayLabel(d.key),'Discipline')}
@@ -9982,7 +10051,7 @@ function pzDisciplineHtml(D){
         <div class="pz-chart" style="--h:96px;--gap:5px"><span class="pz-thr" style="bottom:${Math.round(70*0.96)}px"></span>${bars}</div>
         <p class="pz-sub" style="font-size:12px">Dashed line is 70 — a clean day for your streak. ${g.streak.shields?`You hold ${g.streak.shields} shield${g.streak.shields===1?'':'s'}: each one covers an off day.`:'A perfect week (every trading day 70+) earns a shield that covers one off day.'}</p></section></div>
     <div class="pz-col"><section class="pz-card pz-parts" aria-label="The six checks">${checks}</section>
-      <section class="pz-card pz-parts" aria-label="Bonus XP"><b style="display:block;font-size:15px;margin:12px 0 2px">Bonus XP ${d.bonus.total?'· +'+d.bonus.total:''}</b>${bon}</section></div>
+      </div>
   </div>`;
 }
 
@@ -10011,15 +10080,15 @@ function pzTrendsHtml(D){
     const mk=st.markets, best=mk.slice(0,3).filter(x=>x.net>0), worst=mk.slice(-3).reverse().filter(x=>x.net<0);
     const hr=h=>String(h).padStart(2,'0')+':00';
     const hrs=st.hours.length>=2?[['Best hour',st.hours[0]],['Worst hour',st.hours[st.hours.length-1]]]:[];
-    stats=`<div class="pz-grid3 pz-span">${tile('Net P&L',money(s.net),s.n+' trade'+(s.n===1?'':'s'),col(s.net),exact(s.net))}${tile('Win rate',pzPct(s.winRate),s.wins+' W · '+s.losses+' L')}${tile('Average trade',money(s.expectancy),'',col(s.expectancy),exact(s.expectancy))}
+    stats=`<div class="pz-grid3 pz-span" data-sec="stats:tiles">${tile('Net P&L',money(s.net),s.n+' trade'+(s.n===1?'':'s'),col(s.net),exact(s.net))}${tile('Win rate',pzPct(s.winRate),s.wins+' W · '+s.losses+' L')}${tile('Average trade',money(s.expectancy),'',col(s.expectancy),exact(s.expectancy))}
       ${tile('Profit factor',isFinite(s.profitFactor)?s.profitFactor.toFixed(2):'∞','')}${tile('Average win',pzShort(s.avgWin),'avg loss '+pzShort(s.avgLoss)+' · payoff '+(isFinite(s.payoff)?s.payoff.toFixed(2):'∞'),null,usdPlain(s.avgWin)+' win / '+usdPlain(s.avgLoss)+' loss')}${tile('Fees + funding',money(-(s.fees)+(s.fund||0)),'fees '+pzShort(s.fees),null,exact(-(s.fees)+(s.fund||0)))}</div>
       <a class="pz-ghost pz-span pz-deepbtn" href="#deep">${pzLocked('deep',g.level.level)?pzI('lock',16)+'In-depth stats · level '+pzLocked('deep',g.level.level):'See in-depth stats'}${pzI('chev',18)}</a>
-      <section class="pz-card pz-span" style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:15px">Daily P&L</b><span class="pz-sub" style="font-size:12px">${days.length} trading day${days.length===1?'':'s'}${st.days.length>60?' (last 60)':''}</span></div>
+      <section class="pz-card pz-span" data-sec="stats:daily" style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:15px">Daily P&L</b><span class="pz-sub" style="font-size:12px">${days.length} trading day${days.length===1?'':'s'}${st.days.length>60?' (last 60)':''}</span></div>
         <div class="pz-chart" style="--h:100px;--gap:${days.length>30?'2px':'5px'}">${bars}</div></section>
-      <section class="pz-card" style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Markets</b>
+      <section class="pz-card" data-sec="stats:markets" style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Markets</b>
         ${best.map(x=>`<div class="pz-row-t"><span>${esc(dispMarket(x.k))} · ${x.n}</span><b style="color:${PZ_COL.good}" title="${esc(signedPlain(x.net))}">${esc(pzSigned(x.net))}</b></div>`).join('')||'<p class="pz-sub" style="font-size:13px">No winning market in this range.</p>'}
         ${worst.map(x=>`<div class="pz-row-t"><span>${esc(dispMarket(x.k))} · ${x.n}</span><b style="color:${PZ_COL.low}" title="${esc(signedPlain(x.net))}">${esc(pzSigned(x.net))}</b></div>`).join('')}</section>
-      <section class="pz-card" style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Time of day</b>
+      <section class="pz-card" data-sec="stats:markets" style="display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">Time of day</b>
         ${hrs.map(([l,x])=>`<div class="pz-row-t"><span>${l} · ${hr(x.h)} · ${x.n} trades</span><b style="color:${col(x.net)}" title="${esc(signedPlain(x.net))}">${esc(pzSigned(x.net))}</b></div>`).join('')||'<p class="pz-sub" style="font-size:13px">Needs a few more trades per hour to compare.</p>'}
         <p class="pz-fine">By entry time, on your ${settings.tz==='utc'?'UTC':'local'} clock.</p></section>`; }
   // deeper insights: discipline vs results — unlocked by level
@@ -10032,11 +10101,11 @@ function pzTrendsHtml(D){
     const rl=pzReadinessLink(ts.days,journal), RF=pzRangeFindings(ctx,from), FA=RF.findings;
     // the six most significant edges and leaks (already ranked by size × confidence); plain notes only fill the gaps
     const F=[...FA.filter(f=>f.tone!=='info'),...FA.filter(f=>f.tone==='info')].slice(0,6);
-    deep=`<section class="pz-card pz-span" style="display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px"><span><span class="pz-lbl" style="color:${PZ_COL.good}">Discipline</span><br><span class="pz-sub" style="font-size:13px">${bc.unit}</span></span><span style="display:flex;align-items:baseline;gap:6px"><span class="pz-sub" style="font-size:12px">avg</span><span style="font-family:var(--pz-num);font-size:40px;font-weight:600;line-height:1">${ts.avg==null?'—':ts.avg}</span></span></div>${chart}</section>
-      <div class="pz-col"><section style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Does discipline pay?</b><div class="pz-grid2">${tile('good','Days 70+',ts.hi)}${tile('hot','Under 70',ts.lo)}</div>
+    deep=`<section class="pz-card pz-span" data-sec="stats:insights" style="display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px"><span><span class="pz-lbl" style="color:${PZ_COL.good}">Discipline</span><br><span class="pz-sub" style="font-size:13px">${bc.unit}</span></span><span style="display:flex;align-items:baseline;gap:6px"><span class="pz-sub" style="font-size:12px">avg</span><span style="font-family:var(--pz-num);font-size:40px;font-weight:600;line-height:1">${ts.avg==null?'—':ts.avg}</span></span></div>${chart}</section>
+      <div class="pz-col" data-sec="stats:insights"><section style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Does discipline pay?</b><div class="pz-grid2">${tile('good','Days 70+',ts.hi)}${tile('hot','Under 70',ts.lo)}</div>
         ${rl?`<div class="pz-tile cool"><span class="pz-t" style="font-size:13px;line-height:1.45">On days you checked in at readiness 70+, your discipline averaged <b>${rl.hi}</b>; on the other check-in days, <b>${rl.lo}</b>.</span></div>`:''}</section></div>
-      <div class="pz-col"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results <span class="pz-sub" style="font-weight:400;font-size:12px">· ${R==='all'?'all time':'last '+R+' days'}${RF.n?', '+RF.n+' trades':''}</span></b>${RF.few?`<p class="pz-sub" style="font-size:13px;padding:6px 0 12px">Needs at least 10 closed trades in this range to find patterns — there ${RF.n===1?'is':'are'} ${RF.n}. Try a longer range.</p>`:''}${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(f.action||f.body||'')}</span>${f.evidence?`<span style="display:block;margin-top:4px;font-size:12px;color:var(--pz-muted)">${esc(f.evidence)} · ${esc(confWords(f.conf))}</span>`:''}</span></div>`).join(''):(RF.few?'':'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>')}</section></div>`; }
-  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}${pzMkSeg()}<div class="pz-wide">${stats}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p></div>`;
+      <div class="pz-col" data-sec="stats:findings"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results <span class="pz-sub" style="font-weight:400;font-size:12px">· ${R==='all'?'all time':'last '+R+' days'}${RF.n?', '+RF.n+' trades':''}</span></b>${RF.few?`<p class="pz-sub" style="font-size:13px;padding:6px 0 12px">Needs at least 10 closed trades in this range to find patterns — there ${RF.n===1?'is':'are'} ${RF.n}. Try a longer range.</p>`:''}${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(f.action||f.body||'')}</span>${f.evidence?`<details class="pz-why"><summary>Why</summary><span>${esc(f.evidence)} · ${esc(confWords(f.conf))}</span></details>`:''}</span></div>`).join(''):(RF.few?'':'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>')}</section></div>`; }
+  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}${pzMkSeg()}<div class="pz-wide">${stats}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p>${pzCustomizeLink('stats')}</div>${pzLayoutCss('stats')}`;
 }
 // The Diagnostic's findings for one range (all time reuses the coach's set). Same engine, only the
 // range's trades; memoized per range so switching back and forth is instant.
@@ -10213,7 +10282,7 @@ function pzDeepHtml(D){
   // plan vs execution
   const pa=planAdherence(tr,journal,_excM), pd=g.days.filter(d=>d.key>=fromKey&&d.parts);
   const dp=pd.filter(d=>d.parts.plan!=null), lim=pd.filter(d=>d.parts.limit!=null), rl=pd.filter(d=>d.parts.rules!=null);
-  const planHtml=pzKv('Plan vs execution',[
+  const planRows=[
     dp.length?['Day plan before the first trade',dp.filter(d=>d.parts.plan===1).length+' of '+dp.length+' days'+(dp.some(d=>d.parts.plan===0.5)?' · '+dp.filter(d=>d.parts.plan===0.5).length+' written late':'')]:null,
     lim.length?['Stayed inside the loss limit',lim.filter(d=>!d.breached).length+' of '+lim.length+' days with a limit']:null,
     lim.some(d=>d.breached)?['Stopped once the limit was hit',lim.filter(d=>d.breached&&d.parts.limit===1).length+' of '+lim.filter(d=>d.breached).length+' days you hit it',null,'No new trade opened after the day’s losses reached the limit']:null,
@@ -10223,7 +10292,8 @@ function pzDeepHtml(D){
     pa.n&&pa.brokeStopCost?['Trades that broke their stop',pzMoney(pa.brokeStopCost),pzSignCol(pa.brokeStopCost)]:null,
     pa.targetHitRate!=null?['Targets reached',pzPct(pa.targetHitRate)]:null,
     pa.medPlannedRR!=null?['Planned reward : risk (median)',pa.medPlannedRR.toFixed(2)+' : 1']:null,
-    pa.medRealizedR!=null?['Realized, in units of planned risk',(pa.medRealizedR>=0?'+':'')+pa.medRealizedR.toFixed(2)+'R',pzSignCol(pa.medRealizedR)]:null],
+    pa.medRealizedR!=null?['Realized, in units of planned risk',(pa.medRealizedR>=0?'+':'')+pa.medRealizedR.toFixed(2)+'R',pzSignCol(pa.medRealizedR)]:null];
+  const planHtml=!planRows.some(Boolean)?'':pzKv('Plan vs execution',planRows,
     dp.length||lim.length||pa.n?'Checked against the numbers you wrote, not by AI: your day plan’s time against your first entry, your loss limit against the day’s realized P&L, and each trade’s stop and target against its actual exit.'
       :'Nothing to compare yet. Write a day plan and loss limit in the check-in, or a stop and target on trades in the full journal, and this shows how closely you followed them.');
   // breakdowns
@@ -10238,10 +10308,10 @@ function pzDeepHtml(D){
       const m=(a,k)=>a.length?nfMedian(a.map(t=>_excM[t.id][k])):null, f=v=>v==null?'—':v.toFixed(2)+'%';
       return pzKv('Price excursions',[['Winners: worst point against you',f(m(Wn,'maePct')),null,'Median, as % of entry price'],['Winners: best point',f(m(Wn,'mfePct'))],['Losers: worst point',f(m(Ls,'maePct'))],['Losers: best point before turning',f(m(Ls,'mfePct')),null,'How far losers went your way before they lost']],exc.length+' trades measured from candles. Measure more in the full journal.'); })():'';
   const tagged=X.setups.reduce((a,r)=>a+r.n,0), rated=X.ratings.reduce((a,r)=>a+r.n,0);
-  const setupTbl=X.setups.length?pzTbl('By setup',X.setups,r=>r.label||r.k,tagged+' of '+s.n+' trades tagged. Tag the rest in the journal — chips keep one spelling per setup.')
-    :`<section class="pz-card pz-kv"><b class="pz-kvh">By setup</b><p class="pz-sub" style="font-size:13px">Tag your trades with a setup in the journal and this shows which setups make money for you.</p></section>`;
+  const setupTbl=X.setups.length?pzTbl('By setup',X.setups,r=>r.label||r.k,tagged+' of '+s.n+' trades tagged. Tag the rest in the journal — chips keep one spelling per setup.'):'';
   const rateTbl=X.ratings.length?pzTbl('By your execution rating',X.ratings,r=>'★'.repeat(r.k)+' '+r.k,rated+' rated trades. Rating is how well you executed, not how it paid — if 5s don’t beat 2s, your idea of a good trade needs a look.'):'';
-  const left=[dowHtml,setupTbl,rateTbl,pzTbl('By market',X.markets,r=>dispMarket(r.k)),pzTbl('Long vs short',X.side,r=>r.k),excHtml].join('');
+  const tagHint=!X.setups.length||!X.ratings.length?`<p class="pz-fine">Tag setups and rate your executions in the journal to see results ${!X.setups.length&&!X.ratings.length?'by setup and by rating':!X.setups.length?'by setup':'by rating'} here.</p>`:'';
+  const left=[dowHtml,setupTbl,rateTbl,tagHint,pzTbl('By market',X.markets,r=>dispMarket(r.k)),pzTbl('Long vs short',X.side,r=>r.k),excHtml].join('');
   const right=[pzTbl('By position size',X.bySize,r=>r.label+' · '+pzShort(r.from)+'–'+pzShort(r.to),'A quarter of your trades each, smallest to biggest. Position size is the largest notional the trade reached.'),
     pzTbl('By holding time',X.byHold,r=>r.label),pzTbl('By month',X.months,r=>MONTHS[+r.k.slice(5)-1]+' '+r.k.slice(0,4))].join('');
   return `${head}<div class="pz-wide">${eq}<div class="pz-col">${results}${cons}${slipHtml}</div><div class="pz-col">${risk}${planHtml}${distHtml}</div>${hourHtml}<div class="pz-col">${left}</div><div class="pz-col">${right}</div>
@@ -10287,7 +10357,7 @@ function pzCheckinHtml(D){
   const opened=D.risk.trades>0;
   const Q=[['sleep','How did you sleep?','Badly','Great'],['calm','How calm do you feel?','Wired','Calm'],['focus','How focused are you?','Scattered','Locked in']];
   const q=Q.map(([k,t,lo,hi])=>`<div role="radiogroup" aria-labelledby="pzq_${k}"><p class="pz-q" id="pzq_${k}">${t}</p><div class="pz-pills">${[1,2,3,4,5].map(n=>`<button type="button" role="radio" class="pz-pill" data-pz-ck="${k}" data-n="${n}" aria-checked="${ck[k]===n}" aria-label="${n} of 5">${n}</button>`).join('')}</div><div class="pz-ends"><span>${lo}</span><span>${hi}</span></div></div>`).join('');
-  return `<a class="pz-back" href="#today">${pzI('back',20)}Today</a>${pzHead(dayLabel(D.todayK),'Check-in')}
+  return `${pzHead(dayLabel(D.todayK),'Check-in')}
   <p class="pz-sub" style="margin-top:-6px">Thirty seconds. It sets your readiness and today’s limits.</p>
   ${pzMorningHtml(D,ck)}
   <div class="pz-wide">
@@ -10439,7 +10509,7 @@ function pzRender(){
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
     pzApplyTheme(lv); socSync(D.g); }
   view.innerHTML=html;
-  const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():'';
+  const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
   const f=(actId&&$(actId))||(actSel&&root.querySelector(actSel)); if(f&&f.focus)f.focus({preventScroll:true});
 }
@@ -10476,7 +10546,10 @@ function wirePulse(){
       pzS.jr[id]=pzS.jr[id]===n?0:n; sec.querySelectorAll('[data-pz-rate]').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRate===pzS.jr[id]))); return; }
     if(ds.pzJsave!==undefined){ const sec=t.closest('[data-pz-trade]'); if(sec)await pzSaveJournal(sec); return; }
     if(ds.pzSheet!==undefined){ pzS.sheet=true; pzRender(); const c=$('pzSheet').querySelector('[data-pz-close].pz-chip'); if(c)c.focus(); return; }
-    if(ds.pzClose!==undefined){ if(t.classList.contains('pz-sheet-bg')&&ev.target!==t)return; pzS.sheet=false; pzRender(); return; }
+    if(ds.pzClose!==undefined){ if(t.classList.contains('pz-sheet-bg')&&ev.target!==t)return; pzS.sheet=false; pzS.custom=null; pzRender(); return; }
+    if(ds.pzCustomize){ pzS.custom=ds.pzCustomize; pzRender(); const c=$('pzSheet').querySelector('[data-pz-close].pz-chip'); if(c)c.focus(); return; }
+    if(ds.pzSect){ const [sc,id]=ds.pzSect.split(':'), L=settings.pzLayout=settings.pzLayout||{}, M=L[sc]=L[sc]||{}; M[id]=!pzShow(sc,id); await Store.set(S_KEY,settings); pzRender(); return; }
+    if(ds.pzSectreset){ if(settings.pzLayout)delete settings.pzLayout[ds.pzSectreset]; await Store.set(S_KEY,settings); pzRender(); return; }
     if(ds.pzRmw!==undefined){ await removeWallet(+ds.pzRmw); pzRender(); return; }
     if(await socAction(t))return;
     switch(t.id){
@@ -10514,7 +10587,7 @@ function wirePulse(){
     else if(ev.key==='Enter'&&ev.target.id==='pzSetupAdd'){ ev.preventDefault(); const b=$('pzSetupAddGo'); if(b)b.click(); }
     else if(ev.key==='Enter'&&(ev.target.id==='socLinkIn'||ev.target.id==='vaultPass'||ev.target.id==='vaultPass2')){ ev.preventDefault();
       const b=$(ev.target.id==='socLinkIn'?'socLinkGo':$('vaultUnlock')?'vaultUnlock':'vaultOn'); if(b)b.click(); }
-    else if(ev.key==='Escape'&&pzS.sheet){ pzS.sheet=false; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
+    else if(ev.key==='Escape'&&(pzS.sheet||pzS.custom)){ pzS.sheet=false; pzS.custom=null; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
   window.addEventListener('hashchange',()=>{ const tb=pzTab(); if(tb==='checkin')pzS.ck=null; if(tb==='sharing')SOC.draft=null; pzRender(); window.scrollTo(0,0); });
   window.addEventListener('beforeinstallprompt',()=>{ if(pzS.sheet)pzRender(); });
 }
@@ -11052,7 +11125,7 @@ function socClaimCardHtml(){
     <button type="button" class="pz-ghost pz-sm" id="socUnclaim">Release this wallet</button></section>`;
   return `<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px;display:flex;align-items:center;gap:8px">${pzI('shield',18)}Claim your wallet</b>
     <p class="pz-sub" style="font-size:13px">Prove a wallet is yours by signing a short message with it. It’s a signature, not a transaction: no gas, nothing moves. A claimed wallet is locked to your profile, gets a ✓ on the boards${me.requireClaim?' (this league only counts claimed wallets for verified Discipline and returns)':''}, and lets you sign in on any device. The server owner can see the address.</p>
-    <button type="button" class="pz-cta" id="socClaim">Claim with my wallet</button>
+    <button type="button" class="pz-ghost" id="socClaim">Claim with my wallet</button>
     <p class="pz-fine">Signs with the account selected in your browser wallet (MetaMask, Rabby…). On a phone, open this page in your wallet app’s browser.</p></section>`;
 }
 function socDevicesCardHtml(){
@@ -11076,8 +11149,8 @@ function socVaultCardHtml(){
     <p class="pz-sub" style="font-size:13px">${has?'This profile has a synced journal. Enter its passphrase to open it here — anything only on this device is kept too.'
       :'Choose a sync passphrase. Your journal, wallets and settings are encrypted on this device before they leave it: the server, and its owner, can’t read them. There’s no reset — lose the passphrase and the synced copy can’t be opened.'}</p>
     <div class="pz-field"><label for="vaultPass" style="font-size:13px">Sync passphrase</label><input type="password" id="vaultPass" autocomplete="${has?'current-password':'new-password'}" placeholder="${has?'':'at least 10 characters'}"></div>
-    ${has?'<button type="button" class="pz-cta" id="vaultUnlock">Open my synced journal</button><button type="button" class="pz-ghost pz-sm" id="vaultReplace">Replace it with this device’s journal (new passphrase)</button>'
-      :'<div class="pz-field"><label for="vaultPass2" style="font-size:13px">Type it again</label><input type="password" id="vaultPass2" autocomplete="new-password"></div><button type="button" class="pz-cta" id="vaultOn">Turn on journal sync</button>'}</section>`;
+    ${has?'<button type="button" class="pz-ghost" id="vaultUnlock">Open my synced journal</button><button type="button" class="pz-ghost pz-sm" id="vaultReplace">Replace it with this device’s journal (new passphrase)</button>'
+      :'<div class="pz-field"><label for="vaultPass2" style="font-size:13px">Type it again</label><input type="password" id="vaultPass2" autocomplete="new-password"></div><button type="button" class="pz-ghost" id="vaultOn">Turn on journal sync</button>'}</section>`;
 }
 
 // ---- actions (from socAction) ----
@@ -11149,10 +11222,7 @@ function pzProgressHtml(D){
     <div class="pz-hero-main"><span class="pz-lbl" style="color:${PZ_COL.xp}">Level ${L.level}</span><h2 class="pz-hero-t">${esc(L.title)}</h2>
       <div class="pz-xpbar" role="progressbar" aria-label="XP to next level" aria-valuemin="0" aria-valuemax="${L.need}" aria-valuenow="${L.into}"><i style="width:${L.max?100:Math.round(100*L.into/L.need)}%"></i></div>
       <p class="pz-sub" style="font-size:13px">${L.xp.toLocaleString()} XP · ${L.max?'top level reached':(L.need-L.into).toLocaleString()+' XP to '+esc(pzLevelTitle(L.level+1))}</p>
-      <div class="pz-hero-stats">
-        <a href="#progress" class="pz-hs"><span style="color:var(--pz-streak)">${pzI('flame',18)}</span><b>${g.streak.current}</b><small>day streak${g.streak.shields?' · '+g.streak.shields+' shield'+(g.streak.shields===1?'':'s'):''}</small></a>
-        <a href="#badges" class="pz-hs"><span style="color:${PZ_TIER_COL[2]}">${pzI('medal',18)}</span><b>${cat.earned.length}</b><small>of ${cat.total} badges</small></a>
-        <span class="pz-hs"><span style="color:${PZ_COL.xp}">${pzI('bolt',18)}</span><b>+${wkTot.toLocaleString()}</b><small>XP this week</small></span></div></div></section>`;
+    </div></section>`;
   const xpCard=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Where this week’s XP came from</b><span class="pz-sub" style="font-size:12px">${wkTot.toLocaleString()} XP</span></div>
     ${wkTot?srcRows.map(([k,l,c])=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(l)}</span><b>+${src[k].toLocaleString()}</b></div>${pzBar(src[k]/wkTot,c)}</div>`).join('')
       :'<p class="pz-sub" style="font-size:13px">No XP yet this week. Every trading day earns its Discipline score; check-ins, plans, journaling and reviews add more.</p>'}
@@ -11203,13 +11273,15 @@ function pzProgressHtml(D){
     ${lockR?'<p class="pz-sub" style="font-size:13px">Weekly and monthly report cards unlock at level '+lockR+'.</p>':`<div class="pz-grid2">${gradeTile(rw,'Last week',`#report`)}${gradeTile(rm,thisM===dayKey(Date.now()).slice(0,7)?'This month':new Date(thisM+'-15T12:00:00Z').toLocaleString('en-US',{month:'long',timeZone:'UTC'}),`#report`)}</div>`}</section>`;
   const pb=`<section class="pz-card pz-kv"><b class="pz-kvh">Personal bests</b>${g.pbs.map(p=>`<div class="pz-row-t"><span>${esc(p.label)}${p.isNew?' <span class="pz-new">new</span>':''}</span><b>${p.value!=null?p.value+(p.unit?' '+p.unit:''):'—'}</b></div>`).join('')}</section>`;
   const share=pzLocked('share',L.level);
+  const P=(id,h)=>pzShow('progress',id)?h:'';
   return `${pzHead('Earned by process','Progress',pzChips(g))}
   <div class="pz-wide">${hero}
-    <div class="pz-col">${xpCard}${chHtml}${habitsHtml}${reportHtml}</div>
-    <div class="pz-col">${leakHtml}${gmHtml}${badgeHtml}${pb}</div>
-    ${pzThemesHtml(g)}
+    <div class="pz-col">${P('xpsources',xpCard)}${P('challenge',chHtml)}${P('habits',habitsHtml)}${P('reports',reportHtml)}</div>
+    <div class="pz-col">${P('leaks',leakHtml)}${P('moments',gmHtml)}${P('badges',badgeHtml)}${P('bests',pb)}</div>
+    ${P('themes',pzThemesHtml(g))}
     <section class="pz-span" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${share?`<span class="pz-fine">${pzI('lock',14)} Share cards unlock at level ${share}</span>`:'<button type="button" class="pz-ghost pz-sm" id="pzShare" style="width:auto;padding:0 16px">Share this week</button>'}</section>
     <div class="pz-span" id="gmOut"></div>
+    ${pzCustomizeLink('progress')}
   </div>`;
 }
 // ---- the badge case (#badges) ----
@@ -11232,7 +11304,7 @@ function pzBadgesHtml(D){
       <div class="pz-bgrid">${cells.map(({b,next,f,after})=>`<button type="button" class="pz-bcell${next?' next':''}" data-pz-bsel="${esc(b.id)}" data-pz-tip="${esc(pzBadgeTip(next?Object.assign({},b,{earned:false}):b,f))}" aria-pressed="${pzS.badgeSel===b.id}" aria-label="${esc(pzBadgeTip(next?Object.assign({},b,{earned:false}):b,f).replace(/\n/g,' '))}">
         ${pzMedal(next?Object.assign({},b,{earned:false}):b,52)}<b>${esc(b.t.replace(/ · .*/,''))}</b><small style="color:${next?'var(--pz-muted)':PZ_TIER_COL[b.r]}">${PZ_TIERS[b.r]||''}</small>
         ${next?`${pzPctBar(f.value/b.need,PZ_TIER_COL[b.r])}<small>${pzN(Math.floor(f.value))} / ${pzN(b.need)}</small>`
-          :after?`${pzPctBar(f.value/after.need,PZ_TIER_COL[after.r])}<small>next: ${PZ_TIERS[after.r]} · ${pzN(Math.floor(f.value))}/${pzN(after.need)}</small>`
+          :after?`${pzPctBar(f.value/after.need,PZ_TIER_COL[after.r])}<small title="Next: ${PZ_TIERS[after.r]}">${pzN(Math.floor(f.value))} / ${pzN(after.need)}</small>`
           :`<small>${f?'all tiers earned':esc(dayLabel(b.k).replace(/^\w+, /,''))}</small>`}</button>`).join('')}</div></section>`; }).join('');
   const hiddenN=cat.hidden;
   // sharing: the public page is opt-in under What you share
@@ -11244,8 +11316,8 @@ function pzBadgesHtml(D){
       :`<p class="pz-sub" style="font-size:13px">Turn on a public page with your badges, level and streak — no trades, no P&amp;L, no wallet. Anyone with the link can see it.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" data-pz-page="1" style="width:auto;padding:0 18px">Create my public badge page</button><button type="button" class="pz-ghost pz-sm" id="pzBadgeImg" style="width:auto;padding:0 16px">Badge card image</button></div>`}</section>`;
   const pct=cat.total?cat.earned.length/cat.total:0;
   return `${back}${pzHead(cat.earned.length+' of '+cat.total+' earned','Badge case')}
-    <div class="pz-wide"><section class="pz-card pz-span pz-kv">${pzPctBar(pct,PZ_TIER_COL[2])}<span class="pz-sub" style="font-size:13px">Every badge is earned by process: discipline, habits, routines, consistency${hiddenN?`. <b>${hiddenN} more</b> to discover — new families appear as your case fills up`:''}. Tiers: ${PZ_TIERS.map((t,i)=>`<span style="color:${PZ_TIER_COL[i]};font-weight:700">${t}</span>`).join(' · ')}.</span></section>
-    ${shareCard}<div class="pz-span">${chips}</div>${info?`<div class="pz-span">${info}</div>`:''}${grid}
+    <div class="pz-wide"><div class="pz-span pz-bprog">${pzPctBar(pct,PZ_TIER_COL[2])}<span class="pz-sub" style="font-size:12px">${hiddenN?`${hiddenN} more to discover — new families appear as your case fills. `:''}Hover or tap a badge to see what it’s for.</span></div>
+    <div class="pz-span">${chips}</div>${info?`<div class="pz-span">${info}</div>`:''}${grid}${shareCard}
     <div class="pz-span" id="gmOut"></div></div>`;
 }
 async function pzBadgeCardImage(){
@@ -11300,15 +11372,17 @@ function pzRulesFormHtml(ck){
   const seg=(k,opts,cur)=>`<div class="pz-seg pz-rseg" role="group" aria-label="${esc(PZ_RULE_LABEL[k])}">${opts.map(([v,l])=>`<button type="button" data-pz-rule="${k}" data-v="${v}" aria-pressed="${String(cur||0)===String(v)}">${l}</button>`).join('')}</div>`;
   const N=R.lossStreak>1?+R.lossStreak:R.stop2?2:0;
   const row=(label,hint,ctl)=>`<div class="pz-rrow"><span><b>${label}</b>${hint?`<small>${hint}</small>`:''}</span>${ctl}</div>`;
-  return `<section class="pz-card pz-kv"><b class="pz-kvh">Rules for today <span class="pz-sub" style="font-weight:400;font-size:12px">· checked from your fills as you trade</span></b>
+  const nSet=(chosen.length?1:0)+(N?1:0)+(R.wait>0?1:0)+(R.noAdd?1:0)+(/^\d{2}:\d{2}$/.test(R.until||'')?1:0)+(R.maxPos>0?1:0);
+  return `<details class="pz-card pz-kv pz-rules"${pzS.rulesOpen?' open':''}><summary><b class="pz-kvh">Rules for today</b><span class="pz-sub" style="font-size:12px">${nSet?nSet+' set':'none yet'} · checked from your fills</span></summary>
     ${row(PZ_RULE_LABEL.setups,'Trades tagged with anything else count as off-plan',`<div class="pz-chiprow pz-wrapr">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-rule="setups" data-v="${esc(x)}" aria-pressed="${chosen.includes(x)}">${esc(x)}</button>`).join('')}</div>
       <div class="pz-addrow"><label for="pzSetupAdd" class="pz-sr">Add a setup</label><input type="text" id="pzSetupAdd" maxlength="40" placeholder="Add your own setup" autocomplete="off"><button type="button" class="pz-ghost pz-sm" id="pzSetupAddGo">Add</button></div>`)}
     ${row(PZ_RULE_LABEL.lossStreak,'',seg('lossStreak',[[0,'Off'],[2,'2'],[3,'3']],N))}
     ${row(PZ_RULE_LABEL.wait,'Before the next entry',seg('wait',[[0,'Off'],[15,'15m'],[30,'30m'],[60,'1h']],R.wait||0))}
     <div class="pz-toggle"><span style="flex:1"><b id="pzNoAddL">${PZ_RULE_LABEL.noAdd}</b></span><button type="button" role="switch" class="pz-switch" data-pz-rule="noAdd" aria-checked="${!!R.noAdd}" aria-labelledby="pzNoAddL"><i></i></button></div>
     <div class="pz-grid2"><div class="pz-field"><label for="pzUntil" style="font-size:13px">${PZ_RULE_LABEL.until}</label><input type="time" id="pzUntil" value="${esc(R.until||'')}"></div>
-      <div class="pz-field"><label for="pzMaxPos" style="font-size:13px">${PZ_RULE_LABEL.maxPos} ($)</label><input type="number" id="pzMaxPos" inputmode="decimal" min="0" step="any" value="${R.maxPos>0?esc(R.maxPos):''}"></div></div></section>`;
+      <div class="pz-field"><label for="pzMaxPos" style="font-size:13px">${PZ_RULE_LABEL.maxPos} ($)</label><input type="number" id="pzMaxPos" inputmode="decimal" min="0" step="any" value="${R.maxPos>0?esc(R.maxPos):''}"></div></div></details>`;
 }
+document.addEventListener('toggle',ev=>{ if(ev.target&&ev.target.classList&&ev.target.classList.contains('pz-rules'))pzS.rulesOpen=ev.target.open; },true);
 
 // ---- the end-of-day review (#review) ----
 function pzReviewInit(D){
@@ -11479,7 +11553,7 @@ function pzCoachPrompts(){
   return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?'];
 }
 function pzCoachHtml(D){
-  const back=`<a class="pz-back" href="#today">${pzI('back',20)}Today</a>`;
+  const back=''; // a top-level tab: no back link
   pzCoachStatus();
   const lock=pzLocked('coach',D.g.level.level); if(lock)return `${back}${pzLockedHtml('Your AI coach',lock,D.g)}`;
   const owner=!!(SRV.token&&!SRV.badAuth);
@@ -11502,7 +11576,7 @@ function pzCoachHtml(D){
     <p class="pz-fine">The coach sees a summary built on this device: scores, slips, habits, plans and reviews. It doesn’t give trade signals. Answers can be wrong — your rules come first.${msgs.length?' <button type="button" class="pz-linkbtn" id="pzCoachClear">Clear this chat</button>':''}</p></div>`;
 }
 function socSubTabs(){
-  return `<div class="pz-seg full" role="group" aria-label="Social">${[['league','Leagues'],['boards','Leaderboards'],['compete','Compete'],['feed','Feed']].map(([k,l])=>`<button type="button" data-soc-sub="${k}" aria-pressed="${SOC.sub===k}">${l}</button>`).join('')}</div>`;
+  return `<div class="pz-seg full" role="group" aria-label="Social">${[['league','League'],['boards','Boards'],['compete','Compete'],['feed','Feed']].map(([k,l])=>`<button type="button" data-soc-sub="${k}" aria-pressed="${SOC.sub===k}">${l}</button>`).join('')}</div>`;
 }
 const SOC_TIER_COL=['#C98B5A','#CDD3DA','#F4C04E','#8FD9E8','#B69CFF'];
 function socRowsHtml(rows, board, emptyText, key){

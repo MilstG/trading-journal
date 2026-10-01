@@ -228,6 +228,15 @@ loss limit and plan) and **Progress** (level, XP, streak and shields, the
 weekly challenge, badges, share cards). A quick journal screen rates and notes
 unjournaled trades. On a wide screen the tabs become a sidebar.
 
+**Your layout.** Every Pulse screen (Today, Stats, Progress) has **Customize
+this screen** at the bottom: show or hide each section, or reset to the default.
+Your choices sync with your settings. Today's default is lean: today's one thing
+(the focus you set in last night's review), the dials, net / entries / risk
+used, your session with today's rules as kept-or-broken chips, the one next
+step (check-in or review), what's due for XP this week, and the last seven
+trading days; level and league standing and the full last-day card can be
+switched on.
+
 **Today, in depth.** Under the dials: the day in numbers (net, trades against
 your cap, win rate, fees, open positions with unrealized P&L, risk used against
 your loss limit), your level, today's XP, streak and league standing; **your
