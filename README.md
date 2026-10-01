@@ -315,14 +315,14 @@ send your `/pulse` link to join *your* league.
   weekly or monthly, with or without tiers, listed or behind an invite code. Members
   can be in several at once, and find listed leagues under **Social → Find leagues**
   by name or number, with a page showing the rules and top five before joining.
-- **Global leaderboards** (opt-in). Under Social → Leaderboards, the same categories
+- **Global leaderboards** (opt-in). Under Social → Boards, the same categories
   across every member regardless of league — only for members who switch on
-  **Show me on global leaderboards**.
+  **Show me on the global boards**. Pick the category from **Ranked by**.
 - **Leaderboards.** Weekly XP (your league), discipline (7-day average, minimum 3
   trading days, **verified**: the server recomputes each member's Discipline from
   their public fills with the app's own code, so it can't be typed in), streak, all-time XP, and — only for traders who opt in — return /
   drawdown, % return (dropped over 25% drawdown) and dollar P&L, all over 30 days.
-- **Competitions**, created by the owner: *Discipline* (best average process score),
+- **Competitions** (listed under Social → League), created by the owner: *Discipline* (best average process score),
   *Survivor* (never hit your daily loss limit), *Journal streak*, and *Return under a
   drawdown cap*. Prizes are badges and bragging rights, never money.
 - **Following and the feed.** Level-ups, streak milestones, badges, completed
@@ -331,7 +331,9 @@ send your `/pulse` link to join *your* league.
 - **What you share.** Profile, process boards, feed and habits are on by default;
   % return, dollar P&L and the wallet address are off. The journal, notes and trades
   never leave the browser: only XP, level, streak, badges, habit sentences and each
-  trading day's process score and flags are sent.
+  trading day's process score and flags are sent. The switches are grouped into
+  Profile, Boards and Sensitive; claiming a wallet, devices, journal sync and leaving
+  live one level down, under **What you share → Account**.
 
 **Trust model.** Process numbers are computed by each member's browser and are
 self-reported. Money numbers are never taken from the browser: the server reads
@@ -339,7 +341,7 @@ them from Hyperliquid's public `portfolio` endpoint for the member's wallet, and
 when they opted in. Naming an address proves nothing; *claiming* it does (below).
 Addresses stay hidden by default and the owner can remove anyone.
 
-**Claiming a wallet.** Under Social → Profile & privacy, **Claim with my wallet**
+**Claiming a wallet.** Under Social → What you share → Account, **Claim with my wallet**
 asks the browser wallet (MetaMask, Rabby, or a wallet app's built-in browser) to sign
 a Sign-In with Ethereum message (EIP-4361). It's a signature, not a transaction: no
 gas, nothing moves. The server writes the message and keeps it by a single-use nonce
@@ -731,6 +733,9 @@ Treat it as positive visualization of staying the course, nothing more.
   win/loss in the distribution analysis.
 
 ## Exports and backups
+
+These sit under **Export & tools** above the trade table (the clock and colour
+switches moved into **Settings**).
 
 | Button | What you get |
 |---|---|

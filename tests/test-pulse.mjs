@@ -23,7 +23,7 @@ Object.assign(ctx, {
 });
 vm.createContext(ctx);
 vm.runInContext(grabConst('PROCESS_W') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'pzTrendStats',
-  'pzReadinessLink', 'pzBars', 'pzHasPlan', 'pzBonusItems', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
+  'pzReadinessLink', 'pzBars', 'pzHasPlan', 'pzBonusItems', 'pzPlain', 'pzRulesBroken', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
 
 const DAY = 86400000, T0 = Date.UTC(2026, 8, 30, 12);
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
@@ -112,7 +112,12 @@ t('the coach line: limit hit, then today’s slips from fills, then load and for
   ok(/after two losses/.test(ctx.pzCoachLine(D({ day: { behavior: { flags: { afterTwo: 1, revenge: 1 } } } }))), 'tilt outranks revenge');
   ok(/2\.0× your usual/.test(ctx.pzCoachLine(D({ load: { ratio: 2 } }))));
   ok(/trails your usual/.test(ctx.pzCoachLine(D({ form: { score: 20 } }))));
-  eq(ctx.pzCoachLine(D({ ctx: { findings: [{ tone: 'edge', title: 'A', action: 'B' }, { tone: 'leak', title: 'Leak', action: 'Fix it.' }] } })), 'Leak. Fix it.');
+  eq(ctx.pzCoachLine(D({ ctx: { findings: [{ tone: 'edge', title: 'A', action: 'B' }, { tone: 'leak', title: 'Leak', action: 'Fix it (Diagnostic → Rules).' }] } })), 'Across your trades: Leak. Fix it.');
+  ok(/^Clean so far: 1 closed, no slips/.test(ctx.pzCoachLine(D({ risk: { limit: 0, loss: 0, net: 50, closed: [{ net: 50, closeTime: 1 }] }, day: { behavior: { flags: {}, slips: [] } },
+    ctx: { findings: [{ tone: 'leak', title: 'SOL caused 100% of your losses', action: 'x' }] } }))), 'a clean winning day isn’t lectured about an old leak');
+  ctx.pzPlanCheck = () => ({ rules: [{ k: 'until', ok: false }] });
+  ok(!/^Clean so far/.test(ctx.pzCoachLine(D({ risk: { limit: 0, loss: 0, net: 50, closed: [{ net: 50, closeTime: 1 }] }, day: { behavior: { flags: {}, slips: [] } } }))), 'a broken plan rule isn’t a clean day');
+  delete ctx.pzPlanCheck;
 });
 
 console.log('\nPath switch and wiring');

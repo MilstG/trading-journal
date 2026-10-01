@@ -200,7 +200,7 @@ t('the denominator ambiguity is explained in the UI, not just in tests', () => {
 t('recommendations quantify the top leak and the profit concentration', () => {
   ok(html.includes("const A=assetContribution(closed,'usd',5);"), 'recs never consult attribution');
   ok(html.includes('of every dollar you lost this period'));
-  ok(html.includes('this is a sizing problem, not a market to drop'),
+  ok(html.includes('If it holds up, trade it smaller instead of dropping it.'),
     'a big-dollar leak with a fine per-trade return is a sizing call — say so');
 });
 
