@@ -130,4 +130,14 @@ t('profit factor counts every loss, including the small ones inside the break-ev
   near(S.computeStats(tr).profitFactor, 200 / 360, 1e-9);
 });
 
+const TS = await evalModule(['tradeStates'], ['tradeStates'], PRE + "const tzMidnight=ms=>Math.floor(ms/864e5)*864e5;");
+t('trade states: the streak skips scratches, and a new day starts at exactly zero', () => {
+  const D = 864e5, mk = (id, o, c, net) => ({ id, openTime: o, closeTime: c, net });
+  const tr = [mk('a', 1, 2, 0.1), mk('b', 3, 4, 0.2), mk('c', 5, 6, 200), mk('s', 7, 8, 10), mk('d', 9, 10, 300), mk('e', D + 1, D + 2, -0.3)];
+  const M = TS.tradeStates(tr);
+  eq(M.get('d').streak, 1, 'a scratch neither extends nor breaks');
+  eq(M.get('e').dayPnl, 0, 'no rounding dust carried into the next day');
+  eq(M.get('e').streak, 2);
+});
+
 report('sweep');

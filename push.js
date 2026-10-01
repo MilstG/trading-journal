@@ -15,7 +15,9 @@ const hmac = (key, data) => crypto.createHmac('sha256', key).update(data).digest
 function loadVapid(dataDir, subject) {
   const file = path.join(dataDir, 'vapid.json');
   let jwk = null, raw = null;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch (e) {}
+  try { raw = fs.readFileSync(file, 'utf8'); }
+  // there but unreadable (permissions): never replace it — push stays off until it can be read
+  catch (e) { if (e.code !== 'ENOENT') throw new Error('can’t read ' + file + ' (' + e.code + ')'); }
   if (raw != null) try { jwk = JSON.parse(raw); } catch (e) {}
   if (!jwk || jwk.kty !== 'EC' || !jwk.d) {
     // a file that's there but unreadable is kept aside (not overwritten) so the owner can recover it

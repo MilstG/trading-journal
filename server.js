@@ -516,6 +516,9 @@ function createApp(opts) {
     if (_dataCache.data && _dataCache.mtime === st.mtimeMs) return _dataCache.data;
     try { const d = JSON.parse(fs.readFileSync(dataFile, 'utf8')); _dataCache = { mtime: st.mtimeMs, data: d }; dataBroken = false; return d; }
     catch (e) {
+      // a read that failed for another reason (too many open files…) isn't a damaged file: answer
+      // from the last good read, or refuse this once — never "empty", never the backup
+      if (!(e instanceof SyntaxError)) { if (_dataCache.data) return _dataCache.data; dataBroken = true; return null; }
       try { const d = JSON.parse(fs.readFileSync(dataFile + '.bak', 'utf8'));
         if (dataBroken !== 'bak') console.warn('[ledger] ' + dataFile + ' is damaged (' + e.message + '); using ' + dataFile + '.bak until the next save');
         dataBroken = 'bak'; _dataCache = { mtime: st.mtimeMs, data: d }; return d; }
@@ -1496,7 +1499,8 @@ function createApp(opts) {
         // "today" on the owner's own clock, the same day alerts, /today and the nudge use
         const zone = nudgeZone(currentSnapshot().settings), dayIn = ms => zonedDayHour(ms, zone).day, todayKey = dayIn(Date.now());
         let tn = 0, tc = 0;
-        for (const t of closed) if (dayIn(t.closeTime) === todayKey) { tn += t.net; tc++; }
+        const recent = Date.now() - 2 * 86400000; // only the last two days can be "today" anywhere
+        for (const t of closed) if (t.closeTime > recent && dayIn(t.closeTime) === todayKey) { tn += t.net; tc++; }
         m.net_today = +tn.toFixed(2); m.trades_today = tc;
         const nets = [...closed].sort((a, b) => a.closeTime - b.closeTime).map(t => t.net);
         if (nets.length) m.current_drawdown = +E.currentDD(nets).dd.toFixed(2);

@@ -1108,7 +1108,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
             <input type="number" id="riskDefault" placeholder="e.g. 100" min="0" step="any" class="hide">
           </div>
           <div class="sp-note" id="rBasisNote">R-multiples scale to your average loss · override per trade</div>
-          <div class="sp-row" data-tip="Trades whose net PnL lands within this dollar band of zero are treated as break-even scratches — excluded from win rate, streaks, and profit factor, and shown with a B/E tag. Set to 0 to disable."><label>Break-even band</label>
+          <div class="sp-row" data-tip="Trades whose net PnL lands within this dollar band of zero are treated as break-even scratches — excluded from win rate and streaks (profit factor still counts every dollar), and shown with a B/E tag. Set to 0 to disable."><label>Break-even band</label>
             <span class="bediv">±$<input type="number" id="beThresh" min="0" step="any" value="50"></span>
           </div>
           <div class="sp-note">Scratches inside the band don't count as wins or losses.</div>
@@ -1540,7 +1540,8 @@ async function initServerSync(){
     const d=(early&&await early)||await srvFetch('/api/data');
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
-      if(j.snapshot){ const pend=jPendingLoad(), localJ=pend.length?((await Store.get(J_KEY))||{}):null;
+      // (no readable local journal: nothing to lay over — a missing copy isn't "every edit was a delete")
+      if(j.snapshot){ const pend=jPendingLoad(), localJ=pend.length?await Store.get(J_KEY):null;
         await applySnapshot(j.snapshot); await jPendingOverlay(localJ,pend); }
       _lastSyncedS=_snapS(); } // baseline for the field-level 409 settings merge
     // PWA: only meaningful when served — installable app icon + offline shell
@@ -2002,7 +2003,7 @@ function reconstructTrades(fills, addr, market){
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
     const feeHere=flipped&&sz>0?fee*Math.abs(before)/sz:fee;
     t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null);
-    if(f.time>rzSince)(t.rz||(t.rz=[])).push([f.time,pnl-fee]); // the whole fill once (a flip's opening fee included)
+    if(f.time>rzSince)(t.rz||(t.rz=[])).push([f.time,pnl-(fee-feeBasis)]); // the whole fill once (a flip's opening fee included; a spot buy's token fee is already in closedPnl's basis)
     if(flipped){
       // one fill that closes the whole |before| position AND opens |after| the other way:
       // only the closing portion belongs to this trade; the opening portion seeds the next trade.
@@ -3730,8 +3731,8 @@ function resolvePinPred(pin,closed,ST){
   return fns.length===1?fns[0]:(t=>fns.every(f=>f(t)));
 }
 async function addPin(v,basis,famParams){
-  const pins=pinsList();
-  if(pins.some(p=>p.pid===v.pid&&p.basis===basis))return false;
+  const pins=Array.isArray(settings.pins)?settings.pins:[]; // all of them, including any the list skips
+  if(pins.some(p=>p&&p.pid===v.pid&&p.basis===basis))return false;
   pins.push({pid:v.pid,name:v.name,basis,params:famParams||{},pinnedAt:Date.now(),
     disc:{exp:v.exp,n:v.n,uplift:v.uplift,ci:(v.ci&&isFinite(v.ci[0])&&isFinite(v.ci[1]))?[v.ci[0],v.ci[1]]:null}});
   settings.pins=pins; await Store.set(S_KEY,settings); return true;
@@ -4341,7 +4342,9 @@ function tradeStates(closed){
     const prev=closedBefore.length?closedBefore[closedBefore.length-1]:null;
     const dk=tzMidnight(t.openTime);
     if(dk!==dayKeyCur){ dayKeyCur=dk; idxDayCtr=0; } idxDayCtr++;
-    while(dayFrom<closedBefore.length&&closedBefore[dayFrom].closeTime<dk){ dayPnl-=closedBefore[dayFrom].net; dayFrom++; }
+    if(dayFrom<closedBefore.length&&closedBefore[dayFrom].closeTime<dk){ // a new day: sum it afresh (subtracting left rounding dust that flipped its sign)
+      while(dayFrom<closedBefore.length&&closedBefore[dayFrom].closeTime<dk)dayFrom++;
+      dayPnl=0; for(let k=dayFrom;k<closedBefore.length;k++)dayPnl+=closedBefore[k].net; }
     M.set(t.id,{streak:st, prevNet:prev?prev.net:null, gap:prev?(t.openTime-prev.closeTime):null, idxDay:idxDayCtr, dayPnl});
   }
   return M;
@@ -7979,7 +7982,7 @@ async function removeCustomRule(pid){
 // closes that preceded them; thresholds come from the rule's frozen params.
 // the same trades, rules and journal ask for the same predicates on every render: kept until one changes
 function customRulePreds(trades, rules){
-  const sig=JSON.stringify(rules||[])+'|'+_be+'|'+(trades?trades.length:0)+'|'+(typeof _jrev!=='undefined'?_jrev:0), m=customRulePreds._m;
+  const sig=JSON.stringify(rules||[])+'|'+_be+'|'+(trades?trades.length:0)+'|'+(typeof _jrev!=='undefined'?_jrev:0)+'|'+(settings.tz||'')+'|'+(settings.tzZone||''), m=customRulePreds._m;
   if(m&&m.trades===trades&&m.sig===sig)return m.out;
   const out=customRulePredsNow(trades, rules); customRulePreds._m={trades,sig,out}; return out;
 }
@@ -9652,7 +9655,8 @@ function pzDeepStats(trades, o){
   const tr=[...(trades||[])].filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
   if(!tr.length)return null;
   const W=t=>o.isWin(t.net), L=t=>o.isLoss(t.net);
-  const agg=list=>{ let net=0,gp=0,gl=0,w=0,l=0; for(const t of list){ net+=t.net; if(W(t)){ w++; gp+=t.net; } else if(L(t)){ l++; gl-=t.net; } }
+  // counts use the break-even band; profit factor is gross over every trade (as in the main stats)
+  const agg=list=>{ let net=0,gp=0,gl=0,w=0,l=0; for(const t of list){ net+=t.net; if(t.net>0)gp+=t.net; else gl-=t.net; if(W(t))w++; else if(L(t))l++; }
     return {n:list.length,net,avg:list.length?net/list.length:null,winRate:w+l?w/(w+l):null,pf:gl>0?gp/gl:(gp>0?Infinity:null)}; };
   const group=(keyOf,order)=>{ const m=new Map(); for(const t of tr){ const k=keyOf(t); if(k==null)continue; if(!m.has(k))m.set(k,[]); m.get(k).push(t); }
     const rows=[...m].map(([k,v])=>({k,...agg(v)})); if(order)rows.sort(order); return rows; };
@@ -11087,7 +11091,7 @@ function pzRender(){
   let html;
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
-    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
+    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
     socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
@@ -11102,15 +11106,18 @@ function pzRender(){
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   view.inert=!!(sh&&(pzS.sheet||pzS.custom)); // with a sheet open, Tab stays inside it
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
-  const f=(actId&&$(actId))||(actSel&&root.querySelector(actSel+':not([disabled])')); if(f&&f.focus)f.focus({preventScroll:true});
+  // (by data-* only when they name a single control: several identical Save buttons stay unfocused rather than jumping to the first)
+  const f=(actId&&$(actId))||(actSel&&(()=>{ const all=root.querySelectorAll(actSel+':not([disabled])'); return all.length===1?all[0]:null; })()); if(f&&f.focus)f.focus({preventScroll:true});
 }
 async function pzConnect(inputId){
   const el=$(inputId); const a=(el&&el.value||'').trim();
   if(!/^0x[0-9a-fA-F]{40}$/.test(a)){ pzNote('That doesn’t look like a wallet address — it starts with 0x and is 42 characters long.','err'); const f=$(inputId); if(f)f.focus(); return; }
-  if(el)el.value=''; pzS.sheet=false; pzS.demo=false; pzNote('Loading your trades…','busy'); // real trades from here on: sample-data mode ends
+  if(el)el.value=''; pzS.sheet=false; pzNote('Loading your trades…','busy');
   for(let i=0;_loading&&i<240;i++)await sleep(250); // a background refresh is running: let it finish, then load
   $('walletAddr').value=a;
   await loadAll();
+  // real trades loaded: sample-data mode is over (not before, in case the load didn't happen)
+  if(allTrades.length&&settings.wallets.some(w=>w.address.toLowerCase()===a.toLowerCase()))pzS.demo=false;
 }
 async function pzToken(){
   const tok=($('pzTok')||{value:''}).value.trim(); if(!tok)return;

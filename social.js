@@ -402,8 +402,9 @@ function createSocial(opts) {
   }
   const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq'];
   let S = { v: 1, members: {} };
-  for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); } catch (e) {}
-  for (const r of q('SELECT data FROM members').all()) try { const m = JSON.parse(r.data); if (m && m.id) S.members[m.id] = m; } catch (e) {}
+  const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
+  for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
+  for (const r of q('SELECT data FROM members').all()) try { const m = JSON.parse(r.data); if (m && m.id) { S.members[m.id] = m; loadedRaw.set('m:' + m.id, r.data); } } catch (e) {}
   if (!S.config || typeof S.config !== 'object') S.config = {};
   if (!S.follows || typeof S.follows !== 'object') S.follows = {};
   if (!S.comps || typeof S.comps !== 'object') S.comps = {};
@@ -436,6 +437,7 @@ function createSocial(opts) {
   // the last copy written is kept), and each save is one transaction.
   const written = new Map(), dirty = new Set();
   const digest = s => crypto.createHash('sha1').update(s).digest('base64');
+  for (const [k, raw] of loadedRaw) written.set(k, digest(raw)); loadedRaw.clear();
   // what was written is only remembered once the transaction commits: a failed save is tried again next time
   let fresh = null;
   const writeRow = (key, val) => { if (val === undefined) return; const s = JSON.stringify(val), d = digest(s); if (written.get(key) === d) return; fresh.set(key, d);
@@ -615,7 +617,7 @@ function createSocial(opts) {
     for (const L of Object.values(S.leagues)) delete L.members[id];
     if (gone && opts.forgetAddress && !members().some(o => o.address === gone)) opts.forgetAddress(gone);
     for (const k in S.follows) S.follows[k] = S.follows[k].filter(x => x !== id);
-    for (const c of Object.values(S.comps)) { delete c.entrants[id]; if (c.money) delete c.money[id]; }
+    for (const c of Object.values(S.comps)) { delete c.entrants[id]; if (c.money) delete c.money[id]; if (c.log) delete c.log[id]; }
     tx(() => {
       for (const e of q('SELECT id FROM events WHERE member = ?').all(id)) dropEvent(e.id);
       q('UPDATE events SET kudos = max(0, kudos - 1) WHERE id IN (SELECT event FROM kudos WHERE member = ?)').run(id);
@@ -655,7 +657,7 @@ function createSocial(opts) {
   const refreshMoney = async (m, force) => {
     const addr = walletFor(m);
     if (!addr || m.banned || !(m.share.ret || m.share.usd) || moneyBusy.has(m.id)) return;
-    if (moneyBusy.size >= 3) return; // three wallets at a time: the rest catch up on later requests
+    if (moneyBusy.size >= 3 && !force) return; // three wallets at a time (a forced one, after a wallet change, goes anyway)
     if (!force && m.money && now() - m.money.at < 30 * 60000) return;
     if (m.moneyFailAt && now() - m.moneyFailAt < 10 * 60000) return; // Hyperliquid erroring: don't hammer it
     moneyBusy.add(m.id);
@@ -669,7 +671,8 @@ function createSocial(opts) {
       m.money = st ? { ret: st.ret, dd: st.dd, usd: st.usd, at: now() } : { ret: null, dd: null, usd: null, at: now() };
       let compsChanged = false;
       // a finished competition keeps the result it had when it ended
-      for (const c of Object.values(S.comps)) if (c.type === 'return' && c.entrants[m.id] && compStatus(c, todayKey()) !== 'finished') {
+      // until a competition's result is frozen (a day or so after the end) its numbers still update
+      for (const c of Object.values(S.comps)) if (c.type === 'return' && c.entrants[m.id] && !c.final) {
         const from = Date.parse(c.start + 'T00:00:00Z');
         // the 'month' series only reaches back 30 days; older windows need the coarser all-time one
         const s2 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(c.end + 'T23:59:59Z'));
@@ -802,9 +805,14 @@ function createSocial(opts) {
   // A competition's standings are frozen the day after it ends (a day's grace for the last sync)
   // and served from then on: members' later days and their history being trimmed can't move them.
   const compRows = c => {
-    if (c.final) return c.final;
+    if (c.final) return c.final.filter(r => own(S.members, r.id) && !S.members[r.id].banned); // as members stand today
     const rows = compStandings(c, S.members, todayKey(), !!S.config.requireClaim);
-    if (todayKey() > addDaysKey(c.end, 1)) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log; save('comps'); }
+    // return and discipline results come from the chain: freeze once every entrant's numbers were
+    // read after the end (or a week late at most, for a wallet that can't be read)
+    const endMs = Date.parse(c.end + 'T23:59:59Z'), fresh = () => Object.keys(c.entrants).every(id => { const m = own(S.members, id) ? S.members[id] : null;
+      if (!m || m.banned) return true; return c.type === 'return' ? !(m.share.ret && m.address) || (m.money && m.money.at > endMs) : c.type === 'discipline' ? !(m.share.verify && m.address) || (m.vAt || 0) > endMs : true; });
+    if (todayKey() > addDaysKey(c.end, 1) && (fresh() || todayKey() > addDaysKey(c.end, 7))) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log; save('comps'); }
+    else if (c.type === 'return' || c.type === 'discipline') for (const id of Object.keys(c.entrants)) if (own(S.members, id)) refreshAll(S.members[id]); // a few at a time (the refresh caps)
     return rows; };
   // each synced day of a survivor or journal competition's entrants is kept with the competition;
   // a broken loss limit stays broken
@@ -1445,7 +1453,7 @@ function createSocial(opts) {
         if (!r || r.id !== me.avatar) { dropMedia(q('SELECT id FROM media WHERE member = ? AND kind = ? AND id != ?').all(me.id, 'avatar', r ? r.id : ''));
           if (r) q('UPDATE media SET ref = ? WHERE id = ?').run('avatar:' + me.id, r.id); me.avatar = r ? r.id : null; } }
       // a claimed wallet stays put: only releasing it (or claiming another) changes the address
-      if (newAddr !== undefined) me.address = newAddr;
+      if (newAddr !== undefined) { if (newAddr !== me.address) me.money = null; /* the old wallet's numbers aren't this one's */ me.address = newAddr; }
       if (!(me.share.ret || me.share.usd)) me.money = null;
       if (!me.share.verify || me.address !== prevAddr) { me.vdays = null; me.vAt = 0; }
       let compsCh = false;

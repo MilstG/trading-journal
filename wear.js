@@ -79,7 +79,8 @@ function createWear(opts) {
     const d = await r.json().catch(() => ({}));
     // a refresh token the provider no longer accepts means signing in again, not a network hiccup
     if (!r.ok || !d.access_token) throw Object.assign(new Error((d && (d.error_description || d.error)) || ('HTTP ' + r.status)),
-      d && d.error === 'invalid_grant' || r.status === 401 ? { code: 401, dead: params.grant_type === 'refresh_token' } : {});
+      // only a refresh token the provider says is no longer valid is dropped (a misconfigured client secret isn't the member's fault)
+      d && d.error === 'invalid_grant' || r.status === 401 ? { code: 401, dead: params.grant_type === 'refresh_token' && !!d && d.error === 'invalid_grant' } : {});
     return { access: d.access_token, refresh: d.refresh_token || null, exp: now() + (+d.expires_in || 3600) * 1000 - 60000 };
   };
   // Everything below that awaits checks afterwards that the person (and the connection) is still
@@ -126,10 +127,11 @@ function createWear(opts) {
   const syncOnce = async (uid) => {
     const u = W.users[uid]; if (!u) return status(uid);
     const to = new Date(now() + 86400000).toISOString().slice(0, 10), from = new Date(now() - 30 * 86400000).toISOString().slice(0, 10);
-    for (const p of Object.keys(PROVIDERS)) { if (!u[p]) continue;
-      try { const d = await fetchDays(uid, p, from, to); if (!still(uid, u, p)) continue;
+    for (const p of Object.keys(PROVIDERS)) { if (!u[p]) continue; const cid = u[p].cid;
+      const same = () => still(uid, u, p) && u[p].cid === cid; // still connected, and to the same sign-in
+      try { const d = await fetchDays(uid, p, from, to); if (!same()) continue;
         if (d) { merge(uid, p, d); delete u[p].err; } else if (!(u[p].exp > now()) && !u[p].refresh) u[p].err = 'Sign in to ' + PROVIDERS[p].name + ' again.'; }
-      catch (e) { if (!still(uid, u, p)) continue; u[p].err = e.code === 401 ? 'Sign in to ' + PROVIDERS[p].name + ' again.' : 'Couldn’t reach ' + PROVIDERS[p].name + ' just now.'; if (e.code === 401) u[p].exp = 0; if (e.dead) u[p].refresh = null; /* stop retrying a refresh that can't work */ } }
+      catch (e) { if (!same()) continue; u[p].err = e.code === 401 ? 'Sign in to ' + PROVIDERS[p].name + ' again.' : 'Couldn’t reach ' + PROVIDERS[p].name + ' just now.'; if (e.code === 401) u[p].exp = 0; if (e.dead) u[p].refresh = null; /* stop retrying a refresh that can't work */ } }
     if (!still(uid, u)) return status(uid);
     u.syncedAt = now(); save(); return status(uid); };
 
@@ -148,7 +150,7 @@ function createWear(opts) {
       if (!st || st.exp < now() || st.provider !== p || !ck || ck[1] !== st.nonce) return back(false);
       if (!query.code) return back(false, 'denied');
       try { const c = cfg(p); const t = await tokenCall(p, { grant_type: 'authorization_code', code: String(query.code), redirect_uri: st.redirect, client_id: c.id, client_secret: c.secret });
-        const u = user(st.uid); u[p] = t; delete u.failed; save(); sync(st.uid, true).catch(() => {}); }
+        const u = user(st.uid); t.cid = crypto.randomBytes(6).toString('hex'); /* cid: this connection, so a sync of an older one can't touch it */ u[p] = t; delete u.failed; save(); sync(st.uid, true).catch(() => {}); }
       catch (e) { return back(false, e.message); }
       return back(true);
     }
