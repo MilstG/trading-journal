@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' https://api.hyperliquid.xyz; manifest-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' https://api.hyperliquid.xyz; manifest-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ledger — Hyperliquid Trade Journal</title>
 <meta name="theme-color" content="#0A0E14">
@@ -818,7 +818,7 @@ body.pz-quiet-on{overflow:hidden}
 .pz-connect h1{margin:0;font-family:var(--pz-num);font-size:44px;font-weight:600;line-height:1}
 .pz-fine{margin:0;font-size:13px;line-height:1.5;color:var(--pz-muted)}
 .pz-err{color:#FFB39E}
-.pz-note{position:fixed;left:50%;bottom:calc(78px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:10px 16px;border-radius:14px!important;background:#1B1F25;border:1px solid var(--pz-line2);color:var(--pz-soft);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+.pz-note{cursor:pointer;position:fixed;left:50%;bottom:calc(78px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:10px 16px;border-radius:14px!important;background:#1B1F25;border:1px solid var(--pz-line2);color:var(--pz-soft);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 .pz-note.err{border-color:#6A2E20;color:#FFB39E}
 .pz-note:empty{display:none}
 .pz-spin{display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:50%!important;border:2px solid var(--pz-good);border-right-color:transparent;animation:pzspin .8s linear infinite;vertical-align:-1px}
@@ -10685,7 +10685,7 @@ function pzEquitySvg(curve,byId){
     <text x="${L-8}" y="${DT+4}" font-size="11" text-anchor="end" fill="var(--pz-muted)">$0</text><text x="${L-8}" y="${f1(yd(dMin)+4)}" font-size="11" text-anchor="end" fill="var(--pz-muted)">${esc(pzSigned(dMin))}</text>
     <path d="${area}" fill="${PZ_COL.low}" fill-opacity=".38"/>
     <circle cx="${f1(x(ddI))}" cy="${f1(yd(curve[ddI].dd))}" r="4" fill="${PZ_COL.low}" stroke="var(--pz-card)" stroke-width="2"/>
-    ${lab(x(ddI)+(anc(x(ddI))==='end'?-8:8),yd(curve[ddI].dd)+4,'Max drawdown '+pzSigned(curve[ddI].dd),PZ_COL.low,anc(x(ddI))==='end'?'end':'start')}
+    ${(()=>{ const r=x(ddI)>W/2; /* a trough on the right half labels to its left, so the text stays inside */ return lab(x(ddI)+(r?-8:8),yd(curve[ddI].dd)+4,'Max drawdown '+pzSigned(curve[ddI].dd),PZ_COL.low,r?'end':'start'); })()}
     ${xt.map(i=>`<text x="${f1(x(i))}" y="${H-5}" font-size="11" text-anchor="${i===0?'start':i===n-1?'end':'middle'}" fill="var(--pz-muted)">${esc(fmtD(curve[i].at))}</text>`).join('')}
     <line class="pz-eqx" x1="0" x2="0" y1="${T}" y2="${DT+DH}" stroke="var(--pz-soft)" stroke-width="1" style="display:none"/>
     <circle class="pz-eqd" r="4" fill="var(--pz-text)" style="display:none"/>
@@ -10921,7 +10921,7 @@ function pzJournalHtml(D){
       <input type="text" id="pzSetup_${esc(t.id)}" aria-label="Setup" placeholder="Setup (breakout, fade, retest…)" autocomplete="off">
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-setupchip="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
       <textarea id="pzNoteT_${esc(t.id)}" rows="2" aria-label="${esc(q)}" placeholder="${esc(q)}"></textarea>
-      <div style="display:flex;gap:8px"><button type="button" class="pz-ghost" data-pz-jsave style="flex:1">Save</button>${SOC.me&&!(SOC.cfg&&SOC.cfg.posts&&!SOC.cfg.posts.on)?`<button type="button" class="pz-ghost" data-soc-share="${esc(t.id)}">Share</button>`:''}</div></section>`; };
+      <div style="display:flex;gap:8px"><button type="button" class="pz-ghost" data-pz-jsave style="flex:1">Save</button>${SOC.me&&!pzS.demo&&!(SOC.cfg&&SOC.cfg.posts&&!SOC.cfg.posts.on)?`<button type="button" class="pz-ghost" data-soc-share="${esc(t.id)}">Share</button>`:''}</div></section>`; };
   return `${back}${pzHead(D.inbox.length+' to journal','Journal')}<p class="pz-sub" style="margin-top:-6px">Rate how well you executed each trade, not how it paid. One line is enough.</p>
     <div class="pz-jgrid">${list.map(card).join('')}</div>${jpg.html}`;
 }
@@ -10978,7 +10978,7 @@ function pzSheetHtml(){
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Wallets</span>
       ${settings.wallets.map((w,i)=>`<div class="pz-wl"><span>${w.label?esc(w.label)+' · ':''}<code>${esc(walletShort(w.address))}</code></span><button type="button" class="pz-ghost pz-sm" data-pz-rmw="${i}" aria-label="Remove wallet ${esc(labelFor(w))}">Remove</button></div>`).join('')||'<p class="pz-sub">No wallets yet.</p>'}
       <div class="pz-field" style="margin-top:10px"><label for="pzAddr2" style="font-size:13px">Add another address</label><input type="text" id="pzAddr2" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <div style="display:flex;gap:8px"><button type="button" class="pz-ghost pz-sm" id="pzAdd2">Add &amp; load</button><button type="button" class="pz-ghost pz-sm" id="pzRefresh">Refresh now</button></div></div></section>
+        <div style="display:flex;gap:8px"><button type="button" class="pz-ghost pz-sm" id="pzAdd2">Add &amp; load</button>${settings.wallets.length?'<button type="button" class="pz-ghost pz-sm" id="pzRefresh">Refresh now</button>':''}</div></div></section>
     ${pzProfilePickHtml()}
     ${pzPushHtml()}
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Your data</span><p class="pz-sub" style="margin-top:6px">${where}</p>
@@ -10995,7 +10995,8 @@ function pzNote(m, kind){
   const el=$('pzNote'); if(!el)return;
   el.className='pz-note'+(kind==='err'?' err':'');
   el.innerHTML=m?(kind==='busy'?'<span class="pz-spin"></span>':'')+esc(m):'';
-  clearTimeout(pzNote._t); if(m&&kind!=='busy'&&kind!=='err')pzNote._t=setTimeout(()=>{ if(el.textContent===m){ el.textContent=''; pzS.note=null; } },5000);
+  // messages go by themselves (errors stay a little longer), or with a tap, or when you change screens
+  clearTimeout(pzNote._t); if(m&&kind!=='busy')pzNote._t=setTimeout(()=>{ if(el.textContent===m){ el.textContent=''; pzS.note=null; } },kind==='err'?9000:5000);
   // the first-run and loading screens show the message inline too
   if(!allTrades.length&&$('pzView'))pzRender();
 }
@@ -11005,7 +11006,9 @@ function pzRender(){
   // keep what's typed across re-renders (a background sync or auto-refresh can land mid-edit)
   const root=$('pz'), keep={}; root.querySelectorAll('input[id],textarea[id]').forEach(el=>{ keep[el.id]=el.value; });
   const act=document.activeElement, actId=act&&root.contains(act)?act.id:null;
-  const actSel=act&&act.dataset?(act.dataset.pzCk?`[data-pz-ck="${act.dataset.pzCk}"][data-n="${act.dataset.n}"]`:act.dataset.pzRing?`[data-pz-ring="${act.dataset.pzRing}"]`:act.dataset.pzRange?`[data-pz-range="${act.dataset.pzRange}"]`:act.dataset.pzBk?`[data-pz-bk="${act.dataset.pzBk}"]`:act.dataset.pzBadge?`[data-pz-badge="${act.dataset.pzBadge}"]`:null):null;
+  // the focused control without an id is found again by its data-* attributes, so a click that
+  // re-renders the screen doesn't drop keyboard focus to the page
+  const actSel=act&&!actId&&root.contains(act)&&act.attributes?([...act.attributes].filter(a=>a.name.startsWith('data-')).map(a=>`[${a.name}="${CSS.escape(a.value)}"]`).join('')||null):null;
   let html;
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
@@ -11022,13 +11025,14 @@ function pzRender(){
   view.innerHTML=html;
   pzQuietMount(allTrades.length?_pzLastD:null);
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
+  view.inert=!!(sh&&(pzS.sheet||pzS.custom)); // with a sheet open, Tab stays inside it
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
-  const f=(actId&&$(actId))||(actSel&&root.querySelector(actSel)); if(f&&f.focus)f.focus({preventScroll:true});
+  const f=(actId&&$(actId))||(actSel&&root.querySelector(actSel+':not([disabled])')); if(f&&f.focus)f.focus({preventScroll:true});
 }
 async function pzConnect(inputId){
   const el=$(inputId); const a=(el&&el.value||'').trim();
   if(!/^0x[0-9a-fA-F]{40}$/.test(a)){ pzNote('That doesn’t look like a wallet address — it starts with 0x and is 42 characters long.','err'); const f=$(inputId); if(f)f.focus(); return; }
-  if(el)el.value=''; pzS.sheet=false; pzNote('Loading your trades…','busy');
+  if(el)el.value=''; pzS.sheet=false; pzS.demo=false; pzNote('Loading your trades…','busy'); // real trades from here on: sample-data mode ends
   for(let i=0;_loading&&i<240;i++)await sleep(250); // a background refresh is running: let it finish, then load
   $('walletAddr').value=a;
   await loadAll();
@@ -11064,16 +11068,17 @@ function wirePulse(){
     if(ds.pzClose!==undefined){ if(t.classList.contains('pz-sheet-bg')&&ev.target!==t)return; pzS.sheet=false; pzS.custom=null; pzRender(); return; }
     if(ds.pzCustomize){ pzS.custom=ds.pzCustomize; pzRender(); const c=$('pzSheet').querySelector('[data-pz-close].pz-chip'); if(c)c.focus(); return; }
     if(ds.pzMove){ const [sc,id,d]=ds.pzMove.split(':'); if(pzMove(sc,id,+d)){ await Store.set(S_KEY,settings); pzRender();
-        const b=$('pzSheet').querySelector(`[data-pz-move="${sc}:${id}:${d}"]`)||$('pzSheet').querySelector(`[data-pz-move^="${sc}:${id}:"]:not([disabled])`); if(b)b.focus(); } return; }
+        const b=$('pzSheet').querySelector(`[data-pz-move="${sc}:${id}:${d}"]:not([disabled])`)||$('pzSheet').querySelector(`[data-pz-move^="${sc}:${id}:"]:not([disabled])`); if(b)b.focus(); } return; }
     if(ds.pzSect){ const [sc,id]=ds.pzSect.split(':'), L=settings.pzLayout=settings.pzLayout||{}, M=L[sc]=L[sc]||{}; M[id]=!pzShow(sc,id); await Store.set(S_KEY,settings); pzRender(); return; }
     if(ds.pzSectreset){ if(settings.pzLayout)delete settings.pzLayout[ds.pzSectreset]; await Store.set(S_KEY,settings); pzRender(); return; }
-    if(ds.pzRmw!==undefined){ await removeWallet(+ds.pzRmw); pzRender(); return; }
+    if(ds.pzRmw!==undefined){ const w=settings.wallets[+ds.pzRmw]; if(w&&!confirm('Remove '+labelFor(w)+'? Its trades leave Pulse; your notes on them stay saved.'))return;
+      await removeWallet(+ds.pzRmw); pzRender(); return; }
     if(await socAction(t))return;
     switch(t.id){
       case 'pzConnect': return pzConnect('pzAddr');
       case 'pzAdd2': return pzConnect('pzAddr2');
       case 'pzDemo': pzS.demo=true; pzNote('Generating sample data…','busy'); await loadDemo();
-        if(allTrades.length)pzNote('Sample trades come with no journal, so discipline starts low. Do a check-in and journal a couple to watch the dials move.');
+        if(allTrades.length)pzNote('These are sample trades. Discipline is read from the fills; check in and journal a few to earn XP and watch the rest fill in.');
         return;
       case 'pzRefresh': pzS.sheet=false; pzRender(); pzNote('Refreshing…','busy'); return loadAll();
       case 'pzCkSave': return pzSaveCheckin();
@@ -11113,10 +11118,13 @@ function wirePulse(){
     else if(ev.key==='Enter'&&ev.target.id==='pzSetupAdd'){ ev.preventDefault(); const b=$('pzSetupAddGo'); if(b)b.click(); }
     else if(ev.key==='Enter'&&(ev.target.id==='socLinkIn'||ev.target.id==='vaultPass'||ev.target.id==='vaultPass2')){ ev.preventDefault();
       const b=$(ev.target.id==='socLinkIn'?'socLinkGo':$('vaultUnlock')?'vaultUnlock':'vaultOn'); if(b)b.click(); }
-    else if(ev.key==='Escape'&&(pzS.sheet||pzS.custom)){ pzS.sheet=false; pzS.custom=null; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
-  let prevTab=pzTab(); window.addEventListener('hashchange',()=>{ const tb=pzTab(); SOC.confirm=null;
+  });
+  // Escape closes an open sheet wherever focus is (it can sit on the page itself after a re-render)
+  document.addEventListener('keydown',ev=>{ if(ev.key==='Escape'&&(pzS.sheet||pzS.custom)){ pzS.sheet=false; pzS.custom=null; pzRender(); const g=document.querySelector('[data-pz-sheet]'); if(g)g.focus(); } });
+  { const n=$('pzNote'); if(n)n.addEventListener('click',()=>{ if(pzS.note&&pzS.note.kind!=='busy')pzNote(null); }); }
+  let prevTab=pzTab(); window.addEventListener('hashchange',()=>{ const tb=pzTab(); SOC.confirm=null; if(pzS.note&&pzS.note.kind==='err')pzNote(null);
     // a half-typed comment or update belongs to the post it was written on
-    for(const id of ['socCText','socUNote','socUExit']){ const el=$(id); if(el)el.value=''; } if(tb==='checkin')pzS.ck=null; if(tb==='sharing'&&prevTab!=='account')SOC.draft=null; prevTab=tb; pzRender(); window.scrollTo(0,0); });
+    for(const id of ['socCText','socUNote','socUExit']){ const el=$(id); if(el)el.value=''; } if(tb==='checkin')pzS.ck=null; if(tb==='sharing'&&prevTab!=='account'){ SOC.draft=null; SOC.draftHandle=null; SOC.draftBio=null; } prevTab=tb; pzRender(); window.scrollTo(0,0); });
   window.addEventListener('beforeinstallprompt',()=>{ if(pzS.sheet)pzRender(); });
 }
 if(PZ)wirePulse();
@@ -11363,7 +11371,7 @@ function socSharingHtml(D){
   SOC.draft=SOC.draft||{...SOC.share};
   const w=settings.wallets[0];
   return `${back}${pzHead('Profile & privacy','What you share')}
-  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades never leave this device. Only the numbers switched on below are sent.</p>
+  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades stay on this device, apart from what you send the coach and your journal sync (encrypted, if you switch it on). For the league, only the numbers switched on below are sent.</p>
   <div class="pz-wide"><div class="pz-col">
     <div class="pz-field"><span style="font-size:15px;font-weight:700">Profile picture</span><div style="display:flex;align-items:center;gap:14px">${socAv(SOC.me.handle,64)}
       <label class="pz-ghost pz-sm" for="socAvFile" style="cursor:pointer">${SOC.me.av?'Change picture':'Add a picture'}</label><input type="file" id="socAvFile" accept="image/*" class="pz-vh">${SOC.me.av?'<button type="button" class="pz-linkbtn" data-soc-avdel>Remove</button>':''}</div></div>
@@ -11477,7 +11485,7 @@ function socPostHtml(D, id){
     upd=`<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><div class="pz-field"><label for="socUNote" style="font-size:13px">Add an update</label><textarea id="socUNote" rows="2" maxlength="500"></textarea></div><button type="button" class="pz-ghost" data-soc-usave="${esc(id)}">Save the update</button></section>`;
   }
   const rep=k=>SOC.confirm===k;
-  const own=e.mine?`<button type="button" class="pz-quietbtn warn" data-soc-pdel="${esc(id)}">${rep('del:'+id)?'Tap again to delete this post':'Delete this post'}</button>`
+  const own=e.mine?`<button type="button" class="pz-quietbtn warn" data-soc-postdel="${esc(id)}">${rep('del:'+id)?'Tap again to delete this post':'Delete this post'}</button>`
     :`<button type="button" class="pz-quietbtn" data-soc-report="${esc(id)}">${rep('rep:'+id)?'Tap again to report this post to the league owner':'Report'}</button>`;
   const cs=(d.comments||[]).map(x=>`<div class="pz-com">${socAv(x.handle,30)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
       <span style="font-size:13px"><a href="#u/${esc(x.handle)}" style="color:var(--pz-text);font-weight:700;text-decoration:none">${x.mine?'You':'@'+esc(x.handle)}</a> <span class="pz-sub" style="font-size:11px">${socAgo(x.at)}</span></span>
@@ -11507,6 +11515,7 @@ function socComposeHtml(D){
         <div class="pz-snap" data-pz-snap="${esc(t.id)}">${pzSnapHtml(t)}</div>
         ${PZ_SNAP[t.id]&&PZ_SNAP[t.id].st==='none'?'':`<div class="pz-toggle"><span style="flex:1"><b id="socChartL">Attach this chart</b><span>Entry, exit and your planned stop and target, drawn on the price</span></span><button type="button" role="switch" class="pz-switch" data-soc-cchart aria-checked="${!!C.chart}" aria-labelledby="socChartL"><i></i></button></div>`}
         <p class="pz-fine">Shows the result in R and %${SOC.share&&SOC.share.usd?' and dollars (you share dollar P&L)':'; dollars stay private unless you share dollar P&L'}.</p></section>`; }
+    else if(pzS.demo) what=`<section class="pz-card"><p class="pz-sub">These are sample trades, so they can’t be shared. Connect your wallet to post your own — or post a plan or a note.</p></section>`;
     else { const L=socJournalTrades();
       what=`<section class="pz-card" style="padding:4px 16px"><b style="display:block;font-size:15px;margin:12px 0 4px">Pick the trade</b>${L.length?L.map(x=>`<button type="button" class="pz-pickrow" data-soc-ctrade="${esc(x.id)}"><span style="flex:1;min-width:0;text-align:left"><b>${esc(x.dir)} ${esc(dispMarket(dcoin(x)))}</b><span class="pz-sub" style="display:block;font-size:12px">${esc(dayLabel(dayKey(x.openTime)))}${x.isOpen?' · open':''}</span></span><span style="font-family:var(--pz-num);font-weight:600;color:${x.isOpen?'var(--pz-soft)':x.net>=0?PZ_COL.good:PZ_COL.low}">${x.isOpen?'open':esc(signedPlain(x.net))}</span></button>`).join(''):'<p class="pz-sub" style="margin:8px 0 14px">No trades in the last 30 days.</p>'}</section>`; } }
   else if(C.kind==='plan'){
@@ -11550,6 +11559,7 @@ async function socChartBlob(t){ const s=PZ_SNAP[t.id]; if(!s||s.st!=='ok')return
 async function socPostSend(){
   const C=SOC.compose; if(!C||C.busy)return;
   const text=($('socPostText')||{value:''}).value.trim(), body={kind:C.kind,text,media:C.media.map(m=>m.id)};
+  if(C.kind==='trade'&&pzS.demo){ pzNote('Sample trades can’t be posted. Connect your wallet to share your own.','err'); return; }
   if(C.kind==='trade'){ const t=C.tid&&allTrades.find(x=>x.id===C.tid); if(!t){ pzNote('Pick the trade first.','err'); return; }
     const p=typeof nfPlan==='function'?nfPlan(journal[t.id]):null, long=t.dir!=='Short', ok=(v,s)=>v>0&&(v-t.avgEntry)*(long?1:-1)*s>0;
     body.trade={coin:t.coin,label:dispMarket(dcoin(t)),side:long?'long':'short',entry:t.avgEntry,stop:p&&ok(p.stop,-1)?p.stop:null,target:p&&ok(p.target,1)?p.target:null,
@@ -11565,6 +11575,7 @@ async function socPostSend(){
     if(C.kind==='trade'&&C.chart&&(SOC.cfg&&SOC.cfg.posts?SOC.cfg.posts.images:true)&&body.media.length<4){ const t=allTrades.find(x=>x.id===C.tid);
       try{ const b=await socChartBlob(t); if(b){ const u=await socUpload(b,'post'); body.media.unshift(u.id); } }catch(e){ console.warn('chart picture',e); } }
     const r=await socFetch('/posts',{method:'POST',body:JSON.stringify(body)});
+    for(const m of C.media)try{ URL.revokeObjectURL(m.url); }catch(e){} // the previews were local copies
     SOC.compose=null; const el=$('socPostText'); if(el)el.value='';
     for(const k in SOC.cache)if(k.startsWith('feed:')||k.startsWith('u:'))delete SOC.cache[k]; SOC.more={};
     SOC.cache['post:'+r.post.id]={at:Date.now(),d:{post:r.post,comments:[]},err:null};
@@ -11580,7 +11591,7 @@ async function socPostAction(t){
   if(ds.socCtrade&&C){ C.tid=ds.socCtrade; C.pick=false; pzRender(); return true; }
   if(ds.socCside&&C){ C.side=ds.socCside; pzRender(); return true; }
   if(ds.socCchart!==undefined&&C){ C.chart=!C.chart; t.setAttribute('aria-checked',String(C.chart)); return true; }
-  if(ds.socCimgdel&&C){ C.media=C.media.filter(m=>m.id!==ds.socCimgdel); pzRender(); return true; }
+  if(ds.socCimgdel&&C){ for(const m of C.media)if(m.id===ds.socCimgdel)try{ URL.revokeObjectURL(m.url); }catch(e){} C.media=C.media.filter(m=>m.id!==ds.socCimgdel); pzRender(); return true; }
   if(t.id==='socPostSend'){ await socPostSend(); return true; }
   if(ds.socShare){ SOC.compose={kind:'trade',tid:ds.socShare,media:[],chart:true,side:'long'}; location.hash='#compose'; return true; }
   if(ds.socMore){ const key=ds.socMore, M=SOC.more[key]=SOC.more[key]||{items:[],next:ds.next}; if(M.busy)return true; M.busy=true; pzRender();
@@ -11601,7 +11612,7 @@ async function socPostAction(t){
   if(ds.socCsend){ const id=ds.socCsend, el=$('socCText'), text=(el&&el.value||'').trim(); if(!text){ pzNote('Write the comment first.','err'); return true; }
     await socFetch('/posts/'+encodeURIComponent(id)+'/comments',{method:'POST',body:JSON.stringify({text})}); if(el)el.value=''; fresh(id); pzRender(); return true; }
   if(ds.socCdel){ if(!twice('cdel:'+ds.socCdel))return true; await socFetch('/comments/'+encodeURIComponent(ds.socCdel),{method:'DELETE'}); fresh(ds.id); pzNote('Comment deleted.'); pzRender(); return true; }
-  if(ds.socPdel){ if(!twice('del:'+ds.socPdel))return true; await socFetch('/posts/'+encodeURIComponent(ds.socPdel),{method:'DELETE'}); fresh(ds.socPdel); SOC.more={}; SOC.sub='feed'; location.hash='#social'; pzNote('Post deleted.'); return true; }
+  if(ds.socPostdel){ if(!twice('del:'+ds.socPostdel))return true; await socFetch('/posts/'+encodeURIComponent(ds.socPostdel),{method:'DELETE'}); fresh(ds.socPostdel); SOC.more={}; SOC.sub='feed'; location.hash='#social'; pzNote('Post deleted.'); return true; }
   if(ds.socReport){ if(!twice('rep:'+ds.socReport))return true; await socFetch('/report',{method:'POST',body:JSON.stringify({post:ds.socReport})}); pzNote('Reported. The league owner will take a look.'); pzRender(); return true; }
   if(ds.socCreport){ if(!twice('crep:'+ds.socCreport))return true; await socFetch('/report',{method:'POST',body:JSON.stringify({comment:ds.socCreport})}); pzNote('Reported. The league owner will take a look.'); pzRender(); return true; }
   if(ds.socAvdel!==undefined){ const r=await socFetch('/me',{method:'PUT',body:JSON.stringify({avatar:null})}); SOC.me=r.me; delete SOC.avs[SOC.me.handle.toLowerCase()]; pzNote('Picture removed.'); pzRender(); return true; }
@@ -11634,7 +11645,7 @@ async function socAction(t){
     if(ds.socPask||t.id==='socPAsk'){ const h=ds.socPask||(($('socPIn')||{value:''}).value.trim()); if(!h)return true;
       await socFetch('/partners',{method:'POST',body:JSON.stringify({handle:h})}); delete SOC.cache.partners; done('Asked @'+h.replace(/^@/,'')+'. You’ll see each other’s days once they accept.'); return true; }
     if(ds.socPaccept){ await socFetch('/partners/'+encodeURIComponent(ds.socPaccept)+'/accept',{method:'POST'}); delete SOC.cache.partners; if(SOC.me)SOC.me.partners=(SOC.me.partners||0)+1; done('You’re partners now.'); return true; }
-    if(ds.socPdel){ if(!confirm('End this partnership? You stop seeing each other’s days.'))return true;
+    if(ds.socPdel){ if(!ds.what&&!confirm('End this partnership? You stop seeing each other’s days.'))return true;
       await socFetch('/partners/'+encodeURIComponent(ds.socPdel),{method:'DELETE'}); delete SOC.cache.partners; done(''); return true; }
     if(ds.socNudge){ await socFetch('/partners/'+encodeURIComponent(ds.socNudge)+'/nudge',{method:'POST',body:JSON.stringify({})}); delete SOC.cache.partners; done('Nudged. They’ll see it on their next open — or as a notification.'); return true; }
     if(ds.socChfor!==undefined){ pzS.chFor=ds.socChfor||null; pzRender(); const n=$('socChIn'); if(n)n.focus(); return true; }
@@ -11660,7 +11671,7 @@ async function socAction(t){
     if(ds.socCf){ SOC.cfilter=ds.socCf; pzRender(); return true; }
     if(ds.socFeed){ SOC.feed=ds.socFeed; pzRender(); return true; }
     if(ds.socDraft){ SOC.draft=SOC.draft||{...(SOC.share||SOC_DEFAULT_SHARE)}; SOC.draft[ds.socDraft]=!SOC.draft[ds.socDraft]; t.setAttribute('aria-checked',String(SOC.draft[ds.socDraft])); return true; }
-    if(ds.socKudos){ const r=await socFetch('/kudos/'+encodeURIComponent(ds.socKudos),{method:'POST'}); t.setAttribute('aria-pressed',String(r.liked)); t.lastChild.textContent=r.kudos; socStale(); return true; }
+    if(ds.socKudos){ const r=await socFetch('/kudos/'+encodeURIComponent(ds.socKudos),{method:'POST'}); t.setAttribute('aria-pressed',String(r.liked)); t.setAttribute('aria-label','Kudos, '+r.kudos); t.lastChild.textContent=r.kudos; socStale(); return true; }
     if(ds.socFollow){ const on=ds.on==='1'; await socFetch('/follow/'+encodeURIComponent(ds.socFollow),{method:on?'DELETE':'POST'}); done(on?'Unfollowed.':'Following @'+ds.socFollow+'. Their milestones show up in your feed.'); return true; }
     if(ds.socJoin){ await socFetch('/competitions/'+encodeURIComponent(ds.socJoin)+'/join',{method:'POST'}); done('You’re in. Good luck — play your process.'); return true; }
     if(ds.socLeave){ if(!confirm('Leave this competition?'))return true; await socFetch('/competitions/'+encodeURIComponent(ds.socLeave)+'/join',{method:'DELETE'}); done('You left the competition.'); return true; }
@@ -12339,7 +12350,7 @@ async function pzCoachSend(text){
     const d=await r.json().catch(()=>({}));
     if(!r.ok){ COACH.err=d.error||('HTTP '+r.status); if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
     else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.remaining==null||d.remaining>0}); }
-  }catch(e){ COACH.err='Couldn’t reach the coach. Check your connection and try again.'; msgs.pop(); }
+  }catch(e){ COACH.err='Couldn’t reach the coach. Check your connection and try again.'; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
   finally{ COACH.busy=false; pzCoachSave(); pzRender(); const l=$('pzChat'); if(l)l.scrollTop=l.scrollHeight; }
 }
 function pzCoachPrompts(){
@@ -12487,9 +12498,9 @@ function socPartnersHtml(){
         <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-chsave="${esc(p.id)}">Set it for you both</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-chfor="">Cancel</button></div>`
         :`<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-nudge="${esc(p.id)}"${p.canNudge?'':' disabled'}>${p.canNudge?'Nudge':'Nudged'}</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-chfor="${esc(p.id)}">${p.challenge?'Change the challenge':'Set a shared challenge'}</button>${p.challenge&&!p.challenge.mine?`<button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-adopt="${esc(p.challenge.text)}">Adopt as habit</button>`:''}</div>`}</section>`; };
   return `<section style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"><span class="pz-lbl" style="color:var(--pz-muted)">Accountability partners</span>
-    ${recv.map(p=>`<section class="pz-card pz-kvrow">${socAv(p.handle,30)}<span style="flex:1;font-size:14px"><b>@${esc(p.handle)}</b> wants to be partners</span><button type="button" class="pz-cta pz-sm" style="width:auto;min-height:40px;padding:0 16px" data-soc-paccept="${esc(p.id)}">Accept</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-pdel="${esc(p.id)}">Decline</button></section>`).join('')}
+    ${recv.map(p=>`<section class="pz-card pz-kvrow">${socAv(p.handle,30)}<span style="flex:1;font-size:14px"><b>@${esc(p.handle)}</b> wants to be partners</span><button type="button" class="pz-cta pz-sm" style="width:auto;min-height:40px;padding:0 16px" data-soc-paccept="${esc(p.id)}">Accept</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-pdel="${esc(p.id)}" data-what="decline">Decline</button></section>`).join('')}
     ${active.length?`<div class="pz-jgrid">${active.map(card).join('')}</div>`:'<p class="pz-sub" style="font-size:13px">Pair with someone you trust: you each see the other’s streak, Discipline scores and slips — never trades or P&amp;L — and can nudge each other and share a weekly challenge.</p>'}
-    ${sent.map(p=>`<p class="pz-fine">Waiting for @${esc(p.handle)} to accept. <button type="button" class="pz-linkbtn" data-soc-pdel="${esc(p.id)}">Cancel</button></p>`).join('')}
+    ${sent.map(p=>`<p class="pz-fine">Waiting for @${esc(p.handle)} to accept. <button type="button" class="pz-linkbtn" data-soc-pdel="${esc(p.id)}" data-what="cancel">Cancel</button></p>`).join('')}
     ${active.length<3?`<div style="display:flex;gap:8px;align-items:flex-end"><div class="pz-field" style="flex:1"><label for="socPIn" style="font-size:13px">Ask someone by name</label><input type="text" id="socPIn" maxlength="21" placeholder="@name" autocomplete="off" autocapitalize="off" spellcheck="false"></div><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 16px;min-height:48px" id="socPAsk">Ask</button></div>`:''}</section>`;
 }
 // a slim row per partner on Today

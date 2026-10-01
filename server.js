@@ -2005,7 +2005,9 @@ function createApp(opts) {
         } catch (e) { return json(res, 500, { error: 'app HTML not found on server' }); }
       }
       const head = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'ETag': _appHtml.etag, 'Vary': 'Accept-Encoding',
-        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
+        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+        // no other site can frame the journal (a <meta> tag can't say this; browsers ignore it there)
+        'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" };
       if ((req.headers['if-none-match'] || '') === _appHtml.etag) { res.writeHead(304, head); return res.end(); }
       const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
       res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
