@@ -9228,14 +9228,30 @@ function pzTrendsHtml(D){
   else { const ts=pzTrendStats(g.days,ctx.byDay,fromKey), bc=pzBars(ts.days);
     const chart=ts.days.length?`<div class="pz-chart" style="--h:110px;--gap:${bc.bars.length>20?'3px':'8px'}"><span class="pz-thr" style="bottom:${Math.round(70*1.1)}px"></span>${bc.bars.map(b=>`<i style="height:${Math.max(4,Math.round(b.v*1.1))}px;background:${PZ_COL[pzBand(b.v)]}" title="${esc(b.tip)}"></i>`).join('')}</div>`:'<p class="pz-sub">No trading days in this range.</p>';
     const tile=(cls,lbl,x)=>`<div class="pz-tile ${cls}"><span class="pz-lbl" style="font-size:11px">${lbl} · ${x.n} day${x.n===1?'':'s'}</span><span class="pz-n">${esc(money(x.avgNet))}</span><span class="pz-t">avg day · ${pzPct(x.winRate)} win rate</span></div>`;
-    const rl=pzReadinessLink(ts.days,journal), FA=ctx.findings||[];
+    const rl=pzReadinessLink(ts.days,journal), RF=pzRangeFindings(ctx,from), FA=RF.findings;
     // the six most significant edges and leaks (already ranked by size × confidence); plain notes only fill the gaps
     const F=[...FA.filter(f=>f.tone!=='info'),...FA.filter(f=>f.tone==='info')].slice(0,6);
     deep=`<section class="pz-card pz-span" style="display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px"><span><span class="pz-lbl" style="color:${PZ_COL.good}">Discipline</span><br><span class="pz-sub" style="font-size:13px">${bc.unit}</span></span><span style="display:flex;align-items:baseline;gap:6px"><span class="pz-sub" style="font-size:12px">avg</span><span style="font-family:var(--pz-num);font-size:40px;font-weight:600;line-height:1">${ts.avg==null?'—':ts.avg}</span></span></div>${chart}</section>
       <div class="pz-col"><section style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Does discipline pay?</b><div class="pz-grid2">${tile('good','Days 70+',ts.hi)}${tile('hot','Under 70',ts.lo)}</div>
         ${rl?`<div class="pz-tile cool"><span class="pz-t" style="font-size:13px;line-height:1.45">On days you checked in at readiness 70+, your discipline averaged <b>${rl.hi}</b>; on the other check-in days, <b>${rl.lo}</b>.</span></div>`:''}</section></div>
-      <div class="pz-col"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results</b>${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(f.action||f.body||'')}</span>${f.evidence?`<span style="display:block;margin-top:4px;font-size:12px;color:var(--pz-muted)">${esc(f.evidence)} · ${esc(confWords(f.conf))}</span>`:''}</span></div>`).join(''):'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>'}</section></div>`; }
+      <div class="pz-col"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results <span class="pz-sub" style="font-weight:400;font-size:12px">· ${R==='all'?'all time':'last '+R+' days'}${RF.n?', '+RF.n+' trades':''}</span></b>${RF.few?`<p class="pz-sub" style="font-size:13px;padding:6px 0 12px">Needs at least 10 closed trades in this range to find patterns — there ${RF.n===1?'is':'are'} ${RF.n}. Try a longer range.</p>`:''}${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(f.action||f.body||'')}</span>${f.evidence?`<span style="display:block;margin-top:4px;font-size:12px;color:var(--pz-muted)">${esc(f.evidence)} · ${esc(confWords(f.conf))}</span>`:''}</span></div>`).join(''):(RF.few?'':'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>')}</section></div>`; }
   return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}<div class="pz-wide">${stats}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p></div>`;
+}
+// The Diagnostic's findings for one range (all time reuses the coach's set). Same engine, only the
+// range's trades; memoized per range so switching back and forth is instant.
+let _pzRF={key:null,v:null};
+function pzRangeFindings(ctx, fromMs){
+  if(!fromMs)return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
+  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs), key=fromMs+'|'+closed.length+'|'+_coachMemo.key+'|'+_jrev;
+  if(_pzRF.key===key)return _pzRF.v;
+  let v;
+  if(closed.length<10)v={findings:[],n:closed.length,few:true};
+  else { let findings=[];
+    try{ const s=computeStats(closed,closed), chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
+      findings=buildFindings(closed,s,{scan:diagScan(closed),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)}); }
+    catch(e){ console.warn('range findings failed',e); }
+    v={findings,n:closed.length,few:false}; }
+  _pzRF={key,v}; return v;
 }
 // ---- screens: in-depth stats (#deep) and how the scores work (#how) ----
 const pzMoney=v=>v==null||!isFinite(v)?'—':pzSigned(v);
