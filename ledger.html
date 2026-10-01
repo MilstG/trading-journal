@@ -12098,6 +12098,8 @@ function pzCoachHtml(D){
 function socSubTabs(){
   return `<div class="pz-seg full" role="group" aria-label="Social">${[['league','League'],['boards','Boards'],['feed','Feed']].map(([k,l])=>`<button type="button" data-soc-sub="${k}" aria-pressed="${(SOC.sub==='compete'?'league':SOC.sub)===k}">${l}</button>`).join('')}</div>`;
 }
+// how often a league's ranking starts over: its seasons when it has them, else its period
+const socPeriod=L=>L.season?(L.season.id.includes('-Q')?'quarterly seasons':'monthly seasons'):L.period==='month'?'monthly':'weekly';
 const SOC_TIER_COL=['#C98B5A','#CDD3DA','#F4C04E','#8FD9E8','#B69CFF'];
 function socRowsHtml(rows, board, emptyText, key){
   if(!rows)return '';
@@ -12129,13 +12131,17 @@ function socLeagueHtml(g){
   const chipsL=`<div class="pz-chiprow" role="group" aria-label="Your leagues">${d.mine.map(x=>`<button type="button" class="pz-chipbtn" data-soc-lg="${esc(x.id)}" aria-pressed="${x.id===L.id}">${esc(x.name)}</button>`).join('')}${find}</div>`;
   const banner=`<section class="pz-banner"><span class="pz-ico" style="width:40px;height:40px;background:#23272E;color:${L.tiers?SOC_TIER_COL[d.tier]||'#CDD3DA':PZ_COL.xp}">${pzI('shield',22)}</span>
     <span style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0"><b style="font-size:14px">${esc(L.name)} <span class="pz-sub" style="font-weight:500">#${L.num}</span></b>
-    <span class="pz-sub" style="font-size:12px">${esc(L.metricLabel)}${L.period==='month'?' · monthly':' · weekly'} · ${L.members} trader${L.members===1?'':'s'}${L.tiers?' · you’re in '+esc(T[d.tier]):''}</span>
+    <span class="pz-sub" style="font-size:12px">${esc(L.metricLabel)} · ${socPeriod(L)} · ${L.members} trader${L.members===1?'':'s'}${L.tiers?' · you’re in '+esc(T[d.tier]):''}</span>
     ${L.season?`<span class="pz-sub" style="font-size:12px;color:var(--pz-soft)">Season: ${esc(L.season.label)} · ${L.season.daysLeft>0?L.season.daysLeft+' day'+(L.season.daysLeft===1?'':'s')+' left':'last day'}</span>`:''}
     ${L.tiers?`<span class="pz-sub" style="font-size:12px">${d.promote?'Top '+d.promote+' move up to '+esc(T[d.tier+1])+' on Monday':d.tier===T.length-1?'The top tier — hold your place.':'Promotion starts once four or more traders share your tier.'}</span>`:''}</span>
     <a class="pz-link" href="#lg/${esc(L.id)}" style="min-height:0">Info${pzI('chev',14)}</a></section>`;
   const chipsB=socRankSel('socBoardSel',[['rank','League ranking · '+L.metricLabel],...SOC_BOARDS.filter(([k])=>k!==L.metric)],b);
   let list='', note='', opt='', mine='';
-  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=SOC_BOARD_NOTE[d.board]||''; mine=d.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d.me.rank}</b> of ${d.size} with ${esc(socValue(d.board,d.me.value))}.</p>`:''; }
+  // the note says what this league's ranking covers: its season, its month, or its week — and only promises promotion where there are tiers
+  const ranks=L.season?'this season ('+L.season.label+')':L.period==='month'?'this month':'this week';
+  const leagueNote=L.metric==='xp'?'XP earned '+ranks+' — process, never profit.'+(L.season?' The top three when the season ends take the podium and a badge.':L.tiers?' The top of each tier moves up '+(L.period==='month'?'when the month ends':'on Monday')+', the bottom moves down.':'')
+    :L.season?(SOC_BOARD_NOTE[d.board]||'')+' Ranked over '+ranks+'; the top three take the podium.':SOC_BOARD_NOTE[d.board]||'';
+  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=d.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d.me.rank}</b> of ${d.size} with ${esc(socValue(d.board,d.me.value))}.</p>`:''; }
   else { const c2=socGet('lb:'+L.id+':'+b,'/leaderboard?board='+b+'&league='+encodeURIComponent(L.id),30000), d2=c2&&c2.d;
     list=d2?socRowsHtml(d2.rows,b,'No one on this board yet.'):`<p class="pz-sub">${c2&&c2.err?esc(c2.err):'<span class="pz-spin"></span>Loading…'}</p>`; note=SOC_BOARD_NOTE[b]||''; opt=socOptHtml(d2);
     mine=d2&&d2.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d2.me.rank}</b> of ${d2.total} with ${esc(socValue(b,d2.me.value))}.</p>`:''; }
@@ -12159,7 +12165,7 @@ function socFindHtml(D){
   const q=SOC.lq||'', c=socGet('lq:'+q,'/leagues'+(q?'?q='+encodeURIComponent(q):''),15000), d=c&&c.d;
   const card=L=>`<a class="pz-card pz-cardlink pz-lcard" href="#lg/${esc(L.id)}"><span class="pz-ico" style="background:#23272E;color:${PZ_COL.xp}">${pzI('shield',20)}</span>
     <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${esc(L.name)} <span class="pz-sub" style="font-weight:500">#${L.num}</span></b>
-    <span class="pz-sub" style="font-size:12px">${esc(L.metricLabel)} · ${L.period==='month'?'monthly':'weekly'}${L.tiers?' · tiers':''} · ${L.members} trader${L.members===1?'':'s'}${L.inviteRequired?' · invite code':''}</span>
+    <span class="pz-sub" style="font-size:12px">${esc(L.metricLabel)} · ${socPeriod(L)}${L.tiers?' · tiers':''} · ${L.members} trader${L.members===1?'':'s'}${L.inviteRequired?' · invite code':''}</span>
     ${L.desc?`<span class="pz-sub" style="font-size:12px">${esc(L.desc)}</span>`:''}</span>${L.joined?'<span class="pz-chipbtn ok" style="cursor:default">Joined</span>':pzI('chev',18)}</a>`;
   return `${back}${pzHead('Name or number','Find a league')}
     <div class="pz-field"><label for="socLq" class="pz-sr">Search leagues</label><input type="search" id="socLq" value="${esc(q)}" placeholder="e.g. discipline, or #1042" autocomplete="off" enterkeyhint="search"></div>
@@ -12178,13 +12184,13 @@ function socLeagueInfoHtml(D, id){
     :`${L.inviteRequired?'<div class="pz-field"><label for="socLgInv" style="font-size:13px">Invite code</label><input type="text" id="socLgInv" maxlength="40" autocomplete="off"></div>':''}<button type="button" class="pz-cta" data-soc-lgjoin="${esc(L.id)}">Join ${esc(L.name)}</button>`;
   return `${back}${pzHead('League #'+L.num,L.name)}
   <div class="pz-wide"><div class="pz-col"><section class="pz-card pz-kv">${L.desc?`<p style="margin:0;font-size:14px;line-height:1.5">${esc(L.desc)}</p>`:''}
-      <div class="pz-row-t"><span>Ranked by</span><b>${esc(L.metricLabel)}</b></div><div class="pz-row-t"><span>Period</span><b>${L.period==='month'?'Rolling month':'Weekly'}</b></div>
+      <div class="pz-row-t"><span>Ranked by</span><b>${esc(L.metricLabel)}</b></div><div class="pz-row-t"><span>Period</span><b>${L.season?(L.season.id.includes('-Q')?'Quarterly seasons':'Monthly seasons'):L.period==='month'?'Rolling month':'Weekly'}</b></div>
       ${L.season?`<div class="pz-row-t"><span>Season</span><b>${esc(L.season.label)} · ends ${esc(dayLabel(L.season.end))}</b></div>`:''}
       <div class="pz-row-t"><span>Tiers</span><b>${L.tiers?'Bronze → Diamond, promotion every Monday':'One table'}</b></div><div class="pz-row-t"><span>Traders</span><b>${L.members}</b></div>
       <div class="pz-row-t"><span>Joining</span><b>${L.inviteRequired?'Invite code':'Open'}</b></div>
       ${L.tiersCount?`<div class="pz-row-t"><span>By tier</span><b>${L.tiersCount.map(t=>t.n).join(' · ')}</b></div>`:''}</section>${act}</div>
     <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">Top five</b>${top}</section>
-      ${L.hall&&L.hall.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Hall of fame</b>${L.hall.slice(0,6).map(h=>`<div class="pz-row-t"><span>${esc(h.label)}</span><b>${h.podium.map((r,i)=>['🏆','🥈','🥉'][i]+' '+(r.me?'You':'@'+esc(r.handle))).join(' · ')||'—'}</b></div>`).join('')}</section>`:''}
+      ${L.hall&&L.hall.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Hall of fame</b>${L.hall.slice(0,6).map(h=>`<div style="padding:8px 0;border-top:1px solid var(--pz-line)"><span class="pz-sub" style="font-size:12px">${esc(h.label)} · ${h.n} trader${h.n===1?'':'s'}</span><div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;font-size:14px;font-weight:600">${h.podium.map((r,i)=>`<span>${['🏆','🥈','🥉'][i]} ${r.me?'You':'@'+esc(r.handle)}</span>`).join('')||'—'}</div></div>`).join('')}</section>`:''}
       ${L.comps&&L.comps.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Competitions</b>${L.comps.map(x=>`<a class="pz-row-t" href="#c/${esc(x.id)}"><span>${esc(x.title)}</span><b>${esc(x.start.slice(5))} → ${esc(x.end.slice(5))}</b></a>`).join('')}</section>`:''}</div></div>`;
 }
 
