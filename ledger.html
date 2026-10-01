@@ -1287,8 +1287,8 @@ const Store = {
   },
   async set(key,val){
     const s=JSON.stringify(val);
-    if(window.storage){ try{ await window.storage.set(key,s); }catch(e){ try{localStorage.setItem(key,s);}catch(_){} } }
-    else { try{ localStorage.setItem(key,s); }catch(e){} }
+    if(window.storage){ try{ await window.storage.set(key,s); }catch(e){ try{localStorage.setItem(key,s);}catch(e2){ storeFailed(e2); } } }
+    else { try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
     if(key===S_KEY)vaultMark(null); // a member's encrypted journal sync keeps this device's newer settings in a merge
     schedulePersist();
   }
@@ -1398,7 +1398,11 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
 // write to local store WITHOUT re-triggering a file write (avoids loops on load)
 async function rawSet(key,val){ const s=JSON.stringify(val);
   if(window.storage){ try{ await window.storage.set(key,s); return; }catch(e){} }
-  try{ localStorage.setItem(key,s); }catch(e){} }
+  try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
+// The browser refused to save (its storage for this site is full): say so, instead of a "saved"
+// tick over an edit that will be gone on the next load.
+function storeFailed(e){ const full=e&&(e.name==='QuotaExceededError'||e.code===22||/quota/i.test(e.message||''));
+  try{ setErr(full?'This browser’s storage for the journal is full, so the last change wasn’t saved here. Use Backup all, then clear old attachments or link a data file.':'Couldn’t save in this browser: '+(e&&e.message||e)); }catch(_){} }
 
 function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout(_writeTimer); _writeTimer=setTimeout(writeLinked,600); }
 
@@ -1423,7 +1427,18 @@ let _srvWriting=false,_srvAgain=false;
 // Journal edit counter — part of the miner cache key, since tags/setups/mistakes/ratings
 // change miner inputs without changing the trade count.
 let _jrev=0;
-function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMark(id); }
+function markJEdit(id){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMark(id); jPendingSave(); }
+// The ids edited here and not yet confirmed saved (to the server, or the linked file) are kept in
+// localStorage too: a reload or a closed tab before the save went through used to let the older
+// copy from the server win at the next start. At boot they're laid back over what loaded.
+const JP_KEY='hl_jpending_v1';
+let _jpQ=false; // once per burst of edits (a bulk change marks thousands)
+function jPendingSave(){ if(_jpQ)return; _jpQ=true; queueMicrotask(()=>{ _jpQ=false;
+  try{ if(_dirtyJ.size)localStorage.setItem(JP_KEY,JSON.stringify([..._dirtyJ.keys()].slice(-5000))); else localStorage.removeItem(JP_KEY); }catch(e){} }); }
+function jPendingLoad(){ try{ const a=JSON.parse(localStorage.getItem(JP_KEY)||'[]'); return Array.isArray(a)?a.filter(x=>typeof x==='string'):[]; }catch(e){ return []; } }
+async function jPendingOverlay(localJ,pend){ if(!pend.length||!localJ)return; _jrev++;
+  for(const id of pend){ if(localJ[id]!==undefined)journal[id]=localJ[id]; else delete journal[id]; _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); }
+  await rawSet(J_KEY,journal); jPendingSave(); schedulePersist(); }
 // Settings as of the last successful sync — powers a field-level 409 merge: a goal/rule/tz
 // edit made here since the last sync wins over the incoming snapshot instead of silently
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
@@ -1501,6 +1516,7 @@ async function writeServer(){
     }
     if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1;
       for(const [id,rev] of sentDirty) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); // only clear what was actually sent unchanged
+      jPendingSave();
       _lastSyncedS=sentS; SRV.err=null; SRV.retryMs=0;
       renderDatafile('saved'); }
     else { // 413 / 5xx / proxy errors: say so — the indicator used to keep reading "saved"
@@ -1524,7 +1540,8 @@ async function initServerSync(){
     const d=(early&&await early)||await srvFetch('/api/data');
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
-      if(j.snapshot)await applySnapshot(j.snapshot);
+      if(j.snapshot){ const pend=jPendingLoad(), localJ=pend.length?((await Store.get(J_KEY))||{}):null;
+        await applySnapshot(j.snapshot); await jPendingOverlay(localJ,pend); }
       _lastSyncedS=_snapS(); } // baseline for the field-level 409 settings merge
     // PWA: only meaningful when served — installable app icon + offline shell
     try{ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
@@ -1574,7 +1591,9 @@ async function writeLinked(){ if(!linkedHandle)return;
   if(_writing){ _writeAgain=true; return; }
   _writing=true;
   try{ if(await ensurePerm(linkedHandle,'readwrite')!=='granted'){ renderDatafile('need-permission'); return; }
+    const sent=[..._dirtyJ.entries()];
     const w=await linkedHandle.createWritable(); await w.write(JSON.stringify(snapshot(),null,2)); await w.close();
+    if(!SRV.enabled){ for(const [id,rev] of sent) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); jPendingSave(); } // the file is the saved copy here
     renderDatafile('saved');
   }catch(e){ renderDatafile('error'); }
   finally{ _writing=false; if(_writeAgain){ _writeAgain=false; writeLinked(); } } }
@@ -1925,8 +1944,30 @@ function reconstructTrades(fills, addr, market){
   // Spot fees paid in a stable quote are dollars; anything else (a buy's fee comes out of the
   // token bought) is in the base token and is converted at the fill price.
   const SPOT_QUOTES={USDC:1,USDT0:1,USDT:1,USDH:1,USDE:1};
+  // each recent fill's realized result (closedPnl − fee), on the trade it belongs to: the daily loss
+  // limit counts what was realized today, including partial closes of a position still open
+  const rzSince=Date.now()-3*86400000;
   const pred = market==='spot' ? (c=>!isPerp(c)) : (c=>isPerp(c));
-  const sorted=fills.filter(f=>pred(f.coin)).sort((a,b)=>a.time-b.time);
+  // Fills that share a millisecond can arrive in any order (a close and a reopen in one ms, TWAP
+  // slices): within such a group, one coin's fills are put in the order their positions chain —
+  // each fill's startPosition is where the one before it left the position.
+  const chainSameTime=arr=>{ const pos={};
+    for(let i=0;i<arr.length;){ let j=i+1; while(j<arr.length&&arr[j].time===arr[i].time)j++;
+      if(j-i>1){ const byCoin=new Map(); for(let k=i;k<j;k++){ const c=arr[k].coin; if(!byCoin.has(c))byCoin.set(c,[]); byCoin.get(c).push(arr[k]); }
+        const out=[];
+        for(const [c,g] of byCoin){ if(g.length<2){ out.push(...g); continue; }
+          const sp=f=>parseFloat(f.startPosition), end=f=>sp(f)+(f.side==='B'?1:-1)*Math.abs(parseFloat(f.sz)), same=(a,b)=>Math.abs(a-b)<=1e-9*Math.max(1,Math.abs(a),Math.abs(b));
+          const left=g.slice(), seq=[];
+          // start where the position stood before this millisecond, else at the fill no other fill leads into
+          let cur=pos[c]; let k=cur!=null?left.findIndex(f=>same(sp(f),cur)):-1;
+          if(k<0)k=left.findIndex(f=>!left.some(o=>o!==f&&same(end(o),sp(f))));
+          while(left.length){ if(k<0){ seq.push(...left); break; } const f=left.splice(k,1)[0]; seq.push(f); cur=end(f); k=left.findIndex(o=>same(sp(o),cur)); }
+          out.push(...seq); }
+        for(let k=i;k<j;k++)arr[k]=out[k-i]; }
+      for(let k=i;k<j;k++){ const f=arr[k]; pos[f.coin]=parseFloat(f.startPosition)+(f.side==='B'?1:-1)*Math.abs(parseFloat(f.sz)); }
+      i=j; }
+    return arr; };
+  const sorted=chainSameTime(fills.filter(f=>pred(f.coin)).sort((a,b)=>a.time-b.time));
   const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={};
   // Spot only: a sell run followed by more buying (or the end of the history) is a realized
   // trade for the amount sold, at the position's average cost; what's still held carries on.
@@ -1939,9 +1980,11 @@ function reconstructTrades(fills, addr, market){
     trades.push(r);
     const nt=newTrade(coin,f,'Long',held,avg!=null?held*avg:0,0); nt.openTime=r.closeTime+1; nt.closeTime=r.closeTime+1; nt.maxSize=held;
     if(avg==null)nt.partialHistory=true; nt.firstEntryPx=avg!=null?avg:t.firstEntryPx; nt.carried=true;
+    nt.bagOpen=t.bagOpen||t.openTime; // the holding it came from: the still-held rest keeps one id across sells
     return nt; };
   for(const f of sorted){
     const coin=f.coin, sz=Math.abs(parseFloat(f.sz));
+    if(!(sz>0))continue; // a zero-size fill moves nothing (it used to open a phantom trade)
     const signed=f.side==='B'?sz:-sz;
     const before=parseFloat(f.startPosition);
     const px=parseFloat(f.px), pnl=parseFloat(f.closedPnl||'0');
@@ -1959,6 +2002,7 @@ function reconstructTrades(fills, addr, market){
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
     const feeHere=flipped&&sz>0?fee*Math.abs(before)/sz:fee;
     t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null);
+    if(f.time>rzSince)(t.rz||(t.rz=[])).push([f.time,pnl-fee]); // the whole fill once (a flip's opening fee included)
     if(flipped){
       // one fill that closes the whole |before| position AND opens |after| the other way:
       // only the closing portion belongs to this trade; the opening portion seeds the next trade.
@@ -1990,7 +2034,8 @@ function reconstructTrades(fills, addr, market){
     // entry drift: how far your size-weighted entry landed from your first fill, in the adverse direction
     t.entryDrift=(!t.partialHistory&&t.firstEntryPx>0&&t.avgEntry>0)
       ? (t.dir==='Short' ? t.firstEntryPx/t.avgEntry-1 : t.avgEntry/t.firstEntryPx-1) : null;
-    t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+t.openTime; });
+    // a spot holding sold down in steps keeps one id while it's still held, so notes on it stay put
+    t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.isOpen&&t.carried&&t.bagOpen?t.bagOpen+':held':t.openTime); });
   return trades.sort((a,b)=>b.openTime-a.openTime);
 }
 function attributeFunding(trades,fundingRows){
@@ -2789,6 +2834,9 @@ function computeStats(closed, allv){
   allv=allv||closed;
   const wins=closed.filter(t=>isWin(t.net)), losses=closed.filter(t=>isLoss(t.net)), scratches=closed.filter(t=>isBE(t.net));
   const gp=wins.reduce((s,t)=>s+t.net,0), gl=Math.abs(losses.reduce((s,t)=>s+t.net,0));
+  // profit factor is gross profit ÷ gross loss over every trade: small losses inside the
+  // break-even band are still losses (nine −$40 trades against one +$200 isn't "∞")
+  const gpAll=closed.reduce((s,t)=>s+(t.net>0?t.net:0),0), glAll=closed.reduce((s,t)=>s+(t.net<0?-t.net:0),0);
   // PnL totals include realized from open positions (allv)
   const net=allv.reduce((s,t)=>s+t.net,0), fees=allv.reduce((s,t)=>s+t.fees,0);
   const fund=allv.reduce((s,t)=>s+(t.funding||0),0);
@@ -2824,7 +2872,7 @@ function computeStats(closed, allv){
   const median=_sortedNets.length?(_sortedNets.length%2?_sortedNets[(_sortedNets.length-1)/2]:(_sortedNets[_sortedNets.length/2-1]+_sortedNets[_sortedNets.length/2])/2):null;
   return {n:closed.length,openN:allv.filter(t=>t.isOpen).length,net,fees,fund,volume:allv.reduce((a,t)=>a+((t.makerNotional||0)+(t.takerNotional||0)+(t.unkNotional||0)),0),wins:wins.length,losses:losses.length,breakeven:scratches.length,
     winRate:(wins.length+losses.length)?wins.length/(wins.length+losses.length):0,
-    profitFactor:gl>0?gp/gl:(gp>0?Infinity:0),avgWin:avgW,avgLoss:avgL,payoff,breakevenWR,
+    profitFactor:glAll>0?gpAll/glAll:(gpAll>0?Infinity:0),avgWin:avgW,avgLoss:avgL,payoff,breakevenWR,
     expectancy,maxDD,maxDDpct,
     curStreak:cur,curSign,longW,longL,avgR,totalR,rCount:withR.length,avgHold,
     sharpe:sh?sh.sr:null,sharpeLo:sh?sh.lo:null,sharpeHi:sh?sh.hi:null,sharpeN:sh?sh.N:0,sharpeDaily:sh?sh.srDaily:null,
@@ -3659,7 +3707,8 @@ function renderWhatIf(chron,name,pred,cond){
 // true out-of-sample confirmation. Thresholds are frozen at pin time (pin.params) so the
 // hypothesis being tested forward is exactly the one that was discovered, even as new
 // trades shift the live quartiles. Condition identity is the stable pid, not the display name.
-function pinsList(){ return Array.isArray(settings.pins)?settings.pins:[]; }
+// a pin restored or synced without its discovery stats (an old backup, a hand edit) is skipped, not a crash
+function pinsList(){ return Array.isArray(settings.pins)?settings.pins.filter(p=>p&&p.disc&&typeof p.disc==='object'&&isFinite(p.disc.exp)&&p.disc.n>0):[]; }
 function resolvePinPred(pin,closed,ST){
   if(!pin||typeof pin.pid!=='string')return null;
   const fams=minerFams(closed,ST,pin.params||{});
@@ -4167,13 +4216,12 @@ function renderDiagnostic(closed, allv){
    </div>`}
    <p class="lead" style="text-align:center;margin-top:8px">Diagnostic reflects the current view (${view}) and period. Bucket signals require ≥${MIN} trades to appear.</p>`;
   document.querySelectorAll('#trackedCard .unpin').forEach(b=>{ b.onclick=async()=>{
-    const i=+b.dataset.pi; const pins=Array.isArray(settings.pins)?settings.pins:[];
-    pins.splice(i,1); settings.pins=pins; await Store.set(S_KEY,settings);
+    // the index is into the listed pins (pinsList skips broken ones): remove that very pin
+    const pin=pinsList()[+b.dataset.pi]; settings.pins=(Array.isArray(settings.pins)?settings.pins:[]).filter(p=>p!==pin); await Store.set(S_KEY,settings);
     renderDiagnostic(periodTrades(),periodTradesAll()); }; });
   document.querySelectorAll('#trackedCard .pin-arch').forEach(b=>{ b.onclick=async()=>{
-    const i=+b.dataset.pi; const pins=Array.isArray(settings.pins)?settings.pins:[];
-    if(pins[i])pins[i].archived=!pins[i].archived;
-    settings.pins=pins; await Store.set(S_KEY,settings);
+    const pin=pinsList()[+b.dataset.pi]; if(pin)pin.archived=!pin.archived;
+    await Store.set(S_KEY,settings);
     renderDiagnostic(periodTrades(),periodTradesAll()); }; });
   const runBtn=$('runMiner');
   const repBtn=$('exportReport');
@@ -4283,15 +4331,17 @@ function tradeStates(closed){
   const byClose=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   const M=new Map(); let ci=0; const closedBefore=[];
   let dayKeyCur=null, idxDayCtr=0;
+  // the streak and the day's P&L are carried forward as trades close (one pass, not a walk back
+  // through every earlier trade for each one: long runs of scratches made that quadratic)
+  let st=0, dayFrom=0, dayPnl=0;
   for(const t of byOpen){
-    while(ci<byClose.length && byClose[ci].closeTime<=t.openTime){ closedBefore.push(byClose[ci]); ci++; }
-    let st=0;
-    for(let k=closedBefore.length-1;k>=0;k--){ const n=closedBefore[k].net;
-      if(isWin(n)){ if(st<0)break; st++; } else if(isLoss(n)){ if(st>0)break; st--; } }
+    while(ci<byClose.length && byClose[ci].closeTime<=t.openTime){ const c=byClose[ci]; closedBefore.push(c); ci++;
+      if(isWin(c.net))st=st>0?st+1:1; else if(isLoss(c.net))st=st<0?st-1:-1; // a scratch neither extends nor breaks it
+      dayPnl+=c.net; }
     const prev=closedBefore.length?closedBefore[closedBefore.length-1]:null;
     const dk=tzMidnight(t.openTime);
     if(dk!==dayKeyCur){ dayKeyCur=dk; idxDayCtr=0; } idxDayCtr++;
-    let dayPnl=0; for(let k=closedBefore.length-1;k>=0;k--){ if(closedBefore[k].closeTime<dk)break; dayPnl+=closedBefore[k].net; }
+    while(dayFrom<closedBefore.length&&closedBefore[dayFrom].closeTime<dk){ dayPnl-=closedBefore[dayFrom].net; dayFrom++; }
     M.set(t.id,{streak:st, prevNet:prev?prev.net:null, gap:prev?(t.openTime-prev.closeTime):null, idxDay:idxDayCtr, dayPnl});
   }
   return M;
@@ -4569,7 +4619,8 @@ function planExcursions(trades,now,pass){
   now=now||Date.now();
   const plan=new Map();
   for(const t of trades){
-    if(t.isOpen||!(t.avgEntry>0)||!(t.closeTime>t.openTime))continue;
+    // a partial-history trade's entry is a stand-in (its opening fills are older than the history): no MAE/MFE
+    if(t.isOpen||t.partialHistory||!(t.avgEntry>0)||!(t.closeTime>t.openTime))continue;
     const itv=chooseItv(t,now,pass), k=excKey(t.coin,itv.name);
     let e=plan.get(k); if(!e){ e={coin:t.coin,itv,windows:[]}; plan.set(k,e); }
     e.windows.push([t.openTime-itv.ms,t.closeTime+itv.ms]);
@@ -5810,7 +5861,7 @@ function renderReviewInner(){
   if(exp(wk)!=null&&exp(wk)<0&&(baseExp==null||exp(wk)<baseExp)) focus.push(`Expectancy this week (${fmtUsd(exp(wk))}) is below your baseline (${baseExp!=null?fmtUsd(baseExp):'—'}). Tighten trade selection before pressing size.`);
   if(mo.length>=5&&jpct<0.5) focus.push(`Only ${Math.round(jpct*100)}% of this month's trades are journaled. Logging setups and notes is what makes the Diagnostic's pattern miner and mistake tracking work.`);
   if(wk.length>weeklyCounts*1.5&&wk.length>=6) focus.push(`You traded ${wk.length} times this week vs a ~${weeklyCounts.toFixed(0)}/week norm. Watch for overtrading — check the Day×hour heatmap for a leaky slot.`);
-  if(worst&&Math.abs(worst.net)>Math.abs(sumNet(mo))*0.5&&worst.net<0) focus.push(`One trade (${dispMarket(dcoin(worst))}, ${fmtUsd(worst.net)}) drove an outsized share of this month's damage. A per-trade stop or size cap would blunt tails like it.`);
+  if(worst&&Math.abs(worst.net)>Math.abs(sumNet(mo))*0.5&&worst.net<0) focus.push(`One trade (${esc(dispMarket(dcoin(worst)))}, ${fmtUsd(worst.net)}) drove an outsized share of this month's damage. A per-trade stop or size cap would blunt tails like it.`);
   if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
   // costs & variance: fee-tier economics + what normal-bad looks like at your own edge
   const bp=x=>{const s=(x*1e4).toFixed(1);return (s.endsWith('.0')?s.slice(0,-2):s)+' bp';};
@@ -6186,7 +6237,10 @@ async function addWalletFromInput(){
   const address=$('walletAddr').value.trim(), label=$('walletLabel').value.trim();
   if(!/^0x[0-9a-fA-F]{40}$/.test(address)){ setErr('That doesn\u2019t look like a 0x wallet address (42 chars).'); return false; }
   if(settings.wallets.some(w=>w.address.toLowerCase()===address.toLowerCase())){ setErr('That wallet is already in the list.'); return false; }
-  settings.wallets.push({address,label}); await Store.set(S_KEY,settings);
+  // trade ids (and so your notes) include the address as written: a wallet added again in other
+  // letter case takes the spelling its notes already use; a new one is stored in lower case
+  const lc=address.toLowerCase(), known=Object.keys(journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
+  settings.wallets.push({address:known||lc,label}); await Store.set(S_KEY,settings);
   $('walletAddr').value=''; $('walletLabel').value=''; renderWallets();
   setStatus(settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' in the list · hit Load all.');
   return true;
@@ -6436,7 +6490,7 @@ function parseFillsCsv(text){
   const ALIAS={
     time:[['time','date','datetime','timestamp','ts'],['filledat','executedat','tradetime','createdat']],
     coin:[['coin','symbol','pair'],['market','asset','ticker','instrument','contract']],
-    side:[['side','direction','buysell'],['action']],
+    side:[['side','direction','buysell'],['action','dir']], // Hyperliquid's own export has dir: "Open Long", "Close Short"…
     px:[['px','price','fillprice'],['avgprice','execprice','dealprice','filledprice']],
     sz:[['sz','size','qty','quantity'],['amount','filled','baseqty','executedqty','filledqty','vol','volume']],
     fee:[['fee','fees','commission'],['feepaid','tradingfee']],
@@ -6466,8 +6520,10 @@ function parseFillsCsv(text){
     }
     const t=Date.parse(v); return isNaN(t)?null:t;
   };
-  const sideOf=v=>{ const s=norm(v); if(['b','buy','long','open','bid'].includes(s))return 'B';
-    if(['a','s','sell','short','close','ask'].includes(s))return 'A'; return null; };
+  // "open"/"close" alone don't say buy or sell (closing a short is a buy), so they aren't read as sides;
+  // "Open Long"/"Close Short" (and "Long > Short" flips) say both
+  const sideOf=v=>{ const s=norm(v); if(['b','buy','long','bid','openlong','closeshort','shortlong'].includes(s))return 'B';
+    if(['a','s','sell','short','ask','openshort','closelong','longshort'].includes(s))return 'A'; return null; };
   const fills=[]; let skipped=0;
   for(let r=1;r<rows.length;r++){ const row=rows[r];
     const time=parseT(String(row[col.time]||'').trim());
@@ -6782,8 +6838,14 @@ $('modalLoad').onclick=async()=>{
     if(data.journal||data.wallets||data.settings){ // full backup
       // applySnapshot is the one restore path that knows the whole backup shape — including
       // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
-      const before=journal;
+      const before=journal, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
+      const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
+      if(!confirm('Restore this backup ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
+        +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return;
       await applySnapshot(data);
+      // merge, not replace: a note written here since the backup was made survives the restore
+      if(incoming){ let kept=0; for(const [k,v] of Object.entries(before)){ const b=incoming[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; kept++; } }
+        if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
       resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
       vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
       schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
@@ -7628,9 +7690,16 @@ function evaluateRules(closed, rules){
   return out;
 }
 // Today's realized net across ALL closed trades (tz-toggle day) — powers the live tripwire banner.
+// Today's realized result: every fill today (closes, partial closes of open positions, and fees),
+// not whole trades that happened to close today with losses from earlier days in them.
+// n counts the trades that closed today.
 function dailyLossToday(trades){
   const k=nfDayKey(Date.now()); let net=0, n=0;
-  for(const t of (trades||[])){ if(t.isOpen||!t.closeTime)continue; if(nfDayKey(t.closeTime)===k){ net+=t.net; n++; } }
+  for(const t of (trades||[])){
+    const today=!t.isOpen&&t.closeTime&&nfDayKey(t.closeTime)===k;
+    if(t.rz){ for(const [tm,v] of t.rz)if(nfDayKey(tm)===k)net+=v; }
+    else if(today)net+=t.net; // a trade built without per-fill results (imports, tests): whole trade on its close day
+    if(today)n++; }
   return {net, n};
 }
 function renderTripwire(){
@@ -7908,7 +7977,13 @@ async function removeCustomRule(pid){
 // One predicate per rule over closed AND open trades. Open trades join the state model with
 // closeTime=Infinity so entry-time states (streaks, day PnL, re-entry gaps) see exactly the
 // closes that preceded them; thresholds come from the rule's frozen params.
+// the same trades, rules and journal ask for the same predicates on every render: kept until one changes
 function customRulePreds(trades, rules){
+  const sig=JSON.stringify(rules||[])+'|'+_be+'|'+(trades?trades.length:0)+'|'+(typeof _jrev!=='undefined'?_jrev:0), m=customRulePreds._m;
+  if(m&&m.trades===trades&&m.sig===sig)return m.out;
+  const out=customRulePredsNow(trades, rules); customRulePreds._m={trades,sig,out}; return out;
+}
+function customRulePredsNow(trades, rules){
   const pool=(trades||[]).map(t=>(t.isOpen||!t.closeTime)?Object.assign({},t,{closeTime:Infinity}):t);
   const chron=pool.slice().sort((a,b)=>a.openTime-b.openTime);
   const ST=tradeStates(chron);
@@ -12784,7 +12859,8 @@ try{ if(window.Chart&&Chart.defaults)Chart.defaults.animation=false; }catch(e){}
   else try{ const h=FSA?await idbGet('handle'):null;
     if(h){ const p=await h.queryPermission({mode:'readwrite'});
       if(p==='granted'){ linkedHandle=h; linkedName=h.name; const file=await h.getFile(); const data=JSON.parse(await file.text());
-        await applySnapshot(data); renderWallets();
+        const pend=jPendingLoad(), localJ=pend.length?Object.assign({},journal):null;
+        await applySnapshot(data); await jPendingOverlay(localJ,pend); renderWallets();
         settings.rBasis=settings.rBasis||'avgloss'; $('rBasis').value=settings.rBasis;
         const fx=settings.rBasis==='fixed'; $('riskDefault').classList.toggle('hide',!fx); if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
         document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===(settings.view||view)));

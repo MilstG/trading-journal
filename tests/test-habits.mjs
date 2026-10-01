@@ -18,7 +18,7 @@ const grabConst = (name) => {
 };
 
 const FNS = ['nfMedian', 'nfRules', 'evaluateRules', 'nfPlan', 'planAdherence', 'nextPlan', 'nextDayEntry',
-  'addedToLoser', 'tradeStates', 'checkinPred', 'minerFams', 'resolvePinPred', 'ruleIsLive', 'customRulePreds',
+  'addedToLoser', 'tradeStates', 'checkinPred', 'minerFams', 'resolvePinPred', 'ruleIsLive', 'customRulePreds', 'customRulePredsNow',
   'ruleFollowThrough', 'liveRuleHits', 'isJournaled', 'journalInbox', 'journalStreak', 'processDays',
   'processQuadrants', 'processTrend', 'replayExtremes', '_erf'];
 const CONSTS = ['CHECKIN_CONDS', 'PROCESS_W'];

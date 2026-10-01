@@ -50,6 +50,9 @@ t('rules noAddToLosers uses real fill-stream adds', ()=>{ const f=ctx.evaluateRu
   {id:'z',net:200,dir:'Long',closeTime:now,openTime:now-1e3,events:[[0,100,1,1],[1,103,1,1],[2,105,2,-1]]},
  ],{noAddToLosers:true}).find(x=>x.rule.includes('adding')); eq(f.n,1); near(f.cost,-100); });
 t('dailyLossToday same-day filter', ()=>{ const d=ctx.dailyLossToday([{isOpen:false,closeTime:now,net:-300},{isOpen:false,closeTime:now,net:100},{isOpen:false,closeTime:now-2*DAY,net:-9}]); near(d.net,-200); eq(d.n,2); });
+t('dailyLossToday counts fills realized today, open positions included, not earlier days of a trade closed today', ()=>{
+  const d=ctx.dailyLossToday([{isOpen:true,net:0,rz:[[now-2*DAY,-5],[now,-810]]},{isOpen:false,closeTime:now,net:-400,rz:[[now-DAY,-390],[now,-10]]}]);
+  near(d.net,-820); eq(d.n,1); });
 t('planAdherence long', ()=>{ ctx.journal={L1:{plan:{entry:100,stop:90,target:120}}};
   const pa=ctx.planAdherence([{id:'L1',dir:'Long',avgEntry:100,avgExit:118,maxSize:10,net:180}],ctx.journal);
   eq(pa.stopHonoredRate,1); eq(pa.targetHitRate,0); near(pa.medPlannedRR,2); near(pa.medRealizedR,1.8); });
