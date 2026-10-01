@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { webcrypto } from 'node:crypto';
 import http from 'node:http';
 import vm from 'node:vm';
-import { t, ok, eq, report, makeExtractor } from './harness.mjs';
+import { t, ok, eq, report, makeExtractor, storedText } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const S = require('../social.js');
@@ -136,7 +136,7 @@ try {
     eq(r.status, 200); ok(r.d.key && r.d.key !== A); A2 = r.d.key;
     eq(r.d.me.handle, 'alpha'); eq(r.d.me.devices, 2);
     eq((await call('/me', { key: A })).status, 200); eq((await call('/me', { key: A2 })).status, 200);
-    ok(!readFileSync(join(dataDir, 'social.json'), 'utf8').includes(A2), 'only the hash is stored');
+    ok(!storedText(dataDir).includes(A2), 'only the hash is stored');
   });
   let A3;
   await t('a one-time code from a signed-in device adds another device', async () => {

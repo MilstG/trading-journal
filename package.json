@@ -8,7 +8,7 @@
     "test": "node tests/run-all.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.129.0"

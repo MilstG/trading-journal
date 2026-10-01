@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
-import { t, ok, eq, report } from './harness.mjs';
+import { t, ok, eq, report, storedText } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const Push = require('../push.js');
@@ -162,8 +162,8 @@ try {
   });
   await t('a lesson only reaches the server for members who let mentors in', async () => {
     await call('/stats', { method: 'POST', key: Bk, body: { xp: 10, level: 1, tz: 'UTC', days: [{ k: '2026-10-29', s: 70, l: 'private lesson' }] } });
-    const st = JSON.parse(readFileSync(join(dataDir, 'social.json'), 'utf8'));
-    ok(!JSON.stringify(st).includes('private lesson'));
+    const st = storedText(dataDir);
+    ok(st.includes('2026-10-29') && !st.includes('private lesson'));
   });
   await t('seasons: a monthly league ranks on its season, closes it with a podium, badges and a hall of fame', async () => {
     const L = { id: (await call('/admin/leagues', { method: 'POST', admin: true, body: { name: 'Process Cup', metric: 'xp', season: 'month', open: true } })).d.id };

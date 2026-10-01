@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
-import { t, ok, eq, near, report, makeExtractor } from './harness.mjs';
+import { t, ok, eq, near, report, makeExtractor, storedText } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const S = require('../social.js');
@@ -166,7 +166,7 @@ try {
     eq(a.status, 200); ok(a.d.key && a.d.key.length === 48); A = a.d.key;
     eq((await call('/join', { method: 'POST', body: { handle: 'ALPHA_1' } })).status, 409);
     const b = await call('/join', { method: 'POST', body: { handle: 'bravo' } }); Bk = b.d.key;
-    const raw = readFileSync(join(dataDir, 'social.json'), 'utf8');
+    const raw = storedText(dataDir);
     ok(!raw.includes(A) && !raw.includes(Bk), 'keys are never written');
     eq((await call('/me')).status, 401);
     eq((await call('/me', { key: A })).d.me.handle, 'alpha_1');
@@ -319,7 +319,7 @@ try {
   await t('leaving deletes the profile, posts and entries', async () => {
     eq((await call('/me', { method: 'DELETE', key: A })).status, 200);
     eq((await call('/me', { key: A })).status, 401);
-    ok(!readFileSync(join(dataDir, 'social.json'), 'utf8').includes('alpha_1'));
+    ok(!storedText(dataDir).includes('alpha_1'));
   });
 } finally { await new Promise(res => app.close(res)); }
 await t('with no AUTH_TOKEN the admin API refuses instead of opening to everyone', async () => {

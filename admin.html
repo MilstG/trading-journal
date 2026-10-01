@@ -57,6 +57,11 @@ th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
 .note:empty{display:none}
 .ev{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
 .ev div{flex:1;min-width:0;overflow-wrap:anywhere}
+.ev .stack{flex:0 0 auto}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.thumbs img{width:88px;height:64px;object-fit:cover;border-radius:8px;display:block}
+.avimg{width:56px;height:56px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.pill.warnp{background:#3A2418;color:#FFB39E}
 .hide{display:none!important}
 .warn{padding:12px 14px;border-radius:14px;background:#2B2413;border:1px solid #4A3C18;color:#F9DC8E;margin:0}
 .okbox{padding:12px 14px;border-radius:14px;background:#0F2A1D;border:1px solid #1E5B3F;color:#BDF5DC;overflow-wrap:anywhere}
@@ -136,7 +141,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     journal:['Every trade journaled',''],stops:['A stop on every trade',''],limit:['Stayed inside the loss limit',''],review:['End-of-day review',''],
     achievement:['Achievement','The base: badge tiers pay ×0.1 to ×3.2 of it'],challenge:['Weekly challenge kept',''],focus:['Focus habit kept','Per kept day']};
   const TABS=[['overview','Overview'],['members','Members'],['leagues','Leagues'],['competitions','Competitions'],['badges','Badges'],['levels','Levels & XP'],
-    ['features','Features'],['coach','Coach'],['routines','Routines'],['feed','Feed'],['settings','Settings']];
+    ['features','Features'],['coach','Coach'],['routines','Routines'],['feed','Feed & reports'],['settings','Settings']];
   let tok=''; try{ tok=localStorage.getItem('srv_token')||''; }catch(e){}
   let noteT=null;
   const note=(m,err)=>{ const n=$('note'); n.className='note'+(err?' err':''); n.textContent=m||''; clearTimeout(noteT); if(m)noteT=setTimeout(()=>{ n.textContent=''; },err?6000:3500); };
@@ -158,7 +163,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
   const pager=(key,list,size)=>{ size=size||10; const n=list.length, pages=Math.max(1,Math.ceil(n/size)), p=Math.max(0,Math.min(UI.pages[key]||0,pages-1)); UI.pages[key]=p;
     return {items:list.slice(p*size,(p+1)*size), html:n>size?`<div class="pager"><button class="sm" data-pg="${esc(key)}" data-d="-1"${p?'':' disabled'} aria-label="Previous page">‹ Prev</button><span class="muted small">${p*size+1}–${Math.min(n,(p+1)*size)} of ${n}</span><button class="sm" data-pg="${esc(key)}" data-d="1"${p<pages-1?'':' disabled'} aria-label="Next page">Next ›</button></div>`:''}; };
   const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
-  const D={ov:null,members:[],leagues:[],badges:[],comps:[],events:[]};
+  const D={ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[]};
   const UI={tab:'overview',member:null,q:'',filter:'all',leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
   const linkFor=code=>location.origin+'/pulse#link='+encodeURIComponent(code);
   const leagueName=id=>{ const L=D.leagues.find(x=>x.id===id); return L?L.name:id; };
@@ -166,8 +171,8 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
   const levelStart=(c,n)=>n<=1?0:c.mode==='table'?(n-2<c.thresholds.length?c.thresholds[n-2]:Infinity):c.base*n*(n-1);
 
   async function load(){
-    const [ov,ms,ls,bs,cs,ev]=await Promise.all([api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events')]);
-    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events});
+    const [ov,ms,ls,bs,cs,ev,rp]=await Promise.all([api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/reports')]);
+    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,reports:rp.reports});
     $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide');
     render();
   }
@@ -191,7 +196,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       if(el.type==='checkbox'?el.checked!==el.defaultChecked:el.tagName==='SELECT'?[...el.options].some(o=>o.selected!==o.defaultSelected):el.value!==el.defaultValue)
         keep.push([el.id,el.type==='checkbox'?el.checked:el.value]); }
     lastView=view; UI.submitted=null; UI.fresh=false;
-    $('tabs').innerHTML=TABS.map(([k,l])=>`<a href="#${k}"${k===UI.tab?' aria-current="page"':''}>${l}</a>`).join('');
+    $('tabs').innerHTML=TABS.map(([k,l])=>`<a href="#${k}"${k===UI.tab?' aria-current="page"':''}>${l}${k==='feed'&&D.reports.length?` <span class="pill warnp">${D.reports.length}</span>`:''}</a>`).join('');
     const tabs=$('tabs'), cur=tabs.querySelector('[aria-current]'); if(cur)tabs.scrollLeft=Math.max(0,cur.offsetLeft-(tabs.clientWidth-cur.offsetWidth)/2);
     const f={overview:vOverview,members:vMembers,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,settings:vSettings}[UI.tab];
     $('view').innerHTML=f();
@@ -208,7 +213,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     const main=D.leagues.find(L=>L.id==='main'), live=Math.max(1,o.members-o.banned);
     const top=D.members.filter(m=>!m.banned).sort((a,b)=>b.xp-a.xp).slice(0,5);
     return `${tiles([['Members',fmt(o.members),o.banned?o.banned+' suspended':''],['Active this week',fmt(o.active7)],['Leagues',o.leagues],['Reward badges',o.badges],
-      ['Competitions',o.comps],['Coach messages today',fmt(o.coachToday),o.coachAi?'AI on':'AI off'],['Claimed wallets',o.claimed||0,o.vaults?o.vaults+' synced journals · '+size(o.vaultBytes):'']])}
+      ['Competitions',o.comps],['Posts',fmt(o.posts||0),o.reports?o.reports+' open report'+(o.reports===1?'':'s'):o.mediaBytes?size(o.mediaBytes)+' of pictures':''],['Coach messages today',fmt(o.coachToday),o.coachAi?'AI on':'AI off'],['Claimed wallets',o.claimed||0,o.vaults?o.vaults+' synced journals · '+size(o.vaultBytes):'']])}
     ${warn.length?`<div class="stack" style="gap:8px">${warn.map(w=>`<p class="warn">${w}</p>`).join('')}</div>`:''}
     <div class="two">
       <section class="card"><h2>${esc(main?main.name:'Main league')} · tiers</h2>
@@ -278,6 +283,8 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
         ${field('mHandle','Name',`<input id="mHandle" maxlength="20" value="${esc(m.handle)}">`)}
         ${field('mAddr','Wallet',`<input id="mAddr" maxlength="42" placeholder="0x…" value="${esc(m.address||'')}"${m.claimed?' disabled':''}>`,m.claimed?'Claimed by signature — only the member can change it.':'Used for verified Discipline and returns. Leave empty to remove it.')}
         <div style="margin-top:12px"><button class="primary" data-m="edit">Save profile</button></div>
+        ${m.av||m.bio?`<h3>Picture and bio</h3><div class="row" style="align-items:center">${m.av?`<img src="${esc(m.av)}" alt="Profile picture of @${esc(m.handle)}" class="avimg">`:''}<div style="flex:1;min-width:0">${m.bio?`<p style="margin:0;overflow-wrap:anywhere">${esc(m.bio)}</p>`:'<p class="muted" style="margin:0">No bio.</p>'}</div></div>
+          <div class="row" style="margin-top:8px">${m.av?'<button class="sm fit" data-m="clearAvatar">Remove picture</button>':''}${m.bio?'<button class="sm fit" data-m="clearBio">Clear bio</button>':''}</div>`:''}
       </section>
       <section class="card"><h2>Boost XP</h2>
         <div class="row">${field('gXp','XP','<input id="gXp" type="number" step="10" placeholder="250">','Negative to correct a mistake.')}${field('gWhy','Reason they’ll see','<input id="gWhy" maxlength="80" placeholder="Won the October mentoring session">')}</div>
@@ -328,6 +335,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       if(await act(()=>post({action:'remove'}),'Deleted.'))location.hash='#members'; return; }
     if(a==='ban'&&!confirm('Suspend @'+m.handle+'? They disappear from boards and the feed and can’t post until you restore them.'))return;
     if(a==='ban'||a==='unban') return act(()=>post({action:a}),a==='ban'?'Suspended.':'Restored.');
+    if(a==='clearAvatar'||a==='clearBio') return act(()=>post({action:a}),a==='clearAvatar'?'Picture removed.':'Bio cleared.');
   }
 
   // ---------------- leagues ----------------
@@ -483,13 +491,28 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
   const readCustom=()=>(UI.custom||[]).map((c,i)=>({id:c.id,name:val('rc_'+i+'_n').trim(),base:val('rc_'+i+'_b'),desc:val('rc_'+i+'_d').trim(),morning:lines(val('rc_'+i+'_m')),eod:lines(val('rc_'+i+'_e'))}));
 
   // ---------------- feed ----------------
+  const tradeLine=t=>!t?'':`${t.side==='short'?'Short':'Long'} ${esc(t.label||t.coin)} · in ${esc(String(t.entry))}${t.stop?' · stop '+esc(String(t.stop)):''}${t.target?' · target '+esc(String(t.target)):''} · ${esc(t.status)}${t.r!=null?' · '+(t.r>=0?'+':'')+t.r+'R':''}`;
+  const postBody=e=>e.post?`${e.post.trade?`<div class="small">${tradeLine(e.post.trade)}</div>`:''}${e.text?`<div class="muted" style="white-space:pre-wrap">${esc(e.text.length>400?e.text.slice(0,400)+'…':e.text)}</div>`:''}${e.post.media.length?`<div class="thumbs">${e.post.media.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Picture on the post"></a>`).join('')}</div>`:''}`
+    :`${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}`;
   function vFeed(){
-    return `<div class="two"><section class="card"><h2>Announcement</h2>
+    const pc=D.ov.config.posts||{on:true,plans:true,images:true};
+    const reports=D.reports.length?D.reports.map(r=>`<div class="ev"><div><span class="pill warnp">${r.n} report${r.n===1?'':'s'}</span> ${r.why.length?`<span class="muted small">“${r.why.map(esc).join('” · “')}”</span>`:''}
+        ${r.comment?`<div><b>@${esc(r.comment.handle||'?')}</b> commented: ${esc(r.comment.text)}</div><div class="muted small">on @${esc(r.post.handle||'?')}’s post</div>`:`<div><b>@${esc(r.post.handle||'?')}</b> ${r.post.post?'· '+esc(r.post.post.kind):''}</div>${postBody(r.post)}`}
+        <div class="muted small">${esc(ago(r.at))}</div></div>
+        <div class="stack" style="gap:6px"><button class="sm danger" data-rep="${esc(r.id)}" data-a="remove">Remove ${r.comment?'comment':'post'}</button><button class="sm" data-rep="${esc(r.id)}" data-a="dismiss">Keep</button></div></div>`).join('')
+      :'<p class="muted">Nothing reported. Members can report a post or comment from its page.</p>';
+    return `<section class="card"><h2>Reports</h2>${reports}</section>
+      <div class="two"><section class="card"><h2>Announcement</h2>
       <p class="muted" style="margin:0 0 8px">Posts to everyone’s feed from the league.</p>
       <textarea id="ann" rows="3" maxlength="280" placeholder="Survivor starts Monday — set your loss limit in the check-in." aria-label="Announcement"></textarea>
-      <div style="margin-top:10px"><button class="primary" id="postAnn">Post</button></div></section>
-      <section class="card"><h2>Recent feed</h2><div style="max-height:520px;overflow:auto">
-      ${pager('events',D.events).items.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}<div class="muted small">${esc(ago(e.at))} · ${e.kudos} kudos</div></div><button class="sm danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>'}
+      <div style="margin-top:10px"><button class="primary" id="postAnn">Post</button></div>
+      <h3>Members’ posts</h3>
+      ${box('pOn','Members can post (trades they took, notes)',pc.on)}
+      ${box('pPlans','Posts about trades they plan to take',pc.plans,'Shown with “A member’s own plan, shared for accountability. Not advice.”')}
+      ${box('pImages','Pictures on posts',pc.images,'Shrunk in the member’s browser before upload; WebP, JPEG or PNG only.')}
+      <div style="margin-top:10px"><button id="pSave">Save</button></div></section>
+      <section class="card"><h2>Recent feed</h2><div style="max-height:620px;overflow:auto">
+      ${pager('events',D.events).items.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${postBody(e)}<div class="muted small">${esc(ago(e.at))} · ${e.kudos} kudos${e.post?' · '+e.post.comments+' comment'+(e.post.comments===1?'':'s'):''}</div></div><button class="sm danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>'}
       </div>${pager('events',D.events).html}</section></div>`;
   }
 
@@ -583,7 +606,9 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       if(!await act(()=>put({profiles:{custom,overrides}}),'Routines saved.')){ [UI.custom,UI.overrides]=keep; } return; }
     // feed
     if(id==='postAnn'){ const t=val('ann').trim(); if(!t)return; return act(()=>api('/announce',{body:{text:t}}),'Posted.'); }
-    if(d.delev&&!confirm('Remove this post from the feed?'))return;
+    if(id==='pSave') return act(()=>put({posts:{on:chk('pOn'),plans:chk('pPlans'),images:chk('pImages')}}),'Saved.');
+    if(d.rep){ if(d.a==='remove'&&!confirm('Remove it for everyone? This can’t be undone.'))return; return act(()=>api('/reports/'+encodeURIComponent(d.rep),{body:{action:d.a}}),d.a==='remove'?'Removed.':'Kept.'); }
+    if(d.delev&&!confirm('Remove this post from the feed? Its comments and pictures go with it.'))return;
     if(d.delev) return act(()=>api('/events/'+encodeURIComponent(d.delev),{method:'DELETE'}),'Removed.');
     // settings
     if(id==='sSave') return act(()=>put({open:chk('sOpen'),inviteCode:val('sInvite').trim(),requireClaim:chk('sClaim'),vaultOn:chk('sVault')}),'Settings saved.');

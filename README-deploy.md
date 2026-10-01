@@ -19,7 +19,8 @@ admin.html      the owner's admin panel, served at /admin
 badges.html     a member's public badge page, served at /b/<name>
 vendor/         eth-sig.js — signature recovery for wallet claims (bundled, no install)
 tech.html       technical reference, served at /docs
-package.json    start script + node version (one optional dependency, the Anthropic SDK, used only with COACH_AI)
+db.js           the social layer's SQLite storage (DATA_DIR/pulse.db), its schema and the one-time social.json import
+package.json    start script + node version, 22.13+ for node:sqlite (one optional dependency, the Anthropic SDK, used only with COACH_AI)
 tests/          test suites (`npm test`; CI runs them on every push)
 ```
 
@@ -65,8 +66,14 @@ tests/          test suites (`npm test`; CI runs them on every push)
   its own app. Visitors without the access token keep their journal in their
   own browser and never write to the server; set `AUTH_TOKEN` before sharing
   the link, or everyone who opens it shares your journal.
-- **Social + admin:** Pulse's leagues, competitions and feed live in
-  `DATA_DIR/social.json` on the same volume, plus 50 days of each verifying
+- **Social + admin:** Pulse's leagues, competitions, feed and posts live in an
+  SQLite database, `DATA_DIR/pulse.db` (with `pulse.db-wal` beside it while the server
+  runs: back up both, or stop the server first), and members' pictures in
+  `DATA_DIR/media/` (2 GB in all). It uses Node's built-in `node:sqlite`, so the
+  server needs **Node 22.13 or newer** (`engines` in `package.json` says so; Railway
+  follows it) and still installs nothing. A server upgraded from an older version
+  imports `DATA_DIR/social.json` once on its first start and renames it
+  `social.json.migrated`. Also on the volume: 50 days of each verifying
   member's public fills in `DATA_DIR/social-fills/`. The owner's panel is at `/admin`
   and needs `AUTH_TOKEN` (without it the admin API refuses every request). It manages
   members (add, edit, XP boosts, full unlocks, sign-in codes), leagues, reward badges,

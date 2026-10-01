@@ -1862,9 +1862,13 @@ function createApp(opts) {
     if (!behaviorInflight.has(k)) behaviorInflight.set(k, behaviorForOnce(addr, tz).finally(() => behaviorInflight.delete(k)));
     return behaviorInflight.get(k);
   };
-  const behaviorForOnce = async (addr, tz) => {
-    if (!engine.ok || !E.pzBehaviorDays) return null;
-    const a = String(addr).toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
+  // the wallet's last 50 days of fills, topped up from the exchange and kept gzipped per address
+  const fillsInflight = new Map();
+  const recentFills = addr => { const a = String(addr).toLowerCase();
+    if (!fillsInflight.has(a)) fillsInflight.set(a, recentFillsOnce(a).finally(() => fillsInflight.delete(a)));
+    return fillsInflight.get(a); };
+  const recentFillsOnce = async (a) => {
+    if (!engine.ok || !/^0x[0-9a-f]{40}$/.test(a)) return null;
     const f = path.join(socialFillsDir, a + '.json.gz'), since = (opts.now || Date.now)() - 50 * 86400000;
     const c = gzRead(f), have = c && c.v === 1 && Array.isArray(c.fills) ? c.fills : [];
     // the cache is saved sorted, so its last fill is the newest (no spread over huge arrays)
@@ -1874,6 +1878,21 @@ function createApp(opts) {
     for (const x of have.concat(r.fills || [])) { if (!x || x.time < since) continue; const k = x.tid + ':' + x.time; if (seen.has(k)) continue; seen.add(k); fills.push(x); }
     fills.sort((x, y) => x.time - y.time);
     gzWrite(f, { v: 1, fills, savedAt: Date.now() });
+    return fills;
+  };
+  // A trade a member posts is "on chain" when their wallet has a fill in that coin within a minute
+  // of when they say it opened (and of when it closed, for a closed one). Older than 50 days: unknown.
+  const tradeCheck = async (addr, t) => {
+    const since = (opts.now || Date.now)() - 50 * 86400000;
+    if (!t || !t.openedAt || t.openedAt < since) return null;
+    const fills = await recentFills(addr); if (!Array.isArray(fills)) return null;
+    const near = ms => fills.some(x => x && x.coin === t.coin && Math.abs(x.time - ms) <= 60000);
+    return near(t.openedAt) && (!t.closedAt || near(t.closedAt));
+  };
+  const behaviorForOnce = async (addr, tz) => {
+    if (!engine.ok || !E.pzBehaviorDays) return null;
+    const a = String(addr).toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
+    const fills = await recentFills(a); if (!fills) return null;
     // attributeFunding sets each trade's net (P&L − fees); funding rows aren't fetched here — they
     // barely move one trade's result and never decide whether it was a loss by more than $1
     const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])];
@@ -1907,7 +1926,7 @@ function createApp(opts) {
   }
   const wearRef = {}; // filled in below, once the wearables store exists
   const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
-    behaviorFor, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled });
+    behaviorFor, tradeCheck: opts.tradeCheck || tradeCheck, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled });
   // readiness from WHOOP, Oura or Apple Health: the owner (AUTH_TOKEN) or a member (Pulse key)
   const wearOrigin = req => { if (publicOrigins[0]) { try { return new URL(publicOrigins[0]).origin; } catch (e) {} }
     return hostVetted && req.headers.host ? 'https://' + req.headers.host : opts.wearOrigin || null; };
@@ -2302,6 +2321,7 @@ function createApp(opts) {
   server._buildBotState = buildBotState;       // exposed for tests — the loop itself needs a live bot
   server._social = social; // tests reach the coach allowance through this
   server.pushTick = () => social.tick(); // the reminder pass, for tests and one-off runs
+  server.on('close', () => social.close());
   return server;
 }
 

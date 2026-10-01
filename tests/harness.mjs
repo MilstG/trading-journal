@@ -9,6 +9,7 @@
 //   report();
 
 import { Buffer } from 'node:buffer';
+import { createRequire } from 'node:module';
 
 let pass = 0, fail = 0;
 
@@ -74,4 +75,14 @@ export function makeExtractor(html){
   };
 
   return { grabBlock, grabFn, evalFn, evalClass, evalModule };
+}
+
+// Everything the social layer stored (DATA_DIR/pulse.db), as one string: for checking what is and
+// isn't written. A second connection sees every committed write (WAL).
+export function storedText(dataDir){
+  const db = createRequire(import.meta.url)('../db.js').open(dataDir);
+  try {
+    const tables = db.q("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name);
+    return tables.map(n => JSON.stringify(db.db.prepare('SELECT * FROM ' + n).all())).join('\n');
+  } finally { db.close(); }
 }
