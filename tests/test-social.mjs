@@ -27,7 +27,7 @@ t('stats are clamped and filtered: bad days, badges and oversized text never get
 });
 t('sharing defaults keep money and the address private', () => {
   const sh = S.sanitizeShare({ usd: true, profile: 'yes' });
-  eq(sh, { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false });
+  eq(sh, { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false, mentor: false });
 });
 t('a sharing key added later (verify) stays off for existing members until they switch it on', () => {
   const old = { profile: true, boards: true, feed: true, habits: true, ret: false, usd: false, addr: false };
@@ -355,7 +355,7 @@ t('only process numbers go out: no trades, notes, P&L or addresses in the stats 
     achievements: [{ id: 'x', title: 'X', at: '2026-09-01' }, { id: 'y', title: 'Y', at: null }],
     days: [{ key: '2026-09-30', score: 88, breached: false, parts: { journal: 1 }, net: -500, n: 3 }] };
   const p = ctx.pzSocialStats(g, ['When a, b.']);
-  eq(Object.keys(p).sort(), ['badgeN', 'badgeTotal', 'badges', 'best', 'challengesDone', 'days', 'habits', 'lastChallenge', 'level', 'shields', 'streak', 'tz', 'week', 'weekXp', 'xp']);
+  eq(Object.keys(p).sort(), ['badgeN', 'badgeTotal', 'badges', 'best', 'challengesDone', 'days', 'habits', 'lastChallenge', 'level', 'shields', 'streak', 'tz', 'week', 'weekXp', 'xp', 'xpDays']);
   eq(p.days, [{ k: '2026-09-30', s: 88, b: false, j: true }], 'a day carries its score and flags — never its P&L');
   eq(p.badges, [{ id: 'x', t: 'X' }]); eq(p.lastChallenge, 'When a, b.');
 });

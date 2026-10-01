@@ -287,6 +287,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       </section>
       <section class="card"><h2>Access</h2>
         ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature and theme regardless of level, and the unlocked coach allowance.')}
+        ${box('mMentor','Mentor',m.mentor,'Sees the days of members who let mentors in (scores, slips, nightly lesson) and can leave them notes.')}
         ${field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
         <div style="margin-top:12px"><button class="primary" data-m="access">Save access</button></div>
       </section>
@@ -316,7 +317,8 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     if(a==='grant'){ const xp=Math.round(+val('gXp')); if(!xp)return note('How much XP?',true);
       return act(()=>post({action:'grant',xp,why:val('gWhy').trim(),announce:chk('gAnn')}),(xp>0?'+':'')+fmt(xp)+' XP for @'+m.handle+'. Their app adds it on its next sync.'); }
     if(a==='access'){ const v=val('mCoach').trim(), un=chk('mUnlocked');
-      return act(async()=>{ if(un!==m.unlocked)await post({action:un?'unlock':'lock'}); await post({action:'coach',daily:v===''?null:+v}); },'Access saved.'); }
+      const mt=chk('mMentor');
+      return act(async()=>{ if(un!==m.unlocked)await post({action:un?'unlock':'lock'}); if(mt!==!!m.mentor)await post({action:mt?'mentor':'unmentor'}); await post({action:'coach',daily:v===''?null:+v}); },'Access saved.'); }
     if(a==='leagues'){ const want=[...document.querySelectorAll('input[name=mLeague]')].filter(i=>i.checked).map(i=>i.value), had=m.leagues.map(x=>x.id);
       const tiers=[...document.querySelectorAll('[data-tier-league]')].map(s=>[s.dataset.tierLeague,+s.value]);
       return act(async()=>{ await post({action:'leagues',join:want.filter(x=>!had.includes(x)),leave:had.filter(x=>!want.includes(x))});
@@ -334,6 +336,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     return `<div class="sub" id="leagueForm" style="margin-top:12px"><h3 style="margin-top:0">${n?'New league':'Edit '+esc(L.name)}</h3>
       <div class="row">${field('lgName','Name',`<input id="lgName" maxlength="40" value="${esc(L?L.name:'')}" placeholder="Risk-adjusted Masters">`)}${field('lgMetric','Ranks members by',sel('lgMetric',Object.entries(M),L?L.metric:'xp'))}${field('lgPeriod','Resets every',sel('lgPeriod',[['week','Week'],['month','Month']],L?L.period:'week'))}</div>
       ${field('lgDesc','Description members see before joining',`<textarea id="lgDesc" rows="2" maxlength="200" placeholder="Best return per unit of drawdown. Verified wallets only.">${esc(L?L.desc:'')}</textarea>`)}
+      ${field('lgSeason','Seasons',sel('lgSeason',[['','None'],['month','Monthly — a podium at each month’s end'],['quarter','Quarterly — a podium at each quarter’s end']],L&&L.season?(L.season.id.includes('-Q')?'quarter':'month'):''),'The ranking resets each season; the top three get a badge and a place in the league’s hall of fame.')}
       ${box('lgTiers','Tiers — Bronze to Diamond, with promotion and relegation each period',L?L.tiers:true)}
       ${box('lgOpen','Listed — anyone can find it under Social → Find leagues',L?L.open:true)}
       ${field('lgInvite','Invite code (optional)',`<input id="lgInvite" maxlength="40" value="${esc(L?L.invite||'':'')}" autocomplete="off">`,'Members need it to join. Empty: anyone can.')}
@@ -348,7 +351,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
       ${ed?leagueForm(L0):''}</section>
       ${D.leagues.map(L=>{ const out=D.members.filter(m=>!L.roster.some(r=>r.id===m.id));
         return `<section class="card"><div class="lcard"><div><h2 style="margin:0">${esc(L.name)} <span class="muted">#${L.num}</span></h2>
-          <div class="chips" style="margin:8px 0">${[esc(L.metricLabel),L.period==='month'?'Monthly':'Weekly',L.tiers?'Tiers':'',L.open?'Listed':'Unlisted',L.inviteRequired?'Invite code':'',L.autoJoin?'Auto-join':''].filter(Boolean).map(x=>`<span class="pill">${x}</span>`).join('')}</div>
+          <div class="chips" style="margin:8px 0">${[esc(L.metricLabel),L.period==='month'?'Monthly':'Weekly',L.tiers?'Tiers':'',L.open?'Listed':'Unlisted',L.inviteRequired?'Invite code':'',L.autoJoin?'Auto-join':'',L.season?'Season: '+L.season.label:''].filter(Boolean).map(x=>`<span class="pill">${x}</span>`).join('')}</div>
           ${L.desc?`<p class="muted" style="margin:0">${esc(L.desc)}</p>`:''}</div>
           <div class="row fit" style="align-items:center"><button class="sm fit" data-lgedit="${esc(L.id)}">Edit</button>${L.id==='main'?'':`<button class="sm danger fit" data-lgdel="${esc(L.id)}" data-n="${esc(L.name)}">Delete</button>`}</div></div>
           <details style="margin-top:10px"${UI.rosterOpen===L.id?' open':''}><summary>${L.roster.length} member${L.roster.length===1?'':'s'}</summary>
@@ -538,7 +541,7 @@ summary{cursor:pointer;color:var(--soft);font-weight:600}
     if(id==='lgNew'){ UI.leagueEdit='new'; return render(); }
     if(d.lgedit){ UI.leagueEdit=d.lgedit; render(); const f=$('leagueForm'); if(f&&f.scrollIntoView)f.scrollIntoView({block:'center'}); return; }
     if(id==='lgCancel'){ UI.leagueEdit=null; return render(); }
-    if(id==='lgSave'){ const body={name:val('lgName').trim(),desc:val('lgDesc').trim(),metric:val('lgMetric'),period:val('lgPeriod'),tiers:chk('lgTiers'),open:chk('lgOpen'),invite:val('lgInvite').trim(),autoJoin:chk('lgAuto')};
+    if(id==='lgSave'){ const body={name:val('lgName').trim(),desc:val('lgDesc').trim(),metric:val('lgMetric'),period:val('lgPeriod'),tiers:chk('lgTiers'),open:chk('lgOpen'),invite:val('lgInvite').trim(),autoJoin:chk('lgAuto'),season:val('lgSeason')};
       if(!body.name)return note('A league needs a name.',true);
       if(!d.id)body.everyone=chk('lgEveryone');
       UI.leagueEdit=null;

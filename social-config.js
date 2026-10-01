@@ -115,7 +115,8 @@ function sanitizeLeague(b, prev) {
   const pick = (k, def) => own(b, k) ? b[k] : prev && own(prev, k) ? prev[k] : def;
   const metric = own(LEAGUE_METRICS, pick('metric', 'xp')) ? pick('metric', 'xp') : 'xp';
   return { name, desc: text(pick('desc', ''), 200), metric, period: pick('period', 'week') === 'month' ? 'month' : 'week',
-    tiers: !!pick('tiers', metric === 'xp'), open: pick('open', true) !== false, invite: text(pick('invite', ''), 40), autoJoin: !!pick('autoJoin', false) };
+    tiers: !!pick('tiers', metric === 'xp'), open: pick('open', true) !== false, invite: text(pick('invite', ''), 40), autoJoin: !!pick('autoJoin', false),
+    season: ['month', 'quarter'].includes(pick('season', '')) ? pick('season', '') : '' };
 }
 
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,

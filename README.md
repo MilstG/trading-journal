@@ -281,6 +281,17 @@ journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
 on a public **badge page** at `/b/<name>` to share.
 
+**Readiness from a wearable.** The check-in can take readiness from **WHOOP** or
+**Oura** (sign in once; the owner registers an app with each and sets its keys, see
+the deploy guide) or from **Apple Health** through a personal link an iPhone
+Shortcut posts the morning's HRV, resting heart rate and sleep to. WHOOP's recovery
+and Oura's readiness are used as they are; for Apple Health readiness is HRV against
+your own 30-day median (60%) and hours asleep against eight (40%). A day's wearable
+score replaces the check-in answers as its readiness (the answers still earn their
+XP), so Stats' readiness-versus-discipline comparison shows which days your
+discipline breaks. Days sync every 30 minutes while Pulse is open and are stored
+with your journal.
+
 **Tilt meter and quiet mode.** A live reading (0–100) on Today of the triggers
 that come before a blow-up: losses in a row (30 points at three), a loss in the
 last 15 minutes (20), entries at 1.5× your usual size (15), four entries in an
@@ -376,6 +387,27 @@ send your `/pulse` link to join *your* league.
   trading day's process score and flags are sent. The switches are grouped into
   Profile, Boards and Sensitive; claiming a wallet, devices, journal sync and leaving
   live one level down, under **What you share → Account**.
+
+- **Accountability partners.** Up to three per member, by mutual request (Social →
+  Feed). Partners see each other's streak, the last 14 days' Discipline scores and
+  which slips happened — never trades, P&L or wallets — can send a nudge (one every
+  six hours) and set a shared challenge for the week that the other can adopt as a
+  habit. Today shows a slim row per partner.
+- **Seasons.** The owner can give a league monthly or quarterly seasons. Its ranking
+  then covers the season so far; when a season ends, the top three get a badge
+  (🏆 🥈 🥉), a place in the league's **hall of fame** (on its info page) and a
+  notification, and the next season starts from zero.
+- **Mentors.** The owner marks members as mentors in the admin panel. Members who
+  switch on **Let mentors see my days** (What you share → Profile) show up on the
+  mentor's **Mentees** screen with each day's score, slips and the lesson they wrote
+  that night, and the mentor can leave a note on any day. Notes arrive in the
+  member's inbox (Today → New for you) and as a push notification.
+- **Reminders (web push).** In Pulse's settings, **Remind me on this device** sends a
+  morning check-in reminder and, on days you traded and haven't reviewed, an evening
+  review reminder, at times you pick on your own clock; partner nudges, mentor notes
+  and season results come the same way. It's standard web push, encrypted end to end
+  (RFC 8291) with the server's own keys — no third-party service. On iPhone it needs
+  Pulse added to the Home Screen.
 
 **Trust model.** Process numbers are computed by each member's browser and are
 self-reported. Money numbers are never taken from the browser: the server reads

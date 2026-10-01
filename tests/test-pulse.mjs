@@ -22,7 +22,7 @@ Object.assign(ctx, {
   dispMarket: x => x, dcoin: t => t.coin, dayLabel: k => k, isoWeekOfKey: k => k.slice(0, 7), usdPlain: v => '$' + Math.abs(v),
 });
 vm.createContext(ctx);
-vm.runInContext(grabConst('PROCESS_W') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'pzTrendStats',
+vm.runInContext(grabConst('PROCESS_W') + '\n' + grabConst('pzReadinessManual') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'pzTrendStats',
   'pzReadinessLink', 'pzBars', 'pzHasPlan', 'pzBonusItems', 'pzPlain', 'pzRulesBroken', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
 
 const DAY = 86400000, T0 = Date.UTC(2026, 8, 30, 12);

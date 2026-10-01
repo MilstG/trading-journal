@@ -103,6 +103,10 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `COACH_AI`             | *(unset = off)*                  | `1` enables the AI weekly letter in Review and the AI coach chat in Pulse (needs `ANTHROPIC_API_KEY`; Railway's `npm install` pulls the optional SDK). Chat allowances are set in `/admin` → Coach |
 | `ANTHROPIC_API_KEY`    | *(unset)*                        | Claude API key, only read when `COACH_AI=1` |
 | `COACH_AI_MODEL`       | `claude-opus-5-5`                | Model for the weekly letter and the coach chat |
+| `PUSH`                 | *(on)*                           | `0` switches web push reminders off. On by default: the server makes its own push keys (VAPID) once, in `DATA_DIR/vapid.json` |
+| `PUSH_SUBJECT`         | `mailto:pulse@localhost`         | Contact the browsers' push services can reach you at — set a real `mailto:` or `https://` address |
+| `WHOOP_CLIENT_ID` / `WHOOP_CLIENT_SECRET` | *(unset)*  | Lets people connect WHOOP for readiness. Register an app at developer.whoop.com with the redirect URL `<PUBLIC_ORIGIN>/api/wear/whoop/callback` |
+| `OURA_CLIENT_ID` / `OURA_CLIENT_SECRET`   | *(unset)*  | The same for Oura (cloud.ouraring.com → OAuth applications), redirect `<PUBLIC_ORIGIN>/api/wear/oura/callback` |
 
 The analytics API, scheduled refresh, alerts, and weekly digests are documented
 in the main [README](README.md).

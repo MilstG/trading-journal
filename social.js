@@ -30,6 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const SC = require('./social-config.js');
+const Push = require('./push.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
 let ethSig = null; try { ethSig = require('./vendor/eth-sig.js'); } catch (e) { /* claims and wallet sign-in answer 501 */ }
 
@@ -51,10 +52,11 @@ const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, vaultOn: true,
   unlocks: { trends: 2, share: 3, compete: 4 }, themes: { ember: 3, aurora: 5, gold: 8 } };
-const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr'];
+const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr', 'mentor'];
+// mentor: the league's mentors can see your trading days (scores, slips, the lesson you wrote) and comment on them — opt-in
 // global: appear on the server-wide leaderboards (every member, every league) — opt-in
 // page: a public badge page at /b/<name> that anyone with the link can open — opt-in
-const DEFAULT_SHARE = { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false };
+const DEFAULT_SHARE = { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false, mentor: false };
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const clampNum = (v, lo, hi) => { const n = +v; return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
@@ -72,22 +74,33 @@ function isoWeekOfKey(k) {
 const avg = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
 
 // ---- validation of what a member's browser posts ----
+const SLIP_KEYS = ['revenge', 'afterTwo', 'sizeUp', 'addLoser', 'overtrade', 'heldLoser'];
+const PARTNER_MAX = 3, INBOX_MAX = 40, COMMENTS_MAX = 300;
 function sanitizeStats(b) {
   b = b || {};
+  // per day: process score, bonus logged, journaled, reviewed, the slips (by key) and the lesson
+  // written that night — the lesson is only kept for members who let mentors see their days
   const days = (Array.isArray(b.days) ? b.days : []).slice(-60)
-    .filter(d => d && DAY_RE.test(d.k)).map(d => ({ k: d.k, s: clampNum(d.s, 0, 100) || 0, b: !!d.b, j: !!d.j }));
+    .filter(d => d && DAY_RE.test(d.k)).map(d => { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, b: !!d.b, j: !!d.j };
+      if (d.r) o.r = true;
+      const f = Array.isArray(d.f) ? [...new Set(d.f.filter(x => SLIP_KEYS.includes(x)))] : []; if (f.length) o.f = f;
+      const l = cleanText(d.l, 200); if (l) o.l = l;
+      return o; });
   // earned badges: id, title, category, tier (0 bronze … 5 legend), day earned
   const seenB = new Set();
   const badges = (Array.isArray(b.badges) ? b.badges : []).slice(0, 400)
     .filter(x => x && BADGE_RE.test(x.id) && !seenB.has(x.id) && seenB.add(x.id)).map(x => ({ id: x.id, t: cleanText(x.t, 60), c: cleanText(x.c, 20), r: Math.round(clampNum(x.r, 0, 5) || 0), k: DAY_RE.test(x.k) ? x.k : null, d: cleanText(x.d, 120) }));
   const habits = (Array.isArray(b.habits) ? b.habits : []).slice(0, 20).map(h => cleanText(h, 140)).filter(Boolean).slice(0, 5);
+  // XP by day, so a season ranks on exactly its own days (weeks straddle month ends)
+  const xpDays = {}; if (b.xpDays && typeof b.xpDays === 'object' && !Array.isArray(b.xpDays))
+    for (const k of Object.keys(b.xpDays).filter(k => DAY_RE.test(k)).sort().slice(-100)) { const v = clampNum(b.xpDays[k], 0, 1e5); if (v) xpDays[k] = Math.round(v); }
   return {
     xp: clampNum(b.xp, 0, 1e8) || 0, level: clampNum(b.level, 1, 500) || 1,
     week: WEEK_RE.test(b.week) ? b.week : null, weekXp: clampNum(b.weekXp, 0, 1e6) || 0,
     streak: clampNum(b.streak, 0, 10000) || 0, best: clampNum(b.best, 0, 10000) || 0, shields: clampNum(b.shields, 0, 2) || 0,
     challengesDone: clampNum(b.challengesDone, 0, 10000) || 0, lastChallenge: cleanText(b.lastChallenge, 140),
     tz: typeof b.tz === 'string' && /^[A-Za-z_+\-/0-9]{1,40}$/.test(b.tz) ? b.tz : 'UTC',
-    badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days,
+    badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days, xpDays,
   };
 }
 function sanitizeShare(s, prev) {
@@ -194,7 +207,8 @@ function boardRows(members, board, opts) {
   const rows = [];
   for (const m of pool) {
     let v = null, sub = '';
-    if (board === 'xp') { v = opts.weeks ? opts.weeks.reduce((a, w) => a + ((m.weekXp && m.weekXp[w]) || 0), 0) : (m.weekXp && m.weekXp[week]) || 0; sub = 'Level ' + m.stats.level; }
+    if (board === 'xp') { v = opts.dayFrom ? Object.entries((m.stats && m.stats.xpDays) || {}).reduce((a, [k, x]) => k >= opts.dayFrom && k <= opts.dayTo ? a + x : a, 0)
+        : opts.weeks ? opts.weeks.reduce((a, w) => a + ((m.weekXp && m.weekXp[w]) || 0), 0) : (m.weekXp && m.weekXp[week]) || 0; sub = 'Level ' + m.stats.level; }
     else if (board === 'level') { v = m.stats.xp; sub = 'Level ' + m.stats.level; }
     else if (board === 'streak') { v = m.stats.streak; sub = 'Best ' + m.stats.best; }
     else if (board === 'discipline') { const d = disciplineOver(m.vdays, addDaysKey(todayK, -((opts.days || 7) - 1)), todayK, 3); if (d.avg == null) continue; v = Math.round(d.avg); sub = 'verified · ' + d.n + ' trading days'; }
@@ -210,6 +224,27 @@ function boardRows(members, board, opts) {
   rows.forEach((r, i) => { r.rank = i + 1; });
   return rows;
 }
+
+// ---- seasons: a league can run calendar seasons (a month or a quarter) with a podium at the end ----
+function seasonOf(kind, dayKey) {
+  if (kind === 'month') return dayKey.slice(0, 7);
+  if (kind === 'quarter') return dayKey.slice(0, 4) + '-Q' + (Math.floor((+dayKey.slice(5, 7) - 1) / 3) + 1);
+  return null;
+}
+function seasonBounds(id) {
+  const y = +id.slice(0, 4);
+  const m0 = id.includes('-Q') ? (+id.slice(6) - 1) * 3 : +id.slice(5, 7) - 1, months = id.includes('-Q') ? 3 : 1;
+  return { start: utcDayKey(Date.UTC(y, m0, 1)), end: utcDayKey(Date.UTC(y, m0 + months, 0)) };
+}
+function seasonLabel(id) {
+  if (id.includes('-Q')) return 'Q' + id.slice(6) + ' ' + id.slice(0, 4);
+  return new Date(Date.UTC(+id.slice(0, 4), +id.slice(5, 7) - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+// the ISO weeks whose Monday falls inside [start, end]
+function weeksIn(start, end) { const out = []; let k = start;
+  const dow = (new Date(k + 'T00:00:00Z').getUTCDay() + 6) % 7; if (dow) k = addDaysKey(k, 7 - dow);
+  for (; k <= end; k = addDaysKey(k, 7)) out.push(isoWeekOfKey(k));
+  return out; }
 
 // ---- competitions ----
 function compStatus(c, todayKey) { return todayKey < c.start ? 'upcoming' : todayKey > c.end ? 'finished' : 'live'; }
@@ -294,6 +329,8 @@ function createSocial(opts) {
   S.config.profiles = SC.sanitizeProfiles(S.config.profiles, null);
   if (!S.badges || typeof S.badges !== 'object') S.badges = {};
   if (!S.ownerCoach) S.ownerCoach = { k: null, n: 0 };
+  if (!S.partners || typeof S.partners !== 'object') S.partners = {};
+  if (!S.comments || typeof S.comments !== 'object') S.comments = {};
   if (!S.leagues || typeof S.leagues !== 'object') { // one league for everyone until the owner makes more
     S.leagues = { main: Object.assign({ id: 'main', createdAt: Date.now(), members: {}, week: S.league.week },
       SC.sanitizeLeague({ name: 'Main league', metric: 'xp', tiers: true, open: true, autoJoin: true })) };
@@ -356,15 +393,19 @@ function createSocial(opts) {
     } return 0; };
   // members of a league as boardRows sees them: their tier is the one in that league
   const leagueMembers = L => members().filter(m => own(L.members, m.id)).map(m => Object.assign({}, m, { tier: L.members[m.id].tier || 0 }));
-  const leagueBoard = (L, board, viewer) => boardRows(leagueMembers(L), board, {
+  // the window a league ranks on: its season so far, else its month so far, else this week
+  const leagueWindow = L => { const si = L.season ? seasonInfo(L) : null;
+    if (si) return { dayFrom: si.start, dayTo: todayKey(), weeks: null, days: Math.round((Date.parse(todayKey()) - Date.parse(si.start)) / 86400000) + 1 };
+    return L.period === 'month' ? { weeks: monthWeeks(S.league.week), days: monthDays() } : { weeks: null, days: 7 }; };
+  const leagueBoard = (L, board, viewer) => { const W = leagueWindow(L); return boardRows(leagueMembers(L), board, {
     tier: L.tiers && board === L.metric && viewer ? leagueTier(L, viewer) : undefined, tierAll: true, week: S.league.week,
-    weeks: L.period === 'month' && board === 'xp' ? monthWeeks(S.league.week) : undefined, days: L.period === 'month' ? monthDays() : 7 });
+    weeks: board === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: board === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days }); };
   // a monthly league's boards cover the month so far: the same window its rollover ranks on
   const monthDays = () => Math.max(1, Math.round((Date.parse(todayKey()) - Date.parse(isoWeekMonday(monthWeeks(S.league.week)[0]))) / 86400000) + 1);
   const leagueOut = (L, viewer) => ({ id: L.id, num: L.num, name: L.name, desc: L.desc, metric: L.metric, metricLabel: SC.LEAGUE_METRICS[L.metric], period: L.period,
     tiers: L.tiers, open: L.open, inviteRequired: !!L.invite, members: members().filter(m => own(L.members, m.id) && !m.banned).length,
     joined: !!viewer && own(L.members, viewer.id), tier: viewer && own(L.members, viewer.id) ? leagueTier(L, viewer) : null,
-    tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null });
+    tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null, season: L.season ? seasonInfo(L) : null });
   // ---- levels, XP grants, reward badges ----
   const levelTitle = n => { const t = S.config.levels.titles; return t[Math.min(n, t.length) - 1] || ('Level ' + n); };
   const zoneKey = (tz, ms) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms); }
@@ -422,7 +463,9 @@ function createSocial(opts) {
     return !!a.share.feed && (e.type !== 'habit' || !!a.share.habits); };
   const dropMember = (id) => { const gone = own(S.members, id) ? S.members[id].address : null;
     if (own(S.members, id) && S.members[id].vault) try { fs.unlinkSync(vaultFile(id)); } catch (e) {}
-    delete S.members[id]; delete S.follows[id];
+    delete S.members[id]; delete S.follows[id]; dropPairsOf(id); delete S.comments[id];
+    if (opts.onDrop) try { opts.onDrop(id); } catch (e) {}
+    for (const k in S.comments) S.comments[k] = S.comments[k].filter(c => c.by !== id);
     for (const L of Object.values(S.leagues)) delete L.members[id];
     if (gone && opts.forgetAddress && !members().some(o => o.address === gone)) opts.forgetAddress(gone);
     for (const k in S.follows) S.follows[k] = S.follows[k].filter(x => x !== id);
@@ -491,7 +534,9 @@ function createSocial(opts) {
       if (!Array.isArray(days)) throw new Error('no data');
       // the member may have changed wallet (or left) while this was running
       const live = own(S.members, m.id) ? S.members[m.id] : null; if (!live || !live.share.verify || walletFor(live) !== addr) return;
-      live.vdays = days.filter(d => d && DAY_RE.test(d.k)).slice(-60).map(d => ({ k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 }));
+      const keep = new Map((live.vdays || []).map(d => [d.k, d]));
+      for (const d of days) if (d && DAY_RE.test(d.k)) keep.set(d.k, { k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 });
+      live.vdays = [...keep.values()].sort((a, b) => a.k < b.k ? -1 : 1).slice(-100);
       live.vAt = now(); live.vFailAt = 0; awardCheck(live); save();
     } catch (e) { m.vFailAt = now(); }
     finally { behaviorBusy.delete(m.id); }
@@ -507,7 +552,10 @@ function createSocial(opts) {
     if (out.isMe) Object.assign(out, { claimedAddress: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
       vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
       unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
-      leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })) });
+      leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })), mentor: !!m.mentor,
+      push: { on: !!(m.push && m.push.subs && m.push.subs.length), prefs: sanitizePrefs(null, m.push && m.push.prefs), available: !!push },
+      inbox: (m.inbox || []).filter(x => x.at > (m.inboxRead || 0)).length,
+      partners: pairsOf(m).filter(p => p.status === 'active').length });
     if (!m.share.profile && !out.isMe) return Object.assign(out, { private: true });
     const ver = m.share.verify && Array.isArray(m.vdays);
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
@@ -532,6 +580,116 @@ function createSocial(opts) {
     return o; };
   const joinTimes = new Map();
 
+  // ---- inbox and web push: nudges, mentor notes, season results and the daily reminders ----
+  const push = opts.push || null; // { publicKey, send(sub, message) -> status }
+  const PUSH_KINDS = ['morning', 'eod', 'partner', 'mentor', 'season'];
+  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, on: { morning: true, eod: true } }, prev || {});
+    if (p && typeof p === 'object') {
+      for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(p[k])) o[k] = p[k];
+      for (const k of ['partner', 'mentor', 'season']) if (typeof p[k] === 'boolean') o[k] = p[k];
+      if (p.on && typeof p.on === 'object') o.on = { morning: p.on.morning !== false, eod: p.on.eod !== false }; }
+    return o; };
+  const sendPush = async (m, msg) => {
+    if (!push || !m.push || !Array.isArray(m.push.subs) || !m.push.subs.length) return 0;
+    let sent = 0;
+    for (const sub of [...m.push.subs]) {
+      try { const st = await push.send(sub, msg);
+        // gone (404/410), or no longer ours (401/403: the server's key changed) — the device subscribes again
+        if (st === 404 || st === 410 || st === 401 || st === 403) { m.push.subs = m.push.subs.filter(x => x.endpoint !== sub.endpoint); save(); }
+        else if (st >= 200 && st < 300) sent++; } catch (e) { /* a push service outage drops this one message */ } }
+    return sent; };
+  // into the member's inbox (shown in the app) and, if they allow that kind, to their devices
+  const notify = (m, kind, text, extra) => {
+    if (!m || m.banned) return;
+    const it = Object.assign({ id: crypto.randomBytes(5).toString('hex'), at: now(), kind, text: cleanText(text, 700) }, extra || {});
+    m.inbox = [...(m.inbox || []), it].slice(-INBOX_MAX);
+    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Pulse', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/pulse#today' });
+  };
+  // morning and evening reminders on the member's own clock, once a day each; the evening one
+  // only on a day they traded and haven't reviewed yet
+  const localHM = (tz, ms) => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms); } catch (e) { return new Date(ms).toISOString().slice(11, 16); } };
+  // a reminder goes from its time until four hours later (a server that was down at 08:30 still sends it at 09:10)
+  const mins = hm => +hm.slice(0, 2) * 60 + +hm.slice(3, 5);
+  const due = (hm, at) => { const d = mins(hm) - mins(at); return d >= 0 && d < 240; };
+  let ticking = false;
+  const tick = async () => {
+    if (!push || ticking) return 0; ticking = true; const t = now(), jobs = [];
+    try {
+      for (const m of members()) {
+        if (m.banned || !m.push || !Array.isArray(m.push.subs) || !m.push.subs.length) continue;
+        const pr = m.push.prefs = sanitizePrefs(null, m.push.prefs), tz = (m.stats && m.stats.tz) || 'UTC', day = zoneKey(tz, t), hm = localHM(tz, t);
+        const sent = m.push.sent = m.push.sent || {};
+        if (pr.on.morning && sent.morning !== day && due(hm, pr.morning)) { sent.morning = day;
+          jobs.push(() => sendPush(m, { title: 'Morning check-in', body: 'Thirty seconds: sleep, calm, focus — then your rules for today.', tag: 'pulse-morning', url: '/pulse#checkin' })); }
+        const today = m.stats && Array.isArray(m.stats.days) ? m.stats.days.find(d => d.k === day) : null;
+        if (pr.on.eod && sent.eod !== day && due(hm, pr.eod) && today && !today.r) { sent.eod = day;
+          jobs.push(() => sendPush(m, { title: 'Review your day', body: 'Five minutes: one lesson, one focus for tomorrow.', tag: 'pulse-eod', url: '/pulse#review' })); }
+      }
+      if (jobs.length) save();
+      // eight at a time: one slow push service doesn't hold up everyone else's reminder
+      for (let i = 0; i < jobs.length; i += 8) await Promise.all(jobs.slice(i, i + 8).map(f => f().catch(() => 0)));
+      return jobs.length;
+    } finally { ticking = false; } };
+
+  // ---- accountability partners: two members who see each other's process and nudge each other ----
+  const pairOf = (m, id) => { const p = own(S.partners, id) ? S.partners[id] : null; return p && (p.a === m.id || p.b === m.id) ? p : null; };
+  const pairsOf = m => Object.values(S.partners).filter(p => p.a === m.id || p.b === m.id);
+  const otherIn = (p, m) => S.members[p.a === m.id ? p.b : p.a] || null;
+  const partnerView = (o) => { const st = o.stats || {};
+    const days = (st.days || []).slice(-14).map(d => ({ k: d.k, s: d.s, f: d.f || [] }));
+    const recent = days.slice(-7);
+    return { handle: o.handle, level: st.level || 1, streak: st.streak || 0, best: st.best || 0, days,
+      avg7: recent.length ? Math.round(recent.reduce((a, d) => a + d.s, 0) / recent.length) : null,
+      slips7: recent.reduce((a, d) => a + d.f.length, 0), challenge: st.lastChallenge || '', habits: o.share.habits ? st.habits || [] : [], seen: o.statsAt || null }; };
+  const pairOut = (p, m) => { const o = otherIn(p, m); if (!o || o.banned) return null;
+    const out = { id: p.id, handle: o.handle, status: p.status === 'active' ? 'active' : p.from === m.id ? 'sent' : 'received', since: p.since || p.at,
+      challenge: p.challenge && p.challenge.week === S.league.week ? { text: p.challenge.text, mine: p.challenge.by === m.id } : null };
+    if (p.status === 'active') out.view = partnerView(o);
+    const last = p.nudged && p.nudged[m.id]; out.canNudge = !last || now() - last > 6 * 3600000;
+    return out; };
+  const dropPairsOf = id => { for (const [k, p] of Object.entries(S.partners)) if (p.a === id || p.b === id) delete S.partners[k]; };
+
+  // ---- mentors: members the owner appoints; they see the days of members who opted in ----
+  const menteesOf = m => members().filter(o => o.id !== m.id && !o.banned && o.share && o.share.mentor);
+  const commentsFor = id => (S.comments[id] || []);
+  const commentOut = c => { const by = own(S.members, c.by) ? S.members[c.by] : null; return { id: c.id, day: c.day, text: c.text, at: c.at, by: by ? by.handle : 'a mentor', read: !!c.read }; };
+  const menteeSummary = o => { const st = o.stats || {}, days = (st.days || []).slice(-7);
+    return { handle: o.handle, level: st.level || 1, streak: st.streak || 0, avg7: days.length ? Math.round(days.reduce((a, d) => a + d.s, 0) / days.length) : null,
+      slips7: days.reduce((a, d) => a + (d.f ? d.f.length : 0), 0), lastDay: days.length ? days[days.length - 1].k : null, seen: o.statsAt || null,
+      notes: commentsFor(o.id).length }; };
+
+  // ---- seasons ----
+  const seasonInfo = L => { if (!L.season) return null; const id = seasonOf(L.season, todayKey()), b = seasonBounds(id);
+    return { id, label: seasonLabel(id), start: b.start, end: b.end, daysLeft: Math.round((Date.parse(b.end) - Date.parse(todayKey())) / 86400000) }; };
+  const SEASON_BADGES = { 'season-gold': ['Season champion', '🏆', 'Finished first in a league season'], 'season-silver': ['Season runner-up', '🥈', 'Finished second in a league season'],
+    'season-bronze': ['Season podium', '🥉', 'Finished third in a league season'] };
+  // a season closes on the first request after its last day: final standings over its own window,
+  // a podium in the league's hall of fame, and a badge for the top three
+  const closeSeason = (L, id) => {
+    const b = seasonBounds(id), days = Math.round((Date.parse(b.end) - Date.parse(b.start)) / 86400000) + 1;
+    const rows = (boardRows(leagueMembers(L), L.metric, { todayKey: b.end, dayFrom: L.metric === 'xp' ? b.start : undefined, dayTo: b.end, days }) || [])
+      .filter(r => r.value != null && r.value > 0);
+    const podium = rows.slice(0, 3).map(r => ({ id: r.id, handle: r.handle, value: r.value }));
+    L.hall = [...(L.hall || []), { season: id, label: seasonLabel(id), start: b.start, end: b.end, n: rows.length, podium, at: now() }].slice(-24);
+    ['season-gold', 'season-silver', 'season-bronze'].forEach((bid, i) => { const r = podium[i]; if (!r) return; const m = S.members[r.id]; if (!m) return;
+      if (!own(S.badges, bid)) { const [name, icon, desc] = SEASON_BADGES[bid]; S.badges[bid] = { id: bid, name, icon, desc, metric: null, op: 'gte', value: 0, xp: 0, system: true }; }
+      m.awards = m.awards || {}; if (!own(m.awards, bid)) m.awards[bid] = now();
+      m.seasonWins = [...(m.seasonWins || []), { league: L.id, season: id, place: i + 1 }].slice(-50);
+      if (m.share.feed) pushEvent(m, { type: 'season', text: ['won', 'took second in', 'took third in'][i] + ' the ' + L.name + ' ' + seasonLabel(id) + ' season ' + SEASON_BADGES[bid][1] });
+      notify(m, 'season', 'You finished #' + (i + 1) + ' in the ' + L.name + ' ' + seasonLabel(id) + ' season.', { title: 'Season over ' + SEASON_BADGES[bid][1], url: '/pulse#lg/' + L.id }); });
+  };
+  // A season that ran to its end waits one more day (so the last day's numbers can sync) and then
+  // closes with a podium. One the owner changed or switched off before its end closes nothing.
+  const ensureSeasons = () => { let ch = false; const today = todayKey();
+    for (const L of Object.values(S.leagues)) {
+      const cur = L.season ? seasonOf(L.season, today) : null;
+      if (L.seasonId && L.seasonId !== cur) { if (today > seasonBounds(L.seasonId).end) L.toClose = [...(L.toClose || []), L.seasonId]; ch = true; }
+      if ((L.seasonId || null) !== cur) { L.seasonId = cur; ch = true; }
+      for (const id of [...(L.toClose || [])]) if (today > addDaysKey(seasonBounds(id).end, 1)) {
+        L.toClose = L.toClose.filter(x => x !== id); ch = true;
+        if (!(L.hall || []).some(h => h.season === id)) try { closeSeason(L, id); } catch (e) {} } }
+    if (ch) save(); };
+
   const readJson = async (req, limit) => {
     const raw = await new Promise((resolve, reject) => { let size = 0; const ch = [];
       req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('too large')); req.destroy(); return; } ch.push(c); });
@@ -555,7 +713,7 @@ function createSocial(opts) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { error: 'invalid body' }); }
     let arg = parts[1] || '';
     try { arg = decodeURIComponent(arg); } catch (e) { return json(res, 400, { error: 'bad path' }); }
-    ensureWeek();
+    ensureWeek(); ensureSeasons();
 
     if (head === 'config' && M === 'GET')
       return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
@@ -589,7 +747,7 @@ function createSocial(opts) {
           address: m.address || null, claimed: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
           vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: !!m.unlocked, coachDaily: m.coachDaily != null ? m.coachDaily : null,
           coachUsed: coachUsed(m), coachLimit: coachLimitFor(m), grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
-          leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), createdAt: m.createdAt, lastSeen: m.lastSeen || null,
+          leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, mentor: !!m.mentor, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), createdAt: m.createdAt, lastSeen: m.lastSeen || null,
           money: m.money && m.money.ret != null ? { ret: m.money.ret, dd: m.money.dd } : null })) });
       if (sub === 'members' && !parts[2] && M === 'POST') { // the owner adds someone; they sign in with the code it returns
         const handle = cleanText(body.handle, 20).replace(/^@/, '');
@@ -623,6 +781,7 @@ function createSocial(opts) {
             if (ad !== m.address) { m.address = ad; m.vdays = null; m.vAt = 0; m.money = null; refreshAll(m); } }
           if (body.share && typeof body.share === 'object') m.share = sanitizeShare(body.share, m.share);
         }
+        else if (a === 'mentor' || a === 'unmentor') m.mentor = a === 'mentor'; // sees the days of members who let mentors in, and comments on them
         else if (a === 'unlock' || a === 'lock') m.unlocked = a === 'unlock'; // every feature, theme and the bigger coach allowance
         else if (a === 'coach') { if (body.daily === null || body.daily === '') m.coachDaily = null;
           else { const d = clampNum(body.daily, 0, 1000); if (d == null || body.daily === undefined) return json(res, 400, { error: 'How many coach messages a day?' }); m.coachDaily = Math.round(d); } }
@@ -856,6 +1015,101 @@ function createSocial(opts) {
     me.lastSeen = now();
 
     if (head === 'me' && M === 'GET') return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 });
+
+    // ---- inbox: nudges, mentor notes, season results ----
+    if (head === 'inbox' && M === 'GET') return json(res, 200, { items: (me.inbox || []).slice().reverse().map(x => Object.assign({}, x, { unread: x.at > (me.inboxRead || 0) })) });
+    if (head === 'inbox' && parts[1] === 'read' && M === 'POST') { me.inboxRead = now(); save(); return json(res, 200, { ok: true }); }
+
+    // ---- web push: this device's subscription and when to remind ----
+    if (head === 'push' && M === 'GET') return json(res, 200, { available: !!push, key: push ? push.publicKey : null, on: !!(me.push && me.push.subs && me.push.subs.length), prefs: sanitizePrefs(null, me.push && me.push.prefs) });
+    if (head === 'push' && !parts[1] && (M === 'POST' || M === 'PUT')) {
+      if (!push) return json(res, 404, { error: 'Push reminders aren’t set up on this server.' });
+      me.push = me.push || { subs: [], prefs: null, sent: {} };
+      if (body.subscription !== undefined) { const sub = Push.sanitizeSubscription(body.subscription); if (!sub) return json(res, 400, { error: 'This browser’s push service isn’t one Pulse can send to.' });
+        me.push.subs = [...(me.push.subs || []).filter(x => x.endpoint !== sub.endpoint), sub].slice(-5); }
+      me.push.prefs = sanitizePrefs(body.prefs, me.push.prefs); save();
+      return json(res, 200, { ok: true, on: me.push.subs.length > 0, prefs: me.push.prefs });
+    }
+    // one device turns its reminders off (the endpoint names it); DELETE turns them off everywhere
+    if (head === 'push' && parts[1] === 'remove' && M === 'POST') { const ep = String(body.endpoint || '');
+      if (me.push) me.push.subs = (me.push.subs || []).filter(x => x.endpoint !== ep); save();
+      return json(res, 200, { ok: true, on: !!(me.push && me.push.subs.length) }); }
+    if (head === 'push' && !parts[1] && M === 'DELETE') { if (me.push) me.push.subs = []; save(); return json(res, 200, { ok: true, on: false }); }
+    if (head === 'push' && parts[1] === 'test' && M === 'POST') {
+      if (limited(req, 'pushtest', 5, 3600000)) return json(res, 429, { error: 'Try again later.' });
+      const n = await sendPush(me, { title: 'Pulse', body: 'Reminders are on. You’ll hear from Pulse at the times you picked.', tag: 'pulse-test', url: '/pulse#today' });
+      return json(res, n ? 200 : 502, n ? { ok: true, sent: n } : { error: 'Your browser’s push service didn’t accept the message.' });
+    }
+
+    // ---- accountability partners ----
+    if (head === 'partners' && M === 'GET' && !parts[1]) return json(res, 200, { partners: pairsOf(me).map(p => pairOut(p, me)).filter(Boolean) });
+    if (head === 'partners' && !parts[1] && M === 'POST') {
+      const o = byHandle(cleanText(body.handle, 21).replace(/^@/, ''));
+      if (!o || o.banned || o.id === me.id) return json(res, 404, { error: 'No member by that name.' });
+      const ex = pairsOf(me).find(p => p.a === o.id || p.b === o.id);
+      if (ex && ex.status === 'active') return json(res, 409, { error: 'You’re already partners.' });
+      if (ex && ex.from === o.id) { // they asked first: this accepts
+        if (pairsOf(me).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
+        if (pairsOf(o).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: '@' + o.handle + ' already has ' + PARTNER_MAX + ' partners.' });
+        ex.status = 'active'; ex.since = now(); notify(o, 'partner', '@' + me.handle + ' is now your accountability partner.', { title: 'New partner', url: '/pulse#social' }); save();
+        return json(res, 200, { partner: pairOut(ex, me) }); }
+      if (ex) return json(res, 409, { error: 'You’ve asked already — waiting for @' + o.handle + '.' });
+      if (pairsOf(me).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
+      if (pairsOf(me).filter(p => p.status !== 'active' && p.from === me.id).length >= 5) return json(res, 409, { error: 'Five open requests is the limit.' });
+      if (limited(req, 'partner', 20, 86400000)) return json(res, 429, { error: 'Too many requests today.' });
+      const id = crypto.randomBytes(6).toString('hex');
+      S.partners[id] = { id, a: me.id, b: o.id, from: me.id, status: 'pending', at: now(), nudged: {} };
+      notify(o, 'partner', '@' + me.handle + ' wants to be accountability partners: you’d see each other’s streak, scores and slips.', { title: 'Partner request', url: '/pulse#social' });
+      save(); return json(res, 200, { partner: pairOut(S.partners[id], me) });
+    }
+    if (head === 'partners' && parts[1]) {
+      const p = pairOf(me, arg); if (!p) return json(res, 404, { error: 'No such partnership.' });
+      const o = otherIn(p, me);
+      if (parts[2] === 'accept' && M === 'POST') { if (p.status === 'active') return json(res, 200, { partner: pairOut(p, me) });
+        if (p.from === me.id) return json(res, 409, { error: 'Waiting for @' + (o ? o.handle : '') + ' to accept.' });
+        if (pairsOf(me).filter(x => x.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
+        if (o && pairsOf(o).filter(x => x.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: '@' + o.handle + ' already has ' + PARTNER_MAX + ' partners.' });
+        p.status = 'active'; p.since = now(); if (o) notify(o, 'partner', '@' + me.handle + ' accepted — you’re accountability partners.', { title: 'New partner', url: '/pulse#social' });
+        save(); return json(res, 200, { partner: pairOut(p, me) }); }
+      if (!parts[2] && M === 'DELETE') { delete S.partners[p.id]; save(); return json(res, 200, { ok: true }); }
+      if (p.status !== 'active') return json(res, 409, { error: 'Not partners yet.' });
+      if (parts[2] === 'nudge' && M === 'POST') {
+        p.nudged = p.nudged || {}; if (p.nudged[me.id] && now() - p.nudged[me.id] < 6 * 3600000) return json(res, 429, { error: 'One nudge every six hours.' });
+        p.nudged[me.id] = now(); const text = cleanText(body.text, 140) || 'Stick to your plan today.';
+        notify(o, 'partner', '@' + me.handle + ': ' + text, { title: 'Nudge from @' + me.handle, url: '/pulse#today', from: me.handle });
+        save(); return json(res, 200, { ok: true }); }
+      if (parts[2] === 'challenge' && M === 'PUT') {
+        const text = cleanText(body.text, 140); if (!text) return json(res, 400, { error: 'What’s the challenge?' });
+        if (p.challenge && p.challenge.week === S.league.week && now() - p.challenge.at < 3600000) return json(res, 429, { error: 'One change an hour.' });
+        p.challenge = { text, by: me.id, week: S.league.week, at: now() };
+        notify(o, 'partner', '@' + me.handle + ' set this week’s shared challenge: ' + text, { title: 'Shared challenge', url: '/pulse#social' });
+        save(); return json(res, 200, { partner: pairOut(p, me) }); }
+      return json(res, 404, { error: 'not found' });
+    }
+
+    // ---- mentors: notes on the days of members who let mentors in ----
+    if (head === 'notes' && M === 'GET') return json(res, 200, { notes: commentsFor(me.id).slice().reverse().map(commentOut), mentorsOn: !!me.share.mentor });
+    if (head === 'notes' && parts[1] === 'read' && M === 'POST') { for (const c of commentsFor(me.id)) c.read = true; save(); return json(res, 200, { ok: true }); }
+    if (head === 'mentor') {
+      if (!me.mentor) return json(res, 403, { error: 'Only mentors the owner appointed can see this.' });
+      if (!parts[1] && M === 'GET') return json(res, 200, { mentees: menteesOf(me).map(menteeSummary).sort((a, b) => (b.seen || 0) - (a.seen || 0)) });
+      const o = byHandle(arg); if (!o || o.id === me.id || o.banned || !o.share.mentor) return json(res, 404, { error: 'That member hasn’t let mentors in.' });
+      if (!parts[2] && M === 'GET') { const st = o.stats || {};
+        return json(res, 200, { mentee: Object.assign(menteeSummary(o), { best: st.best || 0, habits: o.share.habits ? st.habits || [] : [], challenge: st.lastChallenge || '',
+          days: (st.days || []).slice(-30).reverse().map(d => ({ k: d.k, s: d.s, f: d.f || [], l: d.l || '', r: !!d.r, j: !!d.j })),
+          notes: commentsFor(o.id).slice().reverse().map(commentOut) }) }); }
+      if (parts[2] === 'notes' && M === 'POST') {
+        const day = DAY_RE.test(body.day) ? body.day : null, text = cleanText(body.text, 600);
+        if (!text) return json(res, 400, { error: 'Write the note first.' });
+        if (limited(req, 'mnote', 60, 3600000)) return json(res, 429, { error: 'Too many notes this hour.' });
+        const c = { id: crypto.randomBytes(5).toString('hex'), by: me.id, day, text, at: now(), read: false };
+        S.comments[o.id] = [...commentsFor(o.id), c].slice(-COMMENTS_MAX);
+        notify(o, 'mentor', '@' + me.handle + ': ' + text, { title: 'A note from your mentor', url: '/pulse#today', day });
+        save(); return json(res, 200, { note: commentOut(c) }); }
+      if (parts[2] === 'notes' && parts[3] && M === 'DELETE') {
+        S.comments[o.id] = commentsFor(o.id).filter(c => !(c.id === parts[3] && c.by === me.id)); save(); return json(res, 200, { ok: true }); }
+      return json(res, 404, { error: 'not found' });
+    }
     if (head === 'me' && M === 'PUT') {
       const newAddr = body.address !== undefined && !me.claimed ? (typeof body.address === 'string' && ADDR_RE.test(body.address) ? body.address.toLowerCase() : null) : undefined;
       if (newAddr && claimedBy(newAddr, me.id)) return json(res, 409, { error: 'That wallet is claimed by another profile. Only a signature from it can move it.', walletTaken: true });
@@ -927,6 +1181,7 @@ function createSocial(opts) {
     }
     if (head === 'stats' && M === 'POST') {
       const next = sanitizeStats(body);
+      if (!me.share.mentor) for (const d of next.days) delete d.l;
       const posted = new Set(me.postedHabits || []);
       for (const e of eventsFromStats(me.stats, next, me.share, S.config.levels.titles)) {
         if (e.type === 'habit') { if (posted.has(e.quote)) continue; posted.add(e.quote); }
@@ -935,7 +1190,7 @@ function createSocial(opts) {
       me.postedHabits = [...posted].slice(-50);
       me.stats = next; me.statsAt = now();
       if (next.week) { me.weekXp = me.weekXp || {}; me.weekXp[next.week] = next.weekXp;
-        const keep = Object.keys(me.weekXp).sort().slice(-8); for (const k of Object.keys(me.weekXp)) if (!keep.includes(k)) delete me.weekXp[k]; }
+        const keep = Object.keys(me.weekXp).sort().slice(-16); /* a quarter's season needs 13 */ for (const k of Object.keys(me.weekXp)) if (!keep.includes(k)) delete me.weekXp[k]; }
       awardCheck(me);
       save(); refreshAll(me);
       return json(res, 200, { ok: true, tier: me.tier || 0 });
@@ -954,8 +1209,9 @@ function createSocial(opts) {
     if (head === 'leagues' && parts[1] && !parts[2] && M === 'GET') {
       const L = own(S.leagues, arg) ? S.leagues[arg] : Object.values(S.leagues).find(x => String(x.num) === arg.replace(/^#/, '')) || null;
       if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
-      const top = boardRows(leagueMembers(L), L.metric, { week: S.league.week, weeks: L.period === 'month' && L.metric === 'xp' ? monthWeeks(S.league.week) : undefined, days: L.period === 'month' ? monthDays() : 7 });
-      return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt,
+      const W = leagueWindow(L), top = boardRows(leagueMembers(L), L.metric, { week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
+      return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt, hall: (L.hall || []).slice().reverse().map(h => ({ season: h.season, label: h.label, n: h.n,
+          podium: h.podium.map(r => ({ handle: own(S.members, r.id) ? S.members[r.id].handle : r.handle, value: r.value, me: r.id === me.id })) })),
         top: top.slice(0, 5).map(r => ({ rank: r.rank, handle: r.handle, value: r.value, sub: r.sub, me: r.id === me.id })),
         tiersCount: L.tiers ? TIERS.map((t, i) => ({ tier: t, n: members().filter(m => own(L.members, m.id) && !m.banned && leagueTier(L, m) === i).length })) : null,
         comps: Object.values(S.comps).filter(c => c.league === L.id && compStatus(c, todayKey()) !== 'finished').map(c => ({ id: c.id, title: c.title, start: c.start, end: c.end, type: c.type })) }) });
@@ -1059,8 +1315,8 @@ function createSocial(opts) {
         m.coachUse = { k: zoneKey(tz, now()), tz, n: Math.max(0, used + d) }; }
       else { const k = utcDayKey(now()); S.ownerCoach = { k, n: Math.max(0, (S.ownerCoach.k === k ? S.ownerCoach.n : 0) + d) }; } save(); },
   };
-  return { handle, coach, state: () => S };
+  return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S };
 }
 
 module.exports = { createSocial, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
-  boardRows, compStandings, compStatus, disciplineOver, isoWeekOfKey, TIERS, DEFAULT_CONFIG, DEFAULT_SHARE };
+  boardRows, compStandings, compStatus, disciplineOver, isoWeekOfKey, seasonOf, seasonBounds, seasonLabel, weeksIn, TIERS, DEFAULT_CONFIG, DEFAULT_SHARE };

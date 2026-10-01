@@ -69,6 +69,8 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const vm = require('vm');
 const { createSocial } = require('./social.js');
+const Push = require('./push.js');
+const Wear = require('./wear.js');
 
 const MAX_BODY = 25 * 1024 * 1024; // journal snapshots are small; this is generous headroom
 
@@ -1894,8 +1896,28 @@ function createApp(opts) {
   const clientIp = req => { const xf = trustProxy && req.headers['x-forwarded-for'];
     if (xf) { const last = String(xf).split(',').map(x => x.trim()).filter(Boolean).pop(); if (last) return last.slice(0, 64); }
     return (req.socket && req.socket.remoteAddress) || ''; };
-  const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now,
+  // web push: the server's own VAPID identity, made once in DATA_DIR (PUSH=0 switches it off)
+  let pushCfg = null;
+  if (opts.push !== false && process.env.PUSH !== '0') {
+    try { const vapid = Push.loadVapid(dataDir, opts.pushSubject || process.env.PUSH_SUBJECT);
+      const pf = opts.pushFetch || opts.fetchImpl || ((...a) => globalThis.fetch(...a));
+      pushCfg = { publicKey: vapid.publicKey, send: (sub, msg) => { const ac = new AbortController(), to = setTimeout(() => ac.abort(), 10000);
+        return Push.send(pf, sub, msg, vapid, { signal: ac.signal }).finally(() => clearTimeout(to)); } };
+    } catch (e) { console.warn('[ledger] push reminders off: ' + e.message); }
+  }
+  const wearRef = {}; // filled in below, once the wearables store exists
+  const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
     behaviorFor, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled });
+  // readiness from WHOOP, Oura or Apple Health: the owner (AUTH_TOKEN) or a member (Pulse key)
+  const wearOrigin = req => { if (publicOrigins[0]) { try { return new URL(publicOrigins[0]).origin; } catch (e) {} }
+    return hostVetted && req.headers.host ? 'https://' + req.headers.host : opts.wearOrigin || null; };
+  const wear = Wear.createWear({ dataDir, json, fetchImpl: opts.wearFetch || opts.fetchImpl, now: opts.now, env: opts.wearEnv || process.env, originOf: wearOrigin,
+    tzOf: uid => { const m = uid.startsWith('m:') ? social.state().members[uid.slice(2)] : null; return (m && m.stats && m.stats.tz) || process.env.TZ || 'UTC'; } });
+  wearRef.forget = uid => wear.forget(uid);
+  // the owner's slot needs AUTH_TOKEN: on an open server anyone would be the owner
+  const wearUid = req => { const m = social.memberOf(req); if (m) return 'm:' + m.id; return auth && authOk(req) ? 'owner' : null; };
+  // morning and evening reminders, checked once a minute on each member's own clock
+  if (pushCfg && opts.pushTick !== false) { const pt = setInterval(() => { social.tick().catch(() => {}); }, 60000); if (pt.unref) pt.unref(); }
 
   const server = http.createServer((req, res) => {
     const [url, qs] = (req.url || '/').split('?');
@@ -1969,7 +1991,12 @@ function createApp(opts) {
         "if(u.origin!==location.origin||u.pathname.startsWith('/api/')||e.request.method!=='GET')return;" +
         "if(S.includes(u.pathname)){const net=fetch(e.request).then(r=>{if(r.ok){const cp=r.clone();caches.open(C).then(c=>c.put('/',cp));}return r;});" +
         "e.waitUntil(net.then(()=>{},()=>{}));" +
-        "e.respondWith(caches.match('/').then(c=>c||net).catch(()=>net));}});");
+        "e.respondWith(caches.match('/').then(c=>c||net).catch(()=>net));}});" +
+        // reminders, nudges and mentor notes arrive as web push; a tap opens (or focuses) Pulse there
+        "self.addEventListener('push',e=>{let d={};try{d=e.data?e.data.json():{}}catch(x){d={body:e.data&&e.data.text()}}" +
+        "e.waitUntil(self.registration.showNotification(d.title||'Pulse',{body:d.body||'',tag:d.tag||'pulse',data:{url:d.url||'/pulse'},icon:'/pulse-icon.svg',badge:'/pulse-icon.svg'}))});" +
+        "self.addEventListener('notificationclick',e=>{e.notification.close();const u=new URL((e.notification.data&&e.notification.data.url)||'/pulse',location.origin).href;" +
+        "e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(l=>{for(const c of l){if(c.url.split('#')[0]===u.split('#')[0]&&'focus' in c){c.navigate(u).catch(()=>{});return c.focus();}}return clients.openWindow(u);}))});");
     }
     if (req.method === 'GET' && url === '/manifest.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
@@ -1999,6 +2026,11 @@ function createApp(opts) {
         + '<circle cx="80" cy="28" r="6" fill="#2fd08c"/></svg>');
     }
 
+    // --- wearables (/api/wear/*): connect, sync, and the Apple Health Shortcut's link ---
+    if (url === '/api/wear' || url.startsWith('/api/wear/')) {
+      wear.handle(req, res, url, query, wearUid).catch(e => { try { json(res, 500, { error: 'internal error: ' + (e && e.message || e) }); } catch (e2) {} });
+      return;
+    }
     // --- social (/api/social/*): members authenticate with their own key, admin with AUTH_TOKEN ---
     if (url === '/api/social' || url.startsWith('/api/social/')) {
       social.handle(req, res, url, query).catch(e => {
@@ -2269,6 +2301,7 @@ function createApp(opts) {
   server._gatherAlertState = gatherAlertState; // exposed for tests
   server._buildBotState = buildBotState;       // exposed for tests — the loop itself needs a live bot
   server._social = social; // tests reach the coach allowance through this
+  server.pushTick = () => social.tick(); // the reminder pass, for tests and one-off runs
   return server;
 }
 

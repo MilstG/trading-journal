@@ -659,6 +659,8 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
 .pz-pos{display:flex;flex-direction:column;gap:3px;padding:8px 0;border-top:1px solid var(--pz-line)}
 .pz-nowrow{display:flex;gap:10px;align-items:flex-start;padding:6px 0}
 .pz-tilt{display:flex;flex-direction:column;gap:8px}
+.pz-pdots{display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.pz-pdots>i{width:9px;height:9px;border-radius:50%!important;display:block}
 .pz-snap{min-height:0}
 .pz-snapsvg{display:block;width:100%;height:auto;background:#0E1216;border-radius:10px!important}
 .pz-snapph{display:flex;align-items:center;gap:8px;height:60px;font-size:12px;color:var(--pz-muted)}
@@ -9718,7 +9720,7 @@ function pzBadgeCatalog(G){
   add('checkin',dayE.filter(([k,e])=>e.sleep||e.stress||e.focus).map(([k])=>k));
   add('plan',D.filter(d=>d.parts&&d.parts.plan===1).map(d=>d.key));
   add('review',dayE.filter(([k,e])=>e.eod&&e.eod.at).map(([k])=>k));
-  add('ready',dayE.filter(([k,e])=>(pzReadiness(e)||0)>=70).map(([k])=>k));
+  add('ready',dayE.filter(([k,e])=>(pzReadinessManual(e)||0)>=70).map(([k])=>k));
   // risk
   add('limitok',D.filter(d=>d.parts&&d.parts.limit!=null&&!d.breached).map(d=>d.key));
   add('walked',D.filter(d=>d.breached&&d.parts&&d.parts.limit===1).map(d=>d.key));
@@ -9931,8 +9933,12 @@ const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'St
 
 // Readiness 0–100 from the session check-in (1–5 scales; stress counts inverted, as calm).
 // Weighted sleep .4 · calm .2 · focus .4 over whichever answers were given; null with none.
+// the check-in's own answers only, never a wearable: what the check-in XP and its badge count
+const pzReadinessManual=e=>e?pzReadiness(Object.assign({},e,{wear:null})):null;
 function pzReadiness(e){
   if(!e)return null;
+  // a wearable's score, when there is one for the day, is the readiness; the check-in still earns its XP
+  if(e.wear&&e.wear.score!=null&&isFinite(e.wear.score))return Math.max(0,Math.min(100,Math.round(e.wear.score)));
   let w=0, s=0;
   for(const [k,wt,f] of [['sleep',0.4,v=>v],['stress',0.2,v=>6-v],['focus',0.4,v=>v]]){
     const v=+e[k]; if(v>=1&&v<=5){ w+=wt; s+=wt*f(v)/5; } }
@@ -9990,7 +9996,7 @@ function pzBonusItems(D){
   const planned=pzHasPlan(D.dayE), opened=D.risk.trades>0, lim=D.risk.limit;
   const earned=(D.day&&D.day.bonus&&D.day.bonus.parts)||{};
   return [
-    {k:'checkin',label:'Morning check-in',xp:pzXpCfg().checkin,done:pzReadiness(D.dayE)!=null,href:'#checkin',hint:'Thirty seconds: sleep, calm, focus'},
+    {k:'checkin',label:'Morning check-in',xp:pzXpCfg().checkin,done:pzReadinessManual(D.dayE)!=null,href:'#checkin',hint:'Thirty seconds: sleep, calm, focus'},
     {k:'plan',label:'Plan before your first trade',xp:pzXpCfg().plan,done:planned&&(!opened||earned.plan===pzXpCfg().plan),partial:planned&&opened&&earned.plan>0&&earned.plan<pzXpCfg().plan,href:'#checkin',
       hint:planned?(opened?'Written after your first entry: half the bonus':'Written — it counts when you trade'):'A line and a loss limit, before you trade'},
     {k:'journal',label:'Journal today’s trades',xp:pzXpCfg().journal,done:todayT.length>0&&j===todayT.length,partial:j>0&&j<todayT.length,href:'#journal',
@@ -10022,14 +10028,14 @@ function pzCoachLine(D){
 }
 
 // ---- UI state (never stored) ----
-const PZ_TABS=['today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues','lessons'];
+const PZ_TABS=['today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues','lessons','mentor','mentee'];
 var _pzQuiet=false; // a background refresh of data Pulse already shows: no status toasts
 var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,jr:{},note:null};
 // a sign-in link from the league owner (/pulse#link=CODE): keep the code for the sign-in form, drop it from the address bar
 (function(){ const m=/^#link=([A-Za-z0-9-]{4,20})$/.exec(location.hash||''); if(!m)return; pzS.linkCode=m[1].toUpperCase(); pzS.acctOpen=true;
   try{ history.replaceState(null,'',location.pathname+location.search+'#today'); }catch(e){} })();
 function pzTab(){ const h=(location.hash||'').slice(1);
-  if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo';
+  if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^mentee\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentee'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo';
   if(/^link=[A-Za-z0-9-]{4,20}$/.test(h))return 'today';
   return PZ_TABS.includes(h)?h:'today'; }
 function pzHashArg(){ return (location.hash||'').slice(1).split('/')[1]||''; }
@@ -10067,7 +10073,7 @@ function pzFullHref(){ return /^https?:$/.test(location.protocol)?'/':location.p
 
 
 function pzNav(tab, level){
-  const cur=tab==='discipline'||tab==='journal'||tab==='review'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='lginfo'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
+  const cur=tab==='discipline'||tab==='journal'||tab==='review'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='lginfo'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   const items=[['today','Today'],['trends','Stats'],['checkin','Check-in'],['coach','Coach'],['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
   return `<nav class="pz-nav" aria-label="Pulse"><div class="pz-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}Pulse</div>
@@ -10102,6 +10108,7 @@ const PZ_SECTIONS={
     ['insight','Coach insight','One line on what matters most',1],['next','Next step','Check-in in the morning, review at night',1],
     ['now','Right now','This hour in your history, time since a loss',1],['good','Done right today','Moments you followed a rule that usually costs you',1],
     ['lesson','A lesson to revisit','One of your own lessons, back when it’s due',1],
+    ['inbox','From your partners and mentor','Nudges, notes and season results',1],['partners','Your partners','Their streak and slips this week',1],
     ['xp','Today’s XP','What earns XP today, and what’s due this week',1],['week','Last 7 trading days','Discipline and net, day by day',1],
     ['level','Level and league','Level progress, XP today, league standing',0],['yesterday','Last trading day','Its score, net and lesson in full',0]],
   stats:[['tiles','Headline numbers','Net, win rate, average trade and more',1],['daily','Daily P&L','',1],['findings','What moves your results','Your biggest edges and leaks',1],
@@ -10469,7 +10476,7 @@ function pzTodayHtml(D){
     ${sec('oneThing',()=>pzOneThingHtml(D))}
     <div class="pz-wide">${ringsHtml}${more('numbers',pzTodayStripHtml)}${sec('level',()=>pzProgressRowHtml(D))}
       <div class="pz-col">${pzLinkCardHtml()}${pzNudgesHtml(D)}${sec('tilt',()=>pzTiltHtml(D))}${detail}${on('insight')?coach:''}${more('session',pzSessionHtml)}${more('positions',pzPositionsHtml)}</div>
-      <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${sec('lesson',()=>pzLessonDueHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
+      <div class="pz-col">${sec('next',()=>pzNextHtml(D))}${more('now',pzNowHtml)}${sec('good',()=>pzGoodHtml(D))}${sec('inbox',()=>socInboxHtml())}${sec('partners',()=>socPartnerStripHtml())}${sec('lesson',()=>pzLessonDueHtml(D))}${on('xp')?bonus:''}${sec('week',()=>pzWeekSparkHtml(D))}${sec('yesterday',()=>pzYesterdayHtml(D))}</div></div>
     ${pzCustomizeLink('today')}`;
 }
 
@@ -10802,7 +10809,8 @@ function pzCheckinInit(D){
     rules:JSON.parse(JSON.stringify(e.rules||{})),am:Object.assign({},e.am||{})};
   return pzS.ck;
 }
-function pzCkReady(ck){ return pzReadiness({sleep:ck.sleep,stress:ck.calm?6-ck.calm:null,focus:ck.focus}); }
+// the readiness the check-in shows: today's wearable score when there is one, else the answers
+function pzCkReady(ck){ const w=((journal['day:'+ck.key]||{}).wear)||null; return pzReadiness({sleep:ck.sleep,stress:ck.calm?6-ck.calm:null,focus:ck.focus,wear:w}); }
 function pzCheckinHtml(D){
   const ck=pzCheckinInit(D), r=pzCkReady(ck), b=pzBand(r);
   const opened=D.risk.trades>0;
@@ -10812,7 +10820,7 @@ function pzCheckinHtml(D){
   <p class="pz-sub" style="margin-top:-6px">Thirty seconds. It sets your readiness and today’s limits.</p>
   ${pzMorningHtml(D,ck)}
   <div class="pz-wide">
-    <div class="pz-col"><section class="pz-card" id="pzCkPrev" style="display:flex;align-items:center;gap:16px" aria-live="polite">${pzCkPrevHtml(r,b)}</section>${q}</div>
+    <div class="pz-col"><section class="pz-card" id="pzCkPrev" style="display:flex;align-items:center;gap:16px" aria-live="polite">${pzCkPrevHtml(r,b)}</section>${pzWearHtml(D)}${q}</div>
     <div class="pz-col">
       <section class="pz-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 10px 10px 16px"><span><b style="font-size:15px">Trade cap today</b><br><span class="pz-sub" style="font-size:12px">The risk dial counts against it</span></span>
         <span class="pz-step"><button type="button" data-pz-cap="-1" aria-label="One fewer trade">${pzI('minus',18,2.4)}</button><output id="pzCap" aria-live="polite">${ck.maxTrades||'—'}</output><button type="button" data-pz-cap="1" aria-label="One more trade">${pzI('plus',18,2.4)}</button></span></section>
@@ -10923,6 +10931,7 @@ function pzSheetHtml(){
       <div class="pz-field" style="margin-top:10px"><label for="pzAddr2" style="font-size:13px">Add another address</label><input type="text" id="pzAddr2" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div style="display:flex;gap:8px"><button type="button" class="pz-ghost pz-sm" id="pzAdd2">Add &amp; load</button><button type="button" class="pz-ghost pz-sm" id="pzRefresh">Refresh now</button></div></div></section>
     ${pzProfilePickHtml()}
+    ${pzPushHtml()}
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Your data</span><p class="pz-sub" style="margin-top:6px">${where}</p>
       ${SRV.enabled&&!SRV.needsAuth?'<p class="pz-warn" style="margin-top:10px">This server has no access token set, so everyone who opens this link shares one journal. The owner should set AUTH_TOKEN before sharing it.</p>':''}
       ${tokenAsk?pzTokenHtml():''}</section>
@@ -10953,12 +10962,12 @@ function pzRender(){
   else { const tab=pzTab(); let D;
     try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
-    socBoot();
+    socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
     const body=tab==='trends'?pzTrendsHtml(D):tab==='deep'?pzDeepHtml(D):tab==='how'?pzHowHtml():tab==='badges'?pzBadgesHtml(D):tab==='report'?pzReportHtml(D)
       :tab==='review'?pzReviewHtml(D):tab==='coach'?pzCoachHtml(D):tab==='leagues'?socFindHtml(D):tab==='lginfo'?socLeagueInfoHtml(D,pzHashArg()):tab==='checkin'?pzCheckinHtml(D):tab==='progress'?pzProgressHtml(D)
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
-      :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
+      :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
     pzApplyTheme(lv); socSync(D.g); }
   view.innerHTML=html;
@@ -11034,6 +11043,8 @@ function wirePulse(){
     if(t.id==='pzPlan')pzS.ck.plan=t.value; else if(t.id==='pzLoss')pzS.ck.maxLoss=t.value; });
   root.addEventListener('change',async ev=>{ const t=ev.target;
     if(t.id==='socBoardSel'){ SOC.board=t.value; pzRender(); return; }
+    if((t.id==='pzPushAm'||t.id==='pzPushPm')&&/^\d{2}:\d{2}$/.test(t.value)){ const pr=Object.assign({},SOC.me&&SOC.me.push&&SOC.me.push.prefs,t.id==='pzPushAm'?{morning:t.value}:{eod:t.value});
+      try{ const r=await socFetch('/push',{method:'PUT',body:JSON.stringify({prefs:pr})}); SOC.me.push.prefs=r.prefs; pzNote('Saved.'); }catch(e){ pzNote(e.message,'err'); } return; }
     if(t.id==='socGboardSel'){ SOC.gboard=t.value; pzRender(); return; }
     if(pzS.goalNew&&(t.id==='pzGk'||t.id==='pzGt'||t.id==='pzGs')){ const f=pzS.goalNew;
       if(t.id==='pzGk'){ f.kind=t.value; const T=PZ_GOAL_KINDS[f.kind].targets; f.target=T[1]||T[0]; } else if(t.id==='pzGt')f.target=+t.value; else f.slip=t.value;
@@ -11059,7 +11070,7 @@ if(PZ)wirePulse();
 // journal, notes and trades never leave the browser. Returns are read on the server from the
 // chain, never sent from here. Sample data is never posted.
 const SOC_KEY_STORE='pz_social_key';
-const SOC_DEFAULT_SHARE={profile:true,boards:true,global:false,page:false,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false};
+const SOC_DEFAULT_SHARE={profile:true,boards:true,global:false,page:false,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false,mentor:false};
 const SOC_SHARE_ROWS=[
   ['profile','Public profile','Your profile page: streak, discipline, badges. Name, level and league show wherever you appear'],
   ['boards','Process leaderboards','Weekly XP, discipline and streak boards in your leagues'],
@@ -11070,7 +11081,8 @@ const SOC_SHARE_ROWS=[
   ['verify','Verify my discipline','The server reads your public fills to confirm your Discipline score — the discipline board only counts verified scores. The owner can see your address'],
   ['ret','Show % return','30-day return and drawdown, read from your first wallet on chain'],
   ['usd','Show dollar P&L','Reveals your account size to everyone',true],
-  ['addr','Show wallet address','Anyone could look up every trade and balance',true]];
+  ['addr','Show wallet address','Anyone could look up every trade and balance',true],
+  ['mentor','Let mentors see my days','Mentors the owner appointed see your scores, slips and the lesson you write each night, and can leave you notes. No trades, P&L or wallet']];
 const SOC_BOARDS=[['xp','Weekly XP'],['discipline','Discipline'],['streak','Streak'],['level','All-time XP'],['riskadj','Return / drawdown'],['ret','% Return'],['usd','$ P&L']];
 const SOC_BOARD_NOTE={
   xp:'XP earned this week in your league — process, never profit. The top of the league moves up on Monday, the bottom moves down.',
@@ -11093,7 +11105,7 @@ var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'league',board:
 try{ SOC.key=localStorage.getItem(SOC_KEY_STORE)||null; }catch(e){}
 
 // The numbers a member shares, from the shared game context. Pure given its inputs.
-function pzSocialStats(g, habits){
+function pzSocialStats(g, habits, J, withLessons){
   const done=g.challenges.filter(c=>c.status==='done');
   return {xp:g.xp.total, level:g.level.level, week:g.nowWeek, weekXp:g.weekXp, tz:pzClockZone(),
     streak:g.streak.current, best:g.streak.best, shields:g.streak.shields,
@@ -11101,7 +11113,11 @@ function pzSocialStats(g, habits){
     badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
     badgeN:g.catalog?g.catalog.earned.length:g.achievements.filter(a=>a.at).length, badgeTotal:g.catalog?g.catalog.total:0,
     habits:(habits||[]).slice(0,5),
-    days:g.days.slice(-45).map(d=>({k:d.key,s:d.score,b:!!d.breached,j:d.parts.journal===1}))};
+    days:g.days.slice(-45).map(d=>{ const o={k:d.key,s:d.score,b:!!d.breached,j:d.parts.journal===1}, fl=(d.behavior&&d.behavior.flags)||{};
+      const f=Object.keys(fl).filter(k=>fl[k]>0); if(f.length)o.f=f;
+      const e=J&&J['day:'+d.key], v=e&&e.eod; if(v&&v.at)o.r=true; if(withLessons&&v&&v.lesson)o.l=String(v.lesson).slice(0,200);
+      return o; }),
+    xpDays:Object.fromEntries(Object.entries((g.xp&&g.xp.byDay)||{}).filter(([k,v])=>v>0).sort().slice(-100))};
 }
 // The server only gets a wallet address when a toggle needs it — Verify my discipline (fills),
 // % return or dollar P&L (portfolio), or Show wallet address; otherwise it never leaves the browser.
@@ -11159,7 +11175,7 @@ function socGet(name, p, maxAge){
 function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;
-  let p; try{ p=JSON.stringify(pzSocialStats(g,habitsList().map(habitSentence))); }catch(e){ return; }
+  let p; try{ p=JSON.stringify(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor))); }catch(e){ return; }
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
   SOC.timer=setTimeout(()=>{ SOC.lastSentAt=Date.now();
@@ -11171,12 +11187,12 @@ function socSync(g){
 
 function socHead(){
   return `<header class="pz-head"><div><span class="pz-kick">${SOC.cfg&&SOC.cfg.week?'Week '+esc(SOC.cfg.week.slice(-2)):'Social'}</span><h1 class="pz-h1">Social</h1></div>
-    <div class="pz-chips"><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></div></header>`;
+    <div class="pz-chips">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}<a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></div></header>`;
 }
 function socUnavailableHtml(){
   return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Pulse from your server’s <b>/pulse</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
 }
-const SOC_SHARE_GROUPS=[['Profile',['profile','page','feed','habits']],['Boards',['boards','global','verify','ret']],['Sensitive',['usd','addr']]];
+const SOC_SHARE_GROUPS=[['Profile',['profile','page','feed','habits','mentor']],['Boards',['boards','global','verify','ret']],['Sensitive',['usd','addr']]];
 function socToggles(share, attr){
   return SOC_SHARE_GROUPS.map(([g,keys])=>`<section class="pz-card" style="padding:4px 16px"><span class="pz-lbl" style="display:block;margin:12px 0 2px;color:${g==='Sensitive'?'#FFB39E':'var(--pz-muted)'}">${g}</span>${socToggleRows(share,attr,keys)}</section>`).join('');
 }
@@ -11258,7 +11274,7 @@ function socSocialHtml(D){
   if(!SOC.cfg)return `${pzHead('Leagues · competitions · friends','Social')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
   if(SOC.cfg.enabled===false)return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">The league opens once the server owner sets an access token (AUTH_TOKEN). Without one, anyone with the link could read the owner’s journal.</p></section>`;
   if(!SOC.me)return socJoinHtml();
-  const body=SOC.sub==='feed'?socFeedHtml():SOC.sub==='boards'?socBoardsHtml(D.g):socLeagueHtml(D.g)+`<section style="display:flex;flex-direction:column;gap:10px;margin-top:10px"><span class="pz-lbl" style="color:var(--pz-muted)">Competitions</span>${socCompeteHtml(D.g)}</section>`;
+  const body=SOC.sub==='feed'?socPartnersHtml()+socFeedHtml():SOC.sub==='boards'?socBoardsHtml(D.g):socLeagueHtml(D.g)+`<section style="display:flex;flex-direction:column;gap:10px;margin-top:10px"><span class="pz-lbl" style="color:var(--pz-muted)">Competitions</span>${socCompeteHtml(D.g)}</section>`;
   return `${socHead()}${socSubTabs()}${body}`;
 }
 function socProfileHtml(D, handle){
@@ -11268,7 +11284,8 @@ function socProfileHtml(D, handle){
   if(!p)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const T=(SOC.cfg&&SOC.cfg.tiers)||[];
   const follow=p.isMe?`<a class="pz-ghost" href="#sharing">Edit what you share</a>`
-    :`<button type="button" class="${p.isFollowing?'pz-ghost':'pz-cta'}" data-soc-follow="${esc(p.handle)}" data-on="${p.isFollowing?1:0}">${p.isFollowing?'Following':'Follow'}</button>`;
+    :`<button type="button" class="${p.isFollowing?'pz-ghost':'pz-cta'}" data-soc-follow="${esc(p.handle)}" data-on="${p.isFollowing?1:0}">${p.isFollowing?'Following':'Follow'}</button>
+      <button type="button" class="pz-ghost" data-soc-pask="${esc(p.handle)}">Ask to be accountability partners</button>`;
   const tiles=p.private?'<section class="pz-card"><p class="pz-sub">This profile is private.</p></section>'
     :`<div class="pz-grid3"><div class="pz-tile good"><span class="pz-n">${p.discipline30==null?'—':p.discipline30}</span><span class="pz-t">Discipline · 30d${p.verified?' · verified':''}</span></div>
       <div class="pz-tile warm"><span class="pz-n">${p.streak}</span><span class="pz-t">Day streak · best ${p.best}</span></div>
@@ -11332,7 +11349,23 @@ async function socAction(t){
   const ds=t.dataset;
   const done=(m,kind)=>{ if(m)pzNote(m,kind); socStale(); pzRender(); };
   try{
-    if(ds.socSub){ SOC.sub=ds.socSub; pzRender(); return true; }
+    if(ds.socSub){ SOC.sub=ds.socSub; if(pzTab()!=='social')location.hash='#social'; else pzRender(); return true; }
+    // partners
+    if(ds.socPask||t.id==='socPAsk'){ const h=ds.socPask||(($('socPIn')||{value:''}).value.trim()); if(!h)return true;
+      await socFetch('/partners',{method:'POST',body:JSON.stringify({handle:h})}); delete SOC.cache.partners; done('Asked @'+h.replace(/^@/,'')+'. You’ll see each other’s days once they accept.'); return true; }
+    if(ds.socPaccept){ await socFetch('/partners/'+encodeURIComponent(ds.socPaccept)+'/accept',{method:'POST'}); delete SOC.cache.partners; if(SOC.me)SOC.me.partners=(SOC.me.partners||0)+1; done('You’re partners now.'); return true; }
+    if(ds.socPdel){ if(!confirm('End this partnership? You stop seeing each other’s days.'))return true;
+      await socFetch('/partners/'+encodeURIComponent(ds.socPdel),{method:'DELETE'}); delete SOC.cache.partners; done(''); return true; }
+    if(ds.socNudge){ await socFetch('/partners/'+encodeURIComponent(ds.socNudge)+'/nudge',{method:'POST',body:JSON.stringify({})}); delete SOC.cache.partners; done('Nudged. They’ll see it on their next open — or as a notification.'); return true; }
+    if(ds.socChfor!==undefined){ pzS.chFor=ds.socChfor||null; pzRender(); const n=$('socChIn'); if(n)n.focus(); return true; }
+    if(ds.socChsave){ const v=($('socChIn')||{value:''}).value.trim(); if(!v)return true;
+      await socFetch('/partners/'+encodeURIComponent(ds.socChsave)+'/challenge',{method:'PUT',body:JSON.stringify({text:v})}); pzS.chFor=null; delete SOC.cache.partners; done('Shared challenge set for this week.'); return true; }
+    // mentor notes
+    if(ds.socNotefor!==undefined){ pzS.noteFor=ds.socNotefor||null; pzRender(); const n=$('socNoteIn'); if(n)n.focus(); return true; }
+    if(ds.socNsend){ const v=($('socNoteIn')||{value:''}).value.trim(); if(!v)return true;
+      await socFetch('/mentor/'+encodeURIComponent(ds.h)+'/notes',{method:'POST',body:JSON.stringify({day:ds.socNsend,text:v})}); pzS.noteFor=null; delete SOC.cache['mentee:'+ds.h.toLowerCase()]; done('Note sent.'); return true; }
+    if(ds.socNdel){ if(!confirm('Delete this note?'))return true; await socFetch('/mentor/'+encodeURIComponent(ds.h)+'/notes/'+encodeURIComponent(ds.socNdel),{method:'DELETE'}); delete SOC.cache['mentee:'+ds.h.toLowerCase()]; done(''); return true; }
+    if(t.id==='socInboxRead'){ await socFetch('/inbox/read',{method:'POST'}); delete SOC.cache.inbox; if(SOC.me)SOC.me.inbox=0; pzRender(); return true; }
     if(ds.socLg){ SOC.lg=ds.socLg; SOC.board='rank'; pzRender(); return true; }
     if(ds.socGboard){ SOC.gboard=ds.socGboard; pzRender(); return true; }
     if(ds.socGlobal){ const on=ds.socGlobal==='1', share={...(SOC.share||SOC_DEFAULT_SHARE),global:on};
@@ -11889,7 +11922,7 @@ function pzReviewHtml(D){
   const coachOk=SOC.me&&SOC.me.coach&&SOC.me.coach.allowed||(SRV.token&&!SRV.badAuth);
   return `${back}${pzHead(dayLabel(D.todayK)+' · '+prof.name,'End-of-day review')}
   <p class="pz-sub" style="margin-top:-6px">Five minutes. What happened, what you learned, one thing for tomorrow.</p>
-  <div class="pz-wide"><div class="pz-col">${summary}</div>
+  <div class="pz-wide"><div class="pz-col">${summary}${socNotesHtml()}</div>
     <div class="pz-col"><section class="pz-card pz-kv">${rating}${qs}
       <div class="pz-field"><label for="pzRvLesson" style="font-size:14px">Today’s lesson, in one line</label><input type="text" id="pzRvLesson" maxlength="200" value="${esc(rv.lesson)}"></div>
       <div class="pz-field"><label for="pzRvTomorrow" style="font-size:14px">One focus for tomorrow</label><input type="text" id="pzRvTomorrow" maxlength="160" value="${esc(rv.tomorrow)}" placeholder="It shows on tomorrow’s check-in"></div></section>
@@ -12092,6 +12125,7 @@ function socLeagueHtml(g){
   const banner=`<section class="pz-banner"><span class="pz-ico" style="width:40px;height:40px;background:#23272E;color:${L.tiers?SOC_TIER_COL[d.tier]||'#CDD3DA':PZ_COL.xp}">${pzI('shield',22)}</span>
     <span style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0"><b style="font-size:14px">${esc(L.name)} <span class="pz-sub" style="font-weight:500">#${L.num}</span></b>
     <span class="pz-sub" style="font-size:12px">${esc(L.metricLabel)}${L.period==='month'?' · monthly':' · weekly'} · ${L.members} trader${L.members===1?'':'s'}${L.tiers?' · you’re in '+esc(T[d.tier]):''}</span>
+    ${L.season?`<span class="pz-sub" style="font-size:12px;color:var(--pz-soft)">Season: ${esc(L.season.label)} · ${L.season.daysLeft>0?L.season.daysLeft+' day'+(L.season.daysLeft===1?'':'s')+' left':'last day'}</span>`:''}
     ${L.tiers?`<span class="pz-sub" style="font-size:12px">${d.promote?'Top '+d.promote+' move up to '+esc(T[d.tier+1])+' on Monday':d.tier===T.length-1?'The top tier — hold your place.':'Promotion starts once four or more traders share your tier.'}</span>`:''}</span>
     <a class="pz-link" href="#lg/${esc(L.id)}" style="min-height:0">Info${pzI('chev',14)}</a></section>`;
   const chipsB=socRankSel('socBoardSel',[['rank','League ranking · '+L.metricLabel],...SOC_BOARDS.filter(([k])=>k!==L.metric)],b);
@@ -12140,11 +12174,160 @@ function socLeagueInfoHtml(D, id){
   return `${back}${pzHead('League #'+L.num,L.name)}
   <div class="pz-wide"><div class="pz-col"><section class="pz-card pz-kv">${L.desc?`<p style="margin:0;font-size:14px;line-height:1.5">${esc(L.desc)}</p>`:''}
       <div class="pz-row-t"><span>Ranked by</span><b>${esc(L.metricLabel)}</b></div><div class="pz-row-t"><span>Period</span><b>${L.period==='month'?'Rolling month':'Weekly'}</b></div>
+      ${L.season?`<div class="pz-row-t"><span>Season</span><b>${esc(L.season.label)} · ends ${esc(dayLabel(L.season.end))}</b></div>`:''}
       <div class="pz-row-t"><span>Tiers</span><b>${L.tiers?'Bronze → Diamond, promotion every Monday':'One table'}</b></div><div class="pz-row-t"><span>Traders</span><b>${L.members}</b></div>
       <div class="pz-row-t"><span>Joining</span><b>${L.inviteRequired?'Invite code':'Open'}</b></div>
       ${L.tiersCount?`<div class="pz-row-t"><span>By tier</span><b>${L.tiersCount.map(t=>t.n).join(' · ')}</b></div>`:''}</section>${act}</div>
     <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">Top five</b>${top}</section>
+      ${L.hall&&L.hall.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Hall of fame</b>${L.hall.slice(0,6).map(h=>`<div class="pz-row-t"><span>${esc(h.label)}</span><b>${h.podium.map((r,i)=>['🏆','🥈','🥉'][i]+' '+(r.me?'You':'@'+esc(r.handle))).join(' · ')||'—'}</b></div>`).join('')}</section>`:''}
       ${L.comps&&L.comps.length?`<section class="pz-card pz-kv"><b class="pz-kvh">Competitions</b>${L.comps.map(x=>`<a class="pz-row-t" href="#c/${esc(x.id)}"><span>${esc(x.title)}</span><b>${esc(x.start.slice(5))} → ${esc(x.end.slice(5))}</b></a>`).join('')}</section>`:''}</div></div>`;
+}
+
+// ---- accountability partners: up to three, each sees the other's streak, scores and slips ----
+const SOC_SLIP_SHORT={revenge:'revenge entry',afterTwo:'traded on after two losses',sizeUp:'sized up after a loss',addLoser:'added to a loser',overtrade:'overtraded',heldLoser:'held a loser'};
+function socDayDots(days){
+  return `<span class="pz-pdots" aria-hidden="true">${(days||[]).slice(-14).map(d=>`<i title="${esc(dayLabel(d.k))}: ${d.s}${d.f&&d.f.length?' · '+esc(d.f.map(k=>SOC_SLIP_SHORT[k]||k).join(', ')):''}" style="background:${PZ_COL[pzBand(d.s)]}${d.f&&d.f.length?';box-shadow:0 0 0 2px #FF7A59':''}"></i>`).join('')}</span>`;
+}
+function socPartnersHtml(){
+  if(!SOC.me)return '';
+  const c=socGet('partners','/partners',30000), L=c&&c.d?c.d.partners:null;
+  if(!L)return `<section class="pz-card"><p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading partners…'}</p></section>`;
+  const active=L.filter(p=>p.status==='active'), recv=L.filter(p=>p.status==='received'), sent=L.filter(p=>p.status==='sent');
+  const card=p=>{ const v=p.view||{};
+    return `<section class="pz-card pz-kv"><div class="pz-kvrow"><a href="#u/${esc(p.handle)}" style="display:flex;align-items:center;gap:10px;color:var(--pz-text);text-decoration:none;min-width:0">${socAv(p.handle,34)}<span style="min-width:0"><b>@${esc(p.handle)}</b><span class="pz-sub" style="display:block;font-size:12px">Level ${v.level||1} · ${v.streak||0}-day streak</span></span></a>
+      <button type="button" class="pz-chip icon" data-soc-pdel="${esc(p.id)}" aria-label="End the partnership with @${esc(p.handle)}">${pzI('x',16)}</button></div>
+      <div class="pz-kvrow"><span class="pz-sub" style="font-size:13px">7-day discipline <b style="color:var(--pz-text)">${v.avg7==null?'—':v.avg7}</b> · slips <b style="color:${v.slips7?PZ_COL.low:'var(--pz-text)'}">${v.slips7||0}</b></span>${socDayDots(v.days)}</div>
+      ${p.challenge?`<p class="pz-sub" style="font-size:13px">Shared challenge: <b style="color:var(--pz-text)">${esc(p.challenge.text)}</b>${p.challenge.mine?' (yours)':''}</p>`:''}
+      ${pzS.chFor===p.id?`<div class="pz-field"><label for="socChIn" style="font-size:13px">This week’s shared challenge</label><input type="text" id="socChIn" maxlength="140" placeholder="e.g. No trades in the first 15 minutes"></div>
+        <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-chsave="${esc(p.id)}">Set it for you both</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-chfor="">Cancel</button></div>`
+        :`<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-nudge="${esc(p.id)}"${p.canNudge?'':' disabled'}>${p.canNudge?'Nudge':'Nudged'}</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-chfor="${esc(p.id)}">${p.challenge?'Change the challenge':'Set a shared challenge'}</button>${p.challenge&&!p.challenge.mine?`<button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-adopt="${esc(p.challenge.text)}">Adopt as habit</button>`:''}</div>`}</section>`; };
+  return `<section style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"><span class="pz-lbl" style="color:var(--pz-muted)">Accountability partners</span>
+    ${recv.map(p=>`<section class="pz-card pz-kvrow">${socAv(p.handle,30)}<span style="flex:1;font-size:14px"><b>@${esc(p.handle)}</b> wants to be partners</span><button type="button" class="pz-cta pz-sm" style="width:auto;min-height:40px;padding:0 16px" data-soc-paccept="${esc(p.id)}">Accept</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-pdel="${esc(p.id)}">Decline</button></section>`).join('')}
+    ${active.length?`<div class="pz-jgrid">${active.map(card).join('')}</div>`:'<p class="pz-sub" style="font-size:13px">Pair with someone you trust: you each see the other’s streak, Discipline scores and slips — never trades or P&amp;L — and can nudge each other and share a weekly challenge.</p>'}
+    ${sent.map(p=>`<p class="pz-fine">Waiting for @${esc(p.handle)} to accept. <button type="button" class="pz-linkbtn" data-soc-pdel="${esc(p.id)}">Cancel</button></p>`).join('')}
+    ${active.length<3?`<div style="display:flex;gap:8px;align-items:flex-end"><div class="pz-field" style="flex:1"><label for="socPIn" style="font-size:13px">Ask someone by name</label><input type="text" id="socPIn" maxlength="21" placeholder="@name" autocomplete="off" autocapitalize="off" spellcheck="false"></div><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 16px;min-height:48px" id="socPAsk">Ask</button></div>`:''}</section>`;
+}
+// a slim row per partner on Today
+function socPartnerStripHtml(){
+  if(!SOC.me||!SOC.me.partners)return '';
+  const c=socGet('partners','/partners',60000), L=c&&c.d?c.d.partners.filter(p=>p.status==='active'):[]; if(!L.length)return '';
+  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your partners</b><a class="pz-link" href="#social" data-soc-sub="feed" style="min-height:0">All ›</a></div>
+    ${L.map(p=>{ const v=p.view||{}; return `<div class="pz-kvrow" style="gap:10px">${socAv(p.handle,28)}<span style="flex:1;min-width:0;font-size:13px"><b>@${esc(p.handle)}</b> · ${v.streak||0}-day streak · ${v.slips7?`<span style="color:${PZ_COL.low}">${v.slips7} slip${v.slips7===1?'':'s'}</span>`:'no slips'} this week</span>${p.canNudge?`<button type="button" class="pz-linkbtn" data-soc-nudge="${esc(p.id)}">Nudge</button>`:''}</div>`; }).join('')}</section>`;
+}
+// nudges, mentor notes and season results, until you've read them
+function socInboxHtml(){
+  if(!SOC.me)return '';
+  const c=socGet('inbox','/inbox',60000), L=c&&c.d?c.d.items.filter(x=>x.unread):[]; if(!L.length)return '';
+  const ico={partner:'social',mentor:'coach',season:'medal'};
+  return `<section class="pz-card pz-kv" aria-label="New for you"><div class="pz-kvrow"><b class="pz-kvh">New for you</b><button type="button" class="pz-linkbtn" id="socInboxRead">Mark read</button></div>
+    ${L.slice(0,4).map(x=>`<div class="pz-nowrow"><span style="color:${x.kind==='mentor'?PZ_COL.xp:x.kind==='season'?'#F4C04E':PZ_COL.risk}">${pzI(ico[x.kind]||'bolt',16)}</span><span><b style="font-size:13px;font-weight:600">${esc(x.text)}</b><span class="pz-sub" style="display:block;font-size:11px">${x.day?'About '+esc(dayLabel(x.day))+' · ':''}${socAgo(x.at)}</span></span></div>`).join('')}</section>`;
+}
+
+// notes your mentors left, in full, newest first (the evening review is where you read them)
+function socNotesHtml(){
+  if(!SOC.me||!SOC.share||!SOC.share.mentor)return '';
+  const c=socGet('notes','/notes',60000), L=c&&c.d?c.d.notes:[]; if(!L.length)return '';
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Notes from your mentor</b>${L.slice(0,5).map(n=>`<div class="pz-quote">${esc(n.text)}<span class="pz-sub" style="display:block;font-size:11px;margin-top:4px">@${esc(n.by)}${n.day?' · about '+esc(dayLabel(n.day)):''} · ${socAgo(n.at)}</span></div>`).join('')}</section>`;
+}
+// ---- mentors: the members who let mentors in, their days, and notes on them ----
+function socMentorHtml(D){
+  const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
+  if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
+  if(!SOC.me.mentor)return `${back}${pzHead('Mentor','Mentees')}<section class="pz-card"><p class="pz-sub">Only mentors the league owner appointed see this.</p></section>`;
+  const c=socGet('mentees','/mentor',30000), L=c&&c.d?c.d.mentees:null;
+  if(!L)return `${back}${pzHead('Mentor','Mentees')}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
+  const pg=pzPage('mentees',L);
+  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}
+    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}</b>
+      <span class="pz-sub" style="font-size:12px">7-day discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'} · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
+      <span class="pz-sub" style="font-size:12px">${m.notes} note${m.notes===1?'':'s'} so far</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
+      :'<section class="pz-card"><p class="pz-sub">No one has let mentors in yet. Members switch on “Let mentors see my days” under What you share.</p></section>'}`;
+}
+function socMenteeHtml(D, handle){
+  const back=`<a class="pz-back" href="#mentor">${pzI('back',20)}Mentees</a>`;
+  if(!socAvailable()||!SOC.me||!SOC.me.mentor)return socMentorHtml(D);
+  const c=socGet('mentee:'+handle.toLowerCase(),'/mentor/'+encodeURIComponent(handle),20000), m=c&&c.d&&c.d.mentee;
+  if(!m)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
+  const notesBy={}; for(const n of m.notes)(notesBy[n.day||'']=notesBy[n.day||'']||[]).push(n);
+  const pg=pzPage('mentee:'+handle,m.days,10);
+  const row=d=>`<section class="pz-card pz-kv"><div class="pz-kvrow"><b>${esc(dayLabel(d.k))}</b><b style="color:${PZ_COL[pzBand(d.s)]}">${d.s}</b></div>
+    <span class="pz-sub" style="font-size:13px">${d.f.length?esc(d.f.map(k=>SOC_SLIP_SHORT[k]||k).join(' · ')):'No slips'}${d.r?' · reviewed':''}${d.j?' · journaled':''}</span>
+    ${d.l?`<p style="margin:0;font-size:14px">“${esc(d.l)}”</p>`:''}
+    ${(notesBy[d.k]||[]).map(n=>`<div class="pz-quote">${esc(n.text)} <span class="pz-sub" style="font-size:11px">— @${esc(n.by)}, ${socAgo(n.at)}${n.by===SOC.me.handle?` · <button type="button" class="pz-linkbtn" data-soc-ndel="${esc(n.id)}" data-h="${esc(m.handle)}">Delete</button>`:''}</span></div>`).join('')}
+    ${pzS.noteFor===d.k?`<div class="pz-field"><label for="socNoteIn" class="pz-sr">Note</label><textarea id="socNoteIn" rows="2" maxlength="600" placeholder="What you see, and one thing to try"></textarea></div>
+      <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-nsend="${esc(d.k)}" data-h="${esc(m.handle)}">Send note</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-notefor="">Cancel</button></div>`
+      :`<button type="button" class="pz-linkbtn" style="align-self:flex-start" data-soc-notefor="${esc(d.k)}">Add a note on this day</button>`}</section>`;
+  return `${back}${pzHead('Level '+m.level+' · '+m.streak+'-day streak','@'+m.handle)}
+    <div class="pz-wide"><div class="pz-col">${m.days.length?pg.items.map(row).join('')+pg.html:'<section class="pz-card"><p class="pz-sub">No trading days shared yet.</p></section>'}</div>
+    <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">At a glance</b><div class="pz-row-t"><span>7-day discipline</span><b>${m.avg7==null?'—':m.avg7}</b></div><div class="pz-row-t"><span>Slips, 7 days</span><b>${m.slips7}</b></div><div class="pz-row-t"><span>Best streak</span><b>${m.best}</b></div>
+      ${m.challenge?`<div class="pz-row-t"><span>Last challenge</span><b>${esc(m.challenge)}</b></div>`:''}${m.habits.length?`<p class="pz-sub" style="font-size:13px">Habits: ${m.habits.map(esc).join(' · ')}</p>`:''}</section>
+      ${(notesBy['']||[]).length?`<section class="pz-card pz-kv"><b class="pz-kvh">General notes</b>${notesBy[''].map(n=>`<div class="pz-quote">${esc(n.text)}</div>`).join('')}</section>`:''}
+      <p class="pz-fine">You see what @${esc(m.handle)} chose to share with mentors: scores, slips and their nightly lesson. Never trades, P&amp;L or wallets.</p></div></div>`;
+}
+
+// ---- reminders: web push to this device, on the member's clock ----
+function pzPushHtml(){
+  if(!SOC.me||!SOC.me.push||!SOC.me.push.available)return '';
+  const ok='serviceWorker' in navigator&&'PushManager' in window&&typeof Notification!=='undefined';
+  const P=SOC.me.push, on=!!PZ_PUSH.sub, pr=P.prefs||{};
+  return `<section><span class="pz-lbl" style="color:var(--pz-muted)">Reminders</span>
+    ${!ok?'<p class="pz-sub" style="margin-top:6px;font-size:13px">This browser can’t receive push reminders. On iPhone, add Pulse to your Home Screen first, then open it from there.</p>'
+    :`<div class="pz-toggle"><span style="flex:1"><b id="pzPushL">Remind me on this device</b><span>Morning check-in, evening review, and nudges or notes from partners and mentors</span></span><button type="button" role="switch" class="pz-switch" id="pzPushOn" aria-checked="${!!on}" aria-labelledby="pzPushL"><i></i></button></div>
+      ${on?`<div style="display:flex;gap:10px"><div class="pz-field" style="flex:1"><label for="pzPushAm" style="font-size:13px">Morning</label><input type="time" id="pzPushAm" value="${esc(pr.morning||'08:30')}"></div><div class="pz-field" style="flex:1"><label for="pzPushPm" style="font-size:13px">Evening</label><input type="time" id="pzPushPm" value="${esc(pr.eod||'20:30')}"></div></div>
+        <button type="button" class="pz-linkbtn" id="pzPushTest" style="margin-top:6px">Send a test</button>`:''}`}</section>`;
+}
+const PZ_PUSH={sub:null,checked:false};
+async function pzPushCheck(){ if(PZ_PUSH.checked||!('serviceWorker' in navigator)||!('PushManager' in window))return; PZ_PUSH.checked=true;
+  try{ const reg=await navigator.serviceWorker.getRegistration(); PZ_PUSH.sub=reg?await reg.pushManager.getSubscription():null; }catch(e){} }
+const pzB64=s=>{ s=String(s).replace(/-/g,'+').replace(/_/g,'/'); const b=atob(s+'='.repeat((4-s.length%4)%4)); return Uint8Array.from(b,c=>c.charCodeAt(0)); };
+async function pzPushToggle(on){
+  if(!on){ const sub=PZ_PUSH.sub; PZ_PUSH.sub=null; let r=null; if(sub){ try{ r=await socFetch('/push/remove',{method:'POST',body:JSON.stringify({endpoint:sub.endpoint})}); }catch(e){} try{ await sub.unsubscribe(); }catch(e){} }
+    SOC.me.push.on=!!(r&&r.on); pzNote('Reminders are off on this device.'); return; }
+  if(Notification.permission!=='granted'&&await Notification.requestPermission()!=='granted'){ pzNote('Notifications are blocked for this site — allow them in your browser’s site settings.','err'); return; }
+  const k=await socFetch('/push'); let reg=await navigator.serviceWorker.getRegistration(); if(!reg)reg=await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready;
+  const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:pzB64(k.key)});
+  const tz=pzClockZone(); const r=await socFetch('/push',{method:'POST',body:JSON.stringify({subscription:sub.toJSON(),prefs:SOC.me.push.prefs||{}})});
+  PZ_PUSH.sub=sub; SOC.me.push.on=true; SOC.me.push.prefs=r.prefs; pzNote('Reminders on. Times follow your '+tz+' clock.');
+}
+
+// ---- readiness from a wearable: WHOOP, Oura, or Apple Health through a Shortcut ----
+const WEAR={st:null,at:0,busy:false,err:null,apple:null};
+async function wearFetch(p,o){ o=o||{};
+  o.headers=Object.assign({},o.body?{'Content-Type':'application/json'}:{},SOC.key?{'X-Pulse-Key':SOC.key}:SRV.token&&!SRV.badAuth?{Authorization:'Bearer '+SRV.token}:{},o.headers||{});
+  const r=await fetch('/api/wear'+p,o); let d={}; try{ d=await r.json(); }catch(e){}
+  if(!r.ok)throw Object.assign(new Error(d.error||('HTTP '+r.status)),{status:r.status}); return d; }
+const wearOk=()=>socAvailable()&&(!!SOC.key||!!(SRV.token&&!SRV.badAuth));
+// once a session and then every 30 minutes: what the wearables say, written into each day's journal entry
+async function pzWearSync(force){
+  if(WEAR.busy||!wearOk()||(!force&&Date.now()-WEAR.at<30*60000))return; WEAR.busy=true;
+  try{ let st=await wearFetch(''); const any=['whoop','oura'].some(p=>st.providers[p]&&st.providers[p].connected);
+    if(any)st=await wearFetch('/sync',{method:'POST'});
+    WEAR.st=st; WEAR.err=null; let ch=false;
+    for(const d of st.days||[]){ if(d.score==null&&d.hrv==null&&d.sleepH==null)continue; const k='day:'+d.k, e=journal[k]||{};
+      const w={score:d.score==null?null:Math.round(d.score),hrv:d.hrv==null?null:d.hrv,rhr:d.rhr==null?null:d.rhr,sleepH:d.sleepH==null?null:d.sleepH,src:d.src};
+      if(JSON.stringify(e.wear||null)!==JSON.stringify(w)){ journal[k]=Object.assign({},e,{wear:w}); markJEdit(k); ch=true; } }
+    if(ch){ await Store.set(J_KEY,journal); }
+  }catch(e){ WEAR.err=e.status===401?null:e.message; }
+  finally{ WEAR.at=Date.now(); WEAR.busy=false; if(PZ)pzRender(); }
+}
+const PZ_WEAR_NAME={whoop:'WHOOP',oura:'Oura',apple:'Apple Health'};
+function pzWearHtml(D){
+  if(!wearOk())return '';
+  if(!WEAR.st){ pzWearSync(); return ''; }
+  const P=WEAR.st.providers, w=(D.dayE||{}).wear, live=['whoop','oura','apple'].filter(p=>P[p]&&P[p].connected);
+  const conn=['whoop','oura'].filter(p=>P[p]&&P[p].configured&&!P[p].connected);
+  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Readiness from a wearable</b>${live.length?`<button type="button" class="pz-linkbtn" data-pz-wsync>Sync</button>`:''}</div>
+    ${w&&w.score!=null?`<div class="pz-kvrow"><span class="pz-sub" style="font-size:13px">${esc(PZ_WEAR_NAME[w.src]||w.src)} today${w.hrv?' · HRV '+w.hrv+' ms':''}${w.rhr?' · resting HR '+w.rhr:''}${w.sleepH?' · '+w.sleepH+'h asleep':''}</span><b style="font-size:20px;color:${PZ_COL[pzBand(w.score)]}">${w.score}</b></div>
+      <p class="pz-fine">Your readiness today comes from ${esc(PZ_WEAR_NAME[w.src]||w.src)}. The questions below still count for your bonus XP.</p>`
+      :live.length?`<p class="pz-sub" style="font-size:13px">Connected: ${live.map(p=>esc(PZ_WEAR_NAME[p])).join(', ')}. Nothing for today yet${WEAR.st.syncedAt?' — last synced '+socAgo(WEAR.st.syncedAt)+' ago':''}.</p>`
+      :'<p class="pz-sub" style="font-size:13px">Let your sleep and recovery set your readiness, and see on Stats which days your discipline breaks.</p>'}
+    ${live.filter(p=>P[p].err).map(p=>`<p class="pz-fine pz-err">${esc(P[p].err)}</p>`).join('')}${['whoop','oura'].filter(p=>!P[p].connected&&P[p].err).map(p=>`<p class="pz-fine pz-err">${esc(P[p].err)}</p>`).join('')}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${conn.map(p=>`<button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-pz-wcon="${p}">Connect ${PZ_WEAR_NAME[p]}</button>`).join('')}
+      ${live.map(p=>`<button type="button" class="pz-linkbtn" data-pz-wdis="${p}">Disconnect ${PZ_WEAR_NAME[p]}</button>`).join('')}
+      ${P.apple&&!P.apple.connected?`<button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-pz-wapple>Apple Health</button>`:''}</div>
+    ${WEAR.apple?`<div class="pz-field"><label for="pzWAppleUrl" style="font-size:13px">Your personal link — keep it private</label><input type="text" id="pzWAppleUrl" readonly value="${esc(WEAR.apple)}"></div>
+      <ol class="pz-sub" style="font-size:13px;margin:0;padding-left:18px;line-height:1.5"><li>In the Shortcuts app, make a shortcut that finds today’s Heart Rate Variability, Resting Heart Rate and Sleep from Health.</li><li>Add “Get Contents of URL”: this link, method POST, JSON body <code>{"hrv":…, "restingHR":…, "sleepHours":…}</code>.</li><li>Run it from an Automation each morning.</li></ol>`:''}
+    ${!conn.length&&!live.length&&!P.whoop.configured&&!P.oura.configured?'<p class="pz-fine">WHOOP and Oura need the server owner to add their app keys (WHOOP_CLIENT_ID / OURA_CLIENT_ID).</p>':''}</section>`;
 }
 
 // ---- Today: live heads-ups, good moments, the evening review and the coach ----
@@ -12189,6 +12372,12 @@ async function pzGrowthAction(t){
   try{
     if(ds.pzBk){ pzS.bk=ds.pzBk; pzRender(); return true; }
     if(ds.pzQuiet){ await pzQuietAction(ds.pzQuiet); return true; }
+    if(ds.pzWsync!==undefined){ pzNote('Syncing…','busy'); await pzWearSync(true); pzNote('Synced.'); return true; }
+    if(ds.pzWcon){ const r=await wearFetch('/'+ds.pzWcon+'/start',{method:'POST'}); location.href=r.url; return true; }
+    if(ds.pzWdis){ if(!confirm('Disconnect '+PZ_WEAR_NAME[ds.pzWdis]+'? Its days stay in your journal.'))return true; WEAR.st=await wearFetch('/'+ds.pzWdis,{method:'DELETE'}); WEAR.apple=null; pzRender(); return true; }
+    if(ds.pzWapple!==undefined){ const r=await wearFetch('/apple/token',{method:'POST'}); WEAR.apple=r.url; WEAR.st=await wearFetch(''); pzRender(); const n=$('pzWAppleUrl'); if(n){ n.focus(); n.select(); } return true; }
+    if(t.id==='pzPushOn'){ await pzPushToggle(t.getAttribute('aria-checked')!=='true'); pzRender(); return true; }
+    if(t.id==='pzPushTest'){ await socFetch('/push/test',{method:'POST'}); pzNote('Sent — it should arrive in a few seconds.'); return true; }
     if(ds.pzLesson){ if(ds.pzLesson==='off'&&!confirm('Remove this lesson from your library?'))return true;
       await pzLessonMark(ds.id,ds.pzLesson); pzNote(ds.pzLesson==='got'?'Kept. It comes back later.':ds.pzLesson==='again'?'It comes back tomorrow.':ds.pzLesson==='back'?'Back in rotation.':'Removed.'); pzRender(); return true; }
     if(ds.pzLf){ pzS.lf=ds.pzLf; pzRender(); return true; }
