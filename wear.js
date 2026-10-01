@@ -77,14 +77,20 @@ function createWear(opts) {
   const tokenCall = async (p, params) => {
     const r = await timed(PROVIDERS[p].token, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form(params) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.access_token) throw new Error((d && (d.error_description || d.error)) || ('HTTP ' + r.status));
+    // a refresh token the provider no longer accepts means signing in again, not a network hiccup
+    if (!r.ok || !d.access_token) throw Object.assign(new Error((d && (d.error_description || d.error)) || ('HTTP ' + r.status)),
+      d && d.error === 'invalid_grant' || r.status === 401 ? { code: 401, dead: params.grant_type === 'refresh_token' } : {});
     return { access: d.access_token, refresh: d.refresh_token || null, exp: now() + (+d.expires_in || 3600) * 1000 - 60000 };
   };
+  // Everything below that awaits checks afterwards that the person (and the connection) is still
+  // there: a disconnect, or a member leaving, during a sync must not be undone when it finishes.
+  const still = (uid, u, p) => W.users[uid] === u && (!p || !!u[p]);
   const accessFor = async (uid, p) => {
-    const u = user(uid), t = u[p]; if (!t) return null;
+    const u = W.users[uid], t = u && u[p]; if (!t) return null;
     if (t.exp > now()) return t.access;
     const c = cfg(p); if (!c || !t.refresh) return null;
     const nt = await tokenCall(p, { grant_type: 'refresh_token', refresh_token: t.refresh, client_id: c.id, client_secret: c.secret, scope: PROVIDERS[p].scope });
+    if (!still(uid, u, p) || u[p] !== t) return null;
     u[p] = Object.assign({}, t, nt, { refresh: nt.refresh || t.refresh }); save(); return nt.access;
   };
   const get = async (url, token) => { const r = await timed(url, { headers: { Authorization: 'Bearer ' + token } });
@@ -102,7 +108,7 @@ function createWear(opts) {
     const rd = await get(PROVIDERS.oura.api + '/daily_readiness' + q, tok), sl = await get(PROVIDERS.oura.api + '/sleep' + q, tok);
     return ouraDays(rd.data, sl.data);
   };
-  const merge = (uid, src, days) => { const u = user(uid);
+  const merge = (uid, src, days) => { const u = W.users[uid]; if (!u) return;
     for (const [k, d] of Object.entries(days || {})) { if (!DAY_RE.test(k)) continue; u.days[k] = Object.assign({}, d, { src }); }
     const keep = Object.keys(u.days).sort().slice(-120); for (const k of Object.keys(u.days)) if (!keep.includes(k)) delete u.days[k]; };
   const status = uid => { const u = W.users[uid] || { days: {} };
@@ -114,14 +120,17 @@ function createWear(opts) {
   // one sync per person at a time, and a forced one at most every two minutes: the provider's
   // rate limit is shared by everyone on this server (it's the owner's app)
   const sync = (uid, force) => { if (syncing.has(uid)) return syncing.get(uid);
-    const u = user(uid); if (u.syncedAt && now() - u.syncedAt < (force ? 2 : 15) * 60000) return Promise.resolve(status(uid));
+    const u = W.users[uid]; if (!u) return Promise.resolve(status(uid));
+    if (u.syncedAt && now() - u.syncedAt < (force ? 2 : 15) * 60000) return Promise.resolve(status(uid));
     const job = syncOnce(uid).finally(() => syncing.delete(uid)); syncing.set(uid, job); return job; };
   const syncOnce = async (uid) => {
-    const u = user(uid);
+    const u = W.users[uid]; if (!u) return status(uid);
     const to = new Date(now() + 86400000).toISOString().slice(0, 10), from = new Date(now() - 30 * 86400000).toISOString().slice(0, 10);
     for (const p of Object.keys(PROVIDERS)) { if (!u[p]) continue;
-      try { const d = await fetchDays(uid, p, from, to); if (d) merge(uid, p, d); delete u[p].err; }
-      catch (e) { u[p].err = e.code === 401 ? 'Sign in to ' + PROVIDERS[p].name + ' again.' : 'Couldn’t reach ' + PROVIDERS[p].name + ' just now.'; if (e.code === 401) u[p].exp = 0; } }
+      try { const d = await fetchDays(uid, p, from, to); if (!still(uid, u, p)) continue;
+        if (d) { merge(uid, p, d); delete u[p].err; } else if (!(u[p].exp > now()) && !u[p].refresh) u[p].err = 'Sign in to ' + PROVIDERS[p].name + ' again.'; }
+      catch (e) { if (!still(uid, u, p)) continue; u[p].err = e.code === 401 ? 'Sign in to ' + PROVIDERS[p].name + ' again.' : 'Couldn’t reach ' + PROVIDERS[p].name + ' just now.'; if (e.code === 401) u[p].exp = 0; if (e.dead) u[p].refresh = null; /* stop retrying a refresh that can't work */ } }
+    if (!still(uid, u)) return status(uid);
     u.syncedAt = now(); save(); return status(uid); };
 
   async function handle(req, res, url, query, uidOf) {

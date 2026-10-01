@@ -116,7 +116,9 @@ function sanitizeLeague(b, prev) {
   const metric = own(LEAGUE_METRICS, pick('metric', 'xp')) ? pick('metric', 'xp') : 'xp';
   return { name, desc: text(pick('desc', ''), 200), metric, period: pick('period', 'week') === 'month' ? 'month' : 'week',
     tiers: !!pick('tiers', metric === 'xp'), open: pick('open', true) !== false, invite: text(pick('invite', ''), 40), autoJoin: !!pick('autoJoin', false),
-    season: ['month', 'quarter'].includes(pick('season', '')) ? pick('season', '') : '' };
+    // seasons rank what was earned inside the season: XP and Discipline can be counted that way;
+    // all-time XP, streaks and returns can't, so those leagues don't run seasons
+    season: ['xp', 'discipline'].includes(metric) && ['month', 'quarter'].includes(pick('season', '')) ? pick('season', '') : '' };
 }
 
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,

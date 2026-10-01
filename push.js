@@ -14,12 +14,16 @@ const hmac = (key, data) => crypto.createHmac('sha256', key).update(data).digest
 // uncompressed P-256 point, base64url — what browsers take as applicationServerKey.
 function loadVapid(dataDir, subject) {
   const file = path.join(dataDir, 'vapid.json');
-  let jwk = null;
-  try { jwk = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+  let jwk = null, raw = null;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (e) {}
+  if (raw != null) try { jwk = JSON.parse(raw); } catch (e) {}
   if (!jwk || jwk.kty !== 'EC' || !jwk.d) {
+    // a file that's there but unreadable is kept aside (not overwritten) so the owner can recover it
+    if (raw != null) { const aside = file + '.unreadable-' + Date.now(); try { fs.renameSync(file, aside); } catch (e) {}
+      console.warn('[ledger] ' + file + ' could not be read; moved it to ' + aside + ' and made new push keys (devices turn reminders on again)'); }
     jwk = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
     // a key that isn't kept means every device has to subscribe again after the next restart
-    try { fs.writeFileSync(file, JSON.stringify(jwk), { mode: 0o600 }); }
+    try { fs.writeFileSync(file + '.tmp', JSON.stringify(jwk), { mode: 0o600 }); fs.renameSync(file + '.tmp', file); }
     catch (e) { console.warn('[ledger] couldn’t save push keys to ' + file + ' (' + e.message + '): reminders stop after a restart until devices turn them on again'); }
   }
   const privateKey = crypto.createPrivateKey({ key: jwk, format: 'jwk' });

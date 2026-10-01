@@ -1011,8 +1011,10 @@ behavior.
 
 - `AUTH_TOKEN` — everything, unchanged.
 - `READ_TOKEN` (optional) — may `GET /api/v1/*` and **nothing else**: it cannot
-  read or write `/api/data`, trigger refreshes, fetch live positions, or touch
-  attachments/snapshots. Safe to hand to a script or a friend's dashboard.
+  read or write `/api/data`, trigger refreshes, refetch live positions, or touch
+  attachments/snapshots. It does read what the analytics show — trades, P&L, journal
+  notes (`/api/v1/journal`), wallet addresses and the cached positions — so give it
+  to scripts and dashboards, and only to people you'd show the journal to.
 - `CORS_ORIGIN` (optional, exact origin) — lets a browser app on another
   origin call `/api/*`. Off by default.
 

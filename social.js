@@ -46,6 +46,7 @@ const MAX_SOCIAL_BODY = 64 * 1024;
 const MAX_AVATAR = 256 * 1024;              // a profile picture, already shrunk to a small square by the app
 const MAX_IMAGE = 1536 * 1024;              // one image on a post
 const MAX_MEDIA_TOTAL = 2 * 1024 * 1024 * 1024; // every uploaded image together
+const MAX_MEDIA_MEMBER = 100 * 1024 * 1024;      // one member's images
 const POSTS_PER_DAY = 10, MEDIA_PER_DAY = 40, POST_EDIT_MS = 15 * 60000;
 const MAX_VAULT_BODY = 6 * 1024 * 1024;   // one encrypted journal (the ciphertext is base64: ~4.5 MB of journal)
 const MAX_VAULT_TOTAL = 1024 * 1024 * 1024; // all members' encrypted journals together
@@ -256,12 +257,17 @@ function weeksIn(start, end) { const out = []; let k = start;
 
 // ---- competitions ----
 function compStatus(c, todayKey) { return todayKey < c.start ? 'upcoming' : todayKey > c.end ? 'finished' : 'live'; }
+// members: an array, or the members object keyed by id (no lookup map to build per call)
 function compStandings(c, members, todayKey, requireClaim) {
-  const byId = new Map(members.map(m => [m.id, m]));
+  const byId = Array.isArray(members) ? new Map(members.map(m => [m.id, m])) : { get: id => Object.prototype.hasOwnProperty.call(members, id) ? members[id] : undefined };
   const rows = [];
   for (const id of Object.keys(c.entrants || {})) {
     const m = byId.get(id); if (!m || m.banned) continue;
-    const days = ((m.stats && m.stats.days) || []).filter(d => d.k >= c.start && d.k <= c.end && d.k <= todayKey);
+    // the days the competition kept as they were synced (the app only sends the last few weeks),
+    // with the member's latest copy on top
+    const kept = new Map(((c.log && c.log[id]) || []).map(d => [d.k, d]));
+    for (const d of (m.stats && m.stats.days) || []) { const p = kept.get(d.k); kept.set(d.k, p ? Object.assign({}, d, { b: !!(d.b || p.b) }) : d); }
+    const days = [...kept.values()].filter(d => d.k >= c.start && d.k <= c.end && d.k <= todayKey).sort((a, b) => a.k < b.k ? -1 : 1);
     let score = null, note = '', out = false;
     if (c.type === 'discipline') {
       // verified days only: recomputed by the server from the member's own fills
@@ -387,8 +393,12 @@ function createSocial(opts) {
   const store = Store.open(opts.dataDir), q = store.q, tx = store.tx;
   // the first start on SQLite brings the old JSON file over, once
   if (!q('SELECT 1 FROM kv LIMIT 1').get() && !q('SELECT 1 FROM members LIMIT 1').get()) {
-    let old = null; try { old = JSON.parse(fs.readFileSync(legacyFile, 'utf8')); } catch (e) {}
-    if (old && old.v === 1) { Store.importJson(store, old); try { fs.renameSync(legacyFile, legacyFile + '.migrated'); } catch (e) {} }
+    let raw = null, old = null; try { raw = fs.readFileSync(legacyFile, 'utf8'); } catch (e) {}
+    if (raw != null) { try { old = JSON.parse(raw); } catch (e) {}
+      // a league file that's there but can't be read must not turn into an empty league that then
+      // can never import it: stop and say so
+      if (!old || old.v !== 1) throw new Error(legacyFile + ' could not be read, so the league was not imported. Fix or move the file, then start again.'); }
+    if (old) { Store.importJson(store, old); try { fs.renameSync(legacyFile, legacyFile + '.migrated'); } catch (e) {} }
   }
   const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq'];
   let S = { v: 1, members: {} };
@@ -418,7 +428,8 @@ function createSocial(opts) {
     for (const m of Object.values(S.members)) S.leagues.main.members[m.id] = { tier: m.tier || 0, at: m.createdAt || Date.now() };
   }
   // every league has a short number people can search for (#1001, #1002, …)
-  if (!(S.leagueSeq > 1000)) S.leagueSeq = 1000;
+  // numbers never repeat: the counter is at least the highest number already handed out
+  S.leagueSeq = Math.max(1000, +S.leagueSeq || 0, ...Object.values(S.leagues).map(L => +L.num || 0));
   for (const L of Object.values(S.leagues)) if (!L.num) L.num = ++S.leagueSeq;
   // Writes go out as rows: save(m, 'partners', …) writes that member and those sections, save()
   // with nothing named checks everything. A row is only written when its JSON changed (a digest of
@@ -432,6 +443,7 @@ function createSocial(opts) {
   const touch = (...xs) => { for (const x of xs) if (typeof x === 'string') dirty.add(x); else if (x && x.id) dirty.add('m:' + x.id); };
   const save = (...xs) => { const all = !xs.length; touch(...xs);
     if (all || dirty.has('follows')) folCount = null;
+    if (dirty.has('leagues')) dirty.add('leagueSeq'); // a new league's number and the counter go together
     fresh = new Map();
     tx(() => {
       if (all) { for (const k of KV_KEYS) writeRow(k, S[k]); for (const m of members()) writeRow('m:' + m.id, m); }
@@ -460,11 +472,13 @@ function createSocial(opts) {
   const ipOf = opts.clientIp || (req => (req.socket && req.socket.remoteAddress) || '');
   const origins = (opts.publicOrigins || []).map(o => { try { const u = new URL(o); return { host: u.host.toLowerCase(), origin: u.origin }; } catch (e) { return null; } }).filter(Boolean);
   const limits = new Map();
-  const limited = (req, bucket, n, windowMs) => { const k = bucket + '|' + ipOf(req);
-    const recent = (limits.get(k) || []).filter(t => now() - t < windowMs);
-    if (recent.length >= n) { limits.set(k, recent); return true; }
-    recent.push(now()); limits.set(k, recent);
-    if (limits.size > 20000) for (const [kk, v] of limits) if (!v.length || now() - v[v.length - 1] > 3600000) limits.delete(kk);
+  // byMember: count per member wherever they connect from (an IP is easy to change)
+  const limited = (req, bucket, n, windowMs, byMember) => { const k = byMember ? bucket : bucket + '|' + ipOf(req);
+    const e = limits.get(k), recent = (e ? e.t : []).filter(t => now() - t < windowMs);
+    if (recent.length >= n) { limits.set(k, { w: windowMs, t: recent }); return true; }
+    recent.push(now()); limits.set(k, { w: windowMs, t: recent });
+    // pruning drops only entries whose own window has passed (a day-long limit isn't reset after an hour)
+    if (limits.size > 20000) for (const [kk, v] of limits) if (!v.t.length || now() - v.t[v.t.length - 1] > v.w) limits.delete(kk);
     return false; };
   const pending = new Map(); // SIWE nonce -> the message the server wrote, single use, 10 minutes
   const links = new Map();   // one-time device code -> member, single use, 10 minutes
@@ -505,13 +519,20 @@ function createSocial(opts) {
     weeks: board === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: board === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days }); };
   // a monthly league's boards cover the month so far: the same window its rollover ranks on
   const monthDays = () => Math.max(1, Math.round((Date.parse(todayKey()) - Date.parse(isoWeekMonday(monthWeeks(S.league.week)[0]))) / 86400000) + 1);
+  // how many active members a league has: a walk over its own roster, not over every member
+  const leagueSize = L => { let n = 0; for (const id in L.members) if (own(S.members, id) && !S.members[id].banned) n++; return n; };
   const leagueOut = (L, viewer) => ({ id: L.id, num: L.num, name: L.name, desc: L.desc, metric: L.metric, metricLabel: SC.LEAGUE_METRICS[L.metric], period: L.period,
-    tiers: L.tiers, open: L.open, inviteRequired: !!L.invite, members: members().filter(m => own(L.members, m.id) && !m.banned).length,
+    tiers: L.tiers, open: L.open, inviteRequired: !!L.invite, members: leagueSize(L),
     joined: !!viewer && own(L.members, viewer.id), tier: viewer && own(L.members, viewer.id) ? leagueTier(L, viewer) : null,
     tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null, season: L.season ? seasonInfo(L) : null });
   // ---- levels, XP grants, reward badges ----
   const levelTitle = n => { const t = S.config.levels.titles; return t[Math.min(n, t.length) - 1] || ('Level ' + n); };
-  const zoneKey = (tz, ms) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms); }
+  // one formatter per time zone, made once: making them is the slow part (the reminder pass runs every minute over every member)
+  const fmts = new Map();
+  const fmtFor = (kind, tz) => { const k = kind + '|' + tz; let f = fmts.get(k);
+    if (!f) { f = new Intl.DateTimeFormat(kind === 'day' ? 'en-CA' : 'en-GB', kind === 'day' ? { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' } : { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+      if (fmts.size > 500) fmts.clear(); fmts.set(k, f); } return f; };
+  const zoneKey = (tz, ms) => { try { return fmtFor('day', tz || 'UTC').format(ms); }
     catch (e) { return utcDayKey(ms); } };
   const badgeValue = (m, metric) => {
     const st = m.stats || {}, mo = m.money;
@@ -587,7 +608,7 @@ function createSocial(opts) {
   const dropComment = c => tx(() => { q('DELETE FROM reports WHERE comment = ?').run(c.id);
     if (q('DELETE FROM comments WHERE id = ?').run(c.id).changes) q('UPDATE events SET comments = max(0, comments - 1) WHERE id = ?').run(c.event); });
   const dropMember = (id) => { const gone = own(S.members, id) ? S.members[id].address : null;
-    if (own(S.members, id) && S.members[id].vault) try { fs.unlinkSync(vaultFile(id)); } catch (e) {}
+    const hadVault = own(S.members, id) && !!S.members[id].vault;
     delete S.members[id]; delete S.follows[id]; dropPairsOf(id); delete S.comments[id]; reindex();
     if (opts.onDrop) try { opts.onDrop(id); } catch (e) {}
     for (const k in S.comments) S.comments[k] = S.comments[k].filter(c => c.by !== id);
@@ -603,6 +624,7 @@ function createSocial(opts) {
       q('DELETE FROM reports WHERE member = ?').run(id);
       dropMedia(q('SELECT id FROM media WHERE member = ?').all(id));
       q('DELETE FROM members WHERE id = ?').run(id); written.delete('m:' + id);
+      if (hadVault) store.afterCommit(() => { try { fs.unlinkSync(vaultFile(id)); } catch (e) {} }); // the journal file goes once the row has
     }); };
   // weekly league rollover runs lazily on the first request of a new ISO week
   const ensureWeek = () => {
@@ -632,7 +654,8 @@ function createSocial(opts) {
   const moneyBusy = new Set();
   const refreshMoney = async (m, force) => {
     const addr = walletFor(m);
-    if (!addr || !(m.share.ret || m.share.usd) || moneyBusy.has(m.id)) return;
+    if (!addr || m.banned || !(m.share.ret || m.share.usd) || moneyBusy.has(m.id)) return;
+    if (moneyBusy.size >= 3) return; // three wallets at a time: the rest catch up on later requests
     if (!force && m.money && now() - m.money.at < 30 * 60000) return;
     if (m.moneyFailAt && now() - m.moneyFailAt < 10 * 60000) return; // Hyperliquid erroring: don't hammer it
     moneyBusy.add(m.id);
@@ -644,13 +667,16 @@ function createSocial(opts) {
       if (!own(S.members, m.id) || walletFor(S.members[m.id]) !== addr) return; // wallet changed meanwhile
       const st = portfolioStats(res, 'month');
       m.money = st ? { ret: st.ret, dd: st.dd, usd: st.usd, at: now() } : { ret: null, dd: null, usd: null, at: now() };
-      for (const c of Object.values(S.comps)) if (c.type === 'return' && c.entrants[m.id]) {
+      let compsChanged = false;
+      // a finished competition keeps the result it had when it ended
+      for (const c of Object.values(S.comps)) if (c.type === 'return' && c.entrants[m.id] && compStatus(c, todayKey()) !== 'finished') {
         const from = Date.parse(c.start + 'T00:00:00Z');
         // the 'month' series only reaches back 30 days; older windows need the coarser all-time one
         const s2 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(c.end + 'T23:59:59Z'));
-        if (s2) { c.money = c.money || {}; c.money[m.id] = { ret: s2.ret, dd: s2.dd }; }
+        if (s2) { c.money = c.money || {}; const prev = c.money[m.id];
+          if (!prev || prev.ret !== s2.ret || prev.dd !== s2.dd) { c.money[m.id] = { ret: s2.ret, dd: s2.dd }; compsChanged = true; } }
       }
-      awardCheck(m); save(m, 'comps');
+      awardCheck(m); if (compsChanged) save(m, 'comps'); else save(m);
       m.moneyFailAt = 0;
     } catch (e) { m.moneyFailAt = now(); /* retried after the backoff; boards show what they have */ }
     finally { moneyBusy.delete(m.id); }
@@ -773,8 +799,26 @@ function createSocial(opts) {
     // a short page with more rows behind it (a long run the viewer can't see) still hands on its cursor
     return { rows: out, next: (out.length >= limit || more) && last ? last.at + '.' + last.id : null };
   };
+  // A competition's standings are frozen the day after it ends (a day's grace for the last sync)
+  // and served from then on: members' later days and their history being trimmed can't move them.
+  const compRows = c => {
+    if (c.final) return c.final;
+    const rows = compStandings(c, S.members, todayKey(), !!S.config.requireClaim);
+    if (todayKey() > addDaysKey(c.end, 1)) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log; save('comps'); }
+    return rows; };
+  // each synced day of a survivor or journal competition's entrants is kept with the competition;
+  // a broken loss limit stays broken
+  const logCompDays = m => { let ch = false;
+    for (const c of Object.values(S.comps)) {
+      if (!(c.type === 'survivor' || c.type === 'journal') || !c.entrants[m.id] || c.final) continue;
+      const L = (c.log = c.log || {})[m.id] = (c.log[m.id] || []), byK = new Map(L.map(d => [d.k, d]));
+      for (const d of (m.stats && m.stats.days) || []) { if (d.k < c.start || d.k > c.end) continue;
+        const p = byK.get(d.k), n = { k: d.k, b: !!(d.b || (p && p.b)), j: !!d.j };
+        if (!p || p.b !== n.b || p.j !== n.j) { byK.set(d.k, n); ch = true; } }
+      if (ch) c.log[m.id] = [...byK.values()].sort((a, b) => a.k < b.k ? -1 : 1).slice(-100); }
+    return ch; };
   const compOut = (c, viewer, full) => { const st = compStatus(c, todayKey());
-    const rows = compStandings(c, members(), todayKey(), !!S.config.requireClaim);
+    const rows = compRows(c);
     const mine = viewer ? rows.find(r => r.id === viewer.id) || null : null;
     const o = { id: c.id, title: c.title, type: c.type, rule: c.rule, start: c.start, end: c.end, minDays: c.minDays, ddCap: c.ddCap,
       league: c.league && own(S.leagues, c.league) ? { id: c.league, name: S.leagues[c.league].name } : null,
@@ -805,11 +849,11 @@ function createSocial(opts) {
     if (!m || m.banned) return;
     const it = Object.assign({ id: crypto.randomBytes(5).toString('hex'), at: now(), kind, text: cleanText(text, 700) }, extra || {});
     m.inbox = [...(m.inbox || []), it].slice(-INBOX_MAX); touch(m);
-    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Pulse', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/pulse#today' });
+    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Pulse', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/pulse#today' }).catch(() => {});
   };
   // morning and evening reminders on the member's own clock, once a day each; the evening one
   // only on a day they traded and haven't reviewed yet
-  const localHM = (tz, ms) => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms); } catch (e) { return new Date(ms).toISOString().slice(11, 16); } };
+  const localHM = (tz, ms) => { try { return fmtFor('hm', tz || 'UTC').format(ms); } catch (e) { return new Date(ms).toISOString().slice(11, 16); } };
   // a reminder goes from its time until four hours later (a server that was down at 08:30 still sends it at 09:10)
   const mins = hm => +hm.slice(0, 2) * 60 + +hm.slice(3, 5);
   const due = (hm, at) => { const d = mins(hm) - mins(at); return d >= 0 && d < 240; };
@@ -933,6 +977,8 @@ function createSocial(opts) {
       // pictures uploaded but never used (a post that wasn't sent) go after a day
       dropMedia(q('SELECT id FROM media WHERE ref IS NULL AND at < ?').all(now() - 86400000));
       if ((q('SELECT sum(size) AS n FROM media').get().n || 0) + buf.length > (opts.mediaTotalMax || MAX_MEDIA_TOTAL)) return json(res, 507, { error: 'This server is out of room for images. Tell its owner.' });
+      // one member can't fill the server's room for everyone
+      if ((q('SELECT sum(size) AS n FROM media WHERE member = ?').get(who.id).n || 0) + buf.length > (opts.mediaMemberMax || MAX_MEDIA_MEMBER)) return json(res, 507, { error: 'You’ve used your room for pictures on this server. Delete a few old posts with pictures first.' });
       const id = crypto.randomBytes(12).toString('hex');
       fs.mkdirSync(mediaDir, { recursive: true }); const f = mediaFile(id); fs.writeFileSync(f + '.tmp', buf); fs.renameSync(f + '.tmp', f);
       q('INSERT INTO media (id, member, at, mime, size, kind, ref) VALUES (?, ?, ?, ?, ?, ?, NULL)').run(id, who.id, now(), mime, buf.length, kind);
@@ -1402,8 +1448,9 @@ function createSocial(opts) {
       if (newAddr !== undefined) me.address = newAddr;
       if (!(me.share.ret || me.share.usd)) me.money = null;
       if (!me.share.verify || me.address !== prevAddr) { me.vdays = null; me.vAt = 0; }
-      if (!me.share.ret) for (const c of Object.values(S.comps)) if (c.money) delete c.money[me.id]; // opting out hides past results too
-      save(me, 'comps');
+      let compsCh = false;
+      if (!me.share.ret) for (const c of Object.values(S.comps)) if (c.money && own(c.money, me.id)) { delete c.money[me.id]; compsCh = true; } // opting out hides past results too
+      if (compsCh) save(me, 'comps'); else save(me);
       refreshMoney(me, me.address !== prevAddr || (!prevMoney && !!(me.share.ret || me.share.usd)));
       refreshBehavior(me, me.address !== prevAddr || (!prevVerify && !!me.share.verify));
       if (prevAddr && prevAddr !== me.address && opts.forgetAddress && !members().some(o => o.address === prevAddr)) opts.forgetAddress(prevAddr);
@@ -1471,7 +1518,7 @@ function createSocial(opts) {
       if (next.week) { me.weekXp = me.weekXp || {}; me.weekXp[next.week] = next.weekXp;
         const keep = Object.keys(me.weekXp).sort().slice(-16); /* a quarter's season needs 13 */ for (const k of Object.keys(me.weekXp)) if (!keep.includes(k)) delete me.weekXp[k]; }
       awardCheck(me);
-      save(me); refreshAll(me);
+      if (logCompDays(me)) save(me, 'comps'); else save(me); refreshAll(me);
       return json(res, 200, { ok: true, tier: me.tier || 0 });
     }
     // ---- leagues: browse, join, leave ----
@@ -1480,7 +1527,7 @@ function createSocial(opts) {
       const q = cleanText(query.q, 40).toLowerCase().replace(/^#/, '');
       let list = Object.values(S.leagues).filter(L => L.open || own(L.members, me.id));
       if (q) list = list.filter(L => String(L.num) === q || L.name.toLowerCase().includes(q) || (L.desc || '').toLowerCase().includes(q));
-      const size = L => members().filter(m => own(L.members, m.id) && !m.banned).length;
+      const size = leagueSize;
       list.sort((a, b) => (own(b.members, me.id) ? 1 : 0) - (own(a.members, me.id) ? 1 : 0) || size(b) - size(a) || a.num - b.num);
       return json(res, 200, { q, leagues: list.slice(0, 50).map(L => leagueOut(L, me)) });
     }
@@ -1490,7 +1537,10 @@ function createSocial(opts) {
       if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
       const W = leagueWindow(L), top = boardRows(leagueMembers(L), L.metric, { week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
       return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt, hall: (L.hall || []).slice().reverse().map(h => ({ season: h.season, label: h.label, n: h.n,
-          podium: h.podium.map(r => ({ handle: own(S.members, r.id) ? S.members[r.id].handle : r.handle, value: r.value, me: r.id === me.id })) })),
+          // as the members stand today: a suspended one isn't named, and returns or dollars only show while still shared
+          podium: h.podium.map(r => { const pm = own(S.members, r.id) ? S.members[r.id] : null;
+            const shown = !['ret', 'usd', 'riskadj'].includes(L.metric) || (pm && !pm.banned && (L.metric === 'usd' ? pm.share.usd : pm.share.ret));
+            return { handle: pm && pm.banned ? null : pm ? pm.handle : r.handle, value: shown ? r.value : null, me: r.id === me.id }; }) })),
         top: top.slice(0, 5).map(r => ({ rank: r.rank, handle: r.handle, av: avUrl(S.members[r.id]), value: r.value, sub: r.sub, me: r.id === me.id })),
         tiersCount: L.tiers ? TIERS.map((t, i) => ({ tier: t, n: members().filter(m => own(L.members, m.id) && !m.banned && leagueTier(L, m) === i).length })) : null,
         comps: Object.values(S.comps).filter(c => c.league === L.id && compStatus(c, todayKey()) !== 'finished').map(c => ({ id: c.id, title: c.title, start: c.start, end: c.end, type: c.type })) }) });
@@ -1518,12 +1568,13 @@ function createSocial(opts) {
     // boards: scope=global (everyone who opted in to global boards) or a league's members
     if (head === 'leaderboard' && M === 'GET') {
       const board = own(BOARDS, query.board) ? query.board : 'discipline', global = query.scope === 'global';
-      for (const m of members()) refreshAll(m); // background; boards show what's cached
+      refreshAll(me); // background, the viewer first; boards show what's cached
       let rows, L = null;
       if (global) rows = boardRows(members().filter(m => m.share.global), board, { week: S.league.week });
       else { L = own(S.leagues, query.league) && own(S.leagues[query.league].members, me.id) ? S.leagues[query.league] : own((S.leagues.main || {}).members || {}, me.id) ? S.leagues.main : leaguesOf(me)[0] || null;
         rows = L ? leagueBoard(L, board, me) : []; }
       const mine = rows.find(r => r.id === me.id) || null;
+      for (const r of rows.slice(0, 50)) if (own(S.members, r.id)) refreshAll(S.members[r.id]); // the rows on show, a few at a time
       const needKey = global && !me.share.global ? 'global' : !me.share[BOARDS[board].needs] ? BOARDS[board].needs : BOARDS[board].verified && !me.share.verify ? 'verify' : null;
       return json(res, 200, { board, label: BOARDS[board].label, scope: global ? 'global' : 'league', league: L ? { id: L.id, name: L.name } : null,
         rows: rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, av: avUrl(S.members[r.id]), tier: r.tier, value: r.value, sub: r.sub, me: r.id === me.id })),
@@ -1597,7 +1648,7 @@ function createSocial(opts) {
       if (!parts[2] && M === 'DELETE') { if (e.member !== me.id) return json(res, 403, { error: 'Only its author can delete a post.' }); dropEvent(e.id); return json(res, 200, { ok: true }); }
       if (parts[2] === 'comments' && M === 'POST') {
         const text = cleanPost(body.text, 500); if (!text) return json(res, 400, { error: 'Write the comment first.' });
-        if (limited(req, 'comment:' + me.id, 60, 3600000)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
+        if (limited(req, 'comment:' + me.id, 60, 3600000, true)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
         const id = crypto.randomBytes(6).toString('hex');
         tx(() => { q('INSERT INTO comments (id, event, member, at, text) VALUES (?, ?, ?, ?, ?)').run(id, e.id, me.id, now(), text);
           q('UPDATE events SET comments = comments + 1 WHERE id = ?').run(e.id); });
@@ -1618,7 +1669,7 @@ function createSocial(opts) {
       const e = c ? eventById(c.event) : eventById(body.post);
       if (!e || !visible(e, me) || (body.comment && !c)) return json(res, 404, { error: 'That isn’t here any more.' });
       if ((c ? c.member : e.member) === me.id) return json(res, 400, { error: 'That’s your own.' });
-      if (limited(req, 'report:' + me.id, 20, 86400000)) return json(res, 429, { error: 'Too many reports today.' });
+      if (limited(req, 'report:' + me.id, 20, 86400000, true)) return json(res, 429, { error: 'Too many reports today.' });
       q('INSERT OR IGNORE INTO reports (id, event, comment, member, at, why) VALUES (?, ?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), c ? null : e.id, c ? c.id : null, me.id, now(), cleanText(body.why, 200));
       return json(res, 200, { ok: true });
     }
@@ -1665,6 +1716,7 @@ function createSocial(opts) {
         m.coachUse = { k: zoneKey(tz, now()), tz, n: Math.max(0, used + d) }; }
       else { const k = utcDayKey(now()); S.ownerCoach = { k, n: Math.max(0, (S.ownerCoach.k === k ? S.ownerCoach.n : 0) + d) }; } save(m || 'ownerCoach'); },
   };
+  save(); // what loading filled in (defaults, league numbers) is written once, so a restart reads the same
   return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S, store, close: () => store.close() };
 }
 

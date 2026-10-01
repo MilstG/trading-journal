@@ -16,7 +16,9 @@
 //     who finds the URL — your journal and wallet addresses are sensitive.
 //   - Optionally set READ_TOKEN to mint a second, weaker credential: it can GET
 //     /api/v1/* (analytics) and nothing else — it can never read or write /api/data,
-//     trigger refreshes, or touch attachments. Safe to hand to scripts/friends.
+//     trigger refreshes, or touch attachments. It does read everything the analytics show —
+//     trades, P&L, journal notes (/api/v1/journal), wallet addresses and open positions — so
+//     hand it only to scripts and people you'd show the journal to.
 //   - Optionally set CORS_ORIGIN (exact origin, e.g. https://tools.example.com) to let
 //     a browser app on another origin consume /api/*. Off by default.
 //   - Railway injects PORT; nothing to configure.
@@ -151,29 +153,36 @@ function buildEngine(htmlPath, fetchImpl) {
     if (b) blocks.push(b); else missing.push(n);
   }
   if (missing.length) return { ok: false, missing };
-  const ctx = {
-    console,
-    fetch: fetchImpl,
-    setTimeout, clearTimeout,
-    API: 'https://api.hyperliquid.xyz/info',
-    sleep: (ms) => new Promise(r => setTimeout(r, ms)),
-    setStatus: () => {},              // browser status bar — no-op on the server
-    _rng: Math.random,                // reassigned by _srand for seeded runs
-    _be: 50, _oneR: null,             // break-even band + 1R basis, set per request
-    settings: { tz: 'utc' }, journal: {},
-  };
-  vm.createContext(ctx);
+  // The engine runs as one closure in this realm: its free variables (settings, _be, …) are
+  // closure locals and built-ins like Math are the real ones. (It used to run as globals of a vm
+  // context, where every lookup went through the contextified global — about 50× slower, enough
+  // for one Monte Carlo request on a big history to block the server for seconds.)
+  const vars = ['_rng', '_be', '_oneR', 'settings', 'journal'];
+  const src = '(function (fetch, setStatus, sleep, API) {\n'
+    + "let _rng = Math.random, _be = 50, _oneR = null, settings = { tz: 'utc' }, journal = {};\n"
+    + blocks.join('\n') + '\n' + ENGINE_SHIMS
+    + '\nreturn { fns: { ' + ENGINE_FNS.join(', ') + ' }, vars: { '
+    + vars.map(v => 'get ' + v + '() { return ' + v + '; }, set ' + v + '(x) { ' + v + ' = x; }').join(', ') + ' } };\n})';
+  let made;
   try {
-    vm.runInContext(blocks.join('\n') + '\n' + ENGINE_SHIMS, ctx, { filename: 'ledger-engine.js' });
+    made = vm.runInThisContext(src, { filename: 'ledger-engine.js' })(fetchImpl, () => {}, (ms) => new Promise(r => setTimeout(r, ms)), 'https://api.hyperliquid.xyz/info');
   } catch (e) {
     return { ok: false, missing: ['<engine eval failed: ' + e.message + '>'] };
   }
-  for (const n of ENGINE_FNS) if (typeof ctx[n] !== 'function')
+  for (const n of ENGINE_FNS) if (typeof made.fns[n] !== 'function')
     return { ok: false, missing: ['<' + n + ' did not evaluate to a function>'] };
+  // E.fn(...) calls the engine; E._be = …, E.settings = … set its per-request knobs
+  const ctx = Object.assign({}, made.fns);
+  for (const v of vars) Object.defineProperty(ctx, v, { get: () => made.vars[v], set: x => { made.vars[v] = x; }, enumerable: true });
   return { ok: true, missing: [], ctx };
 }
 
 /* ============================ small helpers ============================ */
+// an async route that threw after its checks: answer 500 (once) instead of leaving an unhandled rejection
+const failed = (res, e) => { console.warn('[ledger] request failed: ' + (e && e.message || e));
+  try { if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); } } catch (e2) {} };
+// Monte Carlo shuffles: fewer on a long history, so iterations × trades stays near 2·10⁷
+const mcIters = (n, max) => Math.max(100, Math.min(max, Math.floor(2e7 / Math.max(1, n))));
 const gzWrite = (file, obj) => {
   const tmp = file + '.tmp';
   fs.writeFileSync(tmp, zlib.gzipSync(JSON.stringify(obj)));
@@ -497,21 +506,30 @@ function createApp(opts) {
   // mtime-cached: cacheSig, setEngineState and ensureTrades each read the snapshot, which
   // used to mean 2-3 full JSON parses of the whole data blob per request
   let _dataCache = { mtime: 0, data: null };
+  // A missing file is "no data yet". A damaged one never is: it falls back to the copy kept
+  // before the last write (dataBroken 'bak'), and with no good copy either (dataBroken true)
+  // the journal API refuses to read or write until the owner restores a file — an empty answer
+  // would let the next save replace the journal, and copy the damaged file over the backup.
+  let dataBroken = false;
   const readData = () => {
-    try {
-      const st = fs.statSync(dataFile);
-      if (_dataCache.data && _dataCache.mtime === st.mtimeMs) return _dataCache.data;
-      const d = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-      _dataCache = { mtime: st.mtimeMs, data: d };
-      return d;
-    } catch (e) { return null; }
+    let st; try { st = fs.statSync(dataFile); } catch (e) { dataBroken = false; return null; }
+    if (_dataCache.data && _dataCache.mtime === st.mtimeMs) return _dataCache.data;
+    try { const d = JSON.parse(fs.readFileSync(dataFile, 'utf8')); _dataCache = { mtime: st.mtimeMs, data: d }; dataBroken = false; return d; }
+    catch (e) {
+      try { const d = JSON.parse(fs.readFileSync(dataFile + '.bak', 'utf8'));
+        if (dataBroken !== 'bak') console.warn('[ledger] ' + dataFile + ' is damaged (' + e.message + '); using ' + dataFile + '.bak until the next save');
+        dataBroken = 'bak'; _dataCache = { mtime: st.mtimeMs, data: d }; return d; }
+      catch (e2) { if (dataBroken !== true) console.error('[ledger] ' + dataFile + ' is damaged (' + e.message + ') and there is no readable .bak: the journal API is refusing reads and writes until a good copy is restored (see DATA_DIR/snapshots/)');
+        dataBroken = true; return null; }
+    }
   };
   const writeData = (obj) => {
     _dataCache.mtime = 0; // invalidate — the rename below may land within the same ms
     const tmp = dataFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(obj));
-    try { if (fs.existsSync(dataFile)) fs.copyFileSync(dataFile, dataFile + '.bak'); } catch (e) {}
-    fs.renameSync(tmp, dataFile);
+    // only a file that reads back is worth keeping as the backup
+    try { if (!dataBroken && fs.existsSync(dataFile)) fs.copyFileSync(dataFile, dataFile + '.bak'); } catch (e) {}
+    fs.renameSync(tmp, dataFile); dataBroken = false;
     snapshotDaily(obj);
   };
   // Rotating daily snapshots: one file per calendar day (UTC), overwritten within the day,
@@ -572,6 +590,13 @@ function createApp(opts) {
   const fundingFile = a => path.join(fundingDir, a.toLowerCase() + '.json.gz');
   const ledgerFile = a => path.join(ledgerDir, a.toLowerCase() + '.json.gz');
   const readFillCache = a => { const c = gzRead(fillsFile(a)); return (c && c.v === 1 && Array.isArray(c.fills)) ? c : null; };
+  // just the counts of a wallet's fill cache (for /meta), kept until the file changes: no need to
+  // unzip and parse every fill to report how many there are
+  const fillMetaMemo = new Map();
+  const fillCacheMeta = a => { let st; try { st = fs.statSync(fillsFile(a)); } catch (e) { return null; }
+    const m = fillMetaMemo.get(a); if (m && m.mtime === st.mtimeMs && m.size === st.size) return m.meta;
+    const c = readFillCache(a), meta = c ? { count: c.count != null ? c.count : c.fills.length, last: c.last, savedAt: c.savedAt, truncated: !!c.truncated } : null;
+    fillMetaMemo.set(a, { mtime: st.mtimeMs, size: st.size, meta }); return meta; };
   const readFundingCache = a => { const c = gzRead(fundingFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
@@ -645,7 +670,8 @@ function createApp(opts) {
           res.truncated = !!cache.truncated || !!fr.truncated; // a gap found once stays flagged
         } else { fills = fr.fills; res.newFills = fills.length; res.truncated = !!fr.truncated; }
         const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
-        fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills });
+        // nothing new: leave the file alone (re-gzipping a big history on every refresh blocks the server)
+        if (!cache || res.newFills || res.truncated !== !!cache.truncated) { fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills }); }
         res.fills = fills.length;
 
         // funding and capital flows: only what's new since the cached watermark (unless a full
@@ -1104,7 +1130,7 @@ function createApp(opts) {
     if (nets.length >= 20) {
       currentDD = E.currentDD(nets).dd;
       E._srand(E._hashSeed('alerts|' + nets.length));
-      const mc = E.mcMaxDD(nets, 1000); if (mc) ddP95 = mc.p95;
+      const mc = E.mcMaxDD(nets, mcIters(nets.length, 1000)); if (mc) ddP95 = mc.p95;
     }
     return { risk: (risk && risk.rows) || [], todayKey, todayNet, funding24h, currentDD, ddP95,
       rulesDailyLoss: (snap.settings && snap.settings.rules && parseFloat(snap.settings.rules.dailyLossLimit)) || 0 };
@@ -1372,7 +1398,7 @@ function createApp(opts) {
           spot: trades.filter(t => t.market === 'spot').length,
           open: trades.filter(t => t.isOpen).length,
         };
-        maybeAlert(); // fire-and-forget: a manual refresh should trigger the same monitoring
+        maybeAlert().catch(e => console.warn('[ledger] alert check failed: ' + e.message)); // fire-and-forget: a manual refresh should trigger the same monitoring
         return send(200, summary);
       } catch (e) { return fail(e); }
       finally { clearTimeout(watchdog); _refreshing = false; }
@@ -1415,7 +1441,7 @@ function createApp(opts) {
         const snap = currentSnapshot();
         const market = readMarket();
         const wallets = snapWallets(snap).map(w => {
-          const fc = readFillCache(w.address);
+          const fc = fillCacheMeta(w.address);
           return { address: w.address, label: w.label || '',
             fills: fc ? fc.count : 0, last: fc ? fc.last : null,
             cachedAt: fc ? fc.savedAt : null, truncated: fc ? !!fc.truncated : false };
@@ -1467,9 +1493,10 @@ function createApp(opts) {
         m.trades_total = trades.length;
         m.open_trades = trades.filter(t => t.isOpen).length;
         m.net_total = +closed.reduce((s, t) => s + t.net, 0).toFixed(2);
-        const todayKey = dayKeyN(Date.now());
+        // "today" on the owner's own clock, the same day alerts, /today and the nudge use
+        const zone = nudgeZone(currentSnapshot().settings), dayIn = ms => zonedDayHour(ms, zone).day, todayKey = dayIn(Date.now());
         let tn = 0, tc = 0;
-        for (const t of closed) if (dayKeyN(t.closeTime) === todayKey) { tn += t.net; tc++; }
+        for (const t of closed) if (dayIn(t.closeTime) === todayKey) { tn += t.net; tc++; }
         m.net_today = +tn.toFixed(2); m.trades_today = tc;
         const nets = [...closed].sort((a, b) => a.closeTime - b.closeTime).map(t => t.net);
         if (nets.length) m.current_drawdown = +E.currentDD(nets).dd.toFixed(2);
@@ -1529,7 +1556,7 @@ function createApp(opts) {
         let shuffleDD = null;
         if (nets.length >= 2) {
           E._srand(E._hashSeed('api-equity|' + nets.length + '|' + (chron.length ? chron[0].id + '|' + chron[chron.length - 1].id : '')));
-          shuffleDD = E.mcMaxDD(nets, 2000);
+          shuffleDD = E.mcMaxDD(nets, mcIters(nets.length, 2000));
         }
         return send(200, {
           points,
@@ -1618,7 +1645,8 @@ function createApp(opts) {
         const { all } = prepare(query);
         const lookback = Math.max(0, Math.floor(qnum(query.lookback, 0)));
         const horizon = Math.max(1, Math.min(3650, Math.floor(qnum(query.horizon, qnum(query.days, 90)))));
-        const paths = Math.max(50, Math.min(2000, Math.floor(qnum(query.paths, 400))));
+        // horizon × paths is capped so one request can't hold the server for long
+        const paths = Math.max(50, Math.min(2000, Math.floor(2e6 / horizon), Math.floor(qnum(query.paths, 400))));
         const block = Math.max(0, Math.floor(qnum(query.block, 0)));
         const seed = query.seed != null && query.seed !== '' && query.seed !== 'auto' ? (parseInt(query.seed, 10) >>> 0) : null;
         const base = E.projBaseline(all, lookback);
@@ -1695,6 +1723,9 @@ function createApp(opts) {
         const opts = {};
         const tr = parseInt(query.train, 10); if (Number.isFinite(tr) && tr > 0) opts.train = tr;
         const st = parseInt(query.step, 10);  if (Number.isFinite(st) && st > 0) opts.step = st;
+        // at most ~200 folds: a step of 1 on a long history would block the server for seconds
+        { const n = closed.length, train = opts.train || Math.min(120, Math.round(n * 0.4)), step = opts.step || Math.max(5, Math.round(train / 4));
+          if (n / step > 200) opts.step = Math.ceil(n / 200); }
         // seed the shared PRNG so the bootstrap CI is reproducible per identical request
         const seed = query.seed != null && query.seed !== '' && query.seed !== 'auto'
           ? (parseInt(query.seed, 10) >>> 0) : E._hashSeed('wf:' + closed.length);
@@ -1935,7 +1966,9 @@ function createApp(opts) {
   const wearOrigin = req => { if (publicOrigins[0]) { try { return new URL(publicOrigins[0]).origin; } catch (e) {} }
     return hostVetted && req.headers.host ? 'https://' + req.headers.host : opts.wearOrigin || null; };
   const wear = Wear.createWear({ dataDir, json, fetchImpl: opts.wearFetch || opts.fetchImpl, now: opts.now, env: opts.wearEnv || process.env, originOf: wearOrigin,
-    tzOf: uid => { const m = uid.startsWith('m:') ? social.state().members[uid.slice(2)] : null; return (m && m.stats && m.stats.tz) || process.env.TZ || 'UTC'; } });
+    // a member's clock is the one their app reports; the owner's is the journal's own time zone setting
+    tzOf: uid => { if (uid === 'owner') return nudgeZone(currentSnapshot().settings);
+      const m = uid.startsWith('m:') ? social.state().members[uid.slice(2)] : null; return (m && m.stats && m.stats.tz) || process.env.TZ || 'UTC'; } });
   wearRef.forget = uid => wear.forget(uid);
   // the owner's slot needs AUTH_TOKEN: on an open server anyone would be the owner
   const wearUid = req => { const m = social.memberOf(req); if (m) return 'm:' + m.id; return auth && authOk(req) ? 'owner' : null; };
@@ -2171,7 +2204,7 @@ function createApp(opts) {
         if (!text) return json(res, 400, { error: 'expected {text}' });
         try { const sent = await tgBroadcast(text, telegramCfg.shareChats); return json(res, 200, { ok: true, sent }); }
         catch (e) { return json(res, 502, { error: 'telegram: ' + ((e && e.message) || 'send failed') }); }
-      })();
+      })().catch(e => failed(res, e));
       return;
     }
     // --- AI coach chat: a member (X-Pulse-Key) within today's allowance, or the owner (AUTH_TOKEN) ---
@@ -2194,12 +2227,12 @@ function createApp(opts) {
         if (!now || !now.allowed) return json(res, 429, { error: (now && now.reason) || 'not allowed' });
         const who = now.who === 'member' ? now.member : null;
         social.coach.count(who, 1);
-        try {
-          const r = await coachChat(chat);
-          const after = memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus();
-          return json(res, 200, { text: r.text, remaining: after.remaining, limit: after.limit, used: after.used });
-        } catch (e) { social.coach.count(who, -1); return json(res, e.code || 500, { error: e.msg || e.message || String(e) }); } // only answered messages count
-      })();
+        let r; try { r = await coachChat(chat); }
+        catch (e) { social.coach.count(who, -1); return json(res, e.code || 500, { error: e.msg || e.message || String(e) }); } // only answered messages count
+        // (the member may have been signed out meanwhile: the answer still stands)
+        const after = (memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus()) || {};
+        return json(res, 200, { text: r.text, remaining: after.remaining != null ? after.remaining : null, limit: after.limit != null ? after.limit : null, used: after.used != null ? after.used : null });
+      })().catch(e => failed(res, e));
       return;
     }
     const letM = url.match(/^\/api\/coach\/letter\/(\d{4}-W\d{2})$/);
@@ -2224,7 +2257,7 @@ function createApp(opts) {
           try { const tmp = file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(rec, null, 2)); fs.renameSync(tmp, file); } catch (e) {}
           return json(res, 200, rec);
         } catch (e) { return json(res, e.code || 500, { error: e.msg || e.message || String(e) }); }
-      })();
+      })().catch(e => failed(res, e));
       return;
     }
     const bkM = url.match(/^\/api\/backups\/(backup-[A-Za-z0-9-]+\.json\.gz)$/);
@@ -2241,6 +2274,7 @@ function createApp(opts) {
 
       if (req.method === 'GET') {
         const d = readData();
+        if (dataBroken === true) return json(res, 500, { error: 'The journal file on the server is damaged. Restore a copy from DATA_DIR/snapshots/ before syncing.' });
         return json(res, 200, { rev: (d && d.rev) || 0, snapshot: (d && d.snapshot) || null });
       }
 
@@ -2266,6 +2300,7 @@ function createApp(opts) {
               || !body.snapshot || typeof body.snapshot !== 'object')
             return json(res, 400, { error: 'expected {rev:number, snapshot:object}' });
           const cur = readData();
+          if (dataBroken === true) return json(res, 503, { error: 'The journal file on the server is damaged; not saving over it. Restore a copy from DATA_DIR/snapshots/.' });
           const curRev = (cur && cur.rev) || 0;
           if (body.rev !== curRev)
             return json(res, 409, { rev: curRev, snapshot: (cur && cur.snapshot) || null });
@@ -2330,6 +2365,8 @@ function createApp(opts) {
 }
 
 if (require.main === module) {
+  // a stray rejection is logged, not fatal: one failed background write shouldn't take every member offline
+  process.on('unhandledRejection', e => console.error('[ledger] unhandled rejection: ' + (e && e.stack || e)));
   const port = parseInt(process.env.PORT, 10) || 8080;
   const app = createApp();
   if (!process.env.AUTH_TOKEN)
