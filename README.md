@@ -457,6 +457,10 @@ always shows the coach and progress layers, whatever the full app's coach-mode
 switch says. It has its own install metadata (`/pulse.webmanifest`), so "Add to
 Home Screen" from `/keel` installs a separate **Keel** app.
 
+To make Keel the site's front page, set `HOME_VIEW=keel` on the server: `/` then
+redirects to `/keel`, and the full journal is at `/ledger.html` (Keel's "full
+journal" links, the admin panel and the installed journal app go there).
+
 Keel used to be called Pulse. `/pulse` still opens it (the address bar then shows
 `/keel`), and phones that installed Pulse update in place. Inside the code the old
 name stays (`app/pulse*.js`, the `pz` prefix, the `X-Pulse-Key` header,

@@ -169,6 +169,22 @@ await t('/keel (and the old /pulse) serve the app, /keel/ and /pulse/ redirect, 
     ok(sw.includes("'/keel'") && sw.includes("'/pulse'") && !sw.includes("mode==='navigate'"), 'only the app shell is cached — help pages never overwrite it');
   } finally { await new Promise(res => app.close(res)); }
 });
+await t('HOME_VIEW=keel sends / to /keel, and the full journal stays at /ledger.html', async () => {
+  const plain = server.createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-pulse-')), auth: '', htmlPath, homeView: '' });
+  const app = server.createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-pulse-')), auth: '', htmlPath, homeView: 'keel' });
+  const bp = await listen(plain), b = await listen(app);
+  try {
+    eq((await fetch(bp + '/', { redirect: 'manual' })).status, 200, 'unset: / is the journal');
+    eq((await (await fetch(bp + '/manifest.webmanifest')).json()).start_url, '/');
+    for (const [q, to] of [['', '/keel'], ['?x=1', '/keel?x=1']]) {
+      const r = await fetch(b + '/' + q, { redirect: 'manual' }); eq(r.status, 302); eq(r.headers.get('location'), to); }
+    for (const pth of ['/ledger.html', '/index.html', '/keel']) eq((await fetch(b + pth, { redirect: 'manual' })).status, 200, pth);
+    const m = await (await fetch(b + '/manifest.webmanifest')).json(); eq([m.id, m.start_url], ['/', '/ledger.html'], 'the installed journal still opens the journal');
+    const k = await (await fetch(b + '/pulse.webmanifest')).json(); eq(k.shortcuts.find(x => x.name === 'Full journal').url, '/ledger.html');
+    ok((await (await fetch(b + '/sw.js')).text()).includes("r.type==='opaqueredirect'"), 'the service worker hands the redirect to the browser');
+    ok(html.includes("?'/ledger.html':location.pathname"), 'Keel links the full journal at /ledger.html');
+  } finally { await new Promise(res => plain.close(res)); await new Promise(res => app.close(res)); }
+});
 
 t('lists longer than ten page through ten at a time, and the page is kept in range', () => {
   const c = { esc: x => String(x), pzI: () => '', PZ_PAGES: {} }; vm.createContext(c);

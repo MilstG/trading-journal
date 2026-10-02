@@ -164,7 +164,8 @@ function pzRing(value, pct, color, opts){ opts=opts||{};
 }
 const pzBar=(pct,color)=>`<div class="pz-bar"><i style="width:${Math.round(Math.max(0,Math.min(1,pct||0))*100)}%;background:${color}"></i></div>`;
 function pzRows(rows,color){ return rows.map(r=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(r.label)}</span><b>${esc(r.value)}</b></div>${pzBar(r.pct,r.color||color)}</div>`).join(''); }
-function pzFullHref(){ return /^https?:$/.test(location.protocol)?'/':location.pathname; }
+// /ledger.html, not /: with HOME_VIEW=keel the server sends / to Keel
+function pzFullHref(){ return /^https?:$/.test(location.protocol)?'/ledger.html':location.pathname; }
 
 
 

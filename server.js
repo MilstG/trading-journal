@@ -2308,6 +2308,8 @@ function createApp(opts) {
   // can only be one of the service's own domains (custom ones included), so it's trusted there unpinned.
   const publicOrigins = (opts.publicOrigins !== undefined ? opts.publicOrigins : String(process.env.PUBLIC_ORIGIN || '').split(','))
     .map(x => String(x).trim()).filter(Boolean);
+  // HOME_VIEW=keel: the site's root (/) opens Keel; the full journal stays at /ledger.html
+  const homeKeel = /^keel$/i.test(String(opts.homeView !== undefined ? opts.homeView : process.env.HOME_VIEW || '').trim());
   const hostVetted = opts.hostVetted !== undefined ? !!opts.hostVetted : !!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT);
   // Behind a proxy (Railway), rate limits need the client's address, not the proxy's: the last
   // X-Forwarded-For entry is the one the proxy added. TRUST_PROXY=1 turns this on elsewhere.
@@ -2387,7 +2389,7 @@ function createApp(opts) {
     // /keel is the same app opened in its simple dial view (the page switches on its own path);
     // /keel/ redirects so the page's relative links (help, sw.js, api/v1) resolve from the root.
     // /pulse, the view's old address, still opens it (old links, installed apps); the page shows /keel.
-    if (req.method === 'GET' && (url === '/keel/' || url === '/pulse/')) {
+    if (req.method === 'GET' && (url === '/keel/' || url === '/pulse/' || (homeKeel && url === '/'))) {
       res.writeHead(302, { Location: '/keel' + (qs ? '?' + qs : '') });
       return res.end();
     }
@@ -2457,7 +2459,8 @@ function createApp(opts) {
         "const old=()=>caches.match('/');" +
         "e.respondWith(new Promise(done=>{let sent=false;const send=r=>{if(!sent&&r){sent=true;done(r);}};" +
         "const t=setTimeout(()=>old().then(send),3000);" +
-        "net.then(r=>r.ok?(clearTimeout(t),send(r)):old().then(c=>{clearTimeout(t);send(c||r);}),()=>old().then(c=>{clearTimeout(t);send(c||Response.error());}));}));return;}" +
+        // a redirect (/ to /keel with HOME_VIEW=keel) goes to the browser as is, never the cached shell
+        "net.then(r=>r.ok||r.type==='opaqueredirect'?(clearTimeout(t),send(r)):old().then(c=>{clearTimeout(t);send(c||r);}),()=>old().then(c=>{clearTimeout(t);send(c||Response.error());}));}));return;}" +
         // the app's scripts: versioned URLs never change, so cache first; a new version replaces the old copy
         "if(u.pathname.startsWith('/app/')){e.respondWith(caches.open(C).then(c=>c.match(e.request).then(hit=>hit||fetch(e.request).then(r=>{" +
         "if(r.ok&&u.search){const cp=r.clone();c.keys().then(ks=>Promise.all(ks.filter(k=>{const x=new URL(k.url);return x.pathname===u.pathname&&x.search!==u.search}).map(k=>c.delete(k)))).then(()=>c.put(e.request,cp));}" +
@@ -2477,7 +2480,7 @@ function createApp(opts) {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
       return res.end(JSON.stringify({ id: '/', name: 'Ledger — trade journal', short_name: 'Ledger',
         description: 'Your trades rebuilt from fills, with a journal, review and diagnostics.',
-        start_url: '/', scope: '/', display: 'standalone', orientation: 'any', background_color: '#0A0C0F', theme_color: '#0A0C0F',
+        start_url: homeKeel ? '/ledger.html' : '/', scope: '/', display: 'standalone', orientation: 'any', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity'], icons: appIcons('ledger'),
         shortcuts: [{ name: 'Keel', short_name: 'Keel', url: '/keel', icons: [{ src: '/icons/pulse-192.png', sizes: '192x192', type: 'image/png' }] }] }));
     }
@@ -2488,7 +2491,7 @@ function createApp(opts) {
         description: 'Readiness, discipline and risk for your trading day.',
         start_url: '/keel', scope: '/', display: 'standalone', orientation: 'portrait', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity', 'health'], icons: appIcons('pulse'),
-        shortcuts: [{ name: 'Prep', url: '/keel#checkin' }, { name: 'Journal', url: '/keel#journal' }, { name: 'Full journal', url: '/' }] }));
+        shortcuts: [{ name: 'Prep', url: '/keel#checkin' }, { name: 'Journal', url: '/keel#journal' }, { name: 'Full journal', url: '/ledger.html' }] }));
     }
     { const m = req.method === 'GET' && /^\/icons\/(ledger|pulse)-(180|192|512|maskable-512)\.png$/.exec(url);
       if (m) return fs.readFile(path.join(__dirname, 'icons', m[1] + '-' + m[2] + '.png'), (err, buf) => {

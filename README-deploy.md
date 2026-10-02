@@ -111,6 +111,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ADMIN_2FA_RESET`      | *(unset)*                        | Escape hatch if the owner lost every second factor: set it (e.g. `1`), restart, then remove it. Clears the owner's admin passkeys, app and recovery codes and ends every admin session; each value resets once. Or run `node server.js --reset-admin-2fa` |
 | `CORS_ORIGIN`          | *(unset)*                        | Exact origin allowed to call `/api/*` from a browser app |
 | `PUBLIC_ORIGIN`        | *(unset)*                        | The address people open Keel at (e.g. `https://pulse.example.com`; comma-separate several). Wallet sign-in messages name only this site, so a look-alike site can't collect a valid signature. Not needed on Railway, whose edge only passes the service's own domains (custom ones included); set it when self-hosting |
+| `HOME_VIEW`            | *(unset = journal)*              | `keel` makes the site's root (`/`) redirect to Keel (`/keel`), for a site that's mainly Keel. The full journal stays at `/ledger.html`, and the installed journal app opens there |
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
 | `DATA_DIR`             | `/data` if present, else `./data`| Where the journal, caches, reports, and backups live |
 | `REFRESH_INTERVAL_MIN` | *(unset = off)*                  | Refresh server caches from Hyperliquid on a timer (first run ~30s after boot) |
