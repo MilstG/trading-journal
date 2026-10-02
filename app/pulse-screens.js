@@ -136,11 +136,11 @@ function pzBadgesHtml(D){
 async function pzBadgeCardImage(){
   const g=gameContext(), cat=g.catalog; if(!cat){ pzNote('Your badges couldn’t be read just now — try again in a moment.','err'); return; }
   const top=[...cat.earned].sort((a,b)=>b.r-a.r||(a.k<b.k?1:-1)).slice(0,8);
-  const blob=await drawCardPng({w:1200,minH:700,kicker:'Pulse · badge case',title:(SOC.me?'@'+SOC.me.handle:'My')+' — '+cat.earned.length+' badges',
+  const blob=await drawCardPng({w:1200,minH:700,kicker:'Keel · badge case',title:(SOC.me?'@'+SOC.me.handle:'My')+' — '+cat.earned.length+' badges',
     sub:'Level '+g.level.level+' · '+g.level.title+' · '+g.streak.current+'-day discipline streak',
     big:[['Badges',cat.earned.length+'/'+cat.total],['Level',g.level.level],['Best streak',g.streak.best]],
-    rows:top.map(b=>[b.t,PZ_TIERS[b.r],b.r>=2?'gold':null]),foot:'Pulse · earned by process, not profit'});
-  showCardOut(blob,'pulse-badges',(SOC.me?'@'+SOC.me.handle+' ':'')+'— '+cat.earned.length+' badges on Pulse, earned by process.\n'+top.slice(0,5).map(b=>'• '+b.t).join('\n'),false);
+    rows:top.map(b=>[b.t,PZ_TIERS[b.r],b.r>=2?'gold':null]),foot:'Keel · earned by process, not profit'});
+  showCardOut(blob,'keel-badges',(SOC.me?'@'+SOC.me.handle+' ':'')+'— '+cat.earned.length+' badges on Keel, earned by process.\n'+top.slice(0,5).map(b=>'• '+b.t).join('\n'),false);
 }
 // ---- setups: one spelling per setup, so the stats by setup add up ----
 function pzSetups(){ const n={}, canon={};
@@ -303,9 +303,9 @@ async function pzShareReport(){
   const g=gameContext(), kind=pzS.rk==='month'?'month':'week', keys=pzPeriods(g,kind), key=keys.includes(pzS.rkey)?pzS.rkey:keys[keys.length-1], r=pzReport(g,kind,key); if(!r)return;
   const label=kind==='week'?'week '+key:MONTHS[+key.slice(5)-1]+' '+key.slice(0,4);
   const rows=[...Object.keys(PZ_BEH).filter(k=>r.slips[k]).map(k=>[PZ_BEH[k],String(r.slips[k].n),'bad']),...r.habits.slice(0,3).map(h=>[h.name.slice(0,48),h.kept+'/'+h.total,h.kept===h.total?'good':null])].slice(0,7);
-  const blob=await drawCardPng({w:1080,minH:720,kicker:'Pulse · report card',title:label+' · grade '+r.grade,sub:'Process '+Math.round(r.avg)+'/100 · '+r.good+' of '+r.days+' days at 70+ · '+r.clean+' clean',
-    big:[['Grade',r.grade],['Process',Math.round(r.avg)],['XP',r.xp]],rows,foot:'Pulse · graded on process, not profit'});
-  showCardOut(blob,'pulse-report-'+key,'Pulse '+label+' report card: '+r.grade+' · process '+Math.round(r.avg)+'/100 · '+r.good+'/'+r.days+' good days',await shareAvailable());
+  const blob=await drawCardPng({w:1080,minH:720,kicker:'Keel · report card',title:label+' · grade '+r.grade,sub:'Process '+Math.round(r.avg)+'/100 · '+r.good+' of '+r.days+' days at 70+ · '+r.clean+' clean',
+    big:[['Grade',r.grade],['Process',Math.round(r.avg)],['XP',r.xp]],rows,foot:'Keel · graded on process, not profit'});
+  showCardOut(blob,'keel-report-'+key,'Keel '+label+' report card: '+r.grade+' · process '+Math.round(r.avg)+'/100 · '+r.good+'/'+r.days+' good days',await shareAvailable());
 }
 // ---- "Share my week": an image of your process, with no dollar amounts or P&L, on purpose ----
 // src: {from, to, days:[{key,score}], streak:{current,best}, level:{level,title}, xpByDay, badges, duel:{w,l,d}}
@@ -345,7 +345,7 @@ function pzWeekCardDraw(m, fmt, theme){
   x.fillStyle=C.bg; x.fillRect(0,0,W,H);
   const glow=x.createRadialGradient(W*0.85,H*0.08,0,W*0.85,H*0.08,W*0.7); glow.addColorStop(0,C.good+(L?'22':'2A')); glow.addColorStop(1,C.good+'00'); x.fillStyle=glow; x.fillRect(0,0,W,H);
   // the brand mark and the week
-  ring(P+22,P+24,19,7,0.72,C.good); text('Pulse',P+58,P+38,F(600,40),C.text);
+  ring(P+22,P+24,19,7,0.72,C.good); text('Keel',P+58,P+38,F(600,40),C.text);
   const md=k=>MONTHS[+k.slice(5,7)-1]+' '+(+k.slice(8));
   text('Week of '+md(m.from)+' – '+md(m.to),W-P,P+36,F(500,28),C.muted,'right',W-2*P-240);
   // Discipline, the week's average, as the big ring
@@ -406,7 +406,7 @@ async function pzWkAction(a){
   if(k==='fmt'||k==='theme'){ w[k]=v; pzRender(); await pzWkMake(); return; }
   if(k==='show'){ w.show[v]=w.show[v]===false; pzRender(); await pzWkMake(); pzRender(); return; }
   const blob=w.blob||await pzWkMake(); if(!blob){ pzNote('The image couldn’t be made in this browser.','err'); return; }
-  const name='pulse-week-'+(w.m?w.m.from:dayKey(Date.now()))+(w.fmt==='square'?'-square':'')+'.png';
+  const name='keel-week-'+(w.m?w.m.from:dayKey(Date.now()))+(w.fmt==='square'?'-square':'')+'.png';
   if(a==='dl'){ const u=URL.createObjectURL(blob), el=document.createElement('a'); el.href=u; el.download=name; document.body.appendChild(el); el.click(); el.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); return; }
   if(a==='share'){ try{ await navigator.share({files:[new File([blob],name,{type:'image/png'})],title:'My trading week'}); }
     catch(e){ if(e&&e.name!=='AbortError')pzNote('Sharing didn’t work here. Download the image instead.','err'); } return; }
@@ -498,7 +498,7 @@ function pzCoachHtml(D){
     <span class="pz-ico" style="width:52px;height:52px;background:var(--pz-tint-good);color:var(--pz-good)">${pzI('coach',26)}</span>
     <b style="font-size:18px">A coach that knows your trades</b>
     <p class="pz-sub" style="max-width:460px">Ask why a day went wrong, what to change this week, or whether a setup is worth keeping. It reads your summaries, never your keys, and runs on the league server this page comes from.</p>
-    ${socAvailable()?'<a class="pz-cta" href="#social" style="max-width:280px">Create your profile to start</a>':'<p class="pz-fine">Open Pulse from your server’s /pulse link to use it.</p>'}</section>`;
+    ${socAvailable()?'<a class="pz-cta" href="#social" style="max-width:280px">Create your profile to start</a>':'<p class="pz-fine">Open Keel from your server’s /keel link to use it.</p>'}</section>`;
   const st=COACH.status;
   if(!st)return `${back}${pzHead('Coach','Your AI coach')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
   if(!st.enabled)return `${back}${pzHead('Coach','Your AI coach')}<section class="pz-card pz-kv"><p class="pz-sub">The AI coach isn’t switched on for this server yet.${owner?' Set <code>COACH_AI=1</code> and an <code>ANTHROPIC_API_KEY</code> (or <code>OPENAI_API_KEY</code>) on the server, then restart it.':' Ask the league owner.'}</p></section>`;
@@ -705,10 +705,10 @@ function pzPushHtml(){
   const ok='serviceWorker' in navigator&&'PushManager' in window&&typeof Notification!=='undefined';
   const P=SOC.me.push, on=!!PZ_PUSH.sub, pr=P.prefs||{};
   return `<section><span class="pz-lbl" style="color:var(--pz-muted)">Reminders</span>
-    ${!ok?'<p class="pz-sub" style="margin-top:6px;font-size:13px">This browser can’t receive push reminders. On iPhone, add Pulse to your Home Screen first, then open it from there.</p>'
+    ${!ok?'<p class="pz-sub" style="margin-top:6px;font-size:13px">This browser can’t receive push reminders. On iPhone, add Keel to your Home Screen first, then open it from there.</p>'
     :`<div class="pz-toggle"><span style="flex:1"><b id="pzPushL">Remind me on this device</b><span>Morning prep, evening review, and nudges or notes from partners and mentors</span></span><button type="button" role="switch" class="pz-switch" id="pzPushOn" aria-checked="${!!on}" aria-labelledby="pzPushL"><i></i></button></div>
       ${on?`<div style="display:flex;gap:10px"><div class="pz-field" style="flex:1"><label for="pzPushAm" style="font-size:13px">Morning</label><input type="time" id="pzPushAm" value="${esc(pr.morning||'08:30')}"></div><div class="pz-field" style="flex:1"><label for="pzPushPm" style="font-size:13px">Evening</label><input type="time" id="pzPushPm" value="${esc(pr.eod||'20:30')}"></div></div>
-        <div class="pz-toggle"><span style="flex:1"><b id="pzPushTiltL">Tilt alerts while Pulse is closed</b><span>${SOC.share&&SOC.share.verify?'Read from your public fills every few minutes':'Needs verified Discipline (Sharing), so the server can read your fills'}</span></span><button type="button" role="switch" class="pz-switch" data-pz-ta="push" aria-checked="${pr.tilt!==false}" aria-labelledby="pzPushTiltL"><i></i></button></div>
+        <div class="pz-toggle"><span style="flex:1"><b id="pzPushTiltL">Tilt alerts while Keel is closed</b><span>${SOC.share&&SOC.share.verify?'Read from your public fills every few minutes':'Needs verified Discipline (Sharing), so the server can read your fills'}</span></span><button type="button" role="switch" class="pz-switch" data-pz-ta="push" aria-checked="${pr.tilt!==false}" aria-labelledby="pzPushTiltL"><i></i></button></div>
         <button type="button" class="pz-linkbtn" id="pzPushTest" style="margin-top:6px">Send a test</button>`:''}`}</section>`;
 }
 const PZ_PUSH={sub:null,checked:false};
@@ -881,7 +881,7 @@ async function pzGrowthAction(t){
       case 'pzRvCoach': await pzSaveReview(); location.hash='#coach'; await pzCoachSend('Review my day. Here are my answers from tonight’s review — what went well, the one thing to fix, and my focus for tomorrow.'); return true;
       case 'pzCoachSend': { const el=$('pzCoachIn'); const v=el?el.value:''; if(el)el.value=''; await pzCoachSend(v); return true; }
       case 'pzCoachClear': if(confirm('Clear this chat on this device?')){ COACH.msgs=[]; pzCoachSave(); pzRender(); } return true;
-      case 'pzBadgeLink': { const u=location.origin+'/b/'+SOC.me.handle; if(navigator.share)navigator.share({title:'My trading badges on Pulse',url:u}).catch(()=>{});
+      case 'pzBadgeLink': { const u=location.origin+'/b/'+SOC.me.handle; if(navigator.share)navigator.share({title:'My trading badges on Keel',url:u}).catch(()=>{});
         else try{ await navigator.clipboard.writeText(u); pzNote('Link copied: '+u); }catch(e){ pzNote(u); } return true; }
       case 'pzBadgeImg': await pzBadgeCardImage(); return true;
       case 'pzReportShare': await pzShareReport(); return true;

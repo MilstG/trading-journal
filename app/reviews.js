@@ -92,15 +92,15 @@ async function mrAction(t){ const ds=t.dataset;
 async function mrJournalLoad(id, fresh){
   const box=document.getElementById('mrev-'+id); if(!box)return;
   if(!SOC.me||pzS.demo){ box.innerHTML=''; return; }
-  if(!SOC.share||!SOC.share.mentor){ box.innerHTML='<label>Mentor review</label><p class="mini-note">To ask a mentor about this trade, switch on “Let mentors see my days” in Pulse → Profile &amp; privacy.</p>'; return; }
+  if(!SOC.share||!SOC.share.mentor){ box.innerHTML='<label>Mentor review</label><p class="mini-note">To ask a mentor about this trade, switch on “Let mentors see my days” in Keel → Profile &amp; privacy.</p>'; return; }
   let L=SOC.cache.reviews; try{ if(fresh||!L||!L.d||Date.now()-L.at>30000){ L=SOC.cache.reviews={at:Date.now(),d:await socFetch('/reviews'),err:null}; } }catch(e){ box.innerHTML=''; return; }
   const r=L.d.mine.find(x=>x.key===mrTradeKey(id));
-  if(!r){ box.innerHTML=`<label>Mentor review</label><p class="mini-note">${L.d.mentors?'Send this trade to the league’s mentors with your note and plan: its % and R and a size range'+(SOC.share.usd?' and dollar result':'')+'. They comment here and in Pulse.':'There are no mentors on this server yet.'}</p>${L.d.mentors?`<button class="btn ghost" data-mr-share="${esc(id)}">Ask my mentor to review this trade</button>`:''}`; return; }
+  if(!r){ box.innerHTML=`<label>Mentor review</label><p class="mini-note">${L.d.mentors?'Send this trade to the league’s mentors with your note and plan: its % and R and a size range'+(SOC.share.usd?' and dollar result':'')+'. They comment here and in Keel.':'There are no mentors on this server yet.'}</p>${L.d.mentors?`<button class="btn ghost" data-mr-share="${esc(id)}">Ask my mentor to review this trade</button>`:''}`; return; }
   let d=SOC.cache['tr:'+r.id]; try{ if(fresh||!d||!d.d){ d=SOC.cache['tr:'+r.id]={at:Date.now(),d:await socFetch('/reviews/'+r.id),err:null}; } }catch(e){ box.innerHTML=''; return; }
   const T=d.d, rv=T.review;
   box.innerHTML=`<label>Mentor review ${rv.reviewed?`<span class="badge ok">Reviewed${rv.reviewed.by?' by @'+esc(rv.reviewed.by):''} ✓</span>`:''}</label>
     <div class="mr-thread">${T.comments.map(x=>`<p><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor?' <span class="badge mid">mentor</span>':''} <span class="mini-note">${socAgo(x.at)}</span><br>${esc(x.text)}</p>`).join('')||'<p class="mini-note">Sent. No comments yet.</p>'}</div>
     <textarea data-mr-text rows="2" maxlength="1000" placeholder="Reply to your mentor" aria-label="Reply to your mentor"></textarea>
-    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn ghost" data-mr-send="${esc(r.id)}">Send reply</button><button class="btn ghost" data-mr-share="${esc(id)}" data-tip="Sends the trade’s summary again with your latest note and plan">Update the summary</button><a class="btn ghost" href="/pulse#tr/${esc(r.id)}">Open in Pulse</a></div>`;
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn ghost" data-mr-send="${esc(r.id)}">Send reply</button><button class="btn ghost" data-mr-share="${esc(id)}" data-tip="Sends the trade’s summary again with your latest note and plan">Update the summary</button><a class="btn ghost" href="/keel#tr/${esc(r.id)}">Open in Keel</a></div>`;
 }
 document.addEventListener('click',e=>{ if(PZ)return; const b=e.target.closest&&e.target.closest('[data-mr-box] button'); if(b){ e.stopPropagation(); mrAction(b); } },true);

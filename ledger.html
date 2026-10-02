@@ -1478,13 +1478,15 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   var ic=document.querySelector('link[rel="apple-touch-icon"]'); if(ic)ic.setAttribute('href','/icons/ledger-180.png');
 }catch(e){} })();
 </script>
-<script>/* Pulse view: /pulse (or ?pulse when opened from disk) switches to the simple dial view before
-   first paint, and points the install metadata at Pulse so "Add to Home Screen" installs Pulse. */
+<script>/* Keel view: /keel (or ?keel when opened from disk) switches to the simple dial view before
+   first paint, and points the install metadata at Keel so "Add to Home Screen" installs Keel.
+   Its old address, /pulse (or ?pulse), still works and shows as /keel. */
 (function(){ try{
-  if(!(/\/pulse\/?$/.test(location.pathname)||/[?&]pulse(?:[=&]|$)/.test(location.search)))return;
-  document.body.classList.add('pz-mode'); document.title='Pulse — Ledger';
+  if(!(/\/(keel|pulse)\/?$/.test(location.pathname)||/[?&](keel|pulse)(?:[=&]|$)/.test(location.search)))return;
+  if(/\/pulse\/?$/.test(location.pathname)&&history.replaceState)history.replaceState(history.state,'',location.pathname.replace(/pulse\/?$/,'keel')+location.search+location.hash);
+  document.body.classList.add('pz-mode'); document.title='Keel — Ledger';
   var m=function(n,v){ var el=document.querySelector('meta[name="'+n+'"]'); if(el)el.setAttribute('content',v); };
-  m('theme-color','#0A0C0F'); m('apple-mobile-web-app-title','Pulse');
+  m('theme-color','#0A0C0F'); m('apple-mobile-web-app-title','Keel');
   var ic=document.querySelector('link[rel="apple-touch-icon"]'); if(ic)ic.setAttribute('href',"data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='38'%20fill='%230A0C0F'/%3E%3Ccircle%20cx='90'%20cy='90'%20r='52'%20fill='none'%20stroke='%23232830'%20stroke-width='18'/%3E%3Cpath%20d='M90%2038a52%2052%200%201%201-49.5%2036'%20fill='none'%20stroke='%233FE0A0'%20stroke-width='18'%20stroke-linecap='round'/%3E%3C/svg%3E");
   if(/^https?:$/.test(location.protocol)){ var l=document.querySelector('link[rel="manifest"]'); if(l)l.setAttribute('href','/pulse.webmanifest');
     if(ic)ic.setAttribute('href','/icons/pulse-180.png'); }
@@ -1506,7 +1508,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
       <button class="btn ghost" id="walletsBtn">Wallets ▾</button>
       <button class="btn primary" id="loadAll" data-tip="Load / refresh every wallet and exchange. Fills are cached locally, so a refresh only fetches what's new since last time. Shift-click to force a full re-fetch.">Load all</button>
     </div>
-    <nav class="side-links" aria-label="More"><a href="pulse">Pulse view</a><a href="admin" target="_blank" rel="noopener">Admin</a><a href="help" target="_blank" rel="noopener">User guide</a></nav>
+    <nav class="side-links" aria-label="More"><a href="keel">Keel view</a><a href="admin" target="_blank" rel="noopener">Admin</a><a href="help" target="_blank" rel="noopener">User guide</a></nav>
   </header>
   <div class="main">
   <div id="setupPanel" class="setup hide">
@@ -1565,7 +1567,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
         <button class="gear" id="gearBtn" data-tip="Clock, colors, R-multiple basis, break-even band and coach mode">⚙ <span>Settings</span></button>
         <div class="settings-pop hide" id="settingsPop">
           <div class="sp-row"><label>Clock</label><button class="gear" id="tzBtn" data-tip="Timezone for all time-of-day analysis — the day×hour heatmap, hour/weekday bars, the miner's session buckets, the daily calendar, and displayed timestamps. Switch between your local time and UTC; everything updates together.">🕓 Local</button></div>
-          <div class="sp-row"><label>Appearance</label><button class="gear" id="appearBtn" data-tip="Auto follows your device's light/dark setting; or pick Dark or Light. Click to cycle Auto → Dark → Light. Pulse follows it too.">◐ Auto</button></div>
+          <div class="sp-row"><label>Appearance</label><button class="gear" id="appearBtn" data-tip="Auto follows your device's light/dark setting; or pick Dark or Light. Click to cycle Auto → Dark → Light. Keel follows it too.">◐ Auto</button></div>
           <div class="sp-row"><label>Colors</label><button class="gear" id="themeBtn" data-tip="Toggle colorway: INK (midnight terminal) ⇄ BB (black &amp; amber, Bloomberg-style). Charts re-theme too. A dark-mode choice.">◧ INK</button></div>
           <div class="sp-row"><label>1R basis</label>
             <select id="rBasis"><option value="avgloss">Avg loss (auto)</option><option value="fixed">Fixed $</option></select>
@@ -1713,8 +1715,8 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 
 <footer id="appfoot" class="appfoot hide">
   <span class="af-name">Ledger</span>
-  <a href="pulse" data-tip="The simple, gamified view: readiness, discipline and risk dials. Installable on its own and shareable — each visitor adds their own wallet.">Pulse view</a>
-  <a href="admin" target="_blank" rel="noopener" data-tip="The owner’s panel for Pulse’s league: members, competitions, unlock levels. Sign in with your access token.">Admin</a>
+  <a href="keel" data-tip="The simple, gamified view: readiness, discipline and risk dials. Installable on its own and shareable — each visitor adds their own wallet.">Keel view</a>
+  <a href="admin" target="_blank" rel="noopener" data-tip="The owner’s panel for Keel’s league: members, competitions, unlock levels. Sign in with your access token.">Admin</a>
   <a href="help" target="_blank" rel="noopener">User guide</a>
   <a href="docs" target="_blank" rel="noopener">Technical docs</a>
   <a href="api/v1" target="_blank" rel="noopener">API</a>

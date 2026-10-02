@@ -5,7 +5,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
-<title>Pulse admin</title>
+<title>Keel admin</title>
 <style>
 :root{--bg:#090B0E;--side:#0D1014;--card:#12161B;--card2:#0E1216;--hover:#171C22;--line:#1E242C;--line2:#2A313A;--text:#EEF1F4;--muted:#8D97A3;--soft:#C9D1D9;--good:#3FE0A0;--mid:#F4C04E;--low:#FF7A59;--risk:#5AA9FF;--xp:#B69CFF;--r:12px}
 *{box-sizing:border-box}
@@ -213,16 +213,16 @@ details>summary{list-style-position:inside}
 <body>
 <div class="shell">
   <aside class="side" id="side">
-    <div class="brand"><span class="logo" aria-hidden="true">P</span><div><b>Pulse</b><small>Admin</small></div></div>
+    <div class="brand"><span class="logo" aria-hidden="true">K</span><div><b>Keel</b><small>Admin</small></div></div>
     <nav class="tabs" id="tabs" aria-label="Admin sections"></nav>
-    <div class="links"><a href="/pulse">Open Pulse ↗</a><a href="/">Full journal ↗</a></div>
+    <div class="links"><a href="/keel">Open Keel ↗</a><a href="/">Full journal ↗</a></div>
     <div class="me"><span id="whoami"></span><span class="row fit" style="gap:6px;flex-wrap:nowrap"><button id="signout" class="hide sm fit">Sign out</button><button class="sm fit menu" id="menuBtn" aria-expanded="false" aria-controls="tabs">Menu</button></span></div>
   </aside>
   <main>
     <section class="card" id="login">
-      <div class="brand" style="padding:0 0 16px"><span class="logo" aria-hidden="true">P</span><div><b>Pulse</b><small>Admin</small></div></div>
+      <div class="brand" style="padding:0 0 16px"><span class="logo" aria-hidden="true">K</span><div><b>Keel</b><small>Admin</small></div></div>
       <h1 style="margin-bottom:6px">Sign in</h1>
-      <p class="muted" style="margin:0">An admin the owner added: open the sign-in link they sent you, or enter its code. The same works for any admin already signed in to Pulse on this device.</p>
+      <p class="muted" style="margin:0">An admin the owner added: open the sign-in link they sent you, or enter its code. The same works for any admin already signed in to Keel on this device.</p>
       <div class="row" style="margin-top:12px"><input id="acode" autocomplete="one-time-code" placeholder="sign-in code" aria-label="Admin sign-in code" style="text-transform:uppercase"><button class="primary fit" id="ago">Sign in</button></div>
       <p class="muted" style="margin:20px 0 0;padding-top:16px;border-top:1px solid var(--line)">The owner: use the access token set as <code>AUTH_TOKEN</code> on the server. It’s remembered in this browser.</p>
       <div class="row" style="margin-top:12px"><input type="password" id="tok" autocomplete="current-password" placeholder="access token" aria-label="Access token"><button class="fit" id="go">Sign in as owner</button></div>
@@ -262,18 +262,18 @@ details>summary{list-style-position:inside}
     insights:['Insights','Every member’s process and results, the whole league at once, or any segment of it. Segments use the “Traders like you” groups (style, trade size, experience, activity). Members are told in Profile & privacy that you can see their stats.'],
     members:['Members','Everyone in the league, and the admins who help you run it.'],
     wallets:['Wallets','Which wallets count for returns, verified Discipline and return competitions, and which member each belongs to.'],
-    bench:['Benchmarks','“Traders like you”: members compare their last 90 days with anonymous traders of the same style, trade size and experience, in Pulse and the journal’s Review. Only group spreads leave the server.'],
+    bench:['Benchmarks','“Traders like you”: members compare their last 90 days with anonymous traders of the same style, trade size and experience, in Keel and the journal’s Review. Only group spreads leave the server.'],
     duels:['Duels','Members challenge each other for a week or a month, 1 on 1 or in groups, scored by the server from verified fills and synced days. Money is never staked.'],
     leagues:['Leagues','Each league ranks its members on its own metric. Members can be in several at once, and find listed ones by name or number.'],
     competitions:['Competitions','Contests with a start and an end: Discipline, survival, journaling or verified return.'],
     badges:['Reward badges','Your own badges for this league, on top of the app’s built-in catalog of ~280. They show on members’ badge pages and pay the XP you set.'],
     levels:['Levels & XP','Where the levels fall, what each is called, and what members earn XP for.'],
-    features:['Features','Which Pulse features open at which level.'],
+    features:['Features','Which Keel features open at which level.'],
     coach:['Coach','How much members can ask the AI coach, and what it may see.'],
     routines:['Routines','The morning prep and end-of-day questions members answer, by how they trade.'],
     feed:['Feed & reports','Reported posts, announcements to everyone, and what members can post.'],
     settings:['Settings','Joining, wallets, sync, and the security of this panel.']};
-  // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Pulse member key
+  // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Keel member key
   let tok=''; try{ tok=localStorage.getItem('srv_token')||''; }catch(e){}
   let mkey=''; try{ mkey=localStorage.getItem('pz_social_key')||''; }catch(e){}
   let ME={owner:false,name:''};
@@ -299,7 +299,7 @@ details>summary{list-style-position:inside}
   const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
   const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
   const UI={msel:new Set(),ins:{f:{},by:'style',sort:'disc30',metric:'disc30'},tab:'overview',member:null,q:'',filter:'all',wq:'',wfilter:'pending',wsel:new Set(),leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
-  const linkFor=code=>location.origin+'/pulse#link='+encodeURIComponent(code);
+  const linkFor=code=>location.origin+'/keel#link='+encodeURIComponent(code);
   const adminLinkFor=code=>location.origin+'/admin#code='+encodeURIComponent(code);
   const leagueName=id=>{ const L=D.leagues.find(x=>x.id===id); return L?L.name:id; };
   // level n starts at base·n·(n−1) XP, or at a table entry — mirrors social-config.js levelStart
@@ -485,8 +485,8 @@ details>summary{list-style-position:inside}
       <div class="fit row" style="align-items:center"><button class="sm fit" data-copy="${esc(link)}">Copy link</button><button class="sm fit" data-copy="${esc(c.code)}">Copy code</button><button class="sm fit" id="codeDone">Done</button></div></div>
       <div class="small" style="margin-top:6px">${esc(link)}</div><div class="small muted" style="margin-top:4px">Shown once. You can make a new one any time from their page.</div></div>`; };
   // ---------------- admins ----------------
-  // Admins are members the owner trusts with this panel. They sign in with their own Pulse
-  // profile (a link from here, or Pulse on a device they already use) — never the access token,
+  // Admins are members the owner trusts with this panel. They sign in with their own Keel
+  // profile (a link from here, or Keel on a device they already use) — never the access token,
   // so the owner's journal and the server stay the owner's. Only the owner adds or removes them.
   // "POST members/<id> · grant" -> "gave XP to @sam"
   const ACT_WORDS={grant:'gave XP to',ungrant:'undid XP for',ban:'suspended',unban:'restored',remove:'deleted',edit:'edited',admin:'made an admin:',unadmin:'removed as admin:',
@@ -526,7 +526,7 @@ details>summary{list-style-position:inside}
         <fieldset style="border:0;padding:0;margin:0"><legend style="font-size:13px;font-weight:600;margin:10px 0 6px">Leagues</legend><div class="chk">${D.leagues.map(L=>`<label><input type="checkbox" name="nmLeague" value="${esc(L.id)}" id="nmL_${esc(L.id)}"${L.autoJoin?' checked':''}>${esc(L.name)}</label>`).join('')}</div></fieldset>
         ${box('nmUnlocked','Fully unlocked — every feature and the bigger coach allowance from day one',false)}
         <div style="margin-top:10px"><button class="primary" id="nmCreate">Create and get a sign-in code</button></div>
-        <p class="hint">They open the link, or paste the code in Pulse → Social → Account → “Link a device”. It works once, within 7 days.</p>
+        <p class="hint">They open the link, or paste the code in Keel → Social → Account → “Link a device”. It works once, within 7 days.</p>
       </section>`:''}
       ${UI.code&&!UI.code.admin&&!UI.member?codeBox(UI.code):''}
       <section class="card"><div class="ch"><h2>Members <span class="sub2">· ${D.members.length}</span></h2></div>
@@ -562,7 +562,7 @@ details>summary{list-style-position:inside}
         <td class="hide-sm n nw">${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td>
         <td class="hide-sm n nw">${m.money?`<span style="color:${m.money.ret>=0?'var(--good)':'var(--low)'}">${(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)}%</span><div class="muted small">DD ${(m.money.dd*100).toFixed(1)}%</div>`:'<span class="muted">—</span>'}</td>
         <td class="small n nw">${esc(ago(m.lastSeen))}</td></tr>`).join('')
-        ||`<tr><td colspan="9" class="muted">${D.members.length?(UI.q||UI.filter!=='all'?'Nobody matches.':''):'No members yet. Add one above, or share your /pulse link and people join from the Social tab.'}</td></tr>`}`;
+        ||`<tr><td colspan="9" class="muted">${D.members.length?(UI.q||UI.filter!=='all'?'Nobody matches.':''):'No members yet. Add one above, or share your /keel link and people join from the Social tab.'}</td></tr>`}`;
   }
   function vMember(m){
     const grants=(m.grants||[]).slice().reverse(), grantSum=grants.reduce((a,g)=>a+g.xp,0);
@@ -601,7 +601,7 @@ details>summary{list-style-position:inside}
       <section class="card"><h2>Access</h2>
         ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature regardless of level, and the unlocked coach allowance.')}
         ${box('mMentor','Mentor',m.mentor,'Sees the days of members who let mentors in (scores, slips, nightly lesson) and can leave them notes.')}
-        ${ME.owner?box('mAdmin','Admin',m.admin,'Can use this admin panel with their own profile (everything except adding or removing admins). Send them the link from “New sign-in code”, or they open /admin on a device where they use Pulse.'):m.admin?'<p class="muted small">Admin — only the owner changes that.</p>':''}
+        ${ME.owner?box('mAdmin','Admin',m.admin,'Can use this admin panel with their own profile (everything except adding or removing admins). Send them the link from “New sign-in code”, or they open /admin on a device where they use Keel.'):m.admin?'<p class="muted small">Admin — only the owner changes that.</p>':''}
         ${m.admin?'<p class="muted small">Admins ask the coach without a limit.</p>':field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
         <div class="row" style="align-items:center;margin-top:6px"><span class="small">Coach today: <b>${m.coachUsed}</b>${m.coachLimit!=null?' of '+m.coachLimit:' (no limit)'}${m.address?' · shared with every profile on this wallet':''}</span>${m.coachUsed?`<button class="sm fit" data-m="coachreset">Reset today’s count</button>`:''}</div>
         <div class="actions"><button class="primary" data-m="access">Save access</button></div>
@@ -731,7 +731,7 @@ details>summary{list-style-position:inside}
       <div class="${c.mode==='table'?'':'hide'}">${field('lvTable','XP to reach level 2, 3, 4, …',`<textarea id="lvTable" rows="3" placeholder="300, 800, 1500, 2500, 4000">${esc((c.thresholds||[]).join(', '))}</textarea>`,'Ascending, separated by commas. The last one is the top level.'+(empty?' Until you add some, the curve stays in place.':''))}</div>
       ${field('lvTitles','Level titles, one per line',`<textarea id="lvTitles" rows="6">${esc(c.titles.join('\n'))}</textarea>`,'Up to 30 characters each. Levels past the last title keep it.')}
       <div class="actions"><button class="fit" id="lvPreview">Preview</button><button class="primary fit" id="lvSave">Save levels</button></div>
-      <p class="hint">Nobody loses XP — only where the levels fall changes. Members’ apps pick it up when they next open Pulse.</p></section>
+      <p class="hint">Nobody loses XP — only where the levels fall changes. Members’ apps pick it up when they next open Keel.</p></section>
       <section class="card"><h2>Preview${UI.levelDraft?' <span class="pill">not saved</span>':''}</h2><div class="scroll"><table class="lvtbl"><thead><tr><th>Level</th><th>Starts at</th><th>Title</th><th>Members</th></tr></thead><tbody>
         ${rows.map(([n,s,t])=>{ const k=D.members.filter(m=>!m.banned&&m.xp>=s&&m.xp<levelStart(pc,n+1)).length; return `<tr><td>${n}</td><td>${fmt(s)} XP</td><td>${esc(t)}</td><td class="muted">${k||''}</td></tr>`; }).join('')}
       </tbody></table></div></section></div>
@@ -749,7 +749,7 @@ details>summary{list-style-position:inside}
   function vFeatures(){
     const c=D.ov.config, mods=D.ov.meta.modules;
     return `<section class="card"><h2>Unlock features by level</h2>
-      ${box('fOn','Unlock Pulse features with levels',c.unlocksOn,'Off: every member gets every feature. Fully unlocked members, and you, always do.')}
+      ${box('fOn','Unlock Keel features with levels',c.unlocksOn,'Off: every member gets every feature. Fully unlocked members, and you, always do.')}
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">${Object.entries(mods).map(([k,l])=>field('mod_'+k,l,`<input id="mod_${k}" type="number" min="1" max="100" value="${c.modules[k]}">`,c.modules[k]<=1?'Everyone':'From level '+c.modules[k])).join('')}</div>
       <div class="actions"><button class="primary" id="fSave">Save</button></div>
       <p class="hint">Members see a lock with the level it opens at. The server enforces it for competitions and the coach too.</p></section>`;
@@ -782,7 +782,7 @@ details>summary{list-style-position:inside}
         ${field('ro_'+k+'_m','Morning prep',`<textarea id="ro_${k}_m" rows="3" placeholder="${esc(r.morning.join('\n'))}">${esc(((ov[k]||{}).morning||[]).join('\n'))}</textarea>`)}
         ${field('ro_'+k+'_e','End-of-day review',`<textarea id="ro_${k}_e" rows="4" placeholder="${esc(r.eod.join('\n'))}">${esc(((ov[k]||{}).eod||[]).join('\n'))}</textarea>`)}</div></div>`).join('')}</div></section>
       <section class="card"><div class="ch"><h2>Your own profiles</h2><button class="fit" id="rAdd"${custom.length>=12?' disabled':''}>Add profile</button></div>
-        <p class="hint">For example “Funded-account trader”, built on Day trader, with questions about the daily loss rule. Members pick them in Pulse → Prep.</p>
+        <p class="hint">For example “Funded-account trader”, built on Day trader, with questions about the daily loss rule. Members pick them in Keel → Prep.</p>
         <div class="stack" style="gap:12px;margin-top:10px">${custom.map((c,i)=>{ const base=ROUTINES[c.base]?c.base:'day'; return `<div class="sub"><div class="row">${field('rc_'+i+'_n','Name',`<input id="rc_${i}_n" maxlength="40" value="${esc(c.name)}">`)}${field('rc_'+i+'_b','Based on',sel('rc_'+i+'_b',Object.entries(ROUTINES).map(([k,r])=>[k,r.name]),base))}</div>
           ${field('rc_'+i+'_d','Who it’s for',`<input id="rc_${i}_d" maxlength="200" value="${esc(c.desc||'')}">`)}
           <div class="two" style="gap:12px">${field('rc_'+i+'_m','Morning questions',`<textarea id="rc_${i}_m" rows="3" placeholder="${esc(ROUTINES[base].morning.join('\n'))}">${esc((c.morning||[]).join('\n'))}</textarea>`)}
@@ -881,7 +881,7 @@ details>summary{list-style-position:inside}
         ['Members switched off',fmt(B.optedOut),fmt(B.withSummary)+' members have a summary'],['Groups built',ago(B.at),'daily, and when settings change']])}
       <div class="two">
       <section class="card"><h2>Settings</h2>
-        ${box('bOn','Show “Traders like you”',c.on,'Off hides it in Pulse and the journal. Summaries keep arriving.')}
+        ${box('bOn','Show “Traders like you”',c.on,'Off hides it in Keel and the journal. Summaries keep arriving.')}
         ${box('bSeeds','Count seed wallets',c.seeds,'Seed wallets fill the groups while your server is small. They have no journal, so “trades journaled” only uses members.')}
         <div class="row">${field('bMin','Smallest group','<input id="bMin" type="number" min="10" max="1000" value="'+c.min+'">','Fewer traders and it isn’t shown, so nobody can be picked out. 25+ is safest; never under 10.')}
           ${field('bSplit','Split groups from','<input id="bSplit" type="number" min="0" max="100000" value="'+c.splitAt+'">','Below this many contributors, people are compared with everyone and their own style only.')}</div>
@@ -937,7 +937,7 @@ details>summary{list-style-position:inside}
           <p class="hint">Cancelling ends a duel without a result: nobody wins, loses or gets XP, and both are told.</p>`:'<h2>Running and waiting</h2><p class="muted" style="margin:0">No duels running or waiting.</p>'}</section>
       <div class="two">
       <section class="card"><h2>Settings</h2>
-        ${box('dOn','Duels are on',c.on,'Off hides duels in Pulse and stops new challenges. Duels already running finish.')}
+        ${box('dOn','Duels are on',c.on,'Off hides duels in Keel and stops new challenges. Duels already running finish.')}
         <p class="muted small" style="margin:6px 0 4px">What members can compete on</p>
         ${Object.keys(T).map(t=>box('dT_'+t,T[t].label,c.types[t],esc(T[t].rule)+(t==='ret'?' Both sides must share % return; a drawdown cap is required. It rewards risk-taking, so it’s off unless you switch it on.':''))).join('')}
         <div class="row">${field('dXp','XP for the winner','<input id="dXp" type="number" min="0" max="10000" step="10" value="'+c.xp+'">','The same for every duel, and only for one played to the end (not a forfeit), so it can’t be farmed. 0 for none.')}
@@ -979,7 +979,7 @@ details>summary{list-style-position:inside}
       <div class="scroll"><table><thead><tr><th style="width:34px"></th><th>Wallet and member</th><th>Status</th></tr></thead><tbody id="wRows">${walletRows()}</tbody></table></div><div id="wPager">${walletPg().html}</div></section>
     <div class="two">
       <section class="card"><h2>Wallet approval</h2>
-      ${box('wOn','Wallets need my approval',W.approveWallets,'A member’s wallet counts for returns, verified Discipline and return competitions only once you approve it. Members can still join and use Pulse; they see that their wallet is waiting. Decisions follow the address, so a rejected wallet stays rejected under a new profile. Wallets you attach to a member yourself count as approved.')}
+      ${box('wOn','Wallets need my approval',W.approveWallets,'A member’s wallet counts for returns, verified Discipline and return competitions only once you approve it. Members can still join and use Keel; they see that their wallet is waiting. Decisions follow the address, so a rejected wallet stays rejected under a new profile. Wallets you attach to a member yourself count as approved.')}
       ${!W.approveWallets?'<p class="hint">Switching it on approves the wallets already in use (marked “already in use”), so nobody’s numbers vanish. You can still reject any of them.</p>':''}
       <div class="actions"><button class="primary" id="wSave">Save</button></div></section>
       <section class="card"><h2>Map a wallet to a member</h2>
@@ -1146,7 +1146,7 @@ details>summary{list-style-position:inside}
     // levels & xp
     if(id==='lvPreview'){ UI.levelDraft=levelDraft(); return render(); }
     if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
-    if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Pulse.'); }
+    if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Keel.'); }
     // features
     if(id==='fSave') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_')}),'Saved.');
     // coach
@@ -1177,7 +1177,7 @@ details>summary{list-style-position:inside}
     if(D.ov){ render(); window.scrollTo(0,0); } });
 
   // an admin's sign-in link (/admin#code=…) or typed code: a one-time member code; the key it
-  // returns is this browser's Pulse sign-in too (same site), so Pulse opens signed in as well
+  // returns is this browser's Keel sign-in too (same site), so Keel opens signed in as well
   async function redeem(code){
     code=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,''); if(!code)return false;
     const r=await fetch('/api/social/link/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
@@ -1192,7 +1192,7 @@ details>summary{list-style-position:inside}
     try{ route(); await load(); }
     catch(e){ $('login').classList.remove('hide'); $('app').classList.add('hide');
       const el=$('loginErr'); el.classList.remove('hide');
-      el.textContent=e.status===401?(tok?'That token isn’t right.':'This browser is signed in to Pulse, but that profile isn’t an admin. Ask the owner for an admin link.'):e.status===403?e.message:'Couldn’t reach the admin API ('+e.message+').'; }
+      el.textContent=e.status===401?(tok?'That token isn’t right.':'This browser is signed in to Keel, but that profile isn’t an admin. Ask the owner for an admin link.'):e.status===403?e.message:'Couldn’t reach the admin API ('+e.message+').'; }
   }
   $('go').onclick=()=>{ tok=$('tok').value.trim(); try{ localStorage.setItem('srv_token',tok); }catch(e){} start(); };
   $('tok').addEventListener('keydown',e=>{ if(e.key==='Enter')$('go').click(); });
@@ -1200,7 +1200,7 @@ details>summary{list-style-position:inside}
   $('ago').onclick=async()=>{ if(await redeem($('acode').value)){ tok=''; try{ localStorage.removeItem('srv_token'); }catch(e){} start(); } };
   $('acode').addEventListener('keydown',e=>{ if(e.key==='Enter')$('ago').click(); });
   $('signout').onclick=()=>{ try{ localStorage.removeItem('srv_token'); }catch(e){}
-    if(!ME.owner&&mkey){ if(!confirm('Sign out? This also signs this browser out of Pulse.'))return; try{ localStorage.removeItem('pz_social_key'); }catch(e){} }
+    if(!ME.owner&&mkey){ if(!confirm('Sign out? This also signs this browser out of Keel.'))return; try{ localStorage.removeItem('pz_social_key'); }catch(e){} }
     location.reload(); };
   start();
 })();

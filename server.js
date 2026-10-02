@@ -401,7 +401,7 @@ function sanitizeCoachFacts(f) {
 // execution, habits, today's routine) and, only if the member switched it on, their recent trades
 // and notes. Wallet addresses are scrubbed from both. Nothing is stored on the server.
 const COACH_CHAT_SYSTEM = [
-  'You are the coach inside Pulse, a trading journal. You talk with one trader about their own trading,',
+  'You are the coach inside Keel, a trading journal. You talk with one trader about their own trading,',
   'using the data their journal app attached (JSON). Their process scores are explained below; profit is',
   'never part of a process score.',
   '',
@@ -2384,13 +2384,14 @@ function createApp(opts) {
     if (cexRelay.relayOnly && url !== '/api/health') return json(res, 404, { error: 'this server is an exchange relay only' });
 
     // --- static: the app itself ---
-    // /pulse is the same app opened in its simple dial view (the page switches on its own path);
-    // /pulse/ redirects so the page's relative links (help, sw.js, api/v1) resolve from the root.
-    if (req.method === 'GET' && url === '/pulse/') {
-      res.writeHead(302, { Location: '/pulse' + (qs ? '?' + qs : '') });
+    // /keel is the same app opened in its simple dial view (the page switches on its own path);
+    // /keel/ redirects so the page's relative links (help, sw.js, api/v1) resolve from the root.
+    // /pulse, the view's old address, still opens it (old links, installed apps); the page shows /keel.
+    if (req.method === 'GET' && (url === '/keel/' || url === '/pulse/')) {
+      res.writeHead(302, { Location: '/keel' + (qs ? '?' + qs : '') });
       return res.end();
     }
-    if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/pulse')) {
+    if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/keel' || url === '/pulse')) {
       // the page is ~0.3 MB (its code is in app/*.js, below): sent gzipped, and a browser that already has this
       // version gets a 304 instead of the whole file on every open
       const shell = appShell();
@@ -2444,9 +2445,9 @@ function createApp(opts) {
       // deploy shows on the very next open; offline, or with no answer within 3 s, the cached copy opens
       // instead. API and exchange calls are never intercepted.
       return res.end(
-        // Only the app shell is cached: '/' and '/pulse' serve the same file, so either one
+        // Only the app shell is cached: '/', '/keel' and '/pulse' serve the same file, so any one
         // refreshes the copy; other pages (help, docs) pass through and never overwrite it.
-        "const C='ledger-v5',S=['/','/index.html','/ledger.html','/pulse'];" +
+        "const C='ledger-v5',S=['/','/index.html','/ledger.html','/keel','/pulse'];" +
         "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.add('/')))});" +
         "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>clients.claim()))});" +
         "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);" +
@@ -2461,13 +2462,13 @@ function createApp(opts) {
         "if(u.pathname.startsWith('/app/')){e.respondWith(caches.open(C).then(c=>c.match(e.request).then(hit=>hit||fetch(e.request).then(r=>{" +
         "if(r.ok&&u.search){const cp=r.clone();c.keys().then(ks=>Promise.all(ks.filter(k=>{const x=new URL(k.url);return x.pathname===u.pathname&&x.search!==u.search}).map(k=>c.delete(k)))).then(()=>c.put(e.request,cp));}" +
         "return r;}))));}});" +
-        // reminders, nudges and mentor notes arrive as web push; a tap opens (or focuses) Pulse there
+        // reminders, nudges and mentor notes arrive as web push; a tap opens (or focuses) Keel there
         "self.addEventListener('push',e=>{let d={};try{d=e.data?e.data.json():{}}catch(x){d={body:e.data&&e.data.text()}}" +
-        "e.waitUntil(self.registration.showNotification(d.title||'Pulse',{body:d.body||'',tag:d.tag||'pulse',data:{url:d.url||'/pulse'},icon:'/icons/pulse-192.png',badge:'/pulse-icon.svg'}))});" +
-        "self.addEventListener('notificationclick',e=>{e.notification.close();const u=new URL((e.notification.data&&e.notification.data.url)||'/pulse',location.origin).href;" +
+        "e.waitUntil(self.registration.showNotification(d.title||'Keel',{body:d.body||'',tag:d.tag||'pulse',data:{url:d.url||'/keel'},icon:'/icons/pulse-192.png',badge:'/pulse-icon.svg'}))});" +
+        "self.addEventListener('notificationclick',e=>{e.notification.close();const u=new URL((e.notification.data&&e.notification.data.url)||'/keel',location.origin).href;" +
         "e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(l=>{for(const c of l){if(c.url.split('#')[0]===u.split('#')[0]&&'focus' in c){c.navigate(u).catch(()=>{});return c.focus();}}return clients.openWindow(u);}))});");
     }
-    // Two installable apps from one origin: the journal (/) and Pulse (/pulse), each with PNG icons
+    // Two installable apps from one origin: the journal (/) and Keel (/keel), each with PNG icons
     // (192 / 512, and a maskable 512 for Android's shapes) so phones install them as real apps.
     const appIcons = n => [{ src: '/icons/' + n + '-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/icons/' + n + '-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
@@ -2478,15 +2479,16 @@ function createApp(opts) {
         description: 'Your trades rebuilt from fills, with a journal, review and diagnostics.',
         start_url: '/', scope: '/', display: 'standalone', orientation: 'any', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity'], icons: appIcons('ledger'),
-        shortcuts: [{ name: 'Pulse', short_name: 'Pulse', url: '/pulse', icons: [{ src: '/icons/pulse-192.png', sizes: '192x192', type: 'image/png' }] }] }));
+        shortcuts: [{ name: 'Keel', short_name: 'Keel', url: '/keel', icons: [{ src: '/icons/pulse-192.png', sizes: '192x192', type: 'image/png' }] }] }));
     }
+    // the id keeps the view's old name so phones that installed it as Pulse update in place to Keel
     if (req.method === 'GET' && url === '/pulse.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
-      return res.end(JSON.stringify({ id: '/pulse', name: 'Pulse — Ledger', short_name: 'Pulse',
+      return res.end(JSON.stringify({ id: '/pulse', name: 'Keel — Ledger', short_name: 'Keel',
         description: 'Readiness, discipline and risk for your trading day.',
-        start_url: '/pulse', scope: '/', display: 'standalone', orientation: 'portrait', background_color: '#0A0C0F', theme_color: '#0A0C0F',
+        start_url: '/keel', scope: '/', display: 'standalone', orientation: 'portrait', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity', 'health'], icons: appIcons('pulse'),
-        shortcuts: [{ name: 'Prep', url: '/pulse#checkin' }, { name: 'Journal', url: '/pulse#journal' }, { name: 'Full journal', url: '/' }] }));
+        shortcuts: [{ name: 'Prep', url: '/keel#checkin' }, { name: 'Journal', url: '/keel#journal' }, { name: 'Full journal', url: '/' }] }));
     }
     { const m = req.method === 'GET' && /^\/icons\/(ledger|pulse)-(180|192|512|maskable-512)\.png$/.exec(url);
       if (m) return fs.readFile(path.join(__dirname, 'icons', m[1] + '-' + m[2] + '.png'), (err, buf) => {

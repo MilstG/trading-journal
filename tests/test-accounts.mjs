@@ -90,7 +90,7 @@ try {
     eq(st.status, 200);
     const host = B.replace('http://', '');
     ok(st.d.message.startsWith(host + ' wants you to sign in with your Ethereum account:\n' + sig.toChecksumAddress(W1) + '\n'));
-    ok(st.d.message.includes('Claim this wallet for @alpha on Pulse.') && st.d.message.includes('URI: https://' + host));
+    ok(st.d.message.includes('Claim this wallet for @alpha on Keel.') && st.d.message.includes('URI: https://' + host));
     eq((await call('/claim/start', { method: 'POST', body: { address: W1 } })).status, 401, 'claiming needs a member key');
     eq((await call('/claim/start', { method: 'POST', key: A, body: { address: 'nope' } })).status, 400);
   });

@@ -556,7 +556,7 @@ function createSocial(opts) {
   const siteOf = req => {
     const reqHost = String(req.headers.host || '').toLowerCase();
     if (origins.length) { const o = origins.find(x => x.host === reqHost);
-      if (!o) return { error: 'Open Pulse at ' + origins[0].origin + '/pulse to use a passkey.' };
+      if (!o) return { error: 'Open Keel at ' + origins[0].origin + '/keel to use a passkey.' };
       return { origin: o.origin, rpId: o.host.replace(/:\d+$/, '') }; }
     const host = reqHost.slice(0, 100).replace(/[^a-z0-9.:\-\[\]]/g, '');
     if (!host) return { error: 'Missing Host header.' };
@@ -904,7 +904,7 @@ function createSocial(opts) {
   const duelOpen = d => d.status === 'pending' || d.status === 'active';
   const openDuels = m => Object.values(S.duels).filter(d => duelOpen(d) && (d.a === m.id || d.b === m.id));
   const duelName = d => Duels.TYPES[d.type].label;
-  const duelUrl = '/pulse#duels';
+  const duelUrl = '/keel#duels';
   const duelDates = d => { const f = k => new Date(k + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }); return f(d.start) + ' – ' + f(d.end); };
   // XP riding on a member's open duels: the ones running, and the terms they've put to someone
   // (a challenge waiting on them commits nothing until they accept it). `except`: the duel being decided.
@@ -1326,7 +1326,7 @@ function createSocial(opts) {
     if (!m || m.banned) return;
     const it = Object.assign({ id: crypto.randomBytes(5).toString('hex'), at: now(), kind, text: cleanText(text, 700) }, extra || {});
     m.inbox = [...(m.inbox || []), it].slice(-INBOX_MAX); touch(m);
-    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Pulse', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/pulse#today' }).catch(() => {});
+    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Keel', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/keel#today' }).catch(() => {});
   };
   // morning and evening reminders on the member's own clock, once a day each; the evening one
   // only on a day they traded and haven't reviewed yet
@@ -1346,10 +1346,10 @@ function createSocial(opts) {
         const pr = m.push.prefs = sanitizePrefs(null, m.push.prefs), tz = (m.stats && m.stats.tz) || 'UTC', day = zoneKey(tz, t), hm = localHM(tz, t);
         const sent = m.push.sent = m.push.sent || {};
         if (pr.on.morning && sent.morning !== day && due(hm, pr.morning)) { sent.morning = day; touch(m);
-          jobs.push(() => sendPush(m, { title: 'Morning prep', body: 'Thirty seconds: sleep, calm, focus, then your rules for today.', tag: 'pulse-morning', url: '/pulse#checkin' })); }
+          jobs.push(() => sendPush(m, { title: 'Morning prep', body: 'Thirty seconds: sleep, calm, focus, then your rules for today.', tag: 'pulse-morning', url: '/keel#checkin' })); }
         const today = m.stats && Array.isArray(m.stats.days) ? m.stats.days.find(d => d.k === day) : null;
         if (pr.on.eod && sent.eod !== day && due(hm, pr.eod) && today && !today.r) { sent.eod = day; touch(m);
-          jobs.push(() => sendPush(m, { title: 'Review your day', body: 'Five minutes: one lesson, one focus for tomorrow.', tag: 'pulse-eod', url: '/pulse#review' })); }
+          jobs.push(() => sendPush(m, { title: 'Review your day', body: 'Five minutes: one lesson, one focus for tomorrow.', tag: 'pulse-eod', url: '/keel#review' })); }
       }
       if (jobs.length) save(null); // the members touched above
       // eight at a time: one slow push service doesn't hold up everyone else's reminder
@@ -1374,7 +1374,7 @@ function createSocial(opts) {
         const r = await opts.tiltFor(walletFor(m), (m.stats && m.stats.tz) || 'UTC', m.tilt || null);
         if (!r || !r.st || !own(S.members, m.id)) return;
         m.tilt = r.st; touch(m);
-        if (r.pick && !(m.lastSeen && t - m.lastSeen < 10 * 60000)) { notify(m, 'tilt', r.pick.text, { title: r.pick.title, url: '/pulse#today' }); sent++; }
+        if (r.pick && !(m.lastSeen && t - m.lastSeen < 10 * 60000)) { notify(m, 'tilt', r.pick.text, { title: r.pick.title, url: '/keel#today' }); sent++; }
       } catch (e) { /* the exchange or the fills cache failed: the next pass tries again */ } }));
     if (due.length) save(null);
     return sent; };
@@ -1445,7 +1445,7 @@ function createSocial(opts) {
       m.awards = m.awards || {}; if (!own(m.awards, bid)) m.awards[bid] = now();
       m.seasonWins = [...(m.seasonWins || []), { league: L.id, season: id, place: i + 1 }].slice(-50);
       if (m.share.feed) pushEvent(m, { type: 'season', text: ['won', 'took second in', 'took third in'][i] + ' the ' + L.name + ' ' + seasonLabel(id) + ' season ' + SEASON_BADGES[bid][1] });
-      notify(m, 'season', 'You finished #' + (i + 1) + ' in the ' + L.name + ' ' + seasonLabel(id) + ' season.', { title: 'Season over ' + SEASON_BADGES[bid][1], url: '/pulse#lg/' + L.id }); });
+      notify(m, 'season', 'You finished #' + (i + 1) + ' in the ' + L.name + ' ' + seasonLabel(id) + ' season.', { title: 'Season over ' + SEASON_BADGES[bid][1], url: '/keel#lg/' + L.id }); });
   };
   // A season that ran to its end waits one more day (so the last day's numbers can sync) and then
   // closes with a podium. One the owner changed or switched off before its end closes nothing.
@@ -2004,14 +2004,14 @@ function createSocial(opts) {
       const reqHost = String(req.headers.host || '').toLowerCase();
       let host, uri;
       if (origins.length) { const o = origins.find(x => x.host === reqHost);
-        if (!o) return json(res, 400, { error: 'Open Pulse at ' + origins[0].origin + '/pulse to sign with your wallet.' });
+        if (!o) return json(res, 400, { error: 'Open Keel at ' + origins[0].origin + '/keel to sign with your wallet.' });
         host = o.host; uri = o.origin; }
       else { // not pinned (local or self-hosted without PUBLIC_ORIGIN): the address this page was served from
         host = reqHost.slice(0, 100).replace(/[^a-z0-9.:\-\[\]]/g, '') || 'pulse';
         uri = (String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https' || (req.socket && req.socket.encrypted) ? 'https' : 'http') + '://' + host; }
       const nonce = crypto.randomBytes(8).toString('hex');
-      const statement = head === 'claim' ? 'Claim this wallet for @' + who.handle + ' on Pulse. This is a signature, not a transaction: it costs nothing and moves no funds.'
-        : 'Sign in to Pulse with this wallet. This is a signature, not a transaction: it costs nothing and moves no funds.';
+      const statement = head === 'claim' ? 'Claim this wallet for @' + who.handle + ' on Keel. This is a signature, not a transaction: it costs nothing and moves no funds.'
+        : 'Sign in to Keel with this wallet. This is a signature, not a transaction: it costs nothing and moves no funds.';
       const message = siweMessage({ domain: host, uri, address: sig.toChecksumAddress(addr), statement, nonce,
         issuedAt: new Date(now()).toISOString(), expirationTime: new Date(now() + 10 * 60000).toISOString() });
       sweep(pending);
@@ -2118,7 +2118,7 @@ function createSocial(opts) {
         if ((me.passkeys || []).length >= PASSKEY_MAX) return json(res, 409, { error: 'You have ' + PASSKEY_MAX + ' passkeys already. Remove one first.' });
         const challenge = WebAuthn.newChallenge(); sweep(pending);
         pending.set('pk:' + challenge, { purpose: 'pk-reg', memberId: me.id, site, exp: now() + 5 * 60000 });
-        return json(res, 200, { challenge, rp: { name: 'Pulse', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('pulse:' + me.id)), name: me.handle, displayName: '@' + me.handle },
+        return json(res, 200, { challenge, rp: { name: 'Keel', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('pulse:' + me.id)), name: me.handle, displayName: '@' + me.handle },
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }, { type: 'public-key', alg: -257 }],
           authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' }, attestation: 'none', timeout: 300000,
           excludeCredentials: (me.passkeys || []).map(k => ({ type: 'public-key', id: k.id })) });
@@ -2156,7 +2156,7 @@ function createSocial(opts) {
     if (head === 'push' && !parts[1] && (M === 'POST' || M === 'PUT')) {
       if (!push) return json(res, 404, { error: 'Push reminders aren’t set up on this server.' });
       me.push = me.push || { subs: [], prefs: null, sent: {} };
-      if (body.subscription !== undefined) { const sub = Push.sanitizeSubscription(body.subscription); if (!sub) return json(res, 400, { error: 'This browser’s push service isn’t one Pulse can send to.' });
+      if (body.subscription !== undefined) { const sub = Push.sanitizeSubscription(body.subscription); if (!sub) return json(res, 400, { error: 'This browser’s push service isn’t one Keel can send to.' });
         me.push.subs = [...(me.push.subs || []).filter(x => x.endpoint !== sub.endpoint), sub].slice(-5); }
       me.push.prefs = sanitizePrefs(body.prefs, me.push.prefs); save(me);
       return json(res, 200, { ok: true, on: me.push.subs.length > 0, prefs: me.push.prefs });
@@ -2168,7 +2168,7 @@ function createSocial(opts) {
     if (head === 'push' && !parts[1] && M === 'DELETE') { if (me.push) me.push.subs = []; save(me); return json(res, 200, { ok: true, on: false }); }
     if (head === 'push' && parts[1] === 'test' && M === 'POST') {
       if (limited(req, 'pushtest', 5, 3600000)) return json(res, 429, { error: 'Try again later.' });
-      const n = await sendPush(me, { title: 'Pulse', body: 'Reminders are on. You’ll hear from Pulse at the times you picked.', tag: 'pulse-test', url: '/pulse#today' });
+      const n = await sendPush(me, { title: 'Keel', body: 'Reminders are on. You’ll hear from Keel at the times you picked.', tag: 'pulse-test', url: '/keel#today' });
       return json(res, n ? 200 : 502, n ? { ok: true, sent: n } : { error: 'Your browser’s push service didn’t accept the message.' });
     }
 
@@ -2360,7 +2360,7 @@ function createSocial(opts) {
       if (last && now() - last < 86400000) return json(res, 429, { error: 'You asked @' + o.handle + ' today already.' });
       if (limited(req, 'mask:' + me.id, 10, 86400000, true)) return json(res, 429, { error: 'Too many requests today.' });
       me.mentorAsks = Object.assign({}, me.mentorAsks, { [o.id]: now() });
-      notify(o, 'mentor', '@' + me.handle + ' would like you to mentor them. Their days are open to you now.', { title: 'A mentoring request', url: '/pulse#mentee/' + me.handle });
+      notify(o, 'mentor', '@' + me.handle + ' would like you to mentor them. Their days are open to you now.', { title: 'A mentoring request', url: '/keel#mentee/' + me.handle });
       save(me); return json(res, 200, { ok: true, share: me.share });
     }
     if (head === 'partners' && M === 'GET' && !parts[1]) return json(res, 200, { partners: pairsOf(me).map(p => pairOut(p, me)).filter(Boolean) });
@@ -2372,7 +2372,7 @@ function createSocial(opts) {
       if (ex && ex.from === o.id) { // they asked first: this accepts
         if (pairsOf(me).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
         if (pairsOf(o).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: '@' + o.handle + ' already has ' + PARTNER_MAX + ' partners.' });
-        ex.status = 'active'; ex.since = now(); notify(o, 'partner', '@' + me.handle + ' is now your accountability partner.', { title: 'New partner', url: '/pulse#social' }); save('partners');
+        ex.status = 'active'; ex.since = now(); notify(o, 'partner', '@' + me.handle + ' is now your accountability partner.', { title: 'New partner', url: '/keel#social' }); save('partners');
         return json(res, 200, { partner: pairOut(ex, me) }); }
       if (ex) return json(res, 409, { error: 'You’ve asked already — waiting for @' + o.handle + '.' });
       if (pairsOf(me).filter(p => p.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
@@ -2380,7 +2380,7 @@ function createSocial(opts) {
       if (limited(req, 'partner:' + me.id, 20, 86400000, true)) return json(res, 429, { error: 'Too many requests today.' });
       const id = crypto.randomBytes(6).toString('hex');
       S.partners[id] = { id, a: me.id, b: o.id, from: me.id, status: 'pending', at: now(), nudged: {} };
-      notify(o, 'partner', '@' + me.handle + ' wants to be accountability partners: you’d see each other’s streak, scores and slips.', { title: 'Partner request', url: '/pulse#social' });
+      notify(o, 'partner', '@' + me.handle + ' wants to be accountability partners: you’d see each other’s streak, scores and slips.', { title: 'Partner request', url: '/keel#social' });
       save('partners'); return json(res, 200, { partner: pairOut(S.partners[id], me) });
     }
     if (head === 'partners' && parts[1]) {
@@ -2390,20 +2390,20 @@ function createSocial(opts) {
         if (p.from === me.id) return json(res, 409, { error: 'Waiting for @' + (o ? o.handle : '') + ' to accept.' });
         if (pairsOf(me).filter(x => x.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: 'You already have ' + PARTNER_MAX + ' partners.' });
         if (o && pairsOf(o).filter(x => x.status === 'active').length >= PARTNER_MAX) return json(res, 409, { error: '@' + o.handle + ' already has ' + PARTNER_MAX + ' partners.' });
-        p.status = 'active'; p.since = now(); if (o) notify(o, 'partner', '@' + me.handle + ' accepted — you’re accountability partners.', { title: 'New partner', url: '/pulse#social' });
+        p.status = 'active'; p.since = now(); if (o) notify(o, 'partner', '@' + me.handle + ' accepted — you’re accountability partners.', { title: 'New partner', url: '/keel#social' });
         save('partners'); return json(res, 200, { partner: pairOut(p, me) }); }
       if (!parts[2] && M === 'DELETE') { delete S.partners[p.id]; save('partners'); return json(res, 200, { ok: true }); }
       if (p.status !== 'active') return json(res, 409, { error: 'Not partners yet.' });
       if (parts[2] === 'nudge' && M === 'POST') {
         p.nudged = p.nudged || {}; if (p.nudged[me.id] && now() - p.nudged[me.id] < 6 * 3600000) return json(res, 429, { error: 'One nudge every six hours.' });
         p.nudged[me.id] = now(); const text = cleanText(body.text, 140) || 'Stick to your plan today.';
-        notify(o, 'partner', '@' + me.handle + ': ' + text, { title: 'Nudge from @' + me.handle, url: '/pulse#today', from: me.handle });
+        notify(o, 'partner', '@' + me.handle + ': ' + text, { title: 'Nudge from @' + me.handle, url: '/keel#today', from: me.handle });
         save('partners'); return json(res, 200, { ok: true }); }
       if (parts[2] === 'challenge' && M === 'PUT') {
         const text = cleanText(body.text, 140); if (!text) return json(res, 400, { error: 'What’s the challenge?' });
         if (p.challenge && p.challenge.week === S.league.week && now() - p.challenge.at < 3600000) return json(res, 429, { error: 'One change an hour.' });
         p.challenge = { text, by: me.id, week: S.league.week, at: now() };
-        notify(o, 'partner', '@' + me.handle + ' set this week’s shared challenge: ' + text, { title: 'Shared challenge', url: '/pulse#social' });
+        notify(o, 'partner', '@' + me.handle + ' set this week’s shared challenge: ' + text, { title: 'Shared challenge', url: '/keel#social' });
         save('partners'); return json(res, 200, { partner: pairOut(p, me) }); }
       return json(res, 404, { error: 'not found' });
     }
@@ -2426,7 +2426,7 @@ function createSocial(opts) {
         if (limited(req, 'mnote', 60, 3600000)) return json(res, 429, { error: 'Too many notes this hour.' });
         const c = { id: crypto.randomBytes(5).toString('hex'), by: me.id, day, text, at: now(), read: false };
         S.comments[o.id] = [...commentsFor(o.id), c].slice(-COMMENTS_MAX);
-        notify(o, 'mentor', '@' + me.handle + ': ' + text, { title: 'A note from your mentor', url: '/pulse#today', day });
+        notify(o, 'mentor', '@' + me.handle + ': ' + text, { title: 'A note from your mentor', url: '/keel#today', day });
         save('comments'); return json(res, 200, { note: commentOut(c) }); }
       if (parts[2] === 'notes' && parts[3] && M === 'DELETE') {
         S.comments[o.id] = commentsFor(o.id).filter(c => !(c.id === parts[3] && c.by === me.id)); save('comments'); return json(res, 200, { ok: true }); }
@@ -2451,7 +2451,7 @@ function createSocial(opts) {
         else { q('INSERT INTO reviews (id, member, trade, at, last, data) VALUES (?, ?, ?, ?, ?, ?)').run(id, me.id, key, now(), now(), JSON.stringify(tr));
           for (const o of q('SELECT id FROM reviews WHERE member = ? ORDER BY last DESC LIMIT -1 OFFSET ?').all(me.id, REVIEWS_KEEP)) dropReview(o.id); } // the oldest go
         if (text) addReviewComment(id, me, text); });
-      if (!ex) for (const o of to) notify(o, 'mentor', '@' + me.handle + ' sent a trade for review: ' + tradeName(tr), { title: 'A trade to review', url: '/pulse#tr/' + id });
+      if (!ex) for (const o of to) notify(o, 'mentor', '@' + me.handle + ' sent a trade for review: ' + tradeName(tr), { title: 'A trade to review', url: '/keel#tr/' + id });
       save(me, ...(ex ? [] : to)); return json(res, 200, threadOut(reviewById(id), me, 'mentee'));
     }
     if (head === 'reviews' && parts[1]) {
@@ -2468,12 +2468,12 @@ function createSocial(opts) {
         // a mentor's comment goes to the member; a reply goes to the mentors in the thread (every mentor, before one of them answered)
         const inT = new Set(q('SELECT DISTINCT member FROM review_comments WHERE review = ? AND member != ?').all(r.id, r.member).map(x => x.member));
         const all = role === 'mentor' ? [o] : mentorsOf(o), inThread = all.filter(x => inT.has(x.id)), to = role === 'mentor' || !inThread.length ? all : inThread;
-        for (const x of to) notify(x, 'mentor', '@' + me.handle + (role === 'mentor' ? ' on your ' + what + ': ' : ' replied on their ' + what + ': ') + text, { title: role === 'mentor' ? 'Your mentor on a trade' : 'A reply on a trade', url: '/pulse#tr/' + r.id });
+        for (const x of to) notify(x, 'mentor', '@' + me.handle + (role === 'mentor' ? ' on your ' + what + ': ' : ' replied on their ' + what + ': ') + text, { title: role === 'mentor' ? 'Your mentor on a trade' : 'A reply on a trade', url: '/keel#tr/' + r.id });
         if (to.length) save(...to); return json(res, 200, threadOut(reviewById(r.id), me, role)); }
       if (parts[2] === 'reviewed' && M === 'POST') {
         if (role !== 'mentor') return json(res, 403, { error: 'Only a mentor marks a trade reviewed.' });
         const on = body.done !== false; q('UPDATE reviews SET reviewed = ?, reviewer = ? WHERE id = ?').run(on ? now() : null, on ? me.id : null, r.id);
-        if (on && !r.reviewed) { notify(o, 'mentor', '@' + me.handle + ' reviewed your ' + what + ' ✓', { title: 'Trade reviewed', url: '/pulse#tr/' + r.id }); save(o); }
+        if (on && !r.reviewed) { notify(o, 'mentor', '@' + me.handle + ' reviewed your ' + what + ' ✓', { title: 'Trade reviewed', url: '/keel#tr/' + r.id }); save(o); }
         return json(res, 200, threadOut(reviewById(r.id), me, role)); }
       return json(res, 404, { error: 'not found' });
     }
@@ -2712,7 +2712,7 @@ function createSocial(opts) {
         tx(() => { q('INSERT INTO comments (id, event, member, at, text) VALUES (?, ?, ?, ?, ?)').run(id, e.id, me.id, now(), text);
           q('UPDATE events SET comments = comments + 1 WHERE id = ?').run(e.id); });
         const author = own(S.members, e.member) ? S.members[e.member] : null;
-        if (author && author.id !== me.id) { notify(author, 'comment', '@' + me.handle + ' on your post: ' + text, { title: 'New comment', url: '/pulse#post/' + e.id, post: e.id }); save(author); }
+        if (author && author.id !== me.id) { notify(author, 'comment', '@' + me.handle + ' on your post: ' + text, { title: 'New comment', url: '/keel#post/' + e.id, post: e.id }); save(author); }
         return json(res, 200, { comment: commentRowOut(q('SELECT * FROM comments WHERE id = ?').get(id), me, e), comments: e.comments + 1 }); }
       return json(res, 404, { error: 'not found' });
     }

@@ -123,18 +123,20 @@ t('the coach line: limit hit, then today’s slips from fills, then load and for
 });
 
 console.log('\nPath switch and wiring');
-t('the page switches on /pulse or ?pulse before the app script runs, and repoints the manifest', () => {
-  const i = html.indexOf('<script>/* Pulse view'); ok(i > 0 && i < html.indexOf("const PZ=document.body.classList.contains('pz-mode');"));
+t('the page switches on /keel or ?keel (and the old /pulse) before the app script runs, and repoints the manifest', () => {
+  const i = html.indexOf('<script>/* Keel view'); ok(i > 0 && i < html.indexOf("const PZ=document.body.classList.contains('pz-mode');"));
   const early = html.slice(i + 8, html.indexOf('</script>', i));
-  for (const [path, search, on] of [['/pulse', '', true], ['/pulse/', '', true], ['/', '?pulse', true], ['/x/ledger.html', '?pulse=1', true],
-    ['/', '', false], ['/pulsex', '', false], ['/', '?impulse=1', false]]) {
-    const cls = new Set(); const attrs = {};
+  for (const [path, search, on, shown] of [['/keel', '', true], ['/keel/', '', true], ['/', '?keel', true], ['/x/ledger.html', '?keel=1', true],
+    ['/pulse', '', true, '/keel#today'], ['/pulse/', '', true, '/keel#today'], ['/', '?pulse', true],
+    ['/', '', false], ['/keelx', '', false], ['/pulsex', '', false], ['/', '?impulse=1', false]]) {
+    const cls = new Set(); const attrs = {}; let replaced = null;
     const el = n => ({ setAttribute: (k, v) => { attrs[n] = v; } });
-    const sb = { location: { pathname: path, search, protocol: 'https:' }, document: { body: { classList: { add: c => cls.add(c) } },
-      querySelector: s => el(s), title: '' } };
+    const sb = { location: { pathname: path, search, hash: '#today', protocol: 'https:' }, history: { state: null, replaceState: (s, t, u) => { replaced = u; } },
+      document: { body: { classList: { add: c => cls.add(c) } }, querySelector: s => el(s), title: '' } };
     vm.runInNewContext(early, sb);
     eq(cls.has('pz-mode'), on, path + search);
-    if (on) eq(attrs['link[rel="manifest"]'], '/pulse.webmanifest');
+    eq(replaced, shown || null, path + ' shows as /keel');
+    if (on) { eq(attrs['link[rel="manifest"]'], '/pulse.webmanifest'); eq(sb.document.title, 'Keel — Ledger'); }
   }
 });
 t('Pulse forces the coach layer on and redraws only its own view', () => {
@@ -154,17 +156,17 @@ t('a trade cap set in Pulse survives a save from the full app’s day journal', 
 
 console.log('\nServer');
 const listen = app => new Promise(res => app.listen(0, () => res('http://127.0.0.1:' + app.address().port)));
-await t('/pulse serves the app, /pulse/ redirects, and Pulse has its own manifest and icon', async () => {
+await t('/keel (and the old /pulse) serve the app, /keel/ and /pulse/ redirect, and Keel has its own manifest and icon', async () => {
   const app = server.createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-pulse-')), auth: '', htmlPath });
   const b = await listen(app);
   try {
-    const r = await fetch(b + '/pulse'); eq(r.status, 200); ok((await r.text()).includes('id="pzView"'));
-    const rd = await fetch(b + '/pulse/?x=1', { redirect: 'manual' }); eq(rd.status, 302); eq(rd.headers.get('location'), '/pulse?x=1');
+    for (const pth of ['/keel', '/pulse']) { const r = await fetch(b + pth); eq(r.status, 200); ok((await r.text()).includes('id="pzView"')); }
+    for (const pth of ['/keel/', '/pulse/']) { const rd = await fetch(b + pth + '?x=1', { redirect: 'manual' }); eq(rd.status, 302); eq(rd.headers.get('location'), '/keel?x=1'); }
     const m = await (await fetch(b + '/pulse.webmanifest')).json();
-    eq(m.start_url, '/pulse'); eq(m.id, '/pulse'); eq(m.short_name, 'Pulse'); eq(m.icons.map(i => i.src + ' ' + i.purpose), ['/icons/pulse-192.png any', '/icons/pulse-512.png any', '/icons/pulse-maskable-512.png maskable']);
+    eq(m.start_url, '/keel'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq(m.short_name, 'Keel'); eq(m.icons.map(i => i.src + ' ' + i.purpose), ['/icons/pulse-192.png any', '/icons/pulse-512.png any', '/icons/pulse-maskable-512.png maskable']);
     const ic = await fetch(b + '/pulse-icon.svg'); eq(ic.headers.get('content-type'), 'image/svg+xml');
     const sw = await (await fetch(b + '/sw.js')).text();
-    ok(sw.includes("'/pulse'") && !sw.includes("mode==='navigate'"), 'only the app shell is cached — help pages never overwrite it');
+    ok(sw.includes("'/keel'") && sw.includes("'/pulse'") && !sw.includes("mode==='navigate'"), 'only the app shell is cached — help pages never overwrite it');
   } finally { await new Promise(res => app.close(res)); }
 });
 

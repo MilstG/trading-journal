@@ -19,7 +19,7 @@ persists across devices and reboots.
 2. [Loading your data](#loading-your-data)
 3. [The Trades view](#the-trades-view)
 4. [The journal](#the-journal)
-4. [Pulse: the simple view (`/pulse`)](#pulse-the-simple-view-pulse)
+4. [Keel: the simple view (`/keel`)](#keel-the-simple-view-keel)
 4. [Social, unlocks and the admin panel](#social-unlocks-and-the-admin-panel)
 5. [The Diagnostic view](#the-diagnostic-view)
 6. [The pattern miner](#the-pattern-miner)
@@ -87,14 +87,14 @@ to clear it.
 | **Bybit** | a **read-only** API key | signed in your browser, relayed by your server | 2 years |
 | **Binance** (USD-M futures) | a **read-only** API key | signed in your browser, relayed by your server | 3 months, then everything Ledger keeps |
 
-Paste an address in **Add** (or Pulse's first screen) and Ledger checks both
+Paste an address in **Add** (or Keel's first screen) and Ledger checks both
 Hyperliquid and Lighter for it, adding each one that has an account: no choice to
 make, no file to export. A Lighter account's sub-accounts are each their own position
 stream. Lighter reports each fill's prior position and entry cost, so its P&L is exact;
 funding comes from Lighter's public hourly rates times the position you held (its
 per-payment history needs a login), which matches Lighter's own funding totals.
 
-For **Bybit or Binance**, use **Connect exchange** (Pulse: *Connect a read-only API key*)
+For **Bybit or Binance**, use **Connect exchange** (Keel: *Connect a read-only API key*)
 and paste an API key and secret. Ledger refuses a key that can trade, transfer or
 withdraw. The secret never leaves your browser: it's kept in this browser's storage
 (never in settings, sync, backups or the encrypted journal), each request is signed
@@ -135,7 +135,7 @@ Selling part of a position realizes a closed trade for the amount sold, at the
 position's average cost, and the rest stays open. Buy fees paid in the token are
 priced in dollars, and since the exchange's realized P&L already includes them,
 they're shown in fees but not subtracted twice. Spot trades read as pairs
-(`HYPE/USDC`) so they never merge with the perp of the same name. Pulse counts
+(`HYPE/USDC`) so they never merge with the perp of the same name. Keel counts
 every market for XP, streaks and Today; its Stats screens have their own
 **All markets · Perps · Spot** switch.
 
@@ -153,14 +153,14 @@ the background.
 Diagnostic, Project), Wallets and Load all; on a phone the sections move to a
 bottom tab bar. Review and Diagnostic are long, so a sticky bar of their
 sections sits above them: tap one to jump there, and it follows along as you
-scroll. It uses the same design as Pulse and the admin panel (Inter, rounded cards),
+scroll. It uses the same design as Keel and the admin panel (Inter, rounded cards),
 in dark, light and the black-and-amber colorway.
 
-**Install it on your phone.** Served over https, the journal (`/`) and Pulse
-(`/pulse`) are two installable apps, each with its own manifest and icons
+**Install it on your phone.** Served over https, the journal (`/`) and Keel
+(`/keel`) are two installable apps, each with its own manifest and icons
 (PNG 192 and 512, a maskable 512 for Android's shapes, and a 180 home-screen icon
 for iPhone). On Android and desktop Chrome, **Install app** (beside Wallets in the
-journal, or the card on Pulse's Today screen) opens the browser's install prompt.
+journal, or the card on Keel's Today screen) opens the browser's install prompt.
 On iPhone, tap **Share** in Safari, then **Add to Home Screen**; the same button and card
 say so. Installed, both open full screen and start from their cached copy.
 
@@ -245,9 +245,9 @@ counts, averages, habit sentences, finding headlines and your own one-line
 lessons — and the button shows exactly that summary before anything is sent.
 No fills, wallet addresses, trade notes or screenshots leave the server.
 
-## Pulse: the simple view (`/pulse`)
+## Keel: the simple view (`/keel`)
 
-Open `https://your-server/pulse` for a phone-first, gamified view of the same
+Open `https://your-server/keel` for a phone-first, gamified view of the same
 data. It's useful with zero effort — everything on the Today screen is read from
 your fills — and gets sharper the more you log.
 
@@ -306,7 +306,7 @@ share sheet, where the browser can share files), **Download**, or **Copy image**
 It's drawn on a canvas in the browser: nothing is sent anywhere. The model the card
 draws from is `pzWeekCardModel` in `app/pulse-screens.js`.
 
-**Your layout.** Every Pulse screen (Today, Stats, Progress) has **Customize
+**Your layout.** Every Keel screen (Today, Stats, Progress) has **Customize
 this screen** at the bottom: show or hide each section, or reset to the default.
 On Today you can also put the cards below the dials in your own order (the up and
 down arrows next to each one); the top of the screen stays where it is.
@@ -338,7 +338,7 @@ past tags, kept consistent), so **See in-depth stats** can break results down
 **by setup** and **by your own execution rating**. Notes themselves are not
 read by any model; only these structured fields are compared with results.
 
-**Routines.** Pulse detects how you trade from the last 90 days (scalper, day,
+**Routines.** Keel detects how you trade from the last 90 days (scalper, day,
 swing or position trader; you can override it, and the league owner can add
 profiles of their own) and adapts the morning questions (after five days of
 answers, the ones you keep giving show as one-tap **usuals** under each question,
@@ -373,7 +373,7 @@ and Oura's readiness are used as they are; for Apple Health readiness is HRV aga
 your own 30-day median (60%) and hours asleep against eight (40%). A day's wearable
 score replaces the prep answers as its readiness (the answers still earn their
 XP), so Stats' readiness-versus-discipline comparison shows which days your
-discipline breaks. Days sync every 30 minutes while Pulse is open and are stored
+discipline breaks. Days sync every 30 minutes while Keel is open and are stored
 with your journal.
 
 **Tilt meter and quiet mode.** A live reading (0–100) on Today of the triggers
@@ -386,7 +386,7 @@ the reading up, brings back the lesson you wrote about that slip, and offers a
 15-minute break with a countdown (or "I'm calm"). One answer covers one episode.
 Optionally the browser notifies you when it happens.
 
-**Tilt alerts.** After each refresh that brings new fills for today, Pulse checks
+**Tilt alerts.** After each refresh that brings new fills for today, Keel checks
 today's fills for five specific patterns and, when one shows up, puts a calm banner
 at the top of Today that names it ("3 losses in 40 minutes. This is when revenge
 trades happen. Step away for 15 minutes?"): a re-entry within 15 minutes of a loss,
@@ -402,12 +402,12 @@ it on the day (`breaks`, marked as from an alert); breaks never change Disciplin
 `app/progress.js`). With notification permission, the alert also comes as a system
 notification through the service worker, and while a session is live (a trade in
 the last two hours) the refresh keeps running in a background tab so it can.
-Settings → **Tilt alerts** turns them off. With Pulse closed, members who share
+Settings → **Tilt alerts** turns them off. With Keel closed, members who share
 verified Discipline get the same alerts as a push (pref kind `tilt`, on by default,
-**Tilt alerts while Pulse is closed** under Reminders): the server reads their public
+**Tilt alerts while Keel is closed** under Reminders): the server reads their public
 fills every 5 minutes (four members a minute at most) and runs the same two
 functions on their clock; the plan and loss-limit checks need the journal, so those
-two are app-only. When Pulse was open on one of their devices in the last 10
+two are app-only. When Keel was open on one of their devices in the last 10
 minutes, the app says it instead.
 
 **Market conditions.** Each day is tagged from BTC's daily candles: *volatile*,
@@ -451,24 +451,29 @@ leaks; trades and notes are added only when the member switches that on (and
 the owner allows it). Wallet addresses are scrubbed. Messages aren't stored on
 the server, only the daily count.
 
-Pulse is the same page (`ledger.html` and its `app/` scripts): it switches on its own path (or `?pulse`
+Keel is the same page (`ledger.html` and its `app/` scripts): it switches on its own path (or `?keel`
 when opened from disk), so every loader, cache and sync path is shared. It
 always shows the coach and progress layers, whatever the full app's coach-mode
 switch says. It has its own install metadata (`/pulse.webmanifest`), so "Add to
-Home Screen" from `/pulse` installs a separate **Pulse** app.
+Home Screen" from `/keel` installs a separate **Keel** app.
+
+Keel used to be called Pulse. `/pulse` still opens it (the address bar then shows
+`/keel`), and phones that installed Pulse update in place. Inside the code the old
+name stays (`app/pulse*.js`, the `pz` prefix, the `X-Pulse-Key` header,
+`DATA_DIR/pulse.db`, the icon files), so no stored data, key or install had to move.
 
 **Sharing the link.** A visitor pastes their own public address (read-only: no
 wallet connection, no signing) and their journal stays in their browser. On a
 server with `AUTH_TOKEN` set, nothing they do is sent to your server; the owner
-signs in once from Pulse's settings to sync. Without `AUTH_TOKEN`, everyone who
-opens the link shares one journal, so set it before sharing (Pulse's settings
+signs in once from Keel's settings to sync. Without `AUTH_TOKEN`, everyone who
+opens the link shares one journal, so set it before sharing (Keel's settings
 warn about this).
 
 ## Social, unlocks and the admin panel
 
-Pulse has a **Social** tab that runs entirely on your own server (`social.js`,
+Keel has a **Social** tab that runs entirely on your own server (`social.js`,
 stored in an SQLite database, `DATA_DIR/pulse.db`, with uploaded pictures in
-`DATA_DIR/media/`). There is no central service: the people you send your `/pulse`
+`DATA_DIR/media/`). There is no central service: the people you send your `/keel`
 link to join *your* league. A server upgraded from an older version imports its
 `social.json` on the first start and keeps the file as `social.json.migrated`.
 
@@ -555,7 +560,7 @@ link to join *your* league. A server upgraded from an older version imports its
   day per mentor): it switches on Let mentors see my days after a yes, tells that mentor,
   and puts the member first on their Mentees screen with an "asked for you" tag.
 - **Trade reviews.** A member who lets mentors in can send one trade to the league's
-  mentors: **Ask mentor** on a Pulse journal card, or **Ask my mentor to review this
+  mentors: **Ask mentor** on a Keel journal card, or **Ask my mentor to review this
   trade** under an expanded trade in the full journal. What goes is the shape of a trade
   post (market, side, open and close times, entry, exit, planned stop and target, %
   and R, a size range instead of the size) plus their note and the day's plan; the
@@ -563,23 +568,23 @@ link to join *your* league. A server upgraded from an older version imports its
   that off). The server knows the trade by a hash of its id, never the id itself (it
   holds the wallet address). Mentors see it under **Trades to review** (Social →
   Reviews, `#reviews`), comment as often as they like and mark it **Reviewed ✓**; the
-  member gets each comment in their inbox, replies in the thread (Pulse `#tr/<id>`, or
+  member gets each comment in their inbox, replies in the thread (Keel `#tr/<id>`, or
   under the trade in the journal) and sees **Reviewed by @mentor**. Only the member
   and the server's mentors see a thread, and only while the member lets mentors in:
   switching that off, a suspension, or the owner standing a mentor down closes it at
   once. Admins read every thread for moderation, read-only (`GET
-  /api/social/admin/reviews[/<id>]`, and in Pulse under Reviews). Limits: 10 new trades a
+  /api/social/admin/reviews[/<id>]`, and in Keel under Reviews). Limits: 10 new trades a
   day, 60 comments an hour, 1,000 characters a comment, 200 comments a thread, the newest
   100 trades per member. The member can take a trade back (its thread goes with it);
   deleting a profile removes its trades and threads, and its comments on anyone else's.
   Stored in `pulse.db` (`reviews`, `review_comments`). Routes: `GET/POST /reviews`,
   `GET/DELETE /reviews/<id>`, `POST /reviews/<id>/comments`, `POST /reviews/<id>/reviewed`.
-- **Reminders (web push).** In Pulse's settings, **Remind me on this device** sends a
+- **Reminders (web push).** In Keel's settings, **Remind me on this device** sends a
   morning prep reminder and, on days you traded and haven't reviewed, an evening
   review reminder, at times you pick on your own clock; partner nudges, mentor notes,
   season results and tilt alerts (see Tilt alerts above) come the same way. It's standard web push, encrypted end to end
   (RFC 8291) with the server's own keys — no third-party service. On iPhone it needs
-  Pulse added to the Home Screen.
+  Keel added to the Home Screen.
 
 **Trust model.** Process numbers are computed by each member's browser and are
 self-reported. Money numbers are never taken from the browser: the server reads
@@ -614,7 +619,7 @@ them. Each sign-in issues a fresh device key, like the other sign-in methods.
 **Wallet approval.** Under Admin → **Wallets** the owner can switch on **Wallets need
 my approval**. From then on, a member's wallet counts for returns, verified Discipline
 and return competitions only after the owner approves its address. Until then the
-server doesn't read it on chain at all. Members can still join and use Pulse, and are
+server doesn't read it on chain at all. Members can still join and use Keel, and are
 told their wallet is waiting (or wasn't accepted). Decisions are stored per address, so
 a rejected wallet stays rejected under a new profile. Wallets the owner attaches to a
 member count as approved, and switching approval on approves the wallets already in
@@ -637,7 +642,7 @@ approves it. A member with no wallet gets the mapped one as their main wallet; *
 switches it later (the old main stays mapped). The AI coach allowance counts across every
 wallet a member has. A signature still wins: claiming a mapped wallet moves it to the claimer.
 The sign-in message names the site it's for. When self-hosting, set `PUBLIC_ORIGIN` to
-your Pulse address so the server only writes messages for that site and a look-alike
+your Keel address so the server only writes messages for that site and a look-alike
 page can't collect a usable signature (on Railway the edge already guarantees the
 address, custom domains included).
 
@@ -658,7 +663,7 @@ browser so you don't retype it; **Stop syncing on this device** forgets it. The 
 already syncs the whole journal with `AUTH_TOKEN`, so this is for members only, and
 the owner can switch it off.
 
-**Unlocks.** Pulse features unlock with level — by default deeper Stats insights at level 2, share
+**Unlocks.** Keel features unlock with level — by default deeper Stats insights at level 2, share
 cards at 3 and joining competitions at 4. XP only comes from process, so unlocking rewards good habits. The owner can
 map every feature (insights, in-depth stats, share cards, competitions, AI coach,
 end-of-day review, report cards) to a level, switch unlocks off, or **fully unlock**
@@ -666,7 +671,7 @@ chosen members. Sample data shows everything. The full journal at `/` is never l
 
 **Admins.** You can share the panel without sharing your access token. Members →
 **Add admin**, type a name, and send them the link it shows (good for 7 days): opening it
-signs them in to the panel, and to Pulse, with their own profile. An existing member becomes
+signs them in to the panel, and to Keel, with their own profile. An existing member becomes
 an admin by ticking **Admin** under Access on their page. Admins can do everything in the
 panel except add or remove admins or change another admin's profile; their key never
 opens your journal, backups or the server's other routes. Removing or suspending an admin
@@ -683,8 +688,8 @@ step: on the sign-in screen it asks for a passkey, a code from the app or a reco
 and keeps that browser signed in for 12 hours (an `HttpOnly`, `SameSite=Strict` cookie,
 `Secure` over https, sent only to `/api/social/admin/`; it opens nothing without the
 token or key, and **Sign out** ends it). A session that runs out while the panel is open
-asks again in a dialog and carries on. Admin passkeys are separate from Pulse passkeys:
-they never sign anyone in to Pulse. The Security card also shows the owner which admins
+asks again in a dialog and carries on. Admin passkeys are separate from Keel passkeys:
+they never sign anyone in to Keel. The Security card also shows the owner which admins
 have two-factor, a switch to **require it of every admin** (those without it are asked to
 set it up the next time they open the panel), and **Reset** for an admin who lost their
 factors. Wrong codes are rate-limited: five for one person within 10 minutes lock codes
@@ -720,7 +725,7 @@ action. Sections:
   use at a glance; **Needs your attention** (reports, wallets waiting, a closed league,
   server settings to fix); top XP, tiers and recent admin activity.
 - **Members** — search and filter; **add a member** (you get a 7-day sign-in code and a
-  `/pulse#link=CODE` link to send them); per member: rename, set or clear the wallet
+  `/keel#link=CODE` link to send them); per member: rename, set or clear the wallet
   (unless claimed), **map more wallets** to them by hand (or make one their main wallet,
   the one their numbers are read from), **boost XP** (or correct it) with a reason they see, fully unlock,
   their coach allowance, leagues and tiers, award or take back reward badges, a new
@@ -842,7 +847,7 @@ how often you keep it and what breaking it cost. Only trades with a ticked
 checklist are graded. A rule you add later doesn't grade older trades, and
 rewording a rule starts its history fresh. Gaps built on fewer than 10 trades a
 side are marked *early*. Playbooks sync across devices and ride backups, and
-Pulse offers their names first when you tag a setup.
+Keel offers their names first when you tag a setup.
 
 **Price chart** on the expanded row draws the trade on real candles: every
 entry/add and close fill, average entry/exit, your planned stop and target as
@@ -1143,7 +1148,7 @@ kept (say, the end-of-day review) isn't held against every day. Stops honored
 and the loss limit stay out of the score, because they can only fail on a
 losing day.
 
-Pulse tells the same story simply, for people getting started, under **Stats →
+Keel tells the same story simply, for people getting started, under **Stats →
 Do your habits pay?** (near the top, for the range you pick). It gives a plain
 answer ("On days you kept most of your habits, you made $281 more a day"), a
 "how sure" meter ("Too early to tell", "Not clear yet — could be luck", "Looks
@@ -1151,7 +1156,7 @@ real", "Clear pattern") and two tiles: habit days and other days, with their
 average day and how many were green. When the link is real it names the habit to
 protect. **See the breakdown** adds a three-step staircase (few, some or most
 habits kept) and the habits ranked by what they're worth a day. There's no
-scatter and no statistics in Pulse; those stay in the full journal. It never
+scatter and no statistics in Keel; those stay in the full journal. It never
 claims a link before 8 days or without a significant one, and it says so when
 sloppier days did better.
 
@@ -1188,7 +1193,7 @@ Two choices keep it honest:
   planned risk), so trading bigger never counts as trading better.
 
 The week-by-week part needs 8 weeks of trading before it claims anything, and it says so when your
-score never varied. Pulse's "Does discipline pay?" card adds a one-line
+score never varied. Keel's "Does discipline pay?" card adds a one-line
 whole-history summary with the habit that pays most. Every number is seeded, so
 it reproduces.
 
@@ -1246,7 +1251,7 @@ follow and your leagues' members). Money is never staked; XP can be.
   - See the ladder's current season and its top 10, and the last podium.
   - See every duel and group duel running or waiting, and cancel one without a
     result.
-  - "Duels" is a Pulse feature that unlocks at level 3 (1,200 XP on the default
+  - "Duels" is a Keel feature that unlocks at level 3 (1,200 XP on the default
     curve), so members have a record to compete on and XP to stake. Change the
     level under Features (1 makes it free); the server enforces it too.
 
@@ -1301,7 +1306,7 @@ be invited.
 
 Members see how their last 90 days compare with anonymous traders of the same
 style (scalper, day, swing, position), trade size range, experience and activity:
-a simple card in **Pulse → Stats** ("better than 64 of 100 traders like you",
+a simple card in **Keel → Stats** ("better than 64 of 100 traders like you",
 plus the one habit that most separates the best quarter of their group from them)
 and a detailed table in the journal's **Review**, where they pick which
 dimensions to match and see each group's spread.
@@ -1356,14 +1361,14 @@ dimensions to match and see each group's spread.
   `GET /api/social/bench` returns it as `improvers: {key, n, nOthers, panel,
   changes: [{metric, label, unit, improversDelta, othersDelta, from, to, n,
   nOthers, effect, text}], note}`, where `note` says plainly why nothing is shown.
-  Pulse → Stats has a simple card, "What traders like you changed when they
+  Keel → Stats has a simple card, "What traders like you changed when they
   improved", with two or three changes. Each has **Make it my habit**, which adds
   the matching habit or plugs the matching leak, and a tooltip with the numbers.
   The journal's Review has the full table. Admin → Benchmarks shows improvers per
   group and the top changes overall. Members who switch off "Count me in" lose
   their history at once; members who leave or are removed, and seed wallets taken
   out, lose theirs at the next build.
-- It's a Pulse feature like the others, **free at level 1**. Set a level under
+- It's a Keel feature like the others, **free at level 1**. Set a level under
   Admin → Features to make it an unlock. The AI coach sees the member's standing
   (group spreads only) and can use it to make a habit concrete. It also sees up
   to three things improvers changed.
@@ -1412,7 +1417,7 @@ Treat it as positive visualization of staying the course, nothing more.
 - **Timezone (⏱):** toggles all time-of-day and weekday analysis between local
   and UTC — one switch, applied everywhere consistently.
 - **Appearance:** Auto (follows your device's light/dark setting, live), Dark
-  or Light, applied to the full journal and Pulse (Pulse → Settings has the same
+  or Light, applied to the full journal and Keel (Keel → Settings has the same
   switch). It syncs with your settings and is applied before the first paint, so
   a light-mode phone never flashes the dark palette. In light mode, profit/loss
   colours are deepened to hold contrast on white.
@@ -1537,7 +1542,7 @@ All opt-in via environment variables, still zero dependencies:
   needs `REFRESH_INTERVAL_MIN`. "Today" is the same calendar day the day
   journal uses, so a review you wrote is always found.
 - `COACH_AI=1` + `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, see below) — the **coach's weekly letter** (see
-  The coach) and the **AI coach chat** in Pulse (`/api/coach/chat`: a member's
+  The coach) and the **AI coach chat** in Keel (`/api/coach/chat`: a member's
   key or the owner token; 3 messages a day per profile and per wallet (profiles that share a
   wallet share its 3), set in the admin panel's Coach tab; admins and the owner have no limit,
   and any admin can reset a member's count for the day from their page; low effort
@@ -1752,7 +1757,7 @@ real server, fully offline (every request off the local server is blocked). They
 boot the full journal with a token, load sample data, open every tab, save a journal
 note and check it reaches the server and survives a reload, check that a reload
 takes every `app/` script from cache, open the app offline through the service
-worker, open `ledger.html` straight from disk, open Pulse at phone width (no
+worker, open `ledger.html` straight from disk, open Keel at phone width (no
 sideways scroll), open every admin tab, and run admin two-factor at 360 and 1280 px
 (setting up an app from its QR code and a passkey in Chrome's virtual authenticator,
 the second step on the sign-in screen and as a dialog when a session ends, sign-out,
@@ -1765,7 +1770,7 @@ separate job on every push.
 Architecture in one paragraph: `ledger.html` holds the markup, styles and fonts,
 and loads its code from `app/` as ordinary scripts, in order: vendored Chart.js,
 then seventeen parts from `core.js` (storage, sync, the exchange API) and
-`engine.js` (reconstruction and analytics) through the views, Pulse and `plans.js`
+`engine.js` (reconstruction and analytics) through the views, Keel and `plans.js`
 (plan vs outcome) to `boot.js`, which runs last. The parts share one global scope, the way the single
 inline script did. **The one rule:** code that runs *while a part loads* (as
 opposed to inside a function called later) may only use names from that part or

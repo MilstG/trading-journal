@@ -15,7 +15,7 @@ app-source.js   the page with app/ inlined — what the analytics engine and the
 server.js       companion server: persistence + read-only analytics API (/api/v1),
                 scheduled refresh, webhook alerts, weekly digests, server backups
 help.html       built-in user guide, served at /help (a Help button appears in the app)
-social.js       Pulse's leagues, competitions, feed, badges and member accounts (/api/social)
+social.js       Keel's leagues, competitions, feed, badges and member accounts (/api/social)
 social-config.js  the admin panel's settings and their sanitizers (levels, XP, features, coach, routines)
 admin.html      the owner's admin panel, served at /admin
 badges.html     a member's public badge page, served at /b/<name>
@@ -23,7 +23,7 @@ vendor/         eth-sig.js — signature recovery for wallet claims (bundled, no
 tech.html       technical reference, served at /docs
 db.js           the social layer's SQLite storage (DATA_DIR/pulse.db), its schema and the one-time social.json import
 package.json    start script + node version, 22.13+ for node:sqlite (one optional dependency, the Anthropic SDK, used only with COACH_AI on Anthropic)
-webauthn.js     passkey (WebAuthn) checks for Pulse sign-in, no dependencies
+webauthn.js     passkey (WebAuthn) checks for Keel sign-in, no dependencies
 offsite.js      encrypted off-site backups to any S3-compatible bucket, plus the restore CLI
 cex-relay.js    forwards browser-signed, read-only Bybit/Binance requests (POST /api/cex/relay)
 tests/          test suites (`npm test`; CI runs them on every push)
@@ -72,11 +72,11 @@ tests/          test suites (`npm test`; CI runs them on every push)
 - **Stays in the browser (by design):** candle caches and fill caches
   (re-fetchable, large) and journal image attachments. "Backup all" still
   exports everything exportable as a portable JSON.
-- **Pulse (`/pulse`):** the same app in its simple dial view, installable as
+- **Keel (`/keel`):** the same app in its simple dial view, installable as
   its own app. Visitors without the access token keep their journal in their
   own browser and never write to the server; set `AUTH_TOKEN` before sharing
   the link, or everyone who opens it shares your journal.
-- **Social + admin:** Pulse's leagues, competitions, feed and posts live in an
+- **Social + admin:** Keel's leagues, competitions, feed and posts live in an
   SQLite database, `DATA_DIR/pulse.db` (with `pulse.db-wal` beside it while the server
   runs: back up both, or stop the server first), and members' pictures in
   `DATA_DIR/media/` (2 GB in all). It uses Node's built-in `node:sqlite`, so the
@@ -110,7 +110,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ADMIN_2FA`            | `optional`                       | Second factor for the admin panel (`/api/social/admin/*` only; the token keeps working alone everywhere else): `optional` — each person turns it on by adding an admin passkey or an authenticator app under Settings → Security; `required` — the owner and every admin need it; `off` — never asked for. An unrecognised value counts as `required` |
 | `ADMIN_2FA_RESET`      | *(unset)*                        | Escape hatch if the owner lost every second factor: set it (e.g. `1`), restart, then remove it. Clears the owner's admin passkeys, app and recovery codes and ends every admin session; each value resets once. Or run `node server.js --reset-admin-2fa` |
 | `CORS_ORIGIN`          | *(unset)*                        | Exact origin allowed to call `/api/*` from a browser app |
-| `PUBLIC_ORIGIN`        | *(unset)*                        | The address people open Pulse at (e.g. `https://pulse.example.com`; comma-separate several). Wallet sign-in messages name only this site, so a look-alike site can't collect a valid signature. Not needed on Railway, whose edge only passes the service's own domains (custom ones included); set it when self-hosting |
+| `PUBLIC_ORIGIN`        | *(unset)*                        | The address people open Keel at (e.g. `https://pulse.example.com`; comma-separate several). Wallet sign-in messages name only this site, so a look-alike site can't collect a valid signature. Not needed on Railway, whose edge only passes the service's own domains (custom ones included); set it when self-hosting |
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
 | `DATA_DIR`             | `/data` if present, else `./data`| Where the journal, caches, reports, and backups live |
 | `REFRESH_INTERVAL_MIN` | *(unset = off)*                  | Refresh server caches from Hyperliquid on a timer (first run ~30s after boot) |
@@ -135,7 +135,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `NUDGE_HOUR`           | *(unset = off)*                  | End-of-day journaling nudge after this hour (0–23); needs `REFRESH_INTERVAL_MIN` and a delivery channel |
 | `NUDGE_TZ`             | `UTC`                            | Fallback IANA zone for `NUDGE_HOUR` and "today" until the app reports its own (it follows the app's clock setting) |
 | `TELEGRAM_SHARE_CHAT_ID` | *(unset)*                     | Accountability partner/group chat(s) for Review → Progress → "Send to partner" (needs `TELEGRAM_BOT_TOKEN`) |
-| `COACH_AI`             | *(unset = off)*                  | `1` enables the AI weekly letter in Review and the AI coach chat in Pulse (needs `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` with OpenAI; Railway's `npm install` pulls the optional SDK). Chat allowances are set in `/admin` → Coach |
+| `COACH_AI`             | *(unset = off)*                  | `1` enables the AI weekly letter in Review and the AI coach chat in Keel (needs `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` with OpenAI; Railway's `npm install` pulls the optional SDK). Chat allowances are set in `/admin` → Coach |
 | `ANTHROPIC_API_KEY`    | *(unset)*                        | Claude API key, only read when `COACH_AI=1` |
 | `COACH_AI_PROVIDER`    | `anthropic` (`openai` for a `gpt-…` model) | Which AI runs the coach: `anthropic` or `openai` |
 | `COACH_AI_MODEL`       | `claude-opus-5-5`, or `gpt-5.6-luna` with OpenAI | Model for the weekly letter and the coach chat |
@@ -183,7 +183,7 @@ Bybit and Binance don't accept calls from a web page, so the browser signs each
 request with the member's read-only key and posts it to this server's
 `POST /api/cex/relay`, which forwards it. The relay only forwards `GET`s to the
 exchanges' own hosts, on the read-only endpoints the app uses, with only the signing
-headers. It never sees an API secret. It's open to the owner's token and to Pulse
+headers. It never sees an API secret. It's open to the owner's token and to Keel
 members, and each caller gets `CEX_RELAY_PER_MIN` requests a minute.
 
 **Region matters.** The exchanges refuse some countries by the caller's IP, and the

@@ -172,7 +172,7 @@ function pzNav(tab, level){
   const cur=tab==='discipline'||tab==='journal'||tab==='review'||tab==='plan'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='reviews'||tab==='tr'||tab==='lginfo'||tab==='duels'||tab==='people'||tab==='duelnew'||tab==='podnew'||tab==='post'||tab==='compose'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   const items=[['today','Today'],['trends','Stats'],['checkin','Prep'],['coach','Coach'],['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
-  return `<nav class="pz-nav" aria-label="Pulse"><div class="pz-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}Pulse</div>
+  return `<nav class="pz-nav" aria-label="Keel"><div class="pz-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}Keel</div>
     ${items.map(([k,l])=>`<a href="#${k}"${k===cur?' aria-current="page"':''}${k==='trends'&&lockT?` aria-label="Trends, unlocks at level ${lockT}"`:''}>${pzI(k==='trends'&&lockT?'lock':k,22)}<span>${l}</span></a>`).join('')}
     <div class="pz-navfoot"><a href="${esc(pzFullHref())}">Open the full journal →</a></div></nav>`;
 }
@@ -309,7 +309,7 @@ function pzTiltHtml(D){
     <div class="pz-tiltbar" role="meter" aria-label="Tilt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${T.score}"><i style="left:${T.score}%"></i></div>
     ${T.reasons.length?T.reasons.slice(0,3).map(r=>`<div class="pz-row-t"><span>${esc(r.text)}</span><b style="color:${col}">+${r.pts}</b></div>`).join('')
       :`<p class="pz-sub" style="font-size:12px">${active?'No losses in a row, no rushed re-entry, size and pace as usual.':'Nothing pushing you yet today.'}</p>`}
-    ${canNotify?`<div class="pz-toggle" style="min-height:44px"><span style="flex:1"><b id="pzTiltNL" style="font-size:13px">Notify me when it runs hot</b><span class="pz-sub" style="display:block;font-size:11px">While Pulse is open, even in another tab</span></span><button type="button" role="switch" class="pz-switch" id="pzTiltNotify" aria-checked="${on}" aria-labelledby="pzTiltNL"><i></i></button></div>`:''}</section>`;
+    ${canNotify?`<div class="pz-toggle" style="min-height:44px"><span style="flex:1"><b id="pzTiltNL" style="font-size:13px">Notify me when it runs hot</b><span class="pz-sub" style="display:block;font-size:11px">While Keel is open, even in another tab</span></span><button type="button" role="switch" class="pz-switch" id="pzTiltNotify" aria-checked="${on}" aria-labelledby="pzTiltNL"><i></i></button></div>`:''}</section>`;
 }
 const PZ_QUIET_MIN=15;
 // kept in memory too, so quiet mode still closes when storage is blocked (private mode, full disk)
@@ -333,7 +333,7 @@ function pzQuietHtml(D){
     ${T.reasons.length?`<ul>${T.reasons.map(r=>`<li><span>${esc(r.text)}</span><b style="color:${PZ_COL.low}">+${r.pts}</b></li>`).join('')}</ul>`:''}
     ${lesson?`<section class="pz-card" style="width:100%;text-align:left"><span class="pz-lbl" style="color:var(--pz-muted)">${lesson.key?'You wrote, '+esc(dayLabel(lesson.key)):'Your lesson'}</span><p style="margin:6px 0 0;font-size:15px;line-height:1.45">“${esc(lesson.text)}”</p></section>`:''}
     ${onBreak?`<button type="button" class="pz-ghost" data-pz-quiet="end">End the break early</button>`
-      :`<button type="button" class="pz-cta" data-pz-quiet="break">Start a ${PZ_QUIET_MIN}-minute break</button><button type="button" class="pz-ghost" data-pz-quiet="ack">I’m calm — back to Pulse</button>`}
+      :`<button type="button" class="pz-cta" data-pz-quiet="break">Start a ${PZ_QUIET_MIN}-minute break</button><button type="button" class="pz-ghost" data-pz-quiet="ack">I’m calm — back to Keel</button>`}
   </div></div>`;
 }
 function pzTiltNotify(T){
@@ -365,7 +365,7 @@ function pzTaNotify(a){
   if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
   // the loss limit already has its notification (the tripwire): one, not two
   if(a.k==='limit'){ const k='trip:'+nfDayKey(Date.now()); if(_notified[k])return; _notified[k]=1; }
-  const o={body:a.text,tag:'pz-tilt',data:{url:'/pulse#today'},icon:'/pulse-icon.svg'}, show=()=>{ try{ new Notification(a.title,o); }catch(e){} };
+  const o={body:a.text,tag:'pz-tilt',data:{url:'/keel#today'},icon:'/pulse-icon.svg'}, show=()=>{ try{ new Notification(a.title,o); }catch(e){} };
   try{ if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration)navigator.serviceWorker.getRegistration().then(r=>r?r.showNotification(a.title,o):show()).catch(show); else show(); }catch(e){ show(); }
 }
 // a hidden tab keeps refreshing while it could matter: alerts on, notifications allowed, a trade in the last two hours
@@ -594,8 +594,8 @@ function pzInstallCardHtml(){
   if(pzStandalone()||!/^https?:$/.test(location.protocol))return '';
   try{ if(localStorage.getItem('pz_install_x'))return ''; }catch(e){}
   const ios=pzIsIOS(); if(!_deferredInstall&&!ios)return '';
-  return `<section class="pz-banner pz-span" aria-label="Install Pulse"><span class="pz-ico" style="width:40px;height:40px;background:var(--pz-tint-good);color:var(--pz-good)">${pzI('plus',20)}</span>
-    <div style="flex:1;min-width:0"><b style="font-size:14px">Put Pulse on your home screen</b><p class="pz-fine" style="margin-top:2px">${ios?'Tap <b>Share</b> in Safari’s toolbar, then <b>Add to Home Screen</b>. It opens full screen, like an app.':'It opens full screen, like an app, and can remind you to prep.'}</p></div>
+  return `<section class="pz-banner pz-span" aria-label="Install Keel"><span class="pz-ico" style="width:40px;height:40px;background:var(--pz-tint-good);color:var(--pz-good)">${pzI('plus',20)}</span>
+    <div style="flex:1;min-width:0"><b style="font-size:14px">Put Keel on your home screen</b><p class="pz-fine" style="margin-top:2px">${ios?'Tap <b>Share</b> in Safari’s toolbar, then <b>Add to Home Screen</b>. It opens full screen, like an app.':'It opens full screen, like an app, and can remind you to prep.'}</p></div>
     ${ios?'':'<button type="button" class="pz-ghost pz-sm" id="pzInstallCard" style="flex:0 0 auto">Install</button>'}<button type="button" class="pz-chip icon" id="pzInstallX" aria-label="Not now" style="flex:0 0 auto;height:36px;padding:0 10px">${pzI('x',16)}</button></section>`;
 }
 function pzTodayHtml(D){
@@ -1191,9 +1191,9 @@ async function pzSaveJournal(sec){
 // The first-run screen: what Pulse is on one side, connecting your trades on the other
 function pzWelcomeHero(){
   const dial=(v,pct,col,l)=>`<div>${pzRing(esc(v),pct,col,{size:76})}<span>${l}</span></div>`;
-  return `<section class="pz-wl-hero"><div class="pz-wl-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}<b>Pulse</b></div>
+  return `<section class="pz-wl-hero"><div class="pz-wl-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}<b>Keel</b></div>
     <h1>Know when to trade.<br><span>And when to stop.</span></h1>
-    <p class="pz-wl-lede">Pulse reads your own fills on Hyperliquid, Lighter, Bybit or Binance and turns them into three dials for your trading day.</p>
+    <p class="pz-wl-lede">Keel reads your own fills on Hyperliquid, Lighter, Bybit or Binance and turns them into three dials for your trading day.</p>
     <div class="pz-wl-dials" aria-hidden="true">${dial('78',0.78,'var(--pz-good)','Readiness')}${dial('84',0.84,'var(--pz-xp)','Discipline')}${dial('Low',0.28,'var(--pz-risk)','Risk')}</div>
     <ul class="pz-wl-points"><li>${pzI('check',16,2.4)}Two minutes of prep before the open</li><li>${pzI('check',16,2.4)}Revenge trades, size-ups and overtrading caught as they happen</li><li>${pzI('check',16,2.4)}One-line journaling, and how you compare with traders like you</li></ul></section>`;
 }
@@ -1254,7 +1254,7 @@ function pzSheetHtml(){
   const tokenAsk=SRV.enabled&&SRV.needsAuth&&(!SRV.token||SRV.badAuth);
   const where=!SRV.enabled?'Saved in this browser. Use the full journal’s Backup to move it to another device.'
     :tokenAsk?'Saved in this browser only — this server is protected by an access token.'
-    :'Synced to this server — open Pulse on any device to pick up where you left off.';
+    :'Synced to this server — open Keel on any device to pick up where you left off.';
   return `<div class="pz-sheet-bg" data-pz-close><div class="pz-sheet" role="dialog" aria-modal="true" aria-labelledby="pzSheetT">
     <div style="display:flex;justify-content:space-between;align-items:center"><b id="pzSheetT" style="font-size:18px">Settings</b><button type="button" class="pz-chip icon" data-pz-close aria-label="Close">${pzI('x',20)}</button></div>
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Wallets</span>
@@ -1271,7 +1271,7 @@ function pzSheetHtml(){
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Your data</span><p class="pz-sub" style="margin-top:6px">${where}</p>
       ${SRV.enabled&&!SRV.needsAuth?'<p class="pz-warn" style="margin-top:10px">This server has no access token set, so everyone who opens this link shares one journal. The owner should set AUTH_TOKEN before sharing it.</p>':''}
       ${tokenAsk?pzTokenHtml():''}</section>
-    <section style="display:flex;flex-direction:column;gap:8px">${_deferredInstall?'<button type="button" class="pz-ghost" id="pzInstall">Install Pulse as an app</button>':'<p class="pz-fine">To install: on iPhone tap Share → Add to Home Screen; on Android or desktop use the browser’s Install option.</p>'}
+    <section style="display:flex;flex-direction:column;gap:8px">${_deferredInstall?'<button type="button" class="pz-ghost" id="pzInstall">Install Keel as an app</button>':'<p class="pz-fine">To install: on iPhone tap Share → Add to Home Screen; on Android or desktop use the browser’s Install option.</p>'}
       <a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a>${((SRV.enabled&&SRV.token&&!SRV.badAuth)||(typeof SOC!=='undefined'&&SOC.me&&SOC.me.admin))&&/^https?:$/.test(location.protocol)?'<a class="pz-ghost" href="/admin">Admin panel</a>':''}</section>
   </div></div>`;
 }
@@ -1299,7 +1299,7 @@ function pzRender(){
   let html;
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
-    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Pulse hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
+    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Keel hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
     socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
@@ -1365,7 +1365,7 @@ function wirePulse(){
     if(ds.pzSectreset){ if(settings.pzLayout)delete settings.pzLayout[ds.pzSectreset]; await Store.set(S_KEY,settings); pzRender(); return; }
     if(ds.pzAmfill!==undefined){ const el=$('pzAm'+ds.pzAmfill); if(!el)return; el.value=ds.v; el.dispatchEvent(new Event('input',{bubbles:true}));
       root.querySelectorAll('[data-pz-amfill="'+ds.pzAmfill+'"]').forEach(b=>b.classList.toggle('ok',b===t)); el.focus(); return; }
-    if(ds.pzRmw!==undefined){ const w=settings.wallets[+ds.pzRmw]; if(w&&!confirm('Remove '+labelFor(w)+'? Its trades leave Pulse; your notes on them stay saved.'))return;
+    if(ds.pzRmw!==undefined){ const w=settings.wallets[+ds.pzRmw]; if(w&&!confirm('Remove '+labelFor(w)+'? Its trades leave Keel; your notes on them stay saved.'))return;
       await removeWallet(+ds.pzRmw); pzRender(); return; }
     if(ds.pzCex){ pzS.cex={venue:ds.pzCex}; pzRender(); const f=$('pzCexKey'); if(f)f.focus(); return; }
     if(ds.pzCexoff!=null){ pzS.cex=null; pzRender(); const f=$('pzAddr'); if(f)f.focus(); return; }

@@ -183,7 +183,7 @@ try {
     const cdp = await ctx.newCDPSession(p); await cdp.send('WebAuthn.enable');
     await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true } });
     await p.addInitScript(k => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('pz_social_key', k); localStorage.setItem('srv_token', 'e2e-token'); sessionStorage.setItem('seeded', '1'); } }, j.key);
-    await p.goto(LB + '/pulse'); await p.waitForFunction(() => typeof SOC !== 'undefined' && SOC.me);
+    await p.goto(LB + '/keel'); await p.waitForFunction(() => typeof SOC !== 'undefined' && SOC.me);
     await p.evaluate(async () => { pzS.demo = true; await loadDemo(); location.hash = '#account'; });
     await p.click('#socPkAdd');
     await p.waitForSelector('[data-pk-del]');
@@ -238,7 +238,7 @@ try {
   await t('Pulse opens at phone width with sample data and no errors, inside the budget', async () => {
     const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
     within('pulse', await timed('pulse', async () => {
-      await p.goto(BASE + '/pulse');
+      await p.goto(BASE + '/keel');
       await p.waitForSelector('#pz', { state: 'visible' });
       await p.waitForFunction(() => document.getElementById('pz').innerText.trim().length > 100);
     }));
@@ -251,7 +251,7 @@ try {
   console.log('\nPulse: tilt alerts and the week card');
   for (const width of [360, 1280]) await t(`at ${width} px: a tilt banner, the break timer, and a PNG of the week (1080×1350 and 1080×1080)`, async () => {
     const { page: p, errors: errs } = await openPage({ width, height: 860 }, { token: false });
-    await p.goto(BASE + '/pulse');
+    await p.goto(BASE + '/keel');
     await p.click('#pzDemo');
     await p.waitForFunction(() => allTrades.length > 20 && document.querySelector('.pz-rings'));
     // three losses in the last few minutes, as a refresh would bring them. Headless Chromium always
@@ -298,7 +298,7 @@ try {
     await p.waitForFunction(() => pzS.wk.theme === 'light' && pzS.wk.show.badges === false && pzS.wk.m && pzS.wk.m.badges.length === 0);
     ok(!/\$/.test(JSON.stringify(await p.evaluate(() => pzS.wk.m))), 'no dollar amounts on the card');
     const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-pz-wk="dl"]')]);
-    ok(/^pulse-week-\d{4}-\d{2}-\d{2}-square\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+    ok(/^keel-week-\d{4}-\d{2}-\d{2}-square\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());
     const sw = await p.evaluate(() => document.documentElement.scrollWidth);
     ok(sw <= width, 'no sideways scrolling (page is ' + sw + ' px wide)');
     eq(errs, [], 'no console errors');
@@ -354,7 +354,7 @@ try {
 
   console.log('\nInstall as an app');
   await t('the journal and Pulse both pass Chrome’s installability check, with PNG home-screen icons', async () => {
-    for (const [path, icon] of [['/', '/icons/ledger-180.png'], ['/pulse', '/icons/pulse-180.png']]) {
+    for (const [path, icon] of [['/', '/icons/ledger-180.png'], ['/keel', '/icons/pulse-180.png']]) {
       const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
       await p.goto(BASE + path);
       await p.waitForFunction(() => !!(navigator.serviceWorker && navigator.serviceWorker.controller), null, { timeout: 15000 });
@@ -404,7 +404,7 @@ try {
     eq(await q.$('#adminToggle'), null, 'only the owner adds admins');
     eq(await q.evaluate(() => localStorage.getItem('srv_token')), null, 'never the access token');
     // and Pulse on that browser is signed in as the same profile
-    await q.goto(BASE + '/pulse'); await q.waitForFunction(() => typeof SOC !== 'undefined' && SOC.me && SOC.me.handle === 'co_admin', null, { timeout: 10000 });
+    await q.goto(BASE + '/keel'); await q.waitForFunction(() => typeof SOC !== 'undefined' && SOC.me && SOC.me.handle === 'co_admin', null, { timeout: 10000 });
     eq(errs, []); eq(errs2, []);
     await p.close(); await q.close();
   });

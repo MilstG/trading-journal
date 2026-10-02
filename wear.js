@@ -146,7 +146,7 @@ function createWear(opts) {
       const ck = /(?:^|;\s*)pulse_wear=([a-f0-9]{32})/.exec(String(req.headers.cookie || ''));
       // back to the check-in either way; a failed sign-in is shown there as the provider's error
       const back = (ok, why) => { if (!ok && why && st) { user(st.uid).failed = { p, why: String(why).slice(0, 200), at: now() }; save(); }
-        res.writeHead(302, { Location: '/pulse#checkin' }); res.end(); };
+        res.writeHead(302, { Location: '/keel#checkin' }); res.end(); };
       if (!st || st.exp < now() || st.provider !== p || !ck || ck[1] !== st.nonce) return back(false);
       if (!query.code) return back(false, 'denied');
       try { const c = cfg(p); const t = await tokenCall(p, { grant_type: 'authorization_code', code: String(query.code), redirect_uri: st.redirect, client_id: c.id, client_secret: c.secret });
@@ -157,7 +157,7 @@ function createWear(opts) {
     // Apple Health: the Shortcut posts with the personal token in the link
     if (p === 'apple' && !parts[1] && M === 'POST' && query.t) {
       const uid = Object.keys(W.users).find(k => W.users[k].apple && W.users[k].apple.h === sha(query.t));
-      if (!uid) return json(res, 401, { error: 'That link was replaced or removed. Copy the new one from Pulse.' });
+      if (!uid) return json(res, 401, { error: 'That link was replaced or removed. Copy the new one from Keel.' });
       const body = await readBody(req).catch(() => null); if (!body) return json(res, 400, { error: 'Send JSON: {"date":"2026-10-01","hrv":52,"restingHR":55,"sleepHours":7.2}' });
       const list = Array.isArray(body) ? body.slice(0, 60) : [body], u = user(uid); let n = 0;
       const today = zoneDay(tzOf(uid), now()), oldest = new Date(Date.parse(today) - 60 * 86400000).toISOString().slice(0, 10);
@@ -171,7 +171,7 @@ function createWear(opts) {
       const keep = Object.keys(u.days).sort().slice(-120); for (const x of Object.keys(u.days)) if (!keep.includes(x)) delete u.days[x];
       save(); return json(res, 200, { ok: true, days: n });
     }
-    const uid = uidOf(req); if (!uid) return json(res, 401, { error: 'Sign in to Pulse first.' });
+    const uid = uidOf(req); if (!uid) return json(res, 401, { error: 'Sign in to Keel first.' });
     if (!p && M === 'GET') return json(res, 200, status(uid));
     if (p === 'sync' && M === 'POST') return json(res, 200, await sync(uid, true));
     if (PROVIDERS[p] && parts[1] === 'start' && M === 'POST') {

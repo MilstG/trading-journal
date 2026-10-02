@@ -198,7 +198,7 @@ try {
     const sr = await w('/whoop/start', { method: 'POST', key: A }), start = await sr.json();
     const cookie = String(sr.headers.get('set-cookie') || '').split(';')[0]; ok(/^pulse_wear=[a-f0-9]{32}$/.test(cookie), 'the sign-in is tied to this browser');
     const u = new URL(start.url); eq([u.origin, u.searchParams.get('redirect_uri'), u.searchParams.get('client_id')], ['https://api.prod.whoop.com', 'https://pulse.example/api/wear/whoop/callback', 'cid']);
-    eq((await w('/whoop/callback?code=x&state=forged')).headers.get('location'), '/pulse#checkin', 'a forged state is ignored');
+    eq((await w('/whoop/callback?code=x&state=forged')).headers.get('location'), '/keel#checkin', 'a forged state is ignored');
     // someone else's browser following the link gets nothing attached (and the state is spent)
     const s2 = await (await w('/whoop/start', { method: 'POST', key: A })).json(), st2 = new URL(s2.url).searchParams.get('state');
     await w('/whoop/callback?code=victim&state=' + st2);

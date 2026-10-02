@@ -291,7 +291,7 @@ function create(opts) {
         sweep(); const challenge = WebAuthn.newChallenge();
         pending.set('pk:' + challenge, { purpose: 'reg', u, site, exp: now() + 5 * 60000 });
         const name = who.owner ? 'owner' : who.name;
-        return json(res, 200, { challenge, rp: { name: 'Pulse admin', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('admin:' + u)), name: 'admin ' + name, displayName: 'Pulse admin · ' + (who.owner ? 'Owner' : who.name) },
+        return json(res, 200, { challenge, rp: { name: 'Keel admin', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('admin:' + u)), name: 'admin ' + name, displayName: 'Keel admin · ' + (who.owner ? 'Owner' : who.name) },
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }, { type: 'public-key', alg: -257 }],
           // not a discoverable credential: it's only ever asked for by id, as the second step
           authenticatorSelection: { residentKey: 'discouraged', requireResidentKey: false, userVerification: 'preferred' }, attestation: 'none', timeout: 300000,
@@ -316,8 +316,8 @@ function create(opts) {
         if (x && x.totp) return json(res, 409, { error: 'An authenticator app is already set up. Remove it first to switch to another.' });
         const secret = b32encode(crypto.randomBytes(20)); sweep();
         pending.set('totp:' + u, { secret, exp: now() + 10 * 60000 });
-        const host = site.rpId || 'Pulse';
-        return json(res, 200, { secret, uri: otpauthUri(secret, (who.owner ? 'owner' : who.name) + '@' + host, 'Pulse admin') });
+        const host = site.rpId || 'Keel';
+        return json(res, 200, { secret, uri: otpauthUri(secret, (who.owner ? 'owner' : who.name) + '@' + host, 'Keel admin') });
       }
       const p = pending.get('totp:' + u);
       if (!p || p.exp < now()) return json(res, 400, { error: 'That setup expired. Start again.' });

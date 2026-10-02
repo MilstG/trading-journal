@@ -147,14 +147,14 @@ function planStripHtml(S, tipAttr, cols){
 function planDiagHtml(closed){
   const S=planStats(closed,journal,_excM), mrow=(l,v,tip)=>`<div class="metric-row" data-tip="${esc(tip)}"><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const head=`<h2>Plan vs outcome <span style="font-size:11px;color:var(--faint);font-weight:400">${S.planned} of ${S.n} closed trades planned</span></h2>`;
-  if(!S.planned)return `<div class="diag-section">${head}<div class="diag-card"><p class="lead">No planned trades in this view. Write an entry / stop / target on a trade’s journal row, or use <b>Plan a trade</b> in Pulse before you trade — it attaches itself to the trade.</p></div></div>`;
+  if(!S.planned)return `<div class="diag-section">${head}<div class="diag-card"><p class="lead">No planned trades in this view. Write an entry / stop / target on a trade’s journal row, or use <b>Plan a trade</b> in Keel before you trade — it attaches itself to the trade.</p></div></div>`;
   const pct=x=>x==null?'—':Math.round(x*100)+'%', cols={followed:'var(--profit)',early:'var(--gold)',moved:'var(--loss)',held:'#E0803F'};
   const vr=['followed','early','moved','held'].map(k=>{ const b=S.by[k], w=planWords(k);
     return `<tr data-tip="${esc(w[2])}"><td class="l">${w[0]}</td><td>${b.n}</td><td>${b.n?pct(b.n/S.planned):'—'}</td><td class="${b.n?cls(b.R):''}">${b.n?planFmtR(b.R/b.n):'—'}</td><td class="${cls(b.cost)}">${k==='followed'?'—':b.priced?fmtUsd(b.cost)+(b.priced<b.n?' <span style="color:var(--faint)">('+b.priced+' of '+b.n+')</span>':''):b.n?'<span style="color:var(--faint)">not costed</span>':'—'}</td></tr>`; }).join('');
   const sr=S.bySetup.slice(0,12).map(s=>`<tr data-tip="${esc((s.k==='—'?'Planned trades with no setup written':s.k)+': '+s.n+' planned · average planned R:R '+(s.rr!=null?'1:'+s.rr.toFixed(2):'— (no targets)')+' vs '+planFmtR(s.R)+' achieved on average · plan followed '+pct(s.adherence))}"><td class="l">${esc(s.k)}</td><td>${s.n}</td><td>${s.rr!=null?'1:'+s.rr.toFixed(2):'—'}</td><td class="${cls(s.R)}">${planFmtR(s.R)}</td><td>${pct(s.adherence)}</td></tr>`).join('');
   return `<div class="diag-section">${head}<div class="diag-grid">
     <div class="diag-card"><h3 data-tip="Each planned trade gets one verdict from its prices: out beyond the stop (moved or widened), price through the stop while you held, out before the target, or the plan as written. R is gross, in units of your entry-to-stop distance.">Adherence</h3>
-      ${mrow('Trades with a plan',pct(S.share)+' <span style="color:var(--faint)">'+S.planned+' / '+S.n+'</span>','Closed trades in this view with a stop written down — before the trade (Pulse’s Plan a trade) or on the journal row.')}
+      ${mrow('Trades with a plan',pct(S.share)+' <span style="color:var(--faint)">'+S.planned+' / '+S.n+'</span>','Closed trades in this view with a stop written down — before the trade (Keel’s Plan a trade) or on the journal row.')}
       ${mrow('Plan followed','<span class="'+((S.adherence||0)>=0.7?'pos-t':'neg-t')+'">'+pct(S.adherence)+'</span>','Share of planned trades that ran as written: stopped at the stop, out at or past the target, or no target set and the stop never broken.')}
       ${mrow('Average R: followed vs not',planFmtR(S.avgRFollowed)+' vs '+planFmtR(S.avgRBroke),'Average achieved R on the trades where you followed the plan, against the ones where you didn’t.')}
       ${mrow('Deviations vs the plan',S.devCost?'<span class="'+cls(S.devCost)+'">'+fmtUsd(S.devCost)+'</span>':'—','Sum of every costed deviation against what following the plan would have paid. Early exits count only when the target printed while you held.')}
@@ -190,7 +190,7 @@ function planPzHtml(D){
       <div class="pz-field"><label for="pzPlWhy" style="font-size:13px">Why this trade (one line)</label><input type="text" id="pzPlWhy" maxlength="80" placeholder="Breakout retest" autocomplete="off"></div>
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-plwhy="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
       <button type="button" class="pz-cta" data-pz-plsave>Save plan</button>
-      <p class="pz-fine">It attaches itself to your next trade on this market and side within 24 hours, then Pulse checks how the trade went against it. No trade in 24 hours? It expires.</p></section></div>
+      <p class="pz-fine">It attaches itself to your next trade on this market and side within 24 hours, then Keel checks how the trade went against it. No trade in 24 hours? It expires.</p></section></div>
     <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">Your plans</b>${L.length?L.slice(0,8).map(row).join(''):'<p class="pz-sub" style="font-size:13px">None yet.</p>'}</section></div></div>`;
 }
 // Stats: % planned, how often followed, and one sentence on what not following cost

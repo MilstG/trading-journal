@@ -167,7 +167,7 @@ async function cexRelay(venue, host, path, query, headers){
   let r; try{ r=await srvFetch('/api/cex/relay',{method:'POST',headers:h,body:JSON.stringify({venue,host,path,query:query||'',headers:headers||{}})}); }
   catch(e){ throw new Error('Couldn’t reach your server to relay the request ('+e.message+').'); }
   let j={}; try{ j=await r.json(); }catch(e){}
-  if(r.status===401)throw new Error('Connect to your server first (access token or Pulse sign-in) to use '+VENUE_NAMES[venue]+'.');
+  if(r.status===401)throw new Error('Connect to your server first (access token or Keel sign-in) to use '+VENUE_NAMES[venue]+'.');
   if(r.status===404||r.status===405)throw new Error('Your server doesn’t relay exchange requests yet — redeploy it with this version of Ledger.');
   if(!r.ok)throw new Error(j.error||('relay HTTP '+r.status));
   if(j.geo)throw new Error(VENUE_NAMES[venue]+' refused your server’s location ('+(j.detail||'restricted region')+'). Exchange APIs only answer from countries they serve: run the server — or a relay — in a region '+VENUE_NAMES[venue]+' supports. See README-deploy “Exchange APIs”.');

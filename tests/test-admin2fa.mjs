@@ -124,7 +124,7 @@ try {
   });
   await t('setting up an authenticator app: a secret and an otpauth:// URI; a wrong code is refused; the right one switches it on', async () => {
     const st = await call(A2 + '/2fa/totp/start', { body: {} });
-    eq(st.status, 200); ok(/^[A-Z2-7]{32}$/.test(st.d.secret), st.d.secret); ok(st.d.uri.startsWith('otpauth://totp/Pulse%20admin:owner%40127.0.0.1?secret=' + st.d.secret));
+    eq(st.status, 200); ok(/^[A-Z2-7]{32}$/.test(st.d.secret), st.d.secret); ok(st.d.uri.startsWith('otpauth://totp/Keel%20admin:owner%40127.0.0.1?secret=' + st.d.secret));
     secret = st.d.secret;
     eq((await call(A2 + '/2fa/totp/finish', { body: { code: '000000' === codeFor(secret) ? '111111' : '000000' } })).status, 400);
     const fin = await call(A2 + '/2fa/totp/finish', { body: { code: codeFor(secret) } });

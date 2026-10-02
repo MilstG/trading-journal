@@ -81,7 +81,7 @@ try {
     eq(r.status, 200); rid = r.d.review.id; ok(/^[a-f0-9]{12}$/.test(rid));
     eq([r.d.role, r.d.review.key, r.d.review.handle, r.d.review.trade.usd, r.d.review.waiting, r.d.review.reviewed], ['mentee', 'tradeaaa1', 'alice', undefined, true, null]);
     eq(r.d.comments.map(c => [c.handle, c.text, c.mentor, c.mine]), [['alice', 'Did I size this right?', false, true]]);
-    for (const k of [C, M2]) { const it = (await inbox(k))[0]; eq([it.kind, it.text, it.url], ['mentor', '@alice sent a trade for review: BTC long', '/pulse#tr/' + rid]); }
+    for (const k of [C, M2]) { const it = (await inbox(k))[0]; eq([it.kind, it.text, it.url], ['mentor', '@alice sent a trade for review: BTC long', '/keel#tr/' + rid]); }
     const L = (await call('/reviews', { key: C })).d;
     eq([L.toReview.length, L.toReview[0].id, L.toReview[0].key, L.toReview[0].trade.size, L.mine], [1, rid, null, 2, []]);
     eq((await call('/reviews', { key: D })).d.toReview, null, 'not a mentor: no list');
@@ -96,7 +96,7 @@ try {
   await t('mentors comment (more than once), the member replies, a mentor marks it reviewed', async () => {
     clock += 60000; eq((await call('/reviews/' + rid + '/comments', { method: 'POST', key: C, body: { text: 'Size was fine. The entry was early.' } })).status, 200);
     clock += 60000; await call('/reviews/' + rid + '/comments', { method: 'POST', key: C, body: { text: 'Wait for the candle to close next time.' } });
-    const ai = await inbox(A); eq([ai[0].text, ai[0].url, ai[0].title], ['@carol on your BTC long: Wait for the candle to close next time.', '/pulse#tr/' + rid, 'Your mentor on a trade']);
+    const ai = await inbox(A); eq([ai[0].text, ai[0].url, ai[0].title], ['@carol on your BTC long: Wait for the candle to close next time.', '/keel#tr/' + rid, 'Your mentor on a trade']);
     eq((await call('/reviews', { key: C })).d.toReview[0].waiting, false, 'answered');
     const monaBefore = (await inbox(M2)).length;
     clock += 60000; await call('/reviews/' + rid + '/comments', { method: 'POST', key: A, body: { text: 'Got it, thanks.' } });

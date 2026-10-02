@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
-<title>@__HANDLE__’s badges · Pulse</title>
-<meta name="description" content="Trading badges @__HANDLE__ earned on Pulse — for discipline, habits and consistency, not luck.">
-<meta property="og:title" content="@__HANDLE__’s badges on Pulse">
+<title>@__HANDLE__’s badges · Keel</title>
+<meta name="description" content="Trading badges @__HANDLE__ earned on Keel — for discipline, habits and consistency, not luck.">
+<meta property="og:title" content="@__HANDLE__’s badges on Keel">
 <meta property="og:description" content="Earned for discipline, habits and consistency — process, not profit.">
 <meta name="theme-color" content="#0A0C0F">
 <link rel="icon" href="/pulse-icon.svg">
@@ -84,8 +84,8 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;color:
   function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.style.display='block'; setTimeout(function(){ t.style.display='none'; },2400); }
   fetch('/api/social/public/'+encodeURIComponent(HANDLE)).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok,status:r.status,d:d}; }); }).then(function(x){
     var app=document.getElementById('app');
-    if(!x.ok){ app.innerHTML='<div class="state"><p>'+(x.status===404?'<b>@'+esc(HANDLE)+'</b> doesn’t have a public badge page.':'This page couldn’t load right now. Try again in a minute.')+'</p><p><a href="/pulse">Open Pulse</a></p></div>'; return; }
-    var d=x.d; document.title='@'+d.handle+'’s badges · Pulse';
+    if(!x.ok){ app.innerHTML='<div class="state"><p>'+(x.status===404?'<b>@'+esc(HANDLE)+'</b> doesn’t have a public badge page.':'This page couldn’t load right now. Try again in a minute.')+'</p><p><a href="/keel">Open Keel</a></p></div>'; return; }
+    var d=x.d; document.title='@'+d.handle+'’s badges · Keel';
     var all=(d.badges||[]).slice(), top={};
     // one badge per family, at the highest tier earned — the same case the app shows
     all.forEach(function(b){ var f=String(b.id).indexOf('a-')===0?b.id:String(b.id).replace(/-\d+$/,''); if(!top[f]||(b.r||0)>(top[f].r||0))top[f]=b; });
@@ -93,7 +93,7 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;color:
     var byCat={}; bs.forEach(function(b){ var c=CATS[b.c]?b.c:'other'; (byCat[c]=byCat[c]||[]).push(b); });
     var pct=d.badgeTotal?Math.round(100*all.length/d.badgeTotal):null;
     var html='<header class="hero"><span class="av" style="background:'+avColor(d.handle)+'">'+esc(d.handle.slice(0,2).toUpperCase())+'</span>'
-      +'<div class="who"><span class="kick">Pulse · badge case</span><h1>@'+esc(d.handle)+(d.claimed?' <span title="Wallet claimed" style="font-size:18px;color:var(--acc)">✓</span>':'')+'</h1>'
+      +'<div class="who"><span class="kick">Keel · badge case</span><h1>@'+esc(d.handle)+(d.claimed?' <span title="Wallet claimed" style="font-size:18px;color:var(--acc)">✓</span>':'')+'</h1>'
       +'<p>Level '+d.level+' · '+esc(d.title)+' · trading the process since '+esc(day(d.since))+'</p></div>'
       +'<button type="button" class="share" id="share">Share this page</button></header>'
       +'<section class="tiles"><div class="tile"><b>'+all.length+'</b><span>badges'+(d.badgeTotal?' of '+d.badgeTotal:'')+'</span>'+(pct!=null?'<div class="bar"><i style="width:'+pct+'%"></i></div>':'')+'</div>'
@@ -105,9 +105,9 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;color:
       html+='<section class="cat"><h2>'+CATS[c]+' <small>'+l.length+' earned</small></h2><div class="grid">'+l.map(badge).join('')+'</div></section>'; });
     if(!bs.length&&!(d.awards||[]).length) html+='<div class="state">No badges yet — the first ones come with the first clean trading days.</div>';
     html+='<div class="legend">'+TIERS.map(function(t,i){ return '<span style="--tc:var(--t'+i+')"><i></i>'+t+'</span>'; }).join('')+'</div>'
-      +'<footer><span>Badges on Pulse are earned for process — discipline, habits, consistency — never for luck.</span><a href="/pulse">Start your own on Pulse →</a></footer>';
+      +'<footer><span>Badges on Keel are earned for process — discipline, habits, consistency — never for luck.</span><a href="/keel">Start your own on Keel →</a></footer>';
     app.innerHTML=html;
-    document.getElementById('share').onclick=function(){ var u=location.href, t='@'+d.handle+'’s trading badges on Pulse';
+    document.getElementById('share').onclick=function(){ var u=location.href, t='@'+d.handle+'’s trading badges on Keel';
       if(navigator.share)navigator.share({title:t,url:u}).catch(function(){});
       else if(navigator.clipboard)navigator.clipboard.writeText(u).then(function(){ toast('Link copied'); },function(){ toast(u); });
       else toast(u); };

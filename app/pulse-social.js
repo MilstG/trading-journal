@@ -266,7 +266,7 @@ function socHead(){
     <div class="pz-chips">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></div></header>`;
 }
 function socUnavailableHtml(){
-  return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Pulse from your server’s <b>/pulse</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
+  return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Keel from your server’s <b>/keel</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
 }
 const SOC_SHARE_GROUPS=[['Profile',['profile','page','feed','habits','mentor','duels','seek']],['Boards',['boards','global','verify','ret','bench']],['Sensitive',['usd','addr']]];
 function socToggles(share, attr){
@@ -745,7 +745,7 @@ function socDuelsHtml(D){
         ${L?`<div class="pz-kvrow"><span>Rating <b style="font-family:var(--pz-num);font-size:20px;color:${PZ_COL.xp}">${L.me.r}</b></span><span class="pz-sub" style="font-size:12px">${L.me.rank?'#'+L.me.rank+' on the ladder':L.me.n<L.min?L.me.n+' of '+L.min+' duels to join the ladder':'not listed'}${L.me.gain?' · '+(L.me.gain>0?'+':'')+L.me.gain+' this season':''}</span></div>`:''}
         <div class="pz-kvrow" style="gap:8px"><input id="duelWho" aria-label="Name to challenge" placeholder="@name to challenge" autocomplete="off" style="flex:1;min-width:0"><button type="button" class="pz-cta" id="duelGo" style="width:auto;padding:0 18px">Challenge</button></div>
         ${socDuelPeopleHtml(d)}<a class="pz-link" href="#people/duels" style="min-height:0;align-self:flex-start">Find someone to duel ${pzI('chev',14)}</a>
-        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Pulse from your fills and your app. ${d.stakes?'You can put XP on it (never money): up to '+d.room+' XP right now. ':'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
+        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Keel from your fills and your app. ${d.stakes?'You can put XP on it (never money): up to '+d.room+' XP right now. ':'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
         ${d.podOn?`<a class="pz-ghost" href="#podnew">${pzI('medal',16)} Group duel: 3 to ${d.podMax} people</a>`:''}</section>
       ${grp('Waiting for you',inv)}${grp('Running',act)}${grp('Sent',sent)}</div>
     <div class="pz-col">${L?socLadderHtml(d):''}${grp('Finished',done)}${grp('Didn’t happen',other)}${!d.duels.length&&!P.length?'<section class="pz-card"><p class="pz-sub" style="margin:0">No duels yet. Challenge someone to a week of clean trading.</p></section>':''}</div></div>`;
@@ -1241,7 +1241,7 @@ function acctConnectHtml(){
     <button type="button" class="pz-cta" id="vaultUnlock">Open my journal</button><button type="button" class="pz-ghost pz-sm" id="vaultSkip">Skip — start without it</button></section>`;
   if(SOC.me){ const a=SOC.me.claimedAddress, known=a&&settings.wallets.some(w=>String(w.address).toLowerCase()===a);
     return `<p class="pz-fine">Signed in as @${esc(SOC.me.handle)}.${a?'':' Add your wallet address above to load your trades.'}</p>${a&&!known?`<button type="button" class="pz-ghost" id="acctLoadClaimed">Load my claimed wallet (${esc(walletShort(a))})</button>`:''}`; }
-  return `<details class="pz-acct"${pzS.acctOpen?' open':''}><summary class="pz-fine" style="cursor:pointer">Already use Pulse on another device? Sign in</summary>
+  return `<details class="pz-acct"${pzS.acctOpen?' open':''}><summary class="pz-fine" style="cursor:pointer">Already use Keel on another device? Sign in</summary>
     <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
     ${pkAvailable()?'<button type="button" class="pz-ghost" id="socPkLogin">Sign in with a passkey</button><p class="pz-fine">Face ID, a fingerprint or your device PIN — once you’ve added a passkey under Account on a signed-in device.</p>':''}
     ${SOC.cfg.claims?'<button type="button" class="pz-ghost" id="socWalletLogin">Sign in with my wallet</button><p class="pz-fine">Works once you’ve claimed your wallet. It’s a signature, not a transaction — nothing moves.</p>':''}
@@ -1292,14 +1292,14 @@ function socDevicesCardHtml(){
   const me=SOC.me, L=SOC.link&&SOC.link.exp>Date.now()?SOC.link:null;
   return `<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Your devices</b>
     <p class="pz-sub" style="font-size:13px">Signed in on ${me.devices||1} device${(me.devices||1)===1?'':'s'}. On a new device, sign in with ${[(me.passkeys||[]).length?'a passkey':'',me.claimed?'your wallet':''].filter(Boolean).join(' or ')||'a one-time code from here'}${(me.passkeys||[]).length||me.claimed?', or a one-time code from here':''}.</p>
-    ${L?`<div class="pz-code" aria-live="polite"><b style="font-family:var(--pz-num);font-size:26px;letter-spacing:.12em">${esc(L.code.slice(0,5)+' '+L.code.slice(5))}</b><span class="pz-fine">On the other device open Pulse, choose “Already use Pulse on another device?” and enter this code. It works once, for 10 minutes.</span></div>`
+    ${L?`<div class="pz-code" aria-live="polite"><b style="font-family:var(--pz-num);font-size:26px;letter-spacing:.12em">${esc(L.code.slice(0,5)+' '+L.code.slice(5))}</b><span class="pz-fine">On the other device open Keel, choose “Already use Keel on another device?” and enter this code. It works once, for 10 minutes.</span></div>`
       :'<button type="button" class="pz-ghost pz-sm" id="socLinkNew">Add a device</button>'}
     ${(me.devices||1)>1?'<button type="button" class="pz-ghost pz-sm" id="socSignOutOthers">Sign out other devices</button>':''}</section>`;
 }
 function socVaultCardHtml(){
   const me=SOC.me;
   if(!me.vaultOn&&!VAULT.key)return '';
-  if(!vaultCan())return `<section class="pz-card"><b style="font-size:15px">Your journal on every device</b><p class="pz-sub" style="font-size:13px;margin-top:6px">Encrypted sync needs a secure (https) connection. Open Pulse from its https address to turn it on.</p></section>`;
+  if(!vaultCan())return `<section class="pz-card"><b style="font-size:15px">Your journal on every device</b><p class="pz-sub" style="font-size:13px;margin-top:6px">Encrypted sync needs a secure (https) connection. Open Keel from its https address to turn it on.</p></section>`;
   if(VAULT.key)return `<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px;display:flex;align-items:center;gap:8px">${pzI('check',16)}Journal sync is on</b>
     <p class="pz-sub" style="font-size:13px">Your journal, wallets and settings are encrypted on this device before they’re sent, so the server stores only scrambled data. On another device, sign in and enter your sync passphrase.</p>
     ${VAULT.err?`<p class="pz-fine pz-err" role="alert">Last sync failed: ${esc(VAULT.err)}</p>`:me.vault&&me.vault.at?`<p class="pz-fine">Last synced ${socAgo(me.vault.at)}${me.vault.at>Date.now()-60000?'':' ago'}.</p>`:''}
@@ -1330,7 +1330,7 @@ async function acctAction(t){
       socSignedIn(r); pzNote('Signed in as @'+r.me.handle+'.'); await acctAfterSignIn(); return true; }
     case 'socClaim': { pzNote('Waiting for your wallet…','busy'); const r=await socWalletSign('claim'); SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null;
       const known=settings.wallets.some(w=>String(w.address).toLowerCase()===r.address);
-      done('Claimed '+walletShort(r.address)+'. It’s locked to your profile.'+(known?'':' It isn’t one of the wallets Pulse reads — add it in Settings to see its trades.')); return true; }
+      done('Claimed '+walletShort(r.address)+'. It’s locked to your profile.'+(known?'':' It isn’t one of the wallets Keel reads — add it in Settings to see its trades.')); return true; }
     case 'socUnclaim': { if(!confirm('Release this wallet? Anyone could name it again, and you’d lose wallet sign-in until you claim it again.'))return true;
       const r=await socFetch('/claim/release',{method:'POST'}); SOC.me=r.me; PZ_CFG.rev++; done('Wallet released.'); return true; }
     case 'socWalletLogin': { pzS.acctOpen=true; pzNote('Waiting for your wallet…','busy'); const r=await socWalletSign('login'); socSignedIn(r);

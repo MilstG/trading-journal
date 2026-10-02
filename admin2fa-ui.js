@@ -174,7 +174,7 @@
     <div class="row" style="align-items:center"><button class="fit sm" data-a2f="copycodes">Copy</button><button class="fit sm" data-a2f="dlcodes">Download</button></div>`;
   let shownCodes = null;
   const copyCodes = async () => { try { await navigator.clipboard.writeText(shownCodes.join('\n')); flash('Copied.'); } catch (e) { flash('Couldn’t copy — select them by hand.', true); } };
-  const dlCodes = () => { const a = document.createElement('a'); a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent('Pulse admin recovery codes (' + location.host + ')\n\n' + shownCodes.join('\n') + '\n');
+  const dlCodes = () => { const a = document.createElement('a'); a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent('Keel admin recovery codes (' + location.host + ')\n\n' + shownCodes.join('\n') + '\n');
     a.download = 'pulse-admin-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove(); };
   const flash = (m, err) => { const n = $('note'); if (!n) return; n.className = 'note' + (err ? ' err' : ''); n.textContent = m; setTimeout(() => { if (n.textContent === m) n.textContent = ''; }, err ? 6000 : 3500); };
 
@@ -257,7 +257,7 @@
     let h = `<h2 id="a2fH">Security</h2>${status}
       ${st.mode === 'required' ? '<p class="hint">Required for the owner and every admin on this server (<code>ADMIN_2FA=required</code>).</p>' : ''}
       <h3>Admin passkeys</h3>
-      ${st.passkeys.length ? st.passkeys.map(k => `<div class="a2f-pk"><div><b>${esc(k.name)}</b> <span class="muted small">added ${esc(day(k.at))} · last used ${esc(k.lastUsed ? day(k.lastUsed) : 'never')}</span></div><button class="sm danger fit" data-a2f="pkdel" data-id="${esc(k.id)}" data-n="${esc(k.name)}"${dis}>Remove</button></div>`).join('') : '<p class="muted small" style="margin:0">None yet. These are only for the admin panel: they don’t sign anyone in to Pulse.</p>'}
+      ${st.passkeys.length ? st.passkeys.map(k => `<div class="a2f-pk"><div><b>${esc(k.name)}</b> <span class="muted small">added ${esc(day(k.at))} · last used ${esc(k.lastUsed ? day(k.lastUsed) : 'never')}</span></div><button class="sm danger fit" data-a2f="pkdel" data-id="${esc(k.id)}" data-n="${esc(k.name)}"${dis}>Remove</button></div>`).join('') : '<p class="muted small" style="margin:0">None yet. These are only for the admin panel: they don’t sign anyone in to Keel.</p>'}
       ${off ? '' : `<div class="row" style="margin-top:10px"><input id="a2fPkName" maxlength="40" placeholder="Name it, e.g. MacBook" aria-label="Passkey name" autocomplete="off"><button class="fit" data-a2f="pkadd"${hasPk() ? dis : ' disabled'}>Add a passkey</button></div>${hasPk() ? '' : '<p class="hint">Passkeys need https (or localhost) and a browser that supports them.</p>'}`}
       <h3>Authenticator app</h3>
       ${st.totp ? `<div class="a2f-pk"><div>Set up ${esc(day(st.totp.at))}</div><button class="sm danger fit" data-a2f="totpdel"${dis}>Remove</button></div>`
