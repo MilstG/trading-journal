@@ -6,6 +6,7 @@
 //     Diagnostic used to call them inline, and the rest equals the original inline sequence
 //   · taHistory — near-linear now; equals traderAge per day over the trailing window, as it used to be
 //   · isoWeekOfKey's per-key cache, _tradesMemo / computeStatsMemo (hit only on the very same trades)
+//   · habitProgress's memo, and pzBadgeCatalog's second pass equal to a fresh run
 import { t, ok, eq, report, makeExtractor } from './harness.mjs';
 import { readAppSource } from '../app-source.js';
 import { readFileSync } from 'node:fs';
@@ -140,4 +141,60 @@ t('the memoized panels are keyed on everything they read', () => {
   ok(grabFn('_diagMCKey').includes('_be'));
   ok(grabFn('behaviorSignalsMemo').includes('[s.net,s.fees,s.fund,s.expectancy]'));
 });
+
+// ---- habitProgress, memoized per coach context ----
+{
+  const vm = await import('node:vm');
+  const ctx = vm.createContext({ Math, JSON, Map, WeakMap, Object, dayKey: ms => new Date(ms).toISOString().slice(0, 10), habitSummary: r => ({ kept: r.length }) });
+  vm.runInContext('var journal={}, _jrev=0, _pzSlipDays=new Map(), calls=0; function habitDayResults(h,days,byDay,pred,fromKey,J){ calls++; return days.filter(d=>d.key>=fromKey).map(d=>({key:d.key,kept:true})); }\n' + grabFn('habitProgress'), ctx);
+  const hp = vm.runInContext('habitProgress', ctx), calls = () => vm.runInContext('calls', ctx);
+  t('habitProgress: one computation per habit, start and data version within a coach context', () => {
+    const c1 = { days: [{ key: '2026-01-01' }, { key: '2026-02-01' }], byDay: {}, preds: {} }, h = { id: 'a', kind: 'tpl', createdAt: 0 };
+    const a = hp(h, c1), b = hp({ ...h }, c1); ok(a === b && calls() === 1, 'the same habit (by content) hits');
+    eq(hp(h, c1, Date.parse('2026-01-15')).kept, 1); eq(calls(), 2, 'another start day is its own entry');
+    hp(h, { ...c1 }); eq(calls(), 3, 'another context misses');
+    vm.runInContext('_jrev++', ctx); hp(h, c1); eq(calls(), 4, 'a journal edit misses');
+    vm.runInContext('_pzSlipDays=new Map()', ctx); hp(h, c1); eq(calls(), 5, 'new slip days (a game rebuild) miss');
+    vm.runInContext('journal={}', ctx); hp(h, c1); eq(calls(), 6, 'a replaced journal misses');
+    hp({ ...h, then: 'x' }, c1); eq(calls(), 7, 'an edited habit misses');
+  });
+}
+
+// ---- the badge catalog's second pass ----
+// gameContext runs pzBadgeCatalog twice per rebuild; the second reuses the first's XP-independent
+// families. It must equal a fresh run with the second pass's inputs, and anything else changing between
+// the passes must make it work everything out again.
+{
+  const vm = await import('node:vm');
+  const grabConst = name => { const i = src.indexOf('const ' + name + '='); if (i < 0) throw new Error(name); const j = name === 'PZ_FAMILIES' ? src.indexOf('];\n', i) + 2 : src.indexOf(';\n', i) + 1; return src.slice(i, j); };
+  const DAYK = ms => new Date(ms).toISOString().slice(0, 10);
+  const ctx = vm.createContext({ Math, console, Set, Map, Object, JSON, Array, String, Date, isFinite, Infinity, Number,
+    dayKey: DAYK, _avg: a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, nfMedian: a => { if (!a || !a.length) return null; const q = [...a].sort((x, y) => x - y), n = q.length; return n % 2 ? q[(n - 1) / 2] : (q[n / 2 - 1] + q[n / 2]) / 2; },
+    isJournaled: j => !!(j && (j.notes || j.setup)), pzReadinessManual: () => null, habitsList: () => [], habitProgress: () => ({ res: [] }), pzPlugs: () => [], pzXpCfg: () => ({ achievement: 50 }) });
+  vm.runInContext(['LEVELS', 'PZ_LOSS', 'pzAddDays', 'PZ_TIERS', 'PZ_TIER_XP', 'pzN', 'pzUsd', 'PZ_FAMILIES'].map(grabConst).join('\n') +
+    '\nvar settings={}, journal={}, _jrev=0, _pzSlipDays=new Map(), PZ_CFG={levels:null};\n' + ['pzLevelCfg', 'levelFor', 'isoWeekOfKey', 'disciplineStreak', 'pzBadgeCatalog'].map(grabFn).join('\n') +
+    '\nlet _pzCatPass=null; function __reset(){ _pzCatPass=null; }', ctx);
+  const day0 = Date.parse('2026-03-02T12:00:00Z'), closed = [], byDay = {}, D = [];
+  for (let i = 0; i < 160; i++) { const at = day0 + i * 864e5, k = DAYK(at), tr = [];
+    for (let j = 0; j < 3; j++) { const tt = { id: k + j, openTime: at + j * 36e5, closeTime: at + j * 36e5 + 18e5, net: ((i * 37 + j * 11) % 23 - 9) * 40 }; tr.push(tt); closed.push(tt); }
+    byDay[k] = tr; D.push({ key: k, score: (i * 29) % 101, n: 3, net: tr.reduce((a, x) => a + x.net, 0), parts: { plan: i % 3 ? 1 : 0, limit: i % 4 ? 1 : null }, breached: false, behavior: { flags: i % 5 ? {} : { revenge: 1 } } }); }
+  const now = day0 + 170 * 864e5, nowWeek = vm.runInContext(`isoWeekOfKey('${DAYK(now)}')`, ctx);
+  const streak = vm.runInContext('disciplineStreak', ctx)(D, nowWeek);
+  const G0 = { ctx: { byDay, closed }, days: D, streak, pa: { items: [] }, achievements: [], challenges: [], journalBest: 0, stopsBest: 0, now, nowWeek };
+  const xpOf = b => { const by = {}; D.forEach((d, i) => { by[d.key] = d.score + (i === 50 ? b : 0); }); return { xp: Object.values(by).reduce((a, v) => a + v, 0), xpByDay: by }; };
+  const cat = (b, reset) => { if (reset) vm.runInContext('__reset()', ctx); return vm.runInContext('pzBadgeCatalog', ctx)(Object.assign({}, G0, xpOf(b), { level: 3 })); };
+  t('the badge catalog: the second pass of a rebuild equals a fresh run, and a change in between is noticed', () => {
+    cat(0, true); const second = cat(50000), fresh = cat(50000, true);
+    ok(second.earned.length > 10, 'badges were earned'); same(second, fresh);
+    ok(fresh.families.find(f => f.id === 'xp').value !== cat(0, true).families.find(f => f.id === 'xp').value, 'the XP family did change with the XP');
+    cat(0, true); vm.runInContext("journal={'day:" + D[3].key + "':{sleep:3}}; _jrev++", ctx);
+    const after = cat(50000); same(after, cat(50000, true), 'a journal change between the passes: worked out again');
+    ok(after.families.find(f => f.id === 'checkin').value === 1, 'and it shows');
+    // and the reuse really happens: a trade slipped into the very same list in between (nothing a rebuild
+    // does — it builds new lists) only shows in a fresh run
+    cat(0, true); closed.push({ id: 'x', openTime: now - 1e6, closeTime: now - 5e5, net: 1 });
+    ok(cat(0).families.find(f => f.id === 'trades').value === closed.length - 1, 'the second pass reused the first');
+    closed.pop();
+  });
+}
 report('perf paths');
