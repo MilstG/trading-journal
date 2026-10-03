@@ -315,19 +315,19 @@ async function renderBenchmark(closed){
   try{
     const t0=Math.min(...closed.map(t=>t.openTime)), t1=Math.max(...closed.map(t=>t.closeTime));
     if(!(t1>t0))return;
-    const series={};
+    const series={}, demo=typeof isDemoData==='function'&&isDemoData(); // sample: drawn, never cached
     for(const coin of ['BTC','HYPE']){
       const k=excKey(coin,'1d');
-      let cache=null; try{ cache=await idbGet('cnd:'+k); }catch(e){}
+      let cache=null; if(!demo){ try{ cache=await idbGet('cnd:'+k); }catch(e){} }
       if(!cache||cache.v!==1||!Array.isArray(cache.candles)||!Array.isArray(cache.ranges))cache={v:1,candles:[],ranges:[]};
       const want=[t0-86400e3,t1+86400e3];
       for(const u of uncoveredRanges(want,cache.ranges)){
         if(u[1]-u[0]<=86400e3)continue;
-        try{ const c=await fetchCandles(coin,'1d',u[0],u[1]);
+        try{ const c=await venueFetchCandles('',coin,'1d',u[0],u[1]);
           cache.candles=mergeCandles(cache.candles,c.rows);
           if(c.coveredTo>u[0]) cache.ranges=mergeRanges([...cache.ranges,[u[0],c.coveredTo]],1); }catch(e){}
       }
-      try{ await idbSet('cnd:'+k,cache); }catch(e){}
+      if(!demo){ try{ await idbSet('cnd:'+k,cache); }catch(e){} }
       const win=cache.candles.filter(c=>c[0]>=t0-86400e3&&c[0]<=t1+86400e3);
       if(win.length>=2)series[coin]=win;
     }

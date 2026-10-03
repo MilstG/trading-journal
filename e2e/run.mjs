@@ -94,8 +94,27 @@ try {
     await page.waitForSelector('#tbody tr.trow');
     eq(errors, [], 'no uncaught errors');
   });
+  await t('sample data never reaches the account: a note on a sample trade and the awards it earned stay off the server and out of storage', async () => {
+    const row = page.locator('#tbody tr.trow').first(), id = await row.getAttribute('data-id');
+    await row.click();
+    await page.locator(`[data-j="notes"][data-id="${id}"]`).fill('e2e: a note on a sample trade');
+    await page.click(`[data-save="${id}"]`);
+    ok(await page.evaluate(i => isDemoData() && journal[i] && journal[i].notes, id), 'saved on screen');
+    await page.click('#topnav [data-tab="review"]'); await page.click('#topnav [data-tab="dash"]'); // the game runs and earns
+    ok(await page.evaluate(() => Object.keys(settings.pzEarned || {}).length > 0), 'the sample earned awards on screen');
+    await page.waitForTimeout(1500); // longer than the save debounce
+    const snap = (await (await fetch(BASE + '/api/data', { headers: { Authorization: 'Bearer ' + TOKEN } })).json()).snapshot || {};
+    ok(!(snap.journal || {})[id], 'the note is not on the server');
+    eq(Object.keys((snap.settings || {}).pzEarned || {}), [], 'no awards on the server');
+    ok(!Object.keys(snap.journal || {}).some(k => k.startsWith('paste:') || k.startsWith('week:') || k.startsWith('pplan:')), 'nothing derived from the sample');
+    eq(await page.evaluate(i => [JSON.parse(localStorage.getItem('hl_journal_v1') || '{}')[i] || null, Object.keys(JSON.parse(localStorage.getItem('hl_settings_v3') || '{}').pzEarned || {}).length], id), [null, 0], 'nor in this browser’s storage');
+    eq(errors, [], 'no uncaught errors');
+  });
   let tradeId;
-  await t('a journal note saves, syncs to the server, and survives a reload', async () => {
+  await t('a journal note on pasted fills (the user’s own data) saves, syncs to the server, and survives a reload', async () => {
+    await page.evaluate(() => { window.__pasted = loadFromPaste(demoFills(7), { offline: true }).then(() => true); });
+    await page.waitForFunction(() => window.__pasted && allTrades.length && !isDemoData()); // pasted fills end sample mode
+    await page.waitForSelector('#tbody tr.trow');
     const row = page.locator('#tbody tr.trow').first();
     tradeId = await row.getAttribute('data-id');
     await row.click();

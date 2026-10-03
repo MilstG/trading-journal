@@ -54,9 +54,12 @@ try {
     // Oct 2026: sync merges an entry both devices edited field by field, a tab notices another device's
     // save, and the sync bar warns about a server without AUTH_TOKEN (all in core.js, so both screens):
     // ~11 KB raw / ~3 KB gzipped, much of it comments: 1906 / 1525 raw, 645 / 512 gzipped.
-    // All four together (measured after the merge): 1937 / 1555 raw, 657 / 524 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1941, 659],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1559, 526],
+    // Oct 2026: sample mode kept off the account (core.js sampleEnter/sampleLeave) and the award ledger's
+    // reset: about 6 KB raw on each screen took both past their raw lines (1901 / 1520 raw, 644 / 510 gzipped).
+    // Daruma's beta fixes (badges, plan checks, XP left, layout, keyboard) and all of the above together,
+    // measured after merging the five: 1944 / 1561 raw, 660 / 526 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1948, 662],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1565, 528],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

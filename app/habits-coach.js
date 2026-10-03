@@ -1438,7 +1438,7 @@ function coachLetterFacts(){
 let _coachStatus=null, _letterCache={wk:null,letter:null};
 async function loadCoachLetter(force){
   const box=$('coachLetter'); if(!box)return;
-  if(!SRV.enabled||!coachOn()){ box.innerHTML=''; return; }
+  if(!SRV.enabled||!coachOn()||isDemoData()){ box.innerHTML=''; return; } // the account's letter: never written from (or shown on) the sample
   let st=_coachStatus;
   if(!st){ try{ const r=await srvFetch('/api/coach/status'); if(r.ok)st=_coachStatus=await r.json(); }catch(e){} } // failures (401 before the token, network) are retried next time
   st=st||{enabled:false};

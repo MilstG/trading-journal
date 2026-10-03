@@ -18,6 +18,8 @@ const Store = {
     try{ const v=localStorage.getItem(key); return v?JSON.parse(v):null; }catch(e){ return null; }
   },
   async set(key,val){
+    if(_sample&&(key===J_KEY||key===S_KEY)){ // sample mode: only the account's own settings (sampleOwnS)
+      if(key===J_KEY)return; const was=JSON.stringify(_sample.settings); val=sampleOwnS(); if(JSON.stringify(val)===was)return; _sample.dirty=true; }
     const s=JSON.stringify(val);
     if(window.storage){ try{ await window.storage.set(key,s); }catch(e){ try{localStorage.setItem(key,s);}catch(e2){ storeFailed(e2); } } }
     else { try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
@@ -111,14 +113,17 @@ async function unpackFillCache(c){
   }catch(e){ return null; } }
   return null;
 }
-function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
+function snapshot(){ if(typeof _sample!=='undefined'&&_sample)return sampleOwn(snapshot); // the account's, never the sample's
+  return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,beFixed:settings.beFixed,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, pzEarned:settings.pzEarned,
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, pzEarned:settings.pzEarned, pzEarnedResetAt:settings.pzEarnedResetAt,
     pzTiltAlerts:settings.pzTiltAlerts, pzCoachDetail:settings.pzCoachDetail, taxExport:settings.taxExport, playbooks:settings.playbooks, colorway:settings.colorway,appearance:settings.appearance}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 // Device-local, never in the snapshot: autoRefresh (a phone on mobile data may want it off while the
 // desktop keeps it on) and pzTiltNotify (rides on this browser's own notification permission). They
 // live only in this browser's stored settings, which a snapshot is laid over, never replaces.
-async function applySnapshot(data){ if(!data)return false; _applying=true;
+async function applySnapshot(data){ if(!data)return false;
+  if(typeof _sample!=='undefined'&&_sample)sampleEnd(); // real data ends sample mode
+  _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
@@ -132,7 +137,8 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
       if(typeof data.settings.pzTiltAlerts==='boolean')settings.pzTiltAlerts=data.settings.pzTiltAlerts; if(typeof data.settings.pzCoachDetail==='boolean')settings.pzCoachDetail=data.settings.pzCoachDetail;
       const tx=data.settings.taxExport; // the tax screen indexes its presets by this name: an unknown one would throw there
       if(tx&&typeof tx==='object'&&typeof tx.preset==='string'&&(typeof TAX_PRESETS==='undefined'||Object.prototype.hasOwnProperty.call(TAX_PRESETS,tx.preset)))settings.taxExport={preset:tx.preset,cur:String(tx.cur||'USD').toUpperCase().replace(/[^A-Z]/g,'').slice(0,3)||'USD'};
-      if(data.settings.pzEarned&&typeof data.settings.pzEarned==='object')settings.pzEarned=Object.assign({},data.settings.pzEarned,settings.pzEarned||{}); // the award ledger only grows (pzEarned)
+      if(data.settings.pzEarned&&typeof data.settings.pzEarned==='object')settings.pzEarned=_syncMerge('pzEarned',settings.pzEarned,data.settings.pzEarned); // the award ledger only grows (pzEarned)
+      if(+data.settings.pzEarnedResetAt>0)settings.pzEarnedResetAt=Math.max(+settings.pzEarnedResetAt||0,+data.settings.pzEarnedResetAt); // the latest reset wins
       if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
@@ -147,13 +153,34 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
   return true;
 }
 // write to local store WITHOUT re-triggering a file write (avoids loops on load)
-async function rawSet(key,val){ const s=JSON.stringify(val);
+async function rawSet(key,val){ if(_sample&&(key===J_KEY||key===S_KEY))val=key===J_KEY?_sample.journal:sampleOwnS();
+  const s=JSON.stringify(val);
   if(window.storage){ try{ await window.storage.set(key,s); return; }catch(e){} }
   try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
 // The browser refused to save (its storage for this site is full): say so, instead of a "saved"
 // tick over an edit that will be gone on the next load.
 function storeFailed(e){ const full=e&&(e.name==='QuotaExceededError'||e.code===22||/quota/i.test(e.message||''));
   try{ setErr(full?'This browser’s storage for the journal is full, so the last change wasn’t saved here. Use Backup all, then clear old attachments or link a data file.':'Couldn’t save in this browser: '+(e&&e.message||e)); }catch(_){} }
+
+/* ============================ sample mode ============================ */
+// Sample data never touches the account: its journal and settings are set aside here while the app works
+// on a scratch copy kept in memory. Store and every sync see only the account's own, which takes just the
+// wallets and preferences from it. Real trades, applied data or a reload put the account's back.
+let _sample=null; // {journal, settings, dirty}: the account's own, while sample data is loaded
+const SAMPLE_KEEP=['wallets','theme','appearance','colorway','tz','tzZone','view','dexView','pageSize','calMode','calWeeks','coachMode','pzLayout','pzMarket','autoRefresh'];
+function sampleEnter(){ if(_sample)return; _sample={journal,settings,dirty:false}; _jrev++; if(typeof pzS!=='undefined')pzS.demo=true;
+  journal={}; settings=JSON.parse(JSON.stringify(settings)); delete settings.pzEarned; delete settings.pzEarnedResetAt; }
+// the account's own settings, with the scratch copy's wallets and preferences
+function sampleOwnS(){ const s=_sample.settings;
+  for(const k of SAMPLE_KEEP){ if(settings[k]===undefined)delete s[k]; else s[k]=JSON.parse(JSON.stringify(settings[k])); } return s; }
+function sampleOwn(fn){ const s=_sample, sj=journal, ss=settings; journal=s.journal; settings=sampleOwnS(); _sample=null;
+  try{ return fn(); }finally{ _sample=s; journal=sj; settings=ss; } }
+function sampleLeave(){ if(!_sample)return false; const s=_sample, was=JSON.stringify(s.settings);
+  settings=sampleOwnS(); journal=s.journal; _sample=null; _jrev++;
+  if(typeof pzS!=='undefined')pzS.demo=false;
+  // what changed or met a 409 meanwhile goes out now
+  if(s.dirty||JSON.stringify(settings)!==was)Promise.resolve(Store.set(S_KEY,settings)).catch(()=>{});
+  return true; }
 
 function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout(_writeTimer); _writeTimer=setTimeout(writeLinked,600); }
 
@@ -182,7 +209,8 @@ let _jrev=0;
 // every edit passes here, so this is where an entry gets its time: restoring a backup keeps
 // whichever copy of a note is newer, and it can only tell when both carry one
 function markJEdit(id){ const e=typeof journal!=='undefined'&&journal&&journal[id]; if(e&&typeof e==='object'&&!Array.isArray(e))e.updatedAt=Date.now();
-  _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMark(id); jPendingSave(); }
+  _jrev++; if(_sample)return; // never saved or synced
+  _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); vaultMark(id); jPendingSave(); }
 // The ids edited here and not yet confirmed saved (to the server, or the linked file) are kept in
 // localStorage too: a reload or a closed tab before the save went through used to let the older
 // copy from the server win at the next start. At boot they're laid back over what loaded.
@@ -246,12 +274,14 @@ const jConflictMsg=n=>n+' journal note'+(n===1?' was':'s were')+' edited on this
 // is theirs. (It used to be last-write-wins, which on a 409 meant the server always won: a wallet
 // added here was dropped.) A baseline saved before wallets were in it merges no wallets: theirs win.
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','beFixed','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','pzEarned','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','beFixed','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','pzEarned','pzEarnedResetAt','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
 // lessons and goals are lists edited on several devices: a conflict merges them by id instead of
 // letting one device's copy replace the other's (the newest change to an item wins; removals stick)
 function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }
 function _syncMerge(k, mine, theirs){
-  if(k==='pzEarned')return Object.assign({},theirs&&typeof theirs==='object'?theirs:{},mine&&typeof mine==='object'?mine:{}); // the award ledger: both devices' awards
+  if(k==='pzEarned'){ const o=Object.assign({},theirs&&typeof theirs==='object'?theirs:{}); // the award ledger: both devices' awards; mine, unless theirs was earned since a later reset (ep)
+    for(const [id,e] of Object.entries(mine&&typeof mine==='object'?mine:{}))if(!o[id]||(+(e&&e.ep)||0)>=(+(o[id]&&o[id].ep)||0))o[id]=e; return o; }
+  if(k==='pzEarnedResetAt')return Math.max(+mine||0,+theirs||0)||undefined; // the latest reset
   if(k==='playbooks'){ const by=new Map(); // per playbook, the newest edit wins; a deletion is a dated tombstone so it sticks
     for(const p of [...pbNorm(theirs,true),...pbNorm(mine,true)]){ const o=by.get(p.id); if(!o||(p.at||0)>=(o.at||0))by.set(p.id,p); }
     return [...by.values()].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); }
@@ -273,7 +303,7 @@ function _syncMerge(k, mine, theirs){
     return Object.assign({},b,a,{items,own:[...own.values()].slice(-300),since:Math.min(a.since||Infinity,b.since||Infinity)===Infinity?undefined:Math.min(a.since||Infinity,b.since||Infinity)}); }
   return mine;
 }
-function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; o.wallets=settings.wallets; return JSON.parse(JSON.stringify(o)); }
+function _snapS(){ if(typeof _sample!=='undefined'&&_sample)return sampleOwn(_snapS); const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; o.wallets=settings.wallets; return JSON.parse(JSON.stringify(o)); }
 // base: the list at the last sync; mine: this device's now; theirs: the incoming copy's
 function _walletMerge(base, mine, theirs){ const wk=w=>String(w&&w.address).toLowerCase();
   const was=new Set((base||[]).map(wk)), now=new Set((mine||[]).map(wk));
@@ -324,6 +354,7 @@ async function writeServer(){
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return 'auth'; }
     if(r.status===429){ syncFailed(srvLockMsg(r),(+r.headers.get('retry-after')||0)*1000); return 'error'; } // locked out: retry when it ends
     if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
+      if(_sample){ _sample.dirty=true; srvMark(true); renderDatafile(); return 'conflict'; } // merged after sampleLeave
       const txt=await r.text(), j=JSON.parse(txt); SRV.rev=j.rev||0;
       const n=j.snapshot?await srvTakeNewer(j,txt):0;
       if(n)setErr('Loaded newer data saved from another device. '+jConflictMsg(n));
@@ -391,6 +422,7 @@ async function srvTakeNewer(j,txt){
 let _srvChk=0;
 async function srvCheckNewer(){
   if(!SRV.enabled||(SRV.needsAuth&&(!SRV.token||SRV.badAuth))||_srvWriting||_applying||SRV.err)return false;
+  if(_sample)return false; // taking it would end sample mode under the viewer: the next check after it ends takes it
   if(Date.now()-_srvChk<5000)return false; _srvChk=Date.now();
   _srvWriting=true;
   try{ const r=await srvFetch('/api/data?only=rev'); if(!r.ok)return false;

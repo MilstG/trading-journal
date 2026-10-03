@@ -1357,7 +1357,8 @@ function vaultMark(id){ if(!VAULT.key)return; if(id==null)VAULT.sGen++; else VAU
 function vaultMarkAll(prev, journalOnly){ if(!VAULT.key)return;
   for(const id of new Set([...Object.keys(prev||{}),...Object.keys(journal)]))VAULT.dirty.set(id,(VAULT.dirty.get(id)||0)+1);
   if(!journalOnly){ VAULT.base=null; VAULT.sGen++; } vaultSaveLocal(); }
-function vaultSchedule(){ if(!vaultActive()||_applying)return; clearTimeout(VAULT.timer); VAULT.timer=setTimeout(()=>vaultPush(),3000); vaultSaveLocal(); }
+// sample mode: the push (and a merge) waits for sampleLeave
+function vaultSchedule(){ if(!vaultActive()||_applying||_sample)return; clearTimeout(VAULT.timer); VAULT.timer=setTimeout(()=>vaultPush(),3000); vaultSaveLocal(); }
 // Another device's copy, merged: theirs wins, except journal entries edited here since the last push,
 // settings fields changed here (against the last synced values), and wallets added or removed here.
 async function vaultMerge(d){
@@ -1383,7 +1384,7 @@ async function vaultMerge(d){
   return JSON.stringify(settings.wallets)!==wBefore;
 }
 async function vaultPush(){
-  if(!vaultActive())return;
+  if(!vaultActive()||_sample)return;
   if(VAULT.busy){ VAULT.again=true; return; } VAULT.busy=true;
   try{
     const sentIds=[...VAULT.dirty.entries()], sentS=VAULT.sGen, sentBase=vaultSnapS();
@@ -1444,6 +1445,7 @@ async function vaultUnlock(pass){
   const d=await socFetch('/vault'); if(!d.blob)throw new Error('There’s no synced journal for this profile yet.');
   const key=await vaultDerive(pass,d.blob.salt,d.blob.iter);
   let data; try{ data=await vaultOpen(key,d.blob); }catch(e){ throw new Error('That passphrase doesn’t open your synced journal.'); }
+  sampleEnd(); // kept below: the account's, not the sample's
   const mineJ=journal||{}, mineW=settings.wallets||[];
   await applySnapshot(data);
   VAULT.key=key; VAULT.salt=d.blob.salt; VAULT.rev=d.rev; VAULT.mid=d.member||(SOC.me&&SOC.me.id); VAULT.dirty=new Map(); VAULT.base=vaultSnapS(); VAULT.sGen=VAULT.sSent=0; VAULT.err=null;

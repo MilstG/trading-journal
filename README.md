@@ -92,7 +92,15 @@ to clear it. Its charts and excursions read a price path drawn from the sample
 fills themselves (`demoCandles`: one deterministic path per coin that passes through
 every fill), never the exchange's candles, which could not line up with made-up prices;
 those sample candles are cached under keys of their own, so a real coin's cache is never
-touched.
+touched. The Diagnostic's BTC benchmark reads them too, and Daruma's market regimes are
+left out rather than fetched. While the sample is up,
+the account's own journal and settings are set aside (`sampleEnter` in `app/core.js`) and the
+app works on an in-memory scratch copy: notes, prep, reviews, plans, awards, the weekly
+challenge, habits and goals made on the sample are never stored, synced or backed up. Only
+the wallet list and look-and-feel preferences (appearance, colorway, clock, layout) carry
+over and save. Real trades replacing the sample (a wallet load or pasted fills, which are your
+own data and save as usual), a backup or a synced copy applied, or a reload bring the
+account's own copy back.
 
 ## Loading your data
 
@@ -247,7 +255,13 @@ activity:
   focus-habit days are read from your fills and journal every time, so they move
   when late fills arrive, a day is re-scored, a wallet is removed or the time zone
   changes. The ledger is written from the whole account only (not a per-market or
-  per-dex view).
+  per-dex view). **Reset progress awards** (⚙ Settings, or Daruma → Progress) empties
+  it — for awards that came from where they shouldn't, such as sample data before
+  sample mode kept off the account. Because ledgers merge by union, the reset is a
+  synced tombstone (`pzEarnedResetAt`, the latest wins a merge): entries recorded after
+  it carry its stamp (`ep`), and older ones, even when another device merges them back,
+  are ignored. The next computation earns everything again from your trades, and this
+  week's challenge is picked again.
 - **Discipline streak with shields** — consecutive trading days at Discipline 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
@@ -2183,8 +2197,9 @@ names the screen that grew, so growth is a choice rather than a drift.
 
 **Browser smoke tests** (`e2e/run.mjs`) run the real app in Chromium against the
 real server, fully offline (every request off the local server is blocked). They
-boot the full journal with a token, load sample data, open every tab, save a journal
-note and check it reaches the server and survives a reload, check that a reload
+boot the full journal with a token, load sample data, open every tab, check that a note and
+the awards made on it never reach the server, save a journal note on pasted fills and check
+it reaches the server and survives a reload, check that a reload
 takes every `app/` script from cache, open the app offline through the service
 worker, open `ledger.html` straight from disk, open Daruma at phone width (no
 sideways scroll), open every admin tab, and run admin two-factor at 360 and 1280 px

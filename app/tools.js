@@ -253,14 +253,19 @@ function demoFills(seed, now){
   out.sort((a,b)=>a.time-b.time);
   return out;
 }
-let _demoData=false; // sample data was loaded (and no real wallet's trades have replaced it: sample trades carry no address)
-function isDemoData(){ return _demoData&&!((typeof allTrades!=='undefined'&&allTrades)||[]).some(t=>t&&t.wallet&&t.wallet.address&&t.wallet.address!=='paste'); } // pasted (and sample) trades say 'paste'
+// its own flag (core.js): pasted fills share the 'paste' wallet tag, and they're the user's data
+function isDemoData(){ return !!_sample; }
 async function loadDemo(){
   setStatus('Generating sample data…',true);
-  try{ await loadFromPaste(demoFills(1),{offline:true}); _demoData=true; }
+  try{ await loadFromPaste(demoFills(1),{offline:true,sample:true}); }
   catch(e){ setErr('Demo generation failed: '+e.message); return; }
   setStatus('Sample data loaded — '+allTrades.length+' synthetic trades across perps and spot. Nothing was fetched or saved to a wallet; add a real address whenever you like.');
 }
+// sample mode ends with nothing to replace its trades (a backup applied): they leave the screen too
+function sampleEnd(){ if(!sampleLeave())return;
+  allTrades=[]; openPositions=[]; spotHoldings=[]; accountValue=null; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; _pastedFills=null; fillsTruncated=[];
+  resetDerivedState();
+  if(PZ){ try{ pzRender(); }catch(e){} } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); } }
 (function(){ for(const id of ['demoBtn','demoBtn2']){ const b=$(id); if(b)b.onclick=loadDemo; } })();
 // Sample candles. The sample fills are made up, so real exchange candles can never line up with them:
 // in sample mode every chart and excursion reads a price path drawn here instead. One deterministic
@@ -280,8 +285,8 @@ function demoNoise(coin,ms){ // -1..1, smooth, with the slow swings of a real ta
     v+=A*((1-s)*_demoHash(coin,o,i)+s*_demoHash(coin,o,i+1)); w+=A; }
   return (v/w)*2-1;
 }
-function demoPrice(coin,ms){
-  const P=demoAnchorsFor(coin), FADE=20*60e3; if(!P.length)return null; // the noise fades out only in the last 20 minutes to a fill
+function demoPrice(coin,ms,P){
+  P=P||demoAnchorsFor(coin); const FADE=20*60e3; if(!P.length)return null; // the noise fades out only in the last 20 minutes to a fill
   let lo=0, hi=P.length; while(lo<hi){ const m=(lo+hi)>>1; if(P[m][0]<=ms)lo=m+1; else hi=m; }
   const A=P[lo-1]||null, B=P[lo]||null; let base, dist;
   if(A&&B){ const u=(ms-A[0])/Math.max(1,B[0]-A[0]); base=A[1]*Math.pow(B[1]/A[1],u); dist=Math.min(ms-A[0],B[0]-ms); }
@@ -293,7 +298,7 @@ function demoCandles(coin,itvName,a,b){
   const ms=(({'1m':60e3,'5m':300e3,'15m':900e3,'1h':3600e3,'4h':14400e3,'1d':86400e3})[itvName])||300e3, rows=[], P=demoAnchorsFor(coin);
   if(!P.length)return {rows,coveredTo:b};
   for(let t=Math.floor(a/ms)*ms;t<b;t+=ms){
-    const xs=[]; for(let k=0;k<=6;k++)xs.push(demoPrice(coin,t+ms*k/6));
+    const xs=[]; for(let k=0;k<=6;k++)xs.push(demoPrice(coin,t+ms*k/6,P)); // the anchors once per request: finding them reads every trade
     for(const p of P)if(p[0]>=t&&p[0]<t+ms)xs.push(p[1]); // a fill inside the candle is inside its range
     rows.push([t,Math.max(...xs),Math.min(...xs),xs[6],xs[0]]);
   }

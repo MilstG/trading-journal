@@ -17,7 +17,7 @@ async function addWalletFromInput(){
   if(!/^0x[0-9a-fA-F]{40}$/.test(address)){ setErr('That doesn\u2019t look like a 0x wallet address (42 chars). For Bybit or Binance, use \u201cConnect exchange\u201d.'); return false; }
   // trade ids (and so your notes) include the address as written: a wallet added again in other
   // letter case takes the spelling its notes already use; a new one is stored in lower case
-  const lc=address.toLowerCase(), known=Object.keys(journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
+  const lc=address.toLowerCase(), known=Object.keys(_sample?_sample.journal:journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
   setStatus('Looking for '+walletShort(address)+' on Hyperliquid and Lighter\u2026',true);
   const ids=(await walletIdsFor(address,forced?['lighter']:null)).map(id=>venueOfAddr(id)==='lighter'?'lighter:'+lc:(known||lc));
   const have=new Set(settings.wallets.map(w=>String(w.address).toLowerCase()));
@@ -199,9 +199,10 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
       // (offline laptop) must keep the current view instead of blanking the dashboard
       if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' ('+failed.join('; ')+')':'')+' — keeping the current view.'); return; }
-      allTrades=[]; openPositions=[]; spotHoldings=[];
+      sampleLeave(); allTrades=[]; openPositions=[]; spotHoldings=[];
       // every wallet failing is not "no activity": say why, and only that
       setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
+    sampleLeave(); // real trades: the account's own journal and settings are back
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
@@ -451,6 +452,7 @@ async function loadFromPaste(fills,opts){
   const {perp:perpTr,spot:spotTr}=await reconstructCompute(fills,[],'paste');
   spotTr.forEach(t=>{ t.symbol=spotMaps.nameByCoin[t.coin]||t.coin; t.quote=(spotMaps.quoteByCoin||{})[t.coin]||null; });
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
+  if(opts.sample)sampleEnter(); else sampleLeave(); // pasted fills are the user's own
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null};
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
@@ -596,6 +598,8 @@ async function setCoachMode(on){
 }
 function syncTzBtn(){ const b=$('tzBtn'); if(b)b.textContent=(settings.tz==='utc'?'🕓 UTC':'🕓 Local'); }
 $('coachSwitch').addEventListener('click',()=>setCoachMode(!coachOn()));
+$('earnResetBtn').addEventListener('click',async()=>{ if(!confirm(PZ_EARN_RESET_ASK))return;
+  await pzEarnedReset(); if(allTrades.length)render(); setStatus('Progress awards reset — earned again from your trades.'); });
 $('tzBtn').addEventListener('click',async ()=>{ settings.tz=settings.tz==='utc'?'local':'utc'; syncTzBtn();
   _minerCache={key:null,res:null,deep:null}; // session/dow buckets changed → invalidate mined patterns
   await Store.set(S_KEY,settings);
@@ -788,6 +792,7 @@ $('modalLoad').onclick=async()=>{
   // !data.fills: a {fills:[...]} paste is fill data for reconstruction, not a journal —
   // without this guard it would fall through to the journal branch and overwrite it.
   if(data&&!Array.isArray(data)&&typeof data==='object'&&!data.coin&&!data.fills){
+    sampleEnd(); // merged into the account's journal, not the sample's
     if(data.journal||data.wallets||data.settings){ await restoreBackup(data); return; } // full backup
     // a journal export is {"<trade id | day:… | week:…>": {…}} — anything else (an API response,
     // a settings blob) used to replace the whole journal silently
@@ -810,6 +815,7 @@ $('modalLoad').onclick=async()=>{
 // it's a restore, so the server first keeps what it replaces ("before restore" in History).
 // -> true once restored (and, with sync, saved), false if cancelled or not saved yet.
 async function restoreBackup(data,what){
+  sampleEnd(); // first: `before` must be the account's journal, not the sample's (History restores come here too)
   const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
   const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
   if(!confirm('Restore '+(what||'this backup')+' ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
