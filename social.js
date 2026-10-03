@@ -445,6 +445,28 @@ function sanitizePostCfg(b, prev) {
   if (b && typeof b === 'object') for (const k of ['on', 'plans', 'images']) if (typeof b[k] === 'boolean') o[k] = b[k];
   return o;
 }
+// shared playbooks: on or off, and who may share one ('all' members with a profile, or 'mentors' only);
+// anyone with a profile can browse and adopt while they're on
+function sanitizePlaybookCfg(b, prev) {
+  const o = Object.assign({ on: true, who: 'all' }, prev || {});
+  if (b && typeof b === 'object') { if (typeof b.on === 'boolean') o.on = b.on; if (b.who === 'all' || b.who === 'mentors') o.who = b.who; }
+  return o;
+}
+const PB_SHARED_MAX = 30, PB_RULES_MAX = 15, PB_SHARES_PER_DAY = 20;
+const PB_ID_RE = /^[a-f0-9]{12}$/, PB_SRC_RE = /^[A-Za-z0-9_-]{1,24}$/;
+// a shared playbook as the app sends it: {src, name, about, rules: [{id, text}]}; null when it can't be shared
+function sanitizeSharedPlaybook(b) {
+  if (!b || typeof b !== 'object' || typeof b.src !== 'string' || !PB_SRC_RE.test(b.src)) return null;
+  const name = cleanText(b.name, 60); if (!name) return null;
+  const seen = new Set(), rules = [];
+  for (const r of Array.isArray(b.rules) ? b.rules : []) {
+    if (!r || typeof r.id !== 'string' || !PB_SRC_RE.test(r.id) || seen.has(r.id)) continue;
+    const text = cleanText(r.text, 160); if (!text) continue;
+    seen.add(r.id); rules.push({ id: r.id, text }); if (rules.length >= PB_RULES_MAX) break;
+  }
+  if (!rules.length) return null;
+  return { src: b.src, name, about: cleanPost(typeof b.about === 'string' ? b.about : '', 400), rules };
+}
 const POST_KINDS = ['trade', 'plan', 'note'];
 const TRADE_STATUS = ['planned', 'open', 'closed', 'cancelled'];
 const COIN_RE = /^[A-Za-z0-9@/:._-]{1,24}$/;
@@ -580,6 +602,7 @@ function createSocial(opts) {
   S.config.coach = SC.sanitizeCoachCfg(S.config.coach, null);
   S.config.profiles = SC.sanitizeProfiles(S.config.profiles, null);
   S.config.posts = sanitizePostCfg(S.config.posts, null);
+  S.config.playbooks = sanitizePlaybookCfg(S.config.playbooks, null);
   S.config.bench = Bench.sanitizeBenchCfg(S.config.bench, null);
   S.config.duels = Duels.sanitizeDuelCfg(S.config.duels, null);
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
@@ -1178,6 +1201,9 @@ function createSocial(opts) {
       q('UPDATE reviews SET reviewer = NULL WHERE reviewer = ?').run(id);
       q("UPDATE reviews SET fee_state = 'refunded' WHERE mentor = ? AND fee_state = 'held'").run(id); // XP held for a mentor who's gone goes back
       dropMedia(q('SELECT id FROM media WHERE member = ?').all(id));
+      // the playbooks they shared stop being shared (adopters keep their copies); their adoptions go
+      for (const p of q('SELECT id FROM playbooks WHERE member = ?').all(id)) dropPlaybook(p.id);
+      q('DELETE FROM playbook_adopts WHERE member = ?').run(id);
       q('DELETE FROM members WHERE id = ?').run(id); written.delete('m:' + id);
       if (hadVault) store.afterCommit(() => { try { fs.unlinkSync(vaultFile(id)); } catch (e) {} }); // the journal file goes once the row has
     }); };
@@ -1902,6 +1928,7 @@ function createSocial(opts) {
       quote: usdB && e.quote ? e.quote.replace(/(In the black|Big day) · [A-Za-z]+( · )?/g, '').replace(/ · $/, '') : e.quote,
       handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null,
       admin: !e.member, kudos: e.kudos || 0, liked: !!liked && liked.has(e.id), mine: !!viewer && e.member === viewer.id };
+    if (e.type === 'playbook') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {} if (d.pb && pbById(d.pb)) o.pb = d.pb; }
     if (e.type === 'post') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
       const t = d.trade ? Object.assign({}, d.trade) : null;
       if (t && !(m && m.share.usd)) delete t.usd; // dollar results only for members who share them
@@ -2037,10 +2064,10 @@ function createSocial(opts) {
 
   // ---- inbox and web push: nudges, mentor notes, season results and the daily reminders ----
   const push = opts.push || null; // { publicKey, send(sub, message) -> status }
-  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, on: { morning: true, eod: true } }, prev || {});
+  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, on: { morning: true, eod: true } }, prev || {});
     if (p && typeof p === 'object') {
       for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(p[k])) o[k] = p[k];
-      for (const k of ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt']) if (typeof p[k] === 'boolean') o[k] = p[k];
+      for (const k of ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook']) if (typeof p[k] === 'boolean') o[k] = p[k];
       if (p.on && typeof p.on === 'object') o.on = { morning: p.on.morning !== false, eod: p.on.eod !== false }; }
     return o; };
   const sendPush = async (m, msg) => {
@@ -2289,6 +2316,33 @@ function createSocial(opts) {
     return raw ? JSON.parse(raw, (k, v) => k === 'toString' || k === 'valueOf' || k === '__proto__' || k === Symbol.toPrimitive ? undefined : v) : {};
   };
 
+  // ---- shared playbooks: a member shares a setup's rules; others adopt a copy into their own journal ----
+  // A row holds only what its author chose to share: the setup's name, a note and the rules, each with
+  // the id it has in the author's journal (so an adopter's checklist ticks keep counting across the
+  // author's later edits of other rules). Never trades, results or anything read from a wallet.
+  // Adopting is a row in playbook_adopts: the author sees how many, and adopters hear when it changes.
+  const pbAuthor = r => { const a = r && own(S.members, r.member) ? S.members[r.member] : null; return a && !a.banned ? a : null; };
+  const pbById = id => typeof id === 'string' && PB_ID_RE.test(id) ? q('SELECT * FROM playbooks WHERE id = ?').get(id) || null : null;
+  const pbCanShare = m => !!(S.config.playbooks.on && m && !m.banned && (S.config.playbooks.who === 'all' || m.mentor));
+  const pbRules = r => { try { const x = JSON.parse(r.rules); return Array.isArray(x) ? x : []; } catch (e) { return []; } };
+  // full: the whole note and every rule with its id (one playbook's page); else a card for the list
+  const pbOut = (r, viewer, full) => {
+    const a = pbAuthor(r), st = (a && a.stats) || {}, pub = !!a && a.share.profile !== false, rules = pbRules(r), mine = !!viewer && r.member === viewer.id;
+    const ad = viewer && !mine ? q('SELECT at FROM playbook_adopts WHERE playbook = ? AND member = ?').get(r.id, viewer.id) : null;
+    const o = { id: r.id, name: r.name, about: full ? r.about : r.about.slice(0, 200), ruleN: rules.length, version: r.version, at: r.at, updated: r.updated,
+      adopts: r.adopts != null ? r.adopts : q('SELECT count(*) AS n FROM playbook_adopts WHERE playbook = ?').get(r.id).n,
+      author: a ? { handle: a.handle, av: avUrl(a), level: st.level || 1, title: levelTitle(st.level || 1), mentor: isMentor(a),
+        style: pub && a.share.bench !== false && a.bench && a.bench.style ? a.bench.style : null } : null,
+      mine, adopted: ad ? ad.at : null };
+    if (full) o.rules = rules; else o.preview = rules.slice(0, 3).map(x => x.text);
+    if (mine) o.src = r.src;
+    return o; };
+  // a playbook that stops being shared takes its adoptions and its feed line with it; adopters keep their copies
+  const dropPlaybook = id => tx(() => {
+    for (const e of q("SELECT id FROM events WHERE type = 'playbook' AND data = ?").all(JSON.stringify({ pb: id }))) dropEvent(e.id);
+    q('DELETE FROM playbook_adopts WHERE playbook = ?').run(id);
+    q('DELETE FROM playbooks WHERE id = ?').run(id); });
+
   async function handle(req, res, url, query) {
     const M = req.method;
     const parts = url.split('/').slice(3); // ['', 'api', 'social', ...]
@@ -2365,7 +2419,7 @@ function createSocial(opts) {
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
         bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on },
-        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), // ai: visitors (no coach status of their own) know whether to show a Coach tab
+        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), playbooks: { on: !!S.config.playbooks.on, who: S.config.playbooks.who }, // ai: visitors (no coach status of their own) know whether to show a Coach tab
         badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),
         leagues: Object.values(S.leagues).filter(L => L.open).length,
         autoLeagues: Object.values(S.leagues).filter(L => L.autoJoin).map(L => ({ id: L.id, name: L.name, metricLabel: SC.LEAGUE_METRICS ? SC.LEAGUE_METRICS[L.metric] || '' : '' })) });
@@ -2413,7 +2467,7 @@ function createSocial(opts) {
         const wk = S.league.week, act = members().filter(m => now() - (m.lastSeen || 0) < 7 * 86400000);
         return json(res, 200, { adminConfigured, members: members().length, banned: members().filter(m => m.banned).length, active7: act.length,
           events: q('SELECT count(*) AS n FROM events').get().n, posts: q("SELECT count(*) AS n FROM events WHERE type = 'post'").get().n,
-          reports: q('SELECT count(*) AS n FROM reports WHERE open = 1').get().n, mediaBytes: q('SELECT sum(size) AS n FROM media').get().n || 0, comps: Object.keys(S.comps).length, week: wk, config: S.config,
+          reports: q('SELECT count(*) AS n FROM reports WHERE open = 1').get().n, playbooks: q('SELECT count(*) AS n FROM playbooks').get().n, mediaBytes: q('SELECT sum(size) AS n FROM media').get().n || 0, comps: Object.keys(S.comps).length, week: wk, config: S.config,
           walletsPending: S.config.approveWallets ? new Set(members().filter(m => m.address && walletStatus(m.address) === 'pending').map(m => m.address)).size : 0,
           claimed: members().filter(m => m.claimed).length, unclaimed: members().filter(m => !m.banned && m.address && m.claimed !== m.address).length,
           visitors: visitStats(), vaults: members().filter(m => m.vault).length, vaultBytes: vaultTotal(), claims: !!sig,
@@ -2612,6 +2666,7 @@ function createSocial(opts) {
         if (body.coach) c.coach = SC.sanitizeCoachCfg(body.coach, c.coach);
         if (body.profiles) c.profiles = SC.sanitizeProfiles(body.profiles, c.profiles);
         if (body.posts) c.posts = sanitizePostCfg(body.posts, c.posts);
+        if (body.playbooks) c.playbooks = sanitizePlaybookCfg(body.playbooks, c.playbooks);
         if (body.bench) { const was = c.bench; c.bench = Bench.sanitizeBenchCfg(body.bench, c.bench);
           // a new bar or window: left-out wallets get another look (and a new window means re-reading the counted ones too)
           if (was && (was.minTrades !== c.bench.minTrades || was.days !== c.bench.days)) {
@@ -2812,6 +2867,11 @@ function createSocial(opts) {
       }
       // trade reviews, read-only: what members sent their mentors and the threads on them, for moderation
       // the owner's pool: what it holds, everything it has taken in, and the latest payments it took a share of
+      if (sub === 'playbooks' && !parts[2] && M === 'GET') return json(res, 200, { playbooks:
+        q('SELECT p.*, (SELECT count(*) FROM playbook_adopts a WHERE a.playbook = p.id) AS adopts FROM playbooks p ORDER BY updated DESC LIMIT 500').all()
+          .map(r => Object.assign(pbOut(r, null, true), { handle: own(S.members, r.member) ? S.members[r.member].handle : null })) });
+      if (sub === 'playbooks' && parts[2] && M === 'DELETE') { const r = pbById(parts[2]); if (!r) return json(res, 404, { error: 'no such playbook' });
+        dropPlaybook(r.id); return json(res, 200, { ok: true }); }
       if (sub === 'pool' && M === 'GET') { const h = id => own(S.members, id) ? S.members[id].handle : null;
         return json(res, 200, { xp: S.pool.xp, total: S.pool.total, poolPct: S.config.mentorXp.poolPct,
           log: S.pool.log.slice(-100).reverse().map(x => ({ at: x.at, xp: x.xp, fee: x.fee, from: h(x.from), to: h(x.to) })),
@@ -3315,6 +3375,71 @@ function createSocial(opts) {
         me.mentorWait = Object.assign({}, me.mentorWait, { [x.id]: now() }); save(me);
       } else { if (me.mentorWait) { me.mentorWait = Object.assign({}, me.mentorWait); delete me.mentorWait[x.id]; } save(me); }
       return json(res, 200, { ok: true, mentor: mentorCard(x, me), me: mentorsMeOut(me), share: me.share });
+    }
+    // ---- shared playbooks ----
+    // GET /playbooks?q=&sort=popular|new|mentors&page=   one page of what members share
+    // GET /playbooks/mine?have=<id,id…>   what you share, and which of the shared ones you hold copies of are still shared
+    // GET /playbooks/<id>   one, with every rule     POST /playbooks {src, name, about, rules}   share it, or share its changes
+    // DELETE /playbooks/<id>   stop sharing it (copies stay)     POST /playbooks/<id>/adopt {on}   count your copy, or stop
+    if (head === 'playbooks') {
+      if (!S.config.playbooks.on) return json(res, 403, { error: 'Shared playbooks are switched off on this server.' });
+      if (parts[1] === 'mine' && !parts[2] && M === 'GET') {
+        const ids = [...new Set(String(query.have || '').split(',').filter(x => PB_ID_RE.test(x)))].slice(0, 90), have = {};
+        for (const id of ids) { const r = pbById(id), a = pbAuthor(r); if (r && a) have[id] = { version: r.version, name: r.name, handle: a.handle }; }
+        return json(res, 200, { mine: q('SELECT * FROM playbooks WHERE member = ? ORDER BY at').all(me.id).map(r => pbOut(r, me, true)), have,
+          canShare: pbCanShare(me), who: S.config.playbooks.who, max: PB_SHARED_MAX }); }
+      if (!parts[1] && M === 'GET') {
+        const qq = cleanText(query.q, 40).replace(/^@/, '').toLowerCase(), sort = ['popular', 'new', 'mentors'].includes(query.sort) ? query.sort : 'popular';
+        let rows = q('SELECT p.*, (SELECT count(*) FROM playbook_adopts a WHERE a.playbook = p.id) AS adopts FROM playbooks p ORDER BY updated DESC LIMIT 10000').all()
+          .filter(r => pbAuthor(r));
+        if (qq) rows = rows.filter(r => r.name.toLowerCase().includes(qq) || r.about.toLowerCase().includes(qq) || pbAuthor(r).handle.toLowerCase().includes(qq)
+          || pbRules(r).some(x => x.text.toLowerCase().includes(qq)));
+        const ment = r => +isMentor(pbAuthor(r));
+        if (sort === 'popular') rows.sort((a, b) => b.adopts - a.adopts || b.updated - a.updated);
+        if (sort === 'mentors') rows.sort((a, b) => ment(b) - ment(a) || b.adopts - a.adopts || b.updated - a.updated);
+        const total = rows.length, page = Math.max(0, Math.min(200, parseInt(query.page, 10) || 0)), size = 30;
+        return json(res, 200, { total, page, more: total > (page + 1) * size, canShare: pbCanShare(me), who: S.config.playbooks.who,
+          playbooks: rows.slice(page * size, (page + 1) * size).map(r => pbOut(r, me, false)) }); }
+      if (!parts[1] && M === 'POST') {
+        if (!pbCanShare(me)) return json(res, 403, { error: 'Only mentors share playbooks on this server. You can still adopt theirs.' });
+        const b = sanitizeSharedPlaybook(body); if (!b) return json(res, 400, { error: 'A playbook needs a name and at least one rule to share.' });
+        const ex = q('SELECT * FROM playbooks WHERE member = ? AND src = ?').get(me.id, b.src), rulesJ = JSON.stringify(b.rules);
+        // its name is the setup adopters type on their trades: two of one member's under one name would be ambiguous
+        if (q('SELECT id FROM playbooks WHERE member = ? AND lower(name) = lower(?) AND src != ?').get(me.id, b.name, b.src))
+          return json(res, 409, { error: 'You already share a playbook called “' + b.name + '”.' });
+        if (ex && ex.name === b.name && ex.about === b.about && ex.rules === rulesJ) return json(res, 200, { playbook: pbOut(ex, me, true), changed: false });
+        if (!ex && q('SELECT count(*) AS n FROM playbooks WHERE member = ?').get(me.id).n >= PB_SHARED_MAX)
+          return json(res, 409, { error: 'You share ' + PB_SHARED_MAX + ' playbooks. Stop sharing one to share another.' });
+        if (dayLimit(me, 'pbLog', PB_SHARES_PER_DAY)) return json(res, 429, { error: 'That’s a lot of sharing today. Try again tomorrow.' });
+        let id;
+        if (ex) { id = ex.id;
+          // the version counts what adopters would take: the name and rules (a reworded note alone isn't news)
+          const news = ex.name !== b.name || ex.rules !== rulesJ;
+          q('UPDATE playbooks SET name = ?, about = ?, rules = ?, updated = ?, version = version + ? WHERE id = ?').run(b.name, b.about, rulesJ, now(), news ? 1 : 0, id);
+          if (news) { const to = q('SELECT member FROM playbook_adopts WHERE playbook = ?').all(id).map(x => own(S.members, x.member) ? S.members[x.member] : null).filter(Boolean);
+            for (const o of to) notify(o, 'playbook', '@' + me.handle + ' updated the “' + b.name + '” playbook you adopted. Get the update under Playbooks.', { title: 'A playbook you use changed', url: '/daruma#playbooks/' + id });
+            if (to.length) save(...to); } }
+        else { id = crypto.randomBytes(6).toString('hex');
+          q('INSERT INTO playbooks (id, member, src, at, updated, version, name, about, rules) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)').run(id, me.id, b.src, now(), now(), b.name, b.about, rulesJ);
+          pushEvent(me, { type: 'playbook', text: 'shared a playbook', quote: b.name, data: { pb: id } }); }
+        save(me); return json(res, 200, { playbook: pbOut(pbById(id), me, true), changed: true }); }
+      const r = pbById(arg), a = pbAuthor(r);
+      if (!r || !a) return json(res, 404, { error: 'That playbook isn’t shared any more.' });
+      if (!parts[2] && M === 'GET') return json(res, 200, { playbook: pbOut(r, me, true), canShare: pbCanShare(me) });
+      if (!parts[2] && M === 'DELETE') { if (r.member !== me.id) return json(res, 403, { error: 'Only the member who shared it can stop sharing it.' });
+        dropPlaybook(r.id); return json(res, 200, { ok: true }); }
+      if (parts[2] === 'adopt' && !parts[3] && M === 'POST') {
+        if (r.member === me.id) return json(res, 400, { error: 'It’s your own playbook.' });
+        if (body.on === false) q('DELETE FROM playbook_adopts WHERE playbook = ? AND member = ?').run(r.id, me.id);
+        else if (!q('SELECT 1 FROM playbook_adopts WHERE playbook = ? AND member = ?').get(r.id, me.id)) {
+          if (limited(req, 'pbadopt:' + me.id, 60, 86400000, true)) return json(res, 429, { error: 'That’s a lot of playbooks today. Try again tomorrow.' });
+          q('INSERT INTO playbook_adopts (playbook, member, at) VALUES (?, ?, ?)').run(r.id, me.id, now());
+          // the author hears once per adopter: adopting, dropping and adopting again doesn't ping them twice
+          if (!(me.pbAdopted && me.pbAdopted[r.id])) { me.pbAdopted = Object.assign({}, me.pbAdopted, { [r.id]: now() });
+            const k = Object.keys(me.pbAdopted); if (k.length > 200) for (const x of k.sort((p, z) => me.pbAdopted[p] - me.pbAdopted[z]).slice(0, k.length - 200)) delete me.pbAdopted[x];
+            notify(a, 'playbook', '@' + me.handle + ' adopted your “' + r.name + '” playbook.', { title: 'Your playbook was adopted', url: '/daruma#playbooks/' + r.id }); save(me, a); } }
+        return json(res, 200, { playbook: pbOut(pbById(r.id), me, true) }); }
+      return json(res, 404, { error: 'not found' });
     }
     // ask a particular mentor to look at your trading: it lets mentors in (they see your days, never your
     // wallet) when the member says so, tells that mentor, and puts you first on their list

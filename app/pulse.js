@@ -137,6 +137,7 @@ var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,j
 (function(){ const m=/^#link=([A-Za-z0-9-]{4,20})$/.exec(location.hash||''); if(!m)return; pzS.linkCode=m[1].toUpperCase(); pzS.acctOpen=true;
   try{ history.replaceState(null,'',location.pathname+location.search+'#today'); }catch(e){} })();
 function pzTab(){ const h=(location.hash||'').slice(1);
+  { const i=h.indexOf('/'), f=i>0?pzFeatTab(h.slice(0,i)):null; if(f&&f.tab.arg&&f.tab.arg.test(h.slice(i+1)))return f.tab.name; } // a feature's screen with an argument (#name/arg)
   if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^mentee\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentee'; if(/^mentors\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentorp'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo'; if(/^post\/[0-9a-f]{12}$/.test(h))return 'post'; if(/^tr\/[0-9a-f]{12}(\/mod)?$/.test(h))return 'tr'; if(/^duel\/[A-Za-z0-9_]{3,20}$/.test(h))return 'duelnew';
   if(/^link=[A-Za-z0-9-]{4,20}$/.test(h))return 'today'; if(/^people\/(duels|partner|mentor)$/.test(h))return 'people';
   return PZ_TABS.includes(h)?h:'today'; }
@@ -253,6 +254,8 @@ function pzFeature(f){
     const col=PZ_FLOW.today[f.today.col===1?1:0], at=f.today.after?col.indexOf(f.today.after)+1:0; col.splice(at>0?at:0,0,f.id); }
   if(f.tab&&!PZ_TABS.includes(f.tab.name))PZ_TABS.push(f.tab.name);
 }
+// A feature can also take its screen's clicks (click(el) -> true when handled), typing (input(el) -> true),
+// and an argument after its screen's name (tab.arg: a RegExp for what follows '#name/'; pzHashArg() reads it).
 const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab)||null;
 function pzOrdered(screen){ const all=(PZ_FLOW[screen]||[]).flat(), o=((settings.pzLayout||{})[screen]||{})._order;
   if(!Array.isArray(o))return null;
@@ -1232,10 +1235,20 @@ function pzJournalHtml(D){
       <div class="pz-trade-q"><span class="pz-lbl" style="color:var(--pz-muted)">How well did you execute it?</span><div role="radiogroup" aria-label="How well did you execute it, 1 to 5"><div class="pz-stars">${[1,2,3,4,5].map(n=>`<button type="button" role="radio" data-pz-rate="${n}" aria-checked="${r===n}" aria-label="${n} of 5">${n}</button>`).join('')}</div></div></div>
       <input type="text" id="pzSetup_${esc(t.id)}" aria-label="Setup" placeholder="Setup (breakout, fade, retest…)" autocomplete="off">
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-setupchip="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
+      <div data-pz-pbslot="${esc(t.id)}">${pzPbCheckHtml(t.id,(journal[t.id]||{}).setup)}</div>
       <textarea id="pzNoteT_${esc(t.id)}" rows="2" aria-label="${esc(q)}" placeholder="${esc(q)}"></textarea>
       <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" data-pz-jsave style="flex:1">Save</button><button type="button" class="pz-ghost pz-sm" data-pz-jskip aria-label="Skip this trade: out of the backlog, not journaled">Skip</button>${SOC.me&&!pzS.demo&&!(SOC.cfg&&SOC.cfg.posts&&!SOC.cfg.posts.on)?`<button type="button" class="pz-ghost pz-sm" data-soc-share="${esc(t.id)}">Share</button>`:''}${mrCanShare()?`<button type="button" class="pz-ghost pz-sm" data-mr-share="${esc(t.id)}">Ask mentor</button>`:''}</div></section>`; };
   return `${back}${pzHead(D.inbox.length+' to journal','Journal')}<p class="pz-sub" style="margin-top:-6px">Rate how well you executed each trade, not how it paid. One line is enough.</p>${undo}${clear}
     <div class="pz-jgrid">${list.map(card).join('')}</div>${jpg.html}`;
+}
+// A setup that names one of your playbooks (your own, or one adopted under Social → Playbooks) brings its
+// checklist into the card: tick the rules you kept. It's saved with the trade only once a box has been
+// touched (leaving it alone records nothing), as {id, ok, of, at}, the full journal's j.pb.
+function pzPbCheckHtml(id, setup){
+  const p=typeof playbookFor==='function'?playbookFor(setup,pbList()):null; if(!p||!p.rules.length)return '';
+  const pb=(journal[id]||{}).pb, ok=new Set(pb&&pb.id===p.id?pb.ok:[]);
+  return `<fieldset class="pz-pbcheck" data-pz-pb="${esc(p.id)}"><legend>${esc(p.name)} playbook${p.src?' · from @'+esc(p.src.h):''} · tick the rules you kept</legend>
+    ${p.rules.map(r=>`<label class="pz-pbr"><input type="checkbox" data-pz-pbr="${esc(r.id)}"${ok.has(r.id)?' checked':''}><span>${esc(r.text)}</span></label>`).join('')}</fieldset>`;
 }
 async function pzSaveJournal(sec){
   const id=sec.dataset.pzTrade, rating=pzS.jr[id]||0;
@@ -1243,6 +1256,8 @@ async function pzSaveJournal(sec){
   if(!rating&&!setup&&!note){ pzNote('Pick a rating or write a line first.','err'); return; }
   const t=allTrades.find(x=>x.id===id)||{};
   const j=ensureJ(id); if(setup)j.setup=pzCanonSetup(setup); if(rating)j.rating=rating; delete j.skip; // one spelling per setup, so stats by setup add up
+  const box=sec.querySelector('[data-pz-pb][data-touched]'), p=box&&pbList().find(x=>x.id===box.dataset.pzPb);
+  if(p&&playbookFor(j.setup,[p]))j.pb={id:p.id,ok:[...box.querySelectorAll('input[data-pz-pbr]')].filter(i=>i.checked).map(i=>i.dataset.pzPbr),of:p.rules.map(r=>r.id),at:Date.now()};
   if(note){ const q=tradeQuestion(t,j,_excM[id]).q; j.notes=(j.notes?j.notes+'\n\n':'')+q+'\n'+note; }
   delete pzS.jr[id]; markJEdit(id); await Store.set(J_KEY,journal);
   pzNote('Saved.'); pzRender();
@@ -1464,6 +1479,7 @@ function wirePulse(){
       await removeWallet(+ds.pzRmw); pzRender(); return; }
     if(ds.pzCex){ pzS.cex={venue:ds.pzCex}; pzRender(); const f=$('pzCexKey'); if(f)f.focus(); return; }
     if(ds.pzCexoff!=null){ pzS.cex=null; pzRender(); const f=$('pzAddr'); if(f)f.focus(); return; }
+    for(const f of PZ_FEATS)if(f.click&&await f.click(t))return;
     if(await mrAction(t))return;
     if(await socAction(t))return;
     switch(t.id){
@@ -1487,7 +1503,12 @@ function wirePulse(){
         await setWeekChallenge(c[i],i); pzRender(); return; }
     }
   });
-  root.addEventListener('input',ev=>{ const t=ev.target; if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; } if(t.id==='socBio'){ SOC.draftBio=t.value; return; }
+  root.addEventListener('input',ev=>{ const t=ev.target; for(const f of PZ_FEATS)if(f.input&&f.input(t))return;
+    if(t.dataset.pzPbr!==undefined){ const b=t.closest('[data-pz-pb]'); if(b)b.dataset.touched='1'; return; }
+    if(t.id.startsWith('pzSetup_')){ const slot=t.closest('[data-pz-trade]'), sl=slot&&slot.querySelector('[data-pz-pbslot]'), id=slot&&slot.dataset.pzTrade;
+      const cur=sl&&sl.querySelector('[data-pz-pb]'), p=playbookFor(t.value,pbList()); // the same playbook still named: keep what's ticked
+      if(sl&&(cur?cur.dataset.pzPb:'')!==(p?p.id:''))sl.innerHTML=pzPbCheckHtml(id,t.value); return; }
+    if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; } if(t.id==='socBio'){ SOC.draftBio=t.value; return; }
     if(t.id==='socPq'){ clearTimeout(SOC.pqT); SOC.pqT=setTimeout(()=>{ SOC.pq=t.value.trim(); SOC.ppage=0; pzRender(); const el=$('socPq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='socMq'){ clearTimeout(SOC.mqT); SOC.mqT=setTimeout(()=>{ SOC.mq=t.value.trim(); pzRender(); const el=$('socMq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='socLq'){ clearTimeout(SOC.lqT); SOC.lqT=setTimeout(()=>{ SOC.lq=t.value.trim(); pzRender(); const el=$('socLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }

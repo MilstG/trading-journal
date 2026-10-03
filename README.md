@@ -468,6 +468,40 @@ habits for the days they were kept (re-adopting one starts a new copy beside the
 old), and **Toolbox** counts different habits: each library habit, leak plug or
 pattern once, and habits you write yourself as one.
 
+**Playbooks.** Social → **Playbooks** (`#playbooks`) holds your playbooks, the same ones as
+the full journal's Review → Playbooks: a setup's name and its rules, one per line. Write and
+edit them here too. When a trade's setup on Daruma's journal card names one (typed, or picked
+from the setup chips), the card shows its rules as a checklist: tick the ones you kept. The
+ticks are saved with the trade only once you've touched a box, so leaving the checklist alone
+records nothing. Each playbook's card then shows what keeping its rules is worth, from your own
+closed trades: kept every rule against broke one, win rate and result per trade (in R where the
+risk is known), and the gap, marked *so far* under 10 trades a side.
+
+**Sharing playbooks.** **Share with the league** on one of your playbooks publishes its name,
+its rules and an optional note (up to 400 characters), with your name; never your trades or how
+it went for you. Members find it under **Shared by members** (`#playbooks/shared`): search by
+setup, rule or name, sorted by most adopted, newest, or mentors first, with one playbook's page
+at `#playbooks/<id>`. The feed says "shared a playbook" with a link. **Adopt** copies the
+name and rules into your own playbooks, marked *from @author* (a name you already use gets
+" · @author" added), and from then on it's yours: the checklist, the scorecard and any edits
+stay on your device. The author sees how many adopted it and hears once per adopter. When the
+author changes the name or rules and shares again (**Share your changes**), it gets a new
+version and every adopter hears about it; their copy shows **Update from @author** with what
+changed ("1 rule added, 1 rule gone"), and **Get the update** takes the new rules and keeps
+their own name for it. Rules that didn't change keep their ids, so ticks already made still
+count; taking the update replaces rules the adopter edited themselves, and the card says so.
+A reworded note alone isn't a new version. **Stop sharing** takes it off the list; copies others
+adopted stay theirs, marked "no longer shared". A member shares up to 30 playbooks, each with up
+to 15 rules. A suspended member's playbooks are hidden; a deleted member's are gone, with their
+adoptions. The owner switches sharing off, or keeps it to mentors (anyone can still adopt), and
+removes a playbook under Admin → Feed & reports → Shared playbooks. Routes:
+`GET /playbooks?q=&sort=popular|new|mentors&page=`, `GET /playbooks/mine?have=<ids>` (what you
+share, and which of the ones you adopted are still shared, at which version), `GET /playbooks/<id>`,
+`POST /playbooks {src, name, about, rules}` (share it, or share its changes), `DELETE /playbooks/<id>`,
+`POST /playbooks/<id>/adopt {on}`; the owner's `GET` and `DELETE /admin/playbooks[/<id>]`. Stored in
+`pulse.db` (`playbooks`, `playbook_adopts`); the app's own copy is in your synced settings
+(`settings.playbooks`, with `src: {id, h, v, at}` on an adopted one).
+
 **Readiness from a wearable.** Prep can take readiness from **WHOOP** or
 **Oura** (sign in once; the owner registers an app with each and sets its keys, see
 the deploy guide) or from **Apple Health** through a personal link an iPhone
@@ -1084,7 +1118,7 @@ action. Sections:
 - **Routines** — replace the built-in profiles' questions and add your own profiles.
 - **Wallets** — wallet approval on/off, and approve or reject each member's wallet
   (single or in bulk, with a note); waiting wallets come first.
-- **Feed** — announcements and moderation. **Settings** — open/closed, invite code and
+- **Feed** — announcements and moderation, and shared playbooks (on/off, mentors only, remove one). **Settings** — open/closed, invite code and
   invite link, claimed wallets only, encrypted sync, and **Security**: two-factor for the panel (above).
 
 Without `AUTH_TOKEN` the admin API refuses every request instead of opening to everyone.
@@ -1151,7 +1185,9 @@ how often you keep it and what breaking it cost. Only trades with a ticked
 checklist are graded. A rule you add later doesn't grade older trades, and
 rewording a rule starts its history fresh. Gaps built on fewer than 10 trades a
 side are marked *early*. Playbooks sync across devices and ride backups, and
-Daruma offers their names first when you tag a setup.
+Daruma offers their names first when you tag a setup, shows the checklist on its journal card,
+and lets you share a playbook with the league or adopt one a member shared (see *Playbooks* and
+*Sharing playbooks* under Daruma); an adopted one says *from @author* here.
 
 **Price chart** on the expanded row draws the trade on real candles: every
 entry/add and close fill, average entry/exit, your planned stop and target as

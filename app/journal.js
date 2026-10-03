@@ -794,7 +794,10 @@ function pbNorm(list, keepDeleted){
     const name=String(p.name||'').trim().slice(0,60); if(!name)continue;
     const rules=(Array.isArray(p.rules)?p.rules:[]).filter(r=>r&&typeof r.id==='string'&&String(r.text||'').trim())
       .slice(0,15).map(r=>({id:r.id.slice(0,24),text:String(r.text).trim().slice(0,160)})); // 15 = PB_RULES_MAX (self-contained: sync code calls this)
-    out.push({id:p.id.slice(0,24),name,rules,at:+p.at||0,createdAt:+p.createdAt||+p.at||0});
+    // src: a copy adopted from a playbook someone shared in Daruma (its shared id, the author, the version
+    // taken, and when it was taken — an edit after that is the adopter's own)
+    const s=p.src, src=s&&typeof s.id==='string'&&/^[a-f0-9]{12}$/.test(s.id)?{src:{id:s.id,h:String(s.h||'').slice(0,20),v:Math.max(1,Math.floor(+s.v)||1),at:+s.at||0}}:{};
+    out.push({id:p.id.slice(0,24),name,rules,at:+p.at||0,createdAt:+p.createdAt||+p.at||0,...src});
   }
   return out.slice(-90); // PB_MAX × 3, room for tombstones
 }
@@ -871,7 +874,7 @@ function playbooksSectionHtml(){
   const cards=stats.map(s=>{ const p=list.find(x=>x.id===s.id); if(_pbEdit===s.id)return editor(p);
     const g=pbGap(s.kept,s.broke);
     const rules=s.rules.map(r=>({r,g:pbGap(r.kept,r.broke)})).sort((a,b)=>(b.g?Math.abs(b.g.v):-1)-(a.g?Math.abs(a.g.v):-1));
-    return `<div class="diag-card"><h3>${esc(s.name)} <span style="font-size:11px;color:var(--faint);font-weight:400">${s.ruleN} rule${s.ruleN===1?'':'s'} · ${s.n} trade${s.n===1?'':'s'}</span></h3>
+    return `<div class="diag-card"><h3>${esc(s.name)} <span style="font-size:11px;color:var(--faint);font-weight:400">${p&&p.src?'from @'+esc(p.src.h)+' · ':''}${s.ruleN} rule${s.ruleN===1?'':'s'} · ${s.n} trade${s.n===1?'':'s'}</span></h3>
       ${s.checked?`${mrow('Kept every rule',res(s.kept),'Trades whose checklist had every rule ticked.')}
       ${mrow('Broke a rule',res(s.broke),'Trades with at least one rule left unticked.')}
       ${g?mrow('Following the playbook is worth',`<b class="${cls(g.v)}">${gapTxt(g)}</b> per trade${early(s.kept,s.broke)}`,'Average result when every rule was kept minus when one was broken. Small samples swing a lot — read it as a direction until each side has 20+ trades.'):''}
@@ -880,7 +883,7 @@ function playbooksSectionHtml(){
       ${s.checked&&s.checked<s.n?`<p class="mini-note">${s.n-s.checked} of ${s.n} trades with this setup aren’t checked yet.</p>`:''}
       <div style="margin-top:8px"><button class="btn ghost" data-pbedit="${esc(s.id)}">Edit</button> <button class="btn ghost" data-pbdel="${esc(s.id)}">Delete</button></div></div>`; }).join('');
   return `<div class="diag-section"><h2>Playbooks <span style="font-size:11px;color:var(--faint);font-weight:400">your setups' rules, and what keeping them is worth · current view</span></h2>
-    <p class="lead">Write the rules for each setup once. Every trade with that setup gets a checklist; tick what you followed${list.length?'':' — then this section shows whether following your own rules pays'}.</p>
+    <p class="lead">Write the rules for each setup once. Every trade with that setup gets a checklist; tick what you followed${list.length?'':' — then this section shows whether following your own rules pays'}.${/^https?:$/.test(location.protocol)?` <a href="/daruma#playbooks">Share yours or adopt others’ in Daruma →</a>`:''}</p>
     <div class="diag-grid">${cards}${_pbEdit==='new'?editor(null):''}</div>
     ${_pbEdit===null&&list.length<PB_MAX?'<button class="btn ghost" id="pbNew" style="margin-top:8px">+ New playbook</button>':''}</div>`;
 }
@@ -892,7 +895,7 @@ function wirePlaybooks(){
     const name=$('pbName').value.trim(); if(!name){ setErr('A playbook needs a setup name.'); return; }
     const all=pbNorm(settings.playbooks,true), id=save.dataset.pbid, prev=all.find(p=>p.id===id&&!p.del);
     if(pbList().some(p=>p.id!==id&&pbKey(p.name)===pbKey(name))){ setErr('There is already a playbook called “'+name+'”.'); return; }
-    const now=Date.now(), p={id:prev?prev.id:'pb'+now.toString(36)+Math.random().toString(36).slice(2,5),name,rules:pbRulesFromText($('pbRules').value,prev&&prev.rules),at:now,createdAt:prev?prev.createdAt:now};
+    const now=Date.now(), p={id:prev?prev.id:'pb'+now.toString(36)+Math.random().toString(36).slice(2,5),name,rules:pbRulesFromText($('pbRules').value,prev&&prev.rules),at:now,createdAt:prev?prev.createdAt:now,...(prev&&prev.src?{src:prev.src}:{})};
     settings.playbooks=[...all.filter(x=>x.id!==p.id),p];
     _pbEdit=null; await Store.set(S_KEY,settings); renderReview(); renderTable();
   };

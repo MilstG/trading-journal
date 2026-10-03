@@ -1473,6 +1473,10 @@ body.light .pz-hlpill.pays{background:#E6F6EF;color:#0A9A63} body.light .pz-hlpi
 .pz-kudo{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;border-radius:20px!important;border:1px solid var(--pz-line2);background:none;color:var(--pz-soft);font-size:13px;font-weight:700;cursor:pointer}
 .pz-kudo[aria-pressed="true"]{background:#10201A;border-color:#1D3A2E;color:var(--pz-good)}
 #pz a.pz-kudo{text-decoration:none;color:var(--pz-soft)}
+.pz-pbcheck{border:1px solid var(--pz-line2);border-radius:12px;padding:8px 12px 10px;margin:0;display:flex;flex-direction:column;gap:2px}
+.pz-pbcheck legend{font-size:12px;color:var(--pz-muted);padding:0 4px}
+.pz-pbr{display:flex;gap:10px;align-items:flex-start;min-height:36px;padding:6px 0;font-size:14px;line-height:1.35;cursor:pointer}
+.pz-pbr input{width:20px;height:20px;margin:0;flex:none;accent-color:var(--pz-acc)}
 #pz .pz-quietbtn{background:none;border:0;padding:6px 0;font:inherit;font-size:13px;font-weight:600;color:var(--pz-muted);cursor:pointer}
 #pz .pz-quietbtn.warn{color:#FFB39E}
 img.pz-av{object-fit:cover;background:#23272E;padding:0}
@@ -1917,6 +1921,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 <script src="app/plans.js"></script>
 <!-- features: one file each in app/features/, plugged in through pzFeature (app/pulse.js) -->
 <script src="app/features/trader-age.js"></script>
+<script src="app/features/playbooks.js" data-only="keel"></script>
 <script src="app/boot.js"></script>
 </body>
 </html>

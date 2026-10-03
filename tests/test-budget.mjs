@@ -58,8 +58,11 @@ try {
     // reset: about 6 KB raw on each screen took both past their raw lines (1901 / 1520 raw, 644 / 510 gzipped).
     // Daruma's beta fixes (badges, plan checks, XP left, layout, keyboard) and all of the above together,
     // measured after merging the five: 1944 / 1561 raw, 660 / 526 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1948, 662],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1565, 528],
+    // Oct 2026: shared playbooks — Daruma's Playbooks screen (app/features/playbooks.js, Daruma only, ~23 KB raw /
+    // ~8 KB gzipped, a third of it comments), the playbook checklist on its journal card and the admin's
+    // controls: Daruma 1589 raw / 535 gzipped; the journal ~1 KB raw for keeping an adopted playbook's source.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1950, 662],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1592, 537],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
