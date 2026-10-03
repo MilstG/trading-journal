@@ -113,7 +113,7 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals,
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, pzEarned:settings.pzEarned,
     pzTiltAlerts:settings.pzTiltAlerts, pzCoachDetail:settings.pzCoachDetail, taxExport:settings.taxExport, playbooks:settings.playbooks, colorway:settings.colorway,appearance:settings.appearance}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 // Device-local, never in the snapshot: autoRefresh (a phone on mobile data may want it off while the
 // desktop keeps it on) and pzTiltNotify (rides on this browser's own notification permission). They
@@ -132,6 +132,7 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
       if(typeof data.settings.pzTiltAlerts==='boolean')settings.pzTiltAlerts=data.settings.pzTiltAlerts; if(typeof data.settings.pzCoachDetail==='boolean')settings.pzCoachDetail=data.settings.pzCoachDetail;
       const tx=data.settings.taxExport; // the tax screen indexes its presets by this name: an unknown one would throw there
       if(tx&&typeof tx==='object'&&typeof tx.preset==='string'&&(typeof TAX_PRESETS==='undefined'||Object.prototype.hasOwnProperty.call(TAX_PRESETS,tx.preset)))settings.taxExport={preset:tx.preset,cur:String(tx.cur||'USD').toUpperCase().replace(/[^A-Z]/g,'').slice(0,3)||'USD'};
+      if(data.settings.pzEarned&&typeof data.settings.pzEarned==='object')settings.pzEarned=Object.assign({},data.settings.pzEarned,settings.pzEarned||{}); // the award ledger only grows (pzEarned)
       if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
@@ -199,11 +200,12 @@ async function jPendingOverlay(localJ,pend){ if(!pend.length||!localJ)return; _j
 // is theirs. (It used to be last-write-wins, which on a 409 meant the server always won: a wallet
 // added here was dropped.) A baseline saved before wallets were in it merges no wallets: theirs win.
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','pzEarned','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
 // lessons and goals are lists edited on several devices: a conflict merges them by id instead of
 // letting one device's copy replace the other's (the newest change to an item wins; removals stick)
 function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }
 function _syncMerge(k, mine, theirs){
+  if(k==='pzEarned')return Object.assign({},theirs&&typeof theirs==='object'?theirs:{},mine&&typeof mine==='object'?mine:{}); // the award ledger: both devices' awards
   if(k==='playbooks'){ const by=new Map(); // per playbook, the newest edit wins; a deletion is a dated tombstone so it sticks
     for(const p of [...pbNorm(theirs,true),...pbNorm(mine,true)]){ const o=by.get(p.id); if(!o||(p.at||0)>=(o.at||0))by.set(p.id,p); }
     return [...by.values()].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); }

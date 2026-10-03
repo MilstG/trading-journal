@@ -157,14 +157,24 @@ function challengeCandidates(findings){
   return out;
 }
 function weekChallenge(ms){ const e=journal[isoWeekKey(ms||Date.now())]; return e&&e.challenge&&e.challenge.spec?e.challenge:null; }
+// The first day a challenge or focus habit picked mid-week is graded on: today, or tomorrow once a trade
+// has opened or closed today. Grading a swap from Monday let Sunday's "Pick another" cycle the candidates
+// until one had already been kept all week; picking after today's trades would do the same for today.
+function pzSwapStartKey(now, trades){ const today=dayKey(now);
+  return (trades||[]).some(t=>(t.openTime<=now&&dayKey(t.openTime)===today)||(t.closeTime&&t.closeTime<=now&&dayKey(t.closeTime)===today))?pzAddDays(today,1):today; }
+// a challenge already missed stays missed for the week: swapping it out would turn the miss into a fresh chance at +XP
+const pzChallengeLocked=c=>!!c&&c.status==='missed';
 async function setWeekChallenge(spec, idx, auto){
-  const now=Date.now(), k=isoWeekKey(now), from=lastCompletedWeekRange(now).to;
+  const now=Date.now(), k=isoWeekKey(now), mon=lastCompletedWeekRange(now).to;
+  // the week's first pick (automatic) is graded from Monday; one that replaces it from the swap day on
+  const swap=!auto&&!!weekChallenge(now), from=swap?Math.max(mon,dateBound(pzSwapStartKey(now,allTrades))):mon;
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
     params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const e={...(journal[k]||{})};
   e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,params:params||{},when:spec.when,then:spec.then},
-    idx:idx||0, from, to:addDays(from,7), createdAt:now}; // addDays: a DST week is 167 or 169 hours
+    idx:idx||0, from, to:addDays(mon,7), createdAt:now}; // addDays: a DST week is 167 or 169 hours
+  if(swap)e.challenge.swapAt=now;
   e.updatedAt=now; journal[k]=e;
   // auto picks aren't marked dirty, so the 409 merge keeps the server's version of the week
   // (a challenge the user picked on another device) instead of this device's automatic one
@@ -189,11 +199,70 @@ function challengeStatus(res, ended){
   return res.length>=2&&!missed?'done':res.length<2?'too few days':'missed';
 }
 
+// ---- what's been earned stays earned ----
+// settings.pzEarned = {id: {at, xp, src?}}, synced with the other settings: every achievement ('a:'),
+// completed challenge ('c:' + week) and badge ('b:' + tier id), written the first time it's earned and
+// never removed or changed (a merge keeps both devices' entries). So a retired habit, a re-graded week,
+// a goal pushed out of the list or a new XP weight never takes back an award: it keeps the day and the XP
+// it was earned with. Daily XP (each day's Discipline score, its logging bonus, focus-habit days) is not
+// in it: that's read from fills and the journal every time, so it moves when late fills arrive.
+function pzEarned(){ const E=settings.pzEarned; return E&&typeof E==='object'&&!Array.isArray(E)?E:{}; }
+function pzEarnedRecord(add){ settings.pzEarned=Object.assign({},add,pzEarned()); // what's there already wins
+  try{ Promise.resolve(Store.set(S_KEY,settings)).catch(()=>{}); }catch(e){} }
+// A badge tier from its id ('habitdays-25'), for a ledger badge the catalog no longer lists (mentoring for a former mentor)
+function pzBadgeStub(id){ const i=id.lastIndexOf('-'), fam=id.slice(0,i), need=+id.slice(i+1), F=PZ_FAMILIES.find(f=>f[0]===fam), r=F?F[4].indexOf(need):-1;
+  return r<0?{id,fam,c:'milestones',r:0,t:id,desc:'',need}:{id,fam,c:F[1],r,t:F[2]+' · '+PZ_TIERS[r],desc:F[3](need),need}; }
+// The catalog with the ledger applied: a badge earned before keeps its day, XP and src even when today's
+// catalog doesn't find it; one earned for the first time goes into `add` (when given).
+function pzEarnedBadges(cat, E, add){
+  const tierOf=new Map(), have=new Set(); for(const f of cat.families)for(const b of f.tiers)tierOf.set(b.id,b);
+  for(const b of cat.earned){ if(b.fam==='a')continue; have.add(b.id); const e=E['b:'+b.id];
+    if(e){ b.k=e.at; b.xp=Math.max(0,+e.xp||0); if(e.src)b.src=e.src; else delete b.src; }
+    else if(add)add['b:'+b.id]=b.src?{at:b.k,xp:b.xp,src:b.src}:{at:b.k,xp:b.xp}; }
+  for(const id in E){ const e=E[id]; if(!id.startsWith('b:')||have.has(id.slice(2))||!e||typeof e.at!=='string')continue;
+    const b=tierOf.get(id.slice(2))||pzBadgeStub(id.slice(2)); Object.assign(b,{k:e.at,earned:true,xp:Math.max(0,+e.xp||0)}); if(e.src)b.src=e.src;
+    cat.earned.push(b); }
+  cat.earned.sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:b.r-a.r);
+  for(const f of cat.families){ f.next=f.tiers.find(b=>!b.earned)||null; if(f.tiers.some(b=>b.earned))f.visible=true; }
+  cat.hidden=cat.families.filter(f=>!f.visible).reduce((a,f)=>a+f.tiers.length,0);
+  return cat;
+}
+// Every habit ever adopted with its kept days: a retired one up to the day it was retired, so what it
+// earned keeps counting for badges and the kept-month achievement. (Retired before retiredAt was stored:
+// no end to stop at, so left out.) Retired avoid-habits get their own predicate; coachContext builds
+// predicates for the active ones only.
+function pzHabitResAll(ctx){
+  const all=(Array.isArray(settings.habits)?settings.habits:[]).filter(h=>h&&h.id&&(!h.retired||h.retiredAt));
+  const need=all.filter(h=>h.retired&&h.kind==='avoid'&&h.pid&&!ctx.preds[h.id]), preds=Object.assign({},ctx.preds);
+  if(need.length){ try{ const P=customRulePreds(ctx.trades,need.map(h=>({pid:h.pid,name:h.when,params:h.params||{},createdAt:h.createdAt})));
+    need.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }catch(e){} }
+  return all.map(h=>{ const res=habitDayResults(h,ctx.days,ctx.byDay,preds[h.id],dayKey(h.createdAt||0),journal), to=h.retired?dayKey(h.retiredAt):null;
+    return {h,res:to?res.filter(r=>r.key<to):res}; });
+}
+// Badge counts that repetition can't run up. Each returns day keys, one per unit counted.
+// Goal getter: one per goal kind (and slip) per month — clearing a reached goal and setting it again
+// doesn't count twice (and a goal already met can't be set: pzGoalMet).
+function pzGoalKeys(goals){ const by=new Map();
+  for(const x of (Array.isArray(goals)?goals:[])){ if(!x||!x.done||x.dropped)continue; const k=dayKey(x.done), id=x.kind+'|'+(x.slip||'')+'|'+(x.month||k.slice(0,7));
+    if(!by.has(id)||k<by.get(id))by.set(id,k); }
+  return [...by.values()]; }
+// Toolbox: one per kind of habit — each library habit, leak plug or pattern to avoid once, and the habits you
+// write yourself as one — retired ones included, on the day it was first adopted
+const pzHabitKind=h=>h.tpl||(h.kind==='slip'?'slip:'+h.slip:h.pid?'pid:'+h.pid:h.kind==='cap'?'cap:'+(h.cap||3):'own');
+function pzAdoptKeys(habits){ const by=new Map();
+  for(const h of (Array.isArray(habits)?habits:[])){ if(!h||!h.createdAt)continue; const id=pzHabitKind(h), k=dayKey(h.createdAt); if(!by.has(id)||k<by.get(id))by.set(id,k); }
+  return [...by.values()]; }
+// Leak plugged: one per leak, the first time it was plugged; a stopped plug earns nothing
+function pzPluggedKeys(plugs){ const by=new Map();
+  for(const p of (plugs||[]))if(p&&p.done&&!p.dropped&&(!by.has(p.slip)||p.done<by.get(p.slip)))by.set(p.slip,p.done);
+  return [...by.values()]; }
+
 // ---- everything the progress panel needs, memoized with the coach context ----
 let _gameMemo={key:null,g:null};
 function gameContext(){
   const ctx=coachContext();
-  const key=_coachMemo.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0);
+  const keyOf=()=>_coachMemo.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length;
+  const key=keyOf();
   if(_gameMemo.key===key)return _gameMemo.g;
   const X=pzXpCfg();
   const now=Date.now(), nowWeek=isoWeekOfKey(dayKey(now));
@@ -219,23 +288,39 @@ function gameContext(){
     const ch=journal[k].challenge; if(!ch||!ch.spec)continue;
     const res=challengeResults(ch,ctx,predFor(ch.spec)); const ended=now>=ch.to;
     challenges.push({key:dayKey(Math.min(ch.to-1,now)),week:k.slice(5),ch,res,status:challengeStatus(res,ended),ended}); }
-  // kept for a month: rules with 30 clean days, or habits kept 20 trading days running
+  // what's been earned stays earned (pzEarned): a challenge once done keeps its day, its XP and its "done"
+  // when the week is graded again; one done for the first time goes into the ledger (add)
+  const E=pzEarned(), add={};
+  for(const c of challenges){ const e=E['c:'+c.week];
+    if(e){ c.status='done'; c.key=e.at; c.xp=Math.max(0,+e.xp||0); }
+    else if(c.status==='done'){ c.xp=X.challenge; add['c:'+c.week]={at:c.key,xp:c.xp}; } }
+  // kept for a month: rules with 30 clean days, or habits kept 20 trading days running (retired ones too, for the days they were kept)
   const keptMonth=[];
   for(const x of (ctx.rulePreds||[])){ const r=x.rule; if(!x.pred||!(r.createdAt<=now-30*86400000))continue;
     const after=ctx.closed.filter(t=>t.openTime>=r.createdAt);
     if(after.length>=10&&!after.some(x.pred))keptMonth.push(dayKey(r.createdAt+30*86400000)); }
-  for(const h of habitsList()){ const res=habitProgress(h,ctx).res; let run=0;
+  const habitRes=pzHabitResAll(ctx), resOf=new Map(habitRes.map(x=>[x.h.id,x.res]));
+  for(const {res} of habitRes){ let run=0;
     for(const r of res){ run=r.kept?run+1:0; if(run===20){ keptMonth.push(r.key); break; } } }
   const J=journal;
   const achievements=gameAchievements({days,closed:ctx.closed,byDay:ctx.byDay,J,pa,dayOf:dayKey,
     journalRun:{best:jBest,at30},streak,keptMonth,challenges});
+  for(const a of achievements){ const e=E['a:'+a.id];
+    if(e){ a.at=e.at; a.n=a.of; a.xp=Math.max(0,+e.xp||0); } else if(a.at){ a.xp=X.achievement; add['a:'+a.id]={at:a.at,xp:a.xp}; } }
   // XP: the day's Discipline score plus its logging bonus, plus achievements, challenges and focus-habit days
   const bonuses=[];
-  for(const a of achievements) if(a.at)bonuses.push({key:a.at,xp:X.achievement,why:a.title});
-  for(const c of challenges) if(c.status==='done')bonuses.push({key:c.key,xp:X.challenge,why:'challenge'});
-  for(const k of Object.keys(journal).filter(k=>k.startsWith('week:')&&journal[k]&&journal[k].focus)){
-    const h=habitById(journal[k].focus); if(!h)continue;
-    for(const r of habitProgress(h,ctx).res) if(r.kept&&isoWeekOfKey(r.key)===k.slice(5))bonuses.push({key:r.key,xp:X.focus,why:'focus habit'}); }
+  for(const a of achievements) if(a.at)bonuses.push({key:a.at,xp:a.xp,why:a.title});
+  for(const c of challenges) if(c.status==='done')bonuses.push({key:c.key,xp:c.xp,why:'challenge'});
+  // ledger entries with nothing left to show them (the week's entry gone, an achievement retired) still pay
+  { const have=new Set([...achievements.map(a=>'a:'+a.id),...challenges.map(c=>'c:'+c.week)]);
+    for(const id in E)if((id.startsWith('a:')||id.startsWith('c:'))&&!have.has(id)&&E[id]&&typeof E[id].at==='string')bonuses.push({key:E[id].at,xp:Math.max(0,+E[id].xp||0),why:id[0]==='c'?'challenge':'achievement'}); }
+  // focus-habit days: the week's focus from the day it was picked (focusFrom), and each focus it replaced
+  // for the days it held (focusPast) — see setWeekFocus
+  for(const k of Object.keys(journal).filter(k=>k.startsWith('week:')&&journal[k]&&(journal[k].focus||journal[k].focusPast))){
+    const e=journal[k], wk=k.slice(5);
+    for(const sp of [...(Array.isArray(e.focusPast)?e.focusPast:[]),e.focus?{id:e.focus,from:e.focusFrom||'',to:'9'}:null]){
+      const h=sp&&habitById(sp.id); if(!h)continue;
+      for(const r of (resOf.get(h.id)||habitProgress(h,ctx).res)) if(r.kept&&isoWeekOfKey(r.key)===wk&&r.key>=(sp.from||'')&&r.key<(sp.to||'9'))bonuses.push({key:r.key,xp:X.focus,why:'focus habit'}); } }
   // from the league: XP the owner granted, and their reward badges that carry XP
   const me=typeof SOC!=='undefined'&&SOC.me;
   if(me){ for(const gr of (me.grants||[]))bonuses.push({key:dayKey(gr.at),xp:gr.xp,why:gr.why||'league bonus',src:gr.coach?'coach':'grant'});
@@ -251,14 +336,18 @@ function gameContext(){
   let led=xpLedger(dayRows,bonuses), lv=levelFor(led.total);
   // the badge catalog reads the game so far; its badges then add their own XP on the day they're earned
   let catalog=null;
-  try{ const G0={ctx,days,streak,pa,achievements,challenges,journalBest:jBest,stopsBest:achievements.stopsBest||0,now,nowWeek};
-    catalog=pzBadgeCatalog(Object.assign({},G0,{xp:led.total,xpByDay:led.byDay,level:lv.level}));
+  // Mentoring stays out of leagues and duels: the catalog also gets the XP per day without it (xpByDayOwn),
+  // so an XP or level badge reached only thanks to mentoring XP is a mentoring badge too (src 'mentor').
+  // Badges earned before come from the ledger (pzEarnedBadges), whatever the catalog finds today.
+  try{ const G0={ctx,days,streak,pa,achievements,challenges,journalBest:jBest,stopsBest:achievements.stopsBest||0,now,nowWeek,habitRes};
+    const own=bs=>xpLedger(dayRows,bs.filter(b=>b.src!=='mentor')).byDay;
+    catalog=pzEarnedBadges(pzBadgeCatalog(Object.assign({},G0,{xp:led.total,xpByDay:led.byDay,xpByDayOwn:own(bonuses),level:lv.level})),E);
     if(catalog.earned.length){
       // the XP and level badges count badge XP too: a second pass reads the total including the first pass's badges
-      const first=catalog.earned.filter(b=>b.xp).map(b=>({key:b.k,xp:b.xp,why:b.t,src:'badge'}));
+      const first=catalog.earned.filter(b=>b.xp).map(b=>({key:b.k,xp:b.xp,why:b.t,src:b.src||'badge'}));
       const led1=xpLedger(dayRows,bonuses.concat(first));
-      catalog=pzBadgeCatalog(Object.assign({},G0,{xp:led1.total,xpByDay:led1.byDay,level:levelFor(led1.total).level}));
-      for(const b of catalog.earned)if(b.xp)bonuses.push({key:b.k,xp:b.xp,why:b.t,src:'badge'});
+      catalog=pzEarnedBadges(pzBadgeCatalog(Object.assign({},G0,{xp:led1.total,xpByDay:led1.byDay,xpByDayOwn:own(bonuses.concat(first)),level:levelFor(led1.total).level})),E,add);
+      for(const b of catalog.earned)if(b.xp)bonuses.push({key:b.k,xp:b.xp,why:b.t,src:b.src||'badge'});
       led=xpLedger(dayRows,bonuses); lv=levelFor(led.total); } }
   catch(e){ console.warn('badges failed',e); }
   const wkFrom=dayKey(lastCompletedWeekRange(now).to);
@@ -274,7 +363,11 @@ function gameContext(){
   const saved=disciplineSaved(ctx.closed,uniq);
   const cur=challenges.find(c=>!c.ended&&c.week===isoWeekKey(now).slice(5))||null;
   const g={ctx,days,streak,level:lv,xp:led,weekXp,xpBase,weekXpBase,mult:multOf(dayKey(now)),achievements,challenges,current:cur,pbs,saved,stopsBest,journalBest:jBest,nowWeek,bonuses,catalog,pa};
-  _gameMemo={key,g}; return g;
+  // first-time awards join the ledger, read from the whole account only: a per-market or per-dex view
+  // leaves trades out, and could find a clean day the account as a whole didn't have
+  let whole=0; for(const t of allTrades)if(!t.orphan)whole++;
+  if(Object.keys(add).length&&ctx.trades.length===whole)pzEarnedRecord(add);
+  _gameMemo={key:keyOf(),g}; return g;
 }
 // New since the start of this week — feeds the coach's wins row.
 function gameWins(g){
@@ -300,8 +393,8 @@ function progressSectionHtml(){
   if(ch){ const kept=ch.res.filter(r=>r.kept).length;
     chHtml=`<div class="gm-big">${esc(habitSentence(ch.ch.spec))}</div>
       <div class="gm-sub">${ch.res.length?`${dotsHtml(ch.res)} ${kept} of ${ch.res.length} trading day${ch.res.length===1?'':'s'} so far`:'Starts with your next trading day.'}
-      ${ch.status==='missed'?' · <span class="neg-t">missed once — the rest of the week still counts for XP</span>':''}</div>
-      <div class="gm-foot"><span class="mini-note" style="margin:0">+${pzXpCfg().challenge} XP if every trading day this week keeps it</span><button class="btn ghost" id="chSwap">Pick another</button></div>`; }
+      ${ch.status==='missed'?' · <span class="neg-t">missed once — a new challenge comes Monday; the rest of the week still counts for XP</span>':''}</div>
+      <div class="gm-foot"><span class="mini-note" style="margin:0">+${pzXpCfg().challenge} XP if every trading day ${ch.ch.swapAt?'from '+esc(dayLabel(dayKey(ch.ch.from))):'this week'} keeps it</span>${pzChallengeLocked(ch)?'':`<button class="btn ghost" id="chSwap" title="A new pick counts from today (tomorrow once you’ve traded today), not from Monday">Pick another</button>`}</div>`; }
   else chHtml=`<div class="gm-sub">A challenge is picked from your biggest leak once you have a few trades.</div>`;
   const past=g.challenges.filter(c=>c.ended).slice(-6).reverse();
   const unlocked=g.achievements.filter(a=>a.at).length;
@@ -332,7 +425,7 @@ function progressSectionHtml(){
 function wireProgress(){
   const sw=$('chSwap');
   if(sw)sw.onclick=async()=>{ const g=gameContext(); const c=challengeCandidates(g.ctx.findings); const cur=weekChallenge();
-    if(!c.length)return; const curKey=cur&&specKey(cur.spec);
+    if(!c.length||pzChallengeLocked(g.current))return; const curKey=cur&&specKey(cur.spec);
     const start=Math.max(0,c.findIndex(x=>specKey(x)===curKey));
     let i=(start+1)%c.length; for(let n=0;n<c.length&&specKey(c[i])===curKey;n++)i=(i+1)%c.length;
     await setWeekChallenge(c[i],i); renderReview(); renderCoach(); };
@@ -802,6 +895,9 @@ function pzGoalEval(g, x){
 const pzGoalList=()=>(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&typeof x.id==='string'&&PZ_GOAL_KINDS[x.kind]&&!x.dropped);
 const pzGoalTitle=go=>{ try{ return PZ_GOAL_KINDS[go.kind].title(go); }catch(e){ return 'A goal'; } };
 function pzGoalsCtx(g){ return {days:g.days,J:journal,closed:g.ctx.closed||[],today:dayKey(Date.now()),dayOf:dayKey,journaled:isJournaled,label:dayLabel}; }
+// a goal already met when it's set would be reached at once: setting it is refused (and Goal getter counts one
+// per kind and month anyway, pzGoalKeys)
+function pzGoalMet(go, g){ try{ return pzGoalEval(go,pzGoalsCtx(g)).status==='done'; }catch(e){ return false; } }
 // a goal reached is stamped once (and counts for the Goal getter badge); a missed one stays until cleared
 function pzGoalsSettle(g){
   const list=pzGoalList(), x=pzGoalsCtx(g); let ch=false;
@@ -1106,7 +1202,7 @@ const PZ_FAMILIES=[
   ['habitdays','habits','Habit builder',t=>t+' habit-days kept',[5,25,75,200,500,1000],1],
   ['habitrun','habits','Locked in',t=>'one habit kept '+t+' trading days running',[3,7,14,30,60,120],2],
   ['challenge','habits','Challenger',t=>t+' weekly challenge'+(t===1?'':'s')+' completed',[1,3,6,12,26,52],0],
-  ['adopt','habits','Toolbox',t=>t+' habit'+(t===1?'':'s')+' adopted',[1,2,3,5,8,12],0],
+  ['adopt','habits','Toolbox',t=>t+' different habit'+(t===1?'':'s')+' adopted',[1,2,3,5,8,12],0],
   ['goals','habits','Goal getter',t=>t+' process goal'+(t===1?'':'s')+' reached',[1,3,6,12,24,48],1],
   ['plugged','habits','Leak plugged',t=>t+' leak'+(t===1?'':'s')+' plugged for three weeks straight',[1,2,3,4,5,6],5],
   ['days','consistency','Showing up',t=>t+' trading days',[10,30,75,150,300,600],0],
@@ -1162,15 +1258,13 @@ function pzBadgeCatalog(G){
   add('noadd',D.filter(d=>lossDay(d)&&!f(d).addLoser).map(d=>d.key));
   add('pace',D.filter(d=>d.n>=2&&!f(d).overtrade).map(d=>d.key));
   add('cutloss',D.filter(d=>lossDay(d)&&!f(d).heldLoser).map(d=>d.key));
-  // habits
+  // habits: every one ever adopted (G.habitRes, pzHabitResAll), a retired one for the days it was kept
   const hk=[], hrun=[];
-  for(const h of habitsList()){ const res=habitProgress(h,ctx).res, sh=new Set(disciplineStreak(res.map(x=>({key:x.key,score:x.kept?100:0})),G.nowWeek).shielded); let r=0;
+  for(const {res} of (G.habitRes||habitsList().map(h=>({h,res:habitProgress(h,ctx).res})))){ const sh=new Set(disciplineStreak(res.map(x=>({key:x.key,score:x.kept?100:0})),G.nowWeek).shielded); let r=0;
     for(const x of res){ if(x.kept)hk.push(x.key); r=x.kept?r+1:sh.has(x.key)&&r>0?r:0; hrun.push([x.key,r]); } }
   add('habitdays',hk); run('habitrun',hrun.sort((a,b)=>a[0]<b[0]?-1:1));
   add('challenge',(G.challenges||[]).filter(c=>c.status==='done').map(c=>c.key));
-  add('goals',(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&x.done&&!x.dropped).map(x=>dayKey(x.done)));
-  add('adopt',(Array.isArray(settings.habits)?settings.habits:[]).filter(h=>h&&h.createdAt).map(h=>dayKey(h.createdAt)));
-  { const seen=new Set(); add('plugged',pzPlugs().filter(p=>p.done&&!p.dropped&&!seen.has(p.slip+'|'+p.done)&&seen.add(p.slip+'|'+p.done)).map(p=>p.done)); } // a stopped plug earns nothing; one leak counts once
+  add('goals',pzGoalKeys(settings.pzGoals)); add('adopt',pzAdoptKeys(settings.habits)); add('plugged',pzPluggedKeys(pzPlugs())); // once each: see pzGoalKeys
   // consistency
   add('days',D.map(d=>d.key));
   { const seen=new Set(), k=[]; for(const d of D){ const w=isoWeekOfKey(d.key); if(!seen.has(w)){ seen.add(w); k.push(d.key); } } add('weeks',k); }
@@ -1233,6 +1327,11 @@ function pzBadgeCatalog(G){
     for(const b of T)if(b.earned)out.push(b);
     fams.push({id,cat,title,value,tiers:T,reveal,next:T.find(b=>!b.earned)||null});
   }
+  // mentoring stays out of leagues and duels (xpBase drops src 'mentor'): the mentoring families, and an XP or
+  // level tier reached only with mentoring XP in the total (G.xpByDayOwn is the same days without it)
+  { let top=Infinity; if(G.xpByDayOwn){ let c=0; top=0; for(const k of Object.keys(G.xpByDayOwn).sort()){ c+=G.xpByDayOwn[k]; if(c>top)top=c; } }
+    const lvOwn=top===Infinity?Infinity:levelFor(top).level;
+    for(const b of out)if(b.fam==='teacher'||b.fam==='helped'||(b.fam==='xp'&&top<b.need)||(b.fam==='level'&&lvOwn<b.need))b.src='mentor'; }
   // the classic achievements keep their own XP; they join the case as gold milestones
   for(const a of (G.achievements||[]))if(a.at)out.push({id:'a-'+a.id,fam:'a',c:'milestones',r:2,t:a.title,desc:a.desc,k:a.at,earned:true,xp:0});
   out.sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:b.r-a.r);

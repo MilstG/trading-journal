@@ -581,12 +581,14 @@ function isoWeekKey(ms){
   const week=1+Math.round((d-ft)/(7*86400000));
   return 'week:'+d.getUTCFullYear()+'-W'+String(week).padStart(2,'0');
 }
+// Monday's midnight from the calendar fields, like addDays: stepping back dow×24h crossed the 25-hour
+// day at a clock change (Sunday 23:30 after the fall-back read last Tuesday as "this Monday")
 function lastCompletedWeekRange(now){
   now=now||Date.now();
   const p=tzParts(now);
   const dow=(new Date(Date.UTC(p.y,p.mo,p.day)).getUTCDay()+6)%7; // Mon=0 on the tz calendar
-  const thisMon=tzMidnight(now-dow*86400000);
-  return {from:tzMidnight(thisMon-7*86400000+43200000), to:thisMon};
+  const at=d=>settings.tz==='utc'?Date.UTC(p.y,p.mo,d):tzMidnight(new Date(p.y,p.mo,d,12).getTime()); // noon, then its midnight: a day whose midnight is skipped starts at 01:00
+  return {from:at(p.day-dow-7), to:at(p.day-dow)};
 }
 function weeklyReviewSectionHtml(){
   const {from,to}=lastCompletedWeekRange();

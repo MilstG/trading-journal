@@ -859,9 +859,11 @@ function habitById(id){ return (Array.isArray(settings.habits)?settings.habits:[
 function habitSentence(h){ return 'When '+h.when+', '+h.then+'.'; }
 async function adoptHabit(spec){
   if(!Array.isArray(settings.habits))settings.habits=[];
-  const same=settings.habits.find(h=>h&&((spec.tpl&&h.tpl===spec.tpl)||(spec.pid&&h.pid===spec.pid&&h.kind===spec.kind)
+  // adopting a habit you already keep is a no-op. Adopting one you retired starts a new copy: the retired
+  // one keeps its kept days (they still count for badges), where reviving it reset them to zero.
+  const same=settings.habits.find(h=>h&&!h.retired&&((spec.tpl&&h.tpl===spec.tpl)||(spec.pid&&h.pid===spec.pid&&h.kind===spec.kind)
     ||(!spec.tpl&&!spec.pid&&h.kind===spec.kind&&!h.tpl&&!h.pid&&h.when===String(spec.when||'').slice(0,160)&&h.then===String(spec.then||'').slice(0,160))));
-  if(same){ if(same.retired){ same.retired=false; same.createdAt=Date.now(); } await Store.set(S_KEY,settings); return same; }
+  if(same){ await Store.set(S_KEY,settings); return same; }
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ // same contract as pins and rules: thresholds fixed at adoption, never re-derived
     try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
@@ -876,13 +878,19 @@ async function adoptHabit(spec){
 }
 async function retireHabit(id){ const h=habitById(id); if(!h)return;
   if(weekFocus()===id)await setWeekFocus(null); // before retiring: weekFocus() ignores retired habits
-  h.retired=true;
+  h.retired=true; h.retiredAt=Date.now(); // its days up to here keep counting for badges (pzHabitResAll)
   await Store.set(S_KEY,settings); }
 // This week's single focus habit lives on the current ISO-week journal entry, so it syncs,
 // merges and backs up like the weekly review it sits beside.
 function weekFocus(ms){ const e=journal[isoWeekKey(ms||Date.now())]; return e&&e.focus&&habitById(e.focus)&&!habitById(e.focus).retired?e.focus:null; }
-async function setWeekFocus(id){ const k=isoWeekKey(Date.now());
-  const e={...(journal[k]||{})}; if(id)e.focus=id; else delete e.focus; e.updatedAt=Date.now();
+// A focus picked mid-week earns its +XP days from the pick on (pzSwapStartKey: today, or tomorrow once
+// today's trading has started), never back to Monday; the focus it replaces keeps the days it already
+// earned (focusPast). Without focusFrom (an older entry) the whole week counts, as before.
+async function setWeekFocus(id){ const now=Date.now(), k=isoWeekKey(now);
+  const e={...(journal[k]||{})}; if((id||null)===(e.focus||null))return;
+  const start=pzSwapStartKey(now,allTrades);
+  if(e.focus)e.focusPast=[...(Array.isArray(e.focusPast)?e.focusPast:[]),{id:e.focus,from:e.focusFrom||'',to:start}].slice(-7);
+  if(id){ e.focus=id; e.focusFrom=start; } else { delete e.focus; delete e.focusFrom; } e.updatedAt=now;
   journal[k]=e; markJEdit(k); await Store.set(J_KEY,journal); }
 
 // Per trading day, was the habit kept? Pure given its inputs. days = processDays output

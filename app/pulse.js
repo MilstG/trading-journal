@@ -1458,7 +1458,7 @@ function wirePulse(){
       case 'pzInstallCard':
       case 'pzInstall': if(_deferredInstall){ _deferredInstall.prompt(); try{ await _deferredInstall.userChoice; }catch(e){} _deferredInstall=null; pzRender(); } return;
       case 'pzReport': return showReportCard();
-      case 'pzSwap': { const g=gameContext(); const c=challengeCandidates(g.ctx.findings); const cur=weekChallenge(); if(!c.length)return;
+      case 'pzSwap': { const g=gameContext(); const c=challengeCandidates(g.ctx.findings); const cur=weekChallenge(); if(!c.length||pzChallengeLocked(g.current))return;
         const curKey=cur&&specKey(cur.spec); let i=(Math.max(0,c.findIndex(x=>specKey(x)===curKey))+1)%c.length;
         for(let n=0;n<c.length&&specKey(c[i])===curKey;n++)i=(i+1)%c.length;
         await setWeekChallenge(c[i],i); pzRender(); return; }

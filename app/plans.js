@@ -29,13 +29,14 @@ function pplanStatus(p, now){ return p.tid?'attached':now-p.at>864e5?'expired':'
 // Which waiting plan goes on which trade: the first trade on the plan's market and side opening
 // from 5 minutes before the plan (typed just after the click) to 24h after it. A trade that already
 // has a plan with a stop keeps it — the pending one waits for the next trade. Oldest plan first,
-// one plan per trade. Returns [{key, tid}].
+// one plan per trade. A spot buy is a long (spot trades carry dir 'Spot'), so a Long plan takes it
+// too; a Short plan never does. Returns [{key, tid}].
 function pplanMatches(J, trades, now){
   const out=[], used=new Set(), L=pplanList(J);
   for(const p of L)if(p.tid)used.add(p.tid);
   const has=id=>{ const q=J[id]&&J[id].plan; return !!(q&&parseFloat(q.stop)>0); };
   for(const p of L){ if(p.tid)continue; const ck=planCoinKey(p.coin); let best=null;
-    for(const t of trades||[]){ if(t.dir!==(p.dir==='Short'?'Short':'Long')||used.has(t.id)||has(t.id))continue;
+    for(const t of trades||[]){ if((p.dir==='Short'?t.dir!=='Short':t.dir!=='Long'&&t.dir!=='Spot')||used.has(t.id)||has(t.id))continue;
       if(!(t.openTime>=p.at-3e5&&t.openTime<=p.at+864e5))continue;
       if(planCoinKey(t.coin)!==ck&&planCoinKey(t.symbol)!==ck)continue;
       if(!best||t.openTime<best.openTime)best=t; }

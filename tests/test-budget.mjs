@@ -33,8 +33,10 @@ try {
     // Oct 2026: the mentor directory, rates and the send-to-a-mentor sheet (about 22 KB raw) fit under
     // these lines: 1836 / 1636 raw, 617 / 549 gzipped.
     // Oct 2026: restores that survive a 409 (srvRestored / srvSaveNow) and the pasted-fill derivation: 621 KB gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 625],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
+    // Oct 2026: the XP game's award ledger, swap-day grading and distinct-badge counts (audit 4, about 12 KB raw)
+    // took both screens past their raw lines and the journal past its gzipped one: 1853 / 1653 raw, 623 / 555 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1870, 630],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1670, 560],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

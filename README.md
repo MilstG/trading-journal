@@ -220,11 +220,27 @@ activity:
   completed weekly challenge, +50 per achievement. Levels by default start at
   200·n·(n−1) XP, titled Rookie → Legend (the tenth title stays from level 10 on);
   on a server, the owner can change the curve, the titles and every XP amount.
+  A focus habit picked mid-week earns from the day it's picked (the next day once
+  you've traded that day), not back to Monday; the one it replaced keeps the days
+  it held.
+- **What's earned stays earned** — every achievement, completed challenge and
+  badge goes into an award ledger the first time it's earned (synced with your
+  settings; it only grows, and two devices' ledgers merge). It keeps the day and
+  the XP it was earned with, so retiring a habit, a week graded again, a goal
+  dropping off the list or the owner changing an XP amount never takes one back.
+  Daily XP is not frozen: each day's Discipline score, its logging bonus and
+  focus-habit days are read from your fills and journal every time, so they move
+  when late fills arrive, a day is re-scored, a wallet is removed or the time zone
+  changes. The ledger is written from the whole account only (not a per-market or
+  per-dex view).
 - **Discipline streak with shields** — consecutive trading days at process 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
 - **Weekly challenge** — one target a week, picked from your biggest leak (or a
-  core habit), graded day by day; "Pick another" swaps it.
+  core habit), graded day by day; "Pick another" swaps it, and the new one counts
+  from the day you swap (the next day once you've traded that day), so a swap late
+  in the week can't complete. A challenge already missed can't be swapped; a new
+  one comes on Monday.
 - **Achievements** — thirteen, for moments that are hard in real trading:
   walked away at the limit, sat out after two losses, ten good losses, twenty
   stops honored in a row, a thirty-day journal, a perfect week, a rule kept for
@@ -311,7 +327,8 @@ use one format everywhere (`pzPx`). On a wide screen the tabs become a sidebar.
 **Plan a trade.** The *Plan your next trade* card on Today opens a short form:
 market, long or short, stop (required), target and entry (optional), and one line
 on why. The plan waits in your journal (synced like any note) and attaches itself
-to your next trade on that market and side that opens within 24 hours — the
+to your next trade on that market and side that opens within 24 hours (a long plan
+also takes a spot buy) — the
 trade's stop and target come from it, it counts as a plan written live, and the
 line becomes the trade's setup if it has none. No trade in 24 hours and it
 expires; old plans are cleared after 30 days. A trade that already has a plan
@@ -379,7 +396,7 @@ cost, and whether it's shrinking), a one-tap **plug this leak** loop that turns 
 into a habit checked from your fills: three clean trading weeks in a row plug it
 and earn a badge (only weeks you traded in count: a week traded without that slip
 adds one, a week with the slip starts the count again, and a week with no trading
-is skipped), **per-habit streaks** with
+is skipped; each leak counts once, however often it's plugged again), **per-habit streaks** with
 shields, **good moments** (the times you followed a rule that usually costs you)
 and **saved you** estimates. Today shows **live nudges** when a trigger you
 tend to slip after is happening right now (a fresh loss, a fast re-entry).
@@ -387,7 +404,10 @@ tend to slip after is happening right now (a fresh loss, a fast re-entry).
 **Badges.** About 270 badges in 45 families (discipline, consistency,
 journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
-on a public **badge page** at `/b/<name>` to share.
+on a public **badge page** at `/b/<name>` to share. Habit badges count retired
+habits for the days they were kept (re-adopting one starts a new copy beside the
+old), and **Toolbox** counts different habits: each library habit, leak plug or
+pattern once, and habits you write yourself as one.
 
 **Readiness from a wearable.** Prep can take readiness from **WHOOP** or
 **Oura** (sign in once; the owner registers an app with each and sets its keys, see
@@ -434,7 +454,8 @@ trading week under the bar drops one tier (never back to the start), and weeks w
 neither count nor break it. The server works it out (the app's own `taMultStep`, one finished
 week at a time) and records each week's multiplier, which applies to that week's daily XP
 (Discipline plus logging bonuses; achievements, badges, challenges and grants pay what they
-say). XP already earned never changes. Levels and lifetime XP count the multiplier; weekly
+say). A week's multiplier, once recorded, doesn't change. Levels and lifetime XP count the multiplier
+("where this week's XP came from" shows its share on a row of its own); weekly
 league tables and duels use the XP before it, so a newcomer can still win a week. The owner
 sets the bar and the tiers, or switches it off, in Levels & XP.
 
@@ -509,7 +530,9 @@ average (70/80/90, at least five trading days), weeks without one slip (2/4/8;
 the clock restarts after one), a share of the month's trades journaled, a
 number of days prepped in the month, or weeks inside your loss limit. Each shows a
 progress ring and on-track / behind; reaching one earns the **Goal getter**
-badge family.
+badge family — one per kind of goal a month, so clearing a reached goal and setting
+it again doesn't count twice, and a goal you've already met can't be set. Reached
+goals stay in the list (only the 40 most recent others are kept).
 
 **Trade charts.** Every card on the quick journal screen carries a candle chart
 of the trade (the same cached candles as the excursion scan) with entry and exit
@@ -720,7 +743,8 @@ link to join *your* league. A server upgraded from an older version imports its
   the mentor never pays; the first look at a mentee only notes where they are. It raises the
   mentor's level (its own row in "where this week's XP came from"), but league tables and
   duels never count it. Two badge families for mentors: **Teacher** (trades reviewed) and
-  **Made a difference** (mentee results). The owner sets the amounts and the cap, or switches
+  **Made a difference** (mentee results); their XP is mentoring XP too, and so is an XP or
+  level badge reached only thanks to mentoring XP. The owner sets the amounts and the cap, or switches
   it off, in Levels & XP.
 - **Trade reviews.** A member who lets mentors in can send one trade to their picked
   mentor (or, without picks, the league's mentors): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
@@ -1429,7 +1453,8 @@ follow and your leagues' members). Money is never staked; XP can be.
 - **XP stakes.** A challenge can put XP on the line: both sides put up the same
   amount and the winner takes the other's (a draw gives both back). A duel can
   stake at most 500 XP, and at most 25% of a member's XP can ride on their open
-  duels at once (the owner sets both). The other side's limit is checked too.
+  duels at once (the owner sets both). The other side's limit is checked too, and on a
+  measure the apps report themselves the screen offers no more than that limit (100 XP).
   XP won in a duel doesn't count toward a Process XP duel.
 - **Earned XP and the stake balance.** Stakes never touch earned XP: the level,
   the title, the weekly XP leagues and every level unlock count only XP earned

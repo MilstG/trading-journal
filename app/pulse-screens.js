@@ -16,11 +16,14 @@ function pzMedal(b, size){
   return `<span class="pz-medal${b.earned===false?' off':''}" style="--tc:${b.earned===false?'#3A424C':col};--ms:${sz}px" aria-hidden="true">${pzI(PZ_CAT_ICON[b.c]||'medal',Math.round(sz*0.42),2)}</span>`;
 }
 const pzPctBar=(p,col)=>`<span class="pz-pbar"><i style="width:${Math.round(Math.max(0,Math.min(1,p||0))*100)}%;background:${col||'var(--pz-acc)'}"></i></span>`;
-// XP earned in a window, by where it came from
+// XP earned in a window, by where it came from. The rows add up to the window's XP: the Trader Age
+// multiplier's share of the daily XP is a row of its own (the XP per day, less everything listed).
 function pzXpSources(g, fromKey){
-  const X=pzXpCfg(), o={discipline:0,bonus:0,badges:0,challenge:0,habits:0,league:0,mentor:0,achievements:0};
+  const X=pzXpCfg(), o={discipline:0,bonus:0,badges:0,challenge:0,habits:0,league:0,mentor:0,achievements:0,mult:0};
   for(const d of g.days)if(d.key>=fromKey){ o.discipline+=Math.round(d.score*X.discipline); o.bonus+=d.bonus.total; }
   for(const b of (g.bonuses||[]))if(b.key>=fromKey&&b.src!=='coach'){ const k=b.src==='badge'?'badges':b.src==='mentor'?'mentor':b.src==='grant'||b.src==='award'?'league':b.why==='challenge'?'challenge':b.why==='focus habit'?'habits':'achievements'; o[k]+=b.xp; }
+  const by=(g.xp&&g.xp.byDay)||{}; let tot=0; for(const k in by)if(k>=fromKey)tot+=by[k];
+  o.mult=Math.max(0,tot-Object.values(o).reduce((a,v)=>a+v,0));
   return o;
 }
 // features whose screen lives under a tab (pzFeature tab.nav) show their card on that tab too, linking to it
@@ -33,7 +36,7 @@ function pzStakeLine(L){ const n=typeof SOC!=='undefined'&&SOC.me?+SOC.me.stakeN
 function pzProgressHtml(D){
   const {g}=D, L=g.level, cat=g.catalog||{earned:[],families:[],total:0}, nowK=D.todayK, wkFrom=dayKey(lastCompletedWeekRange(Date.now()).to);
   const src=pzXpSources(g,wkFrom), srcRows=[['discipline','Discipline scores',PZ_COL.good],['bonus','Prep, plans, journal, reviews',PZ_COL.xp],['badges','Badges',PZ_TIER_COL[2]],
-    ['achievements','Achievements','#F4C04E'],['challenge','Weekly challenge','#FFB25A'],['habits','Focus habit','#5AA9FF'],['league','From your league','#FF8AD8'],['mentor','Mentoring','#7FE0D2']].filter(([k])=>src[k]);
+    ['achievements','Achievements','#F4C04E'],['challenge','Weekly challenge','#FFB25A'],['habits','Focus habit','#5AA9FF'],['league','From your league','#FF8AD8'],['mentor','Mentoring','#7FE0D2'],['mult','Trader Age multiplier',PZ_COL.xp]].filter(([k])=>src[k]);
   const wkTot=Object.values(src).reduce((a,v)=>a+v,0);
   const hero=`<section class="pz-card pz-hero pz-span">
     <div class="pz-hero-ring">${pzRing(L.level,L.max?1:L.into/L.need,PZ_COL.xp,{size:132,cap:'Level'})}</div>
@@ -50,7 +53,7 @@ function pzProgressHtml(D){
   const ch=g.current, chHtml=ch?`<section class="pz-card pz-kv"><div class="pz-kvrow"><span class="pz-lbl" style="color:${PZ_COL.xp}">This week’s challenge</span><span style="font-size:12px;font-weight:700;color:${PZ_COL.xp}">+${pzXpCfg().challenge} XP</span></div>
       <b style="font-size:16px;line-height:1.35">${esc(pzChallengeTitle(ch.ch.spec))}</b>
       ${ch.res.length?`<div class="pz-dots">${ch.res.slice(-7).map(r=>`<span><i class="${r.kept?'k':'m'}"></i>${esc(DOWN[new Date(r.key+'T00:00:00Z').getUTCDay()])}</span>`).join('')}</div>`:'<p class="pz-sub" style="font-size:13px">Starts with your next trading day.</p>'}
-      <div class="pz-kvrow"><span class="pz-sub" style="font-size:12px">${ch.status==='missed'?'Missed once — the rest of the week still earns XP.':'Kept on every trading day this week = done.'}</span><button type="button" class="pz-ghost pz-sm" id="pzSwap" style="width:auto;padding:0 14px">Pick another</button></div></section>`
+      <div class="pz-kvrow"><span class="pz-sub" style="font-size:12px">${ch.status==='missed'?'Missed once — a new challenge comes Monday. The rest of the week still earns XP.':ch.ch.swapAt?'Kept on every trading day from '+esc(dayLabel(dayKey(ch.ch.from)))+' = done.':'Kept on every trading day this week = done.'}</span>${pzChallengeLocked(ch)?'':`<button type="button" class="pz-ghost pz-sm" id="pzSwap" style="width:auto;padding:0 14px" data-pz-tip="${esc('A new pick counts from today (tomorrow once you’ve traded today), not from Monday.')}">Pick another</button>`}</div></section>`
     :`<section class="pz-card"><p class="pz-sub">A weekly challenge is picked from your biggest leak once you have a few trades.</p></section>`;
   // habits with their own streaks
   const savedBy=new Map((g.saved.items||[]).map(x=>[x.name,x.saved]));
@@ -900,7 +903,10 @@ async function pzGrowthAction(t){
     if(t.id==='pzGsave'&&pzS.goalNew){ const f=pzS.goalNew, K=PZ_GOAL_KINDS[f.kind], today=dayKey(Date.now());
       const go={id:'g'+Date.now().toString(36),kind:f.kind,target:+f.target||K.targets[0],start:today,createdAt:Date.now()};
       if(K.month)go.month=today.slice(0,7); if(f.kind==='noslip')go.slip=f.slip||'revenge';
-      settings.pzGoals=(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&typeof x==='object').concat([go]).slice(-40); pzS.goalNew=null;
+      if(pzGoalMet(go,gameContext())){ pzNote('You’ve already reached that: pick a higher target.','err'); return true; } // it would count as reached the moment it's set
+      // the list keeps its last 40 goals, but never drops a reached one: it counts for Goal getter
+      const all=(Array.isArray(settings.pzGoals)?settings.pzGoals:[]).filter(x=>x&&typeof x==='object').concat([go]), rest=new Set(all.filter(x=>!x.done||x.dropped).slice(-40));
+      settings.pzGoals=all.filter(x=>(x.done&&!x.dropped)||rest.has(x)); pzS.goalNew=null;
       await Store.set(S_KEY,settings); pzNote('Goal set: '+K.title(go)+'.'); pzRender(); return true; }
     if(t.id==='pzLadd'){ const el=$('pzLnew'), v=(el&&el.value||'').trim(); if(v.length<3)return true;
       const st=settings.pzLessons=pzLessonsNorm(settings.pzLessons); st.own=st.own.concat([{id:'u:'+Date.now().toString(36),text:v.slice(0,200),at:Date.now()}]).slice(-300);
