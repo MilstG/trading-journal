@@ -72,6 +72,11 @@ t('a HIP-3 / spot symbol matches the plan’s plain market name; non-plan journa
   eq(pplanMatches(J, [tr('h', 'xyz:TSLA', 'Long', T0 + H)], T0), [{ key: 'pplan:a', tid: 'h' }]);
   eq(pplanMatches({ 'pplan:a': { coin: 'PURR', dir: 'Long', stop: 1, at: T0 } }, [tr('s', '@107', 'Long', T0 + H, { symbol: 'PURR/USDC' })], T0), [{ key: 'pplan:a', tid: 's' }]);
 });
+t('a Long plan attaches to a spot buy (spot trades carry dir "Spot"); a Short plan never does (audit 4 E7)', () => {
+  const spot = tr('s', '@107', 'Spot', T0 + H, { symbol: 'PURR/USDC' });
+  eq(pplanMatches({ 'pplan:a': { coin: 'PURR', dir: 'Long', stop: 1, at: T0 } }, [spot], T0 + 2 * H), [{ key: 'pplan:a', tid: 's' }]);
+  eq(pplanMatches({ 'pplan:a': { coin: 'PURR', dir: 'Short', stop: 1, at: T0 } }, [spot], T0 + 2 * H), []);
+});
 
 console.log('\nplanned R:R, achieved R, verdicts');
 const L = (exit, extra) => Object.assign({ id: 'L', dir: 'Long', avgEntry: 100, avgExit: exit, maxSize: 2, isOpen: false, events: [] }, extra || {});
