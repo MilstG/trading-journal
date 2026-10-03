@@ -26,7 +26,7 @@ const SLOW = Math.max(1, +process.env.E2E_SLOW || 1);
 const [BLOCKS, GROUPS] = (process.env.HEAVY || '6x30').split('x').map(Number);
 // measured locally at ~18k trades: import ~0.6 s, render ~0.8 s, Diagnostic ~0.3 s, Review ~0.2 s,
 // the other tabs ~0.1 s, longest task while switching tabs ~0.3 s (it was 3 s)
-const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, mcLands: 15000 };
+const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, mcLands: 15000, daruma: 4000 };
 const within = (what, ms) => ok(ms <= BUDGET_MS[what] * SLOW, `${what} took ${ms} ms — over its ${BUDGET_MS[what] * SLOW} ms budget`);
 const timings = {};
 
@@ -130,6 +130,32 @@ try {
     await page.waitForFunction(() => !document.getElementById('rvLazy') && !!document.getElementById('rvWeeks'));
     await page.evaluate(() => window.scrollTo(0, 0));
     eq(errors, [], 'no uncaught errors');
+  });
+  await page.close();
+
+  console.log(`\nDaruma, same history`);
+  await t('Daruma imports and draws the heavy history without the journal-only code, inside the budget', async () => {
+    const p = await browser.newPage({ viewport: { width: 390, height: 844 } }), errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|frame-ancestors/.test(m.text())) errs.push(m.text()); });
+    await p.route('**/*', r => r.request().url().startsWith(BASE) ? r.continue() : r.abort());
+    await p.addInitScript(tok => { try { localStorage.setItem('srv_token', tok); } catch (e) {} }, TOKEN);
+    await p.goto(BASE + '/daruma'); await p.waitForSelector('#pz', { state: 'visible' });
+    // the Diagnostic view, the excursion/miner panels, the replay chart and the exports aren't on this page
+    eq(await p.evaluate(() => [typeof renderDiagnostic, typeof renderMinerResults, typeof openReplay, typeof MiniPDF, typeof diagScan, typeof reconstructCompute, typeof fetchCandles]),
+      ['undefined', 'undefined', 'undefined', 'undefined', 'function', 'function', 'function']);
+    const ms = await p.evaluate(async ([blocks, groups]) => {
+      const DAY = 86400000, now = Date.now(); let fills = [], tid = 1;
+      for (let b = 0; b < blocks; b++) for (let g = 0; g < groups; g++) for (const f of demoFills(b * 1000 + g + 1, now - b * 152 * DAY)) {
+        if (f.coin.includes('/')) { if (b || g) continue; } else if (g) f.coin = f.coin + 'X' + g; f.tid = tid++; f.oid = 1e6 + tid; fills.push(f); }
+      fills.sort((a, b) => a.time - b.time);
+      const t0 = performance.now(); await loadFromPaste(fills, { offline: true }); return Math.round(performance.now() - t0); }, [BLOCKS, GROUPS]);
+    timings.daruma = ms; within('daruma', ms);
+    ok(await p.evaluate(() => allTrades.length) >= 10000 && await p.evaluate(() => !!_worker), 'reconstructed in the worker (its function list resolves here)');
+    for (const h of ['#progress', '#journal', '']) { await p.evaluate(x => { location.hash = x; }, h);
+      await p.waitForFunction(() => document.getElementById('pz').innerText.trim().length > 100); await p.waitForTimeout(300); }
+    eq(errs, [], 'no uncaught errors');
+    await p.close();
   });
 } finally {
   await browser.close();

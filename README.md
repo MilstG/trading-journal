@@ -1966,6 +1966,7 @@ listed) and its own test suite. Trader Age (`app/features/trader-age.js`) is the
 ```
 npm test           # or: node tests/run-all.mjs — offline, no dependencies
 npm run test:e2e   # browser smoke tests (needs Playwright, see below)
+npm run test:e2e:heavy  # a ~18k-trade account in the browser, with real time budgets
 ```
 
 About 620 tests across 33 suites cover reconstruction (flips, funding
@@ -1987,7 +1988,9 @@ digest lifecycle, server-held backups, the metrics endpoint). The suites extract
 they test exactly what ships — there is no second copy of the code to drift
 out of sync. `tests/test-budget.mjs` adds size budgets, one per screen, measured as
 the server sends them: the journal (`/`: the page plus its `app/` scripts) and Daruma
-(`/daruma`, which leaves Chart.js out because it never draws one). The fonts are files in
+(`/daruma`, which leaves out Chart.js and the journal-only parts it never shows: the
+Diagnostic view, the excursion and miner panels with the replay chart, and the exports —
+`app/diagnostic-view.js`, `app/excursions-view.js`, `app/exports.js`). The fonts are files in
 `app/fonts/`, versioned and cached for a year like the scripts, and a browser only
 fetches the faces a screen uses, so they have a budget of their own. A test that fails
 names the screen that grew, so growth is a choice rather than a drift.
@@ -2002,7 +2005,11 @@ sideways scroll), open every admin tab, and run admin two-factor at 360 and 1280
 (setting up an app from its QR code and a passkey in Chrome's virtual authenticator,
 the second step on the sign-in screen and as a dialog when a session ends, sign-out,
 `ADMIN_2FA=required` first-time setup), failing on any uncaught page error. Each step also has a time budget (boot 3 s, sample data 4 s, a tab switch
-2.5 s; `E2E_SLOW=2` doubles them for slow machines, and CI uses that). Playwright is
+2.5 s; `E2E_SLOW=2` doubles them for slow machines, and CI uses that). `e2e/heavy.mjs`
+does the same for a heavy account (~18k trades; `HEAVY=10x30` for ~31k): budgets on the
+import, a cold render, each tab and the longest main-thread task while a tab opens, the
+Diagnostic's worker results equal to the synchronous path, and Daruma on the same history
+without the journal-only files. Playwright is
 deliberately not a dependency of the repo: install it with
 `npm i --no-save playwright && npx playwright install chromium`. CI runs these in a
 separate job on every push.

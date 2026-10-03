@@ -35,13 +35,20 @@ try {
     // Oct 2026: the heavy-account work (AUDIT-4 P1/P2: the Diagnostic's worker batch and memos, lazy
     // below-the-fold charts and sections, the near-linear Trader Age history) is ~17 KB raw / ~6 KB
     // gzipped, about half of it comments: 1858 / 1657 raw, 625 / 557 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1870, 628],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1670, 562],
+    // Oct 2026: the Diagnostic view, the excursion/miner panels and replay chart, and the exports moved
+    // to journal-only files (diagnostic-view.js, excursions-view.js, exports.js): Daruma 1657 -> 1479 KB
+    // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1870, 630],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1490, 500],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
     ok(journal.scripts.some(s => s.startsWith('app/chart.umd.js')), 'the journal draws charts');
     ok(!keel.scripts.some(s => s.startsWith('app/chart.umd.js')), 'Daruma never does');
+    // nor the Diagnostic view, the excursion/miner panels and replay chart, or the exports: it never shows them
+    for (const f of ['diagnostic-view.js', 'excursions-view.js', 'exports.js']) {
+      ok(journal.scripts.some(s => s.startsWith('app/' + f)), 'the journal loads ' + f);
+      ok(!keel.scripts.some(s => s.startsWith('app/' + f)), 'Daruma leaves out ' + f); }
   });
   t('no font is embedded in the page any more', () => {
     for (const p of [journal, keel]) { ok(!p.html.includes('data:font/'), 'a data: font in the page'); ok(/url\(app\/fonts\/inter-400\.woff2\?v=[0-9a-f]{12}\)/.test(p.html), 'fonts are versioned files'); }
