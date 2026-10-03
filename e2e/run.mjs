@@ -206,6 +206,28 @@ try {
     await p.close();
   });
 
+  await t('another device saving in the meantime: its change arrives, and the setting this browser changed but never sent is kept', async () => {
+    const { page: p, errors: errs } = await openPage({ width: 1280, height: 800 });
+    const srv = async () => (await (await fetch(BASE + '/api/data', { headers: { Authorization: 'Bearer ' + TOKEN } })).json());
+    const until = async (f, what) => { for (let i = 0; i < 40; i++) { if (f(await srv())) return; await new Promise(r => setTimeout(r, 250)); } throw new Error('never reached the server: ' + what); };
+    await p.goto(BASE + '/'); await p.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0);
+    await p.evaluate(() => setAppearance('dark')); await until(d => d.snapshot?.settings?.appearance === 'dark', 'dark');
+    await new Promise(r => setTimeout(r, 300)); // let this browser take the revision its own save made
+    // another device saves a different setting while this one is open
+    const cur = await srv();
+    await fetch(BASE + '/api/data', { method: 'PUT', headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rev: cur.rev, snapshot: { ...cur.snapshot, settings: { ...cur.snapshot.settings, colorway: 'bb' } } }) });
+    // this browser switches to Light and reloads before its save goes out (it waits 800 ms)
+    await p.evaluate(() => setAppearance('light')); await p.reload();
+    await p.waitForFunction(() => typeof SRV !== 'undefined' && SRV.rev > 0 && settings.colorway === 'bb', null, { timeout: 10000 });
+    ok(await p.evaluate(() => settings.appearance === 'light' && document.body.classList.contains('light')), 'Light is kept, not undone by the other device’s save');
+    await until(d => d.snapshot?.settings?.appearance === 'light' && d.snapshot?.settings?.colorway === 'bb', 'both changes');
+    await p.evaluate(async () => { await setColorway('ts9'); await setAppearance('dark'); });
+    await until(d => d.snapshot?.settings?.appearance === 'dark' && d.snapshot?.settings?.colorway === 'ts9', 'the reset');
+    eq(errs, []);
+    await p.close();
+  });
+
   console.log('\nPasskeys (Chrome virtual authenticator)');
   await t('a member adds a passkey in Pulse, then signs in with it on a fresh session', async () => {
     // WebAuthn refuses IP addresses as a site ID: this test talks to the server as localhost
@@ -269,6 +291,19 @@ try {
   });
 
   console.log('\nPulse (phone)');
+  await t('the welcome screen: the promise, the address bar, the API-key switch and sample data, with no sideways scroll on a phone', async () => {
+    const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
+    await p.goto(BASE + '/daruma'); await p.waitForSelector('.pz-welcome');
+    eq(await p.textContent('.pz-wl-hero h1'), 'Good habits compound.');
+    ok(await p.isVisible('#pzAddr') && await p.isVisible('#pzConnect') && await p.isVisible('#pzDemo'), 'address, Start day one and sample data are all there');
+    eq((await p.textContent('#pzConnect')).trim(), 'Start day one');
+    ok(await p.isVisible('.pz-wl-art .pz-mark'), 'the daruma, one eye painted');
+    await p.click('[data-pz-cex="bybit"]'); await p.waitForSelector('#pzCexKey');
+    await p.click('[data-pz-cexoff]'); await p.waitForSelector('#pzAddr');
+    ok(await p.evaluate(() => document.documentElement.scrollWidth) <= 390, 'no sideways scrolling');
+    eq(errs, [], 'no uncaught errors');
+    await p.close();
+  });
   await t('Pulse opens at phone width with sample data and no errors, inside the budget', async () => {
     const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
     within('pulse', await timed('pulse', async () => {

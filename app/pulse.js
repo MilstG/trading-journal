@@ -165,7 +165,8 @@ function pzRing(value, pct, color, opts){ opts=opts||{};
 }
 // Daruma's logo (DARUMA_BODY in progress.js; icons/build-daruma.mjs draws the app icons), drawn from the
 // colorway's variables so it follows TS9, INK, BB and Light.
-function pzMark(size){
+function pzMark(size, face){
+  if(face)return `<svg class="pz-mark" viewBox="0 0 100 100" fill="none" stroke-linecap="round" aria-hidden="true"><path d="${DARUMA_BODY}" style="fill:var(--pz-card);stroke:var(--pz-line)" stroke-width="8"/><path class="pz-mark-arc" d="${DARUMA_BODY}" style="stroke:var(--pz-acc)" stroke-width="8" pathLength="100" stroke-dasharray="72 100"/><path d="M50 30C63 30 71 36 71 47C71 57 62 62 50 62C38 62 29 57 29 47C29 36 37 30 50 30Z" style="fill:var(--pz-bg);stroke:var(--pz-line2)" stroke-width="1.5"/><circle class="pz-mark-eye" cx="40.5" cy="47" r="7.75" style="fill:var(--pz-acc)"/><circle cx="59.5" cy="47" r="6.5" style="stroke:var(--pz-muted)" stroke-width="2.5"/></svg>`;
   return `<svg class="pz-mark" viewBox="0 0 100 100" width="${size}" height="${size}" fill="none" stroke-linecap="round" aria-hidden="true"><path d="${DARUMA_BODY}" style="fill:var(--pz-card);stroke:var(--pz-line)" stroke-width="10"/><path class="pz-mark-arc" d="${DARUMA_BODY}" style="stroke:var(--pz-acc)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="pz-mark-eye" cx="40.5" cy="48" r="9.25" style="fill:var(--pz-acc)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--pz-muted)" stroke-width="3.5"/></svg>`;
 }
 const pzBar=(pct,color)=>`<div class="pz-bar"><i style="width:${Math.round(Math.max(0,Math.min(1,pct||0))*100)}%;background:${color}"></i></div>`;
@@ -1244,14 +1245,20 @@ async function pzUnskipJournal(){
 
 
 // ---- first run, loading, empty ----
-// The first-run screen: what Pulse is on one side, connecting your trades on the other
-function pzWelcomeHero(){
-  const dial=(v,pct,col,l)=>`<div>${pzRing(esc(v),pct,col,{size:76})}<span>${l}</span></div>`;
-  return `<section class="pz-wl-hero"><div class="pz-wl-brand">${pzMark(30)}<b>Daruma</b></div>
-    <h1>Know when to trade.<br><span>And when to stop.</span></h1>
-    <p class="pz-wl-lede">Daruma reads your own fills on Hyperliquid, Lighter, Bybit or Binance and turns them into three dials for your trading day.</p>
-    <div class="pz-wl-dials" aria-hidden="true">${dial('86',0.86,'var(--pz-good)','Form')}${dial('84',0.84,'var(--pz-good)','Discipline')}${dial('1.0×',0.5,'var(--pz-risk)','Load')}</div>
-    <ul class="pz-wl-points"><li>${pzI('check',16,2.4)}Two minutes of prep before the open</li><li>${pzI('check',16,2.4)}Revenge trades, size-ups and overtrading caught as they happen</li><li>${pzI('check',16,2.4)}One-line journaling, and how you compare with traders like you</li></ul></section>`;
+// The first-run screen: the promise and connecting your trades on one side, the daruma (one eye
+// painted: a goal set) on the other, and the daily / weekly / monthly rhythm underneath
+function pzWelcome(body){
+  return `<div class="pz-welcome">
+    <header class="pz-wl-top"><div class="pz-wl-brand">${pzMark(30)}<b>Daruma</b></div><a class="pz-wl-full" href="${esc(pzFullHref())}">Full journal →</a></header>
+    <div class="pz-wl-main"><section class="pz-wl-hero" aria-labelledby="pzWlT">
+      <span class="pz-wl-kick">Graded on process, not profit</span>
+      <h1 id="pzWlT"><span>Good habits</span> <span>compound.</span></h1>
+      ${body}</section>
+      <div class="pz-wl-art">${pzMark(0,true)}</div></div>
+    <footer class="pz-wl-foot">
+      <div><b>Daily</b><span>Two minutes of prep, a Discipline score from your fills, one line of journal per trade.</span></div>
+      <div><b>Weekly</b><span>A report card with a grade, a challenge aimed at your biggest leak, and a streak that holds.</span></div>
+      <div><b>Monthly</b><span>Process goals with a ring that fills: hit one and you’ve earned the other eye.</span></div></footer></div>`;
 }
 function pzConnectHtml(){
   const synced=SRV.enabled&&(!SRV.needsAuth||(SRV.token&&!SRV.badAuth));
@@ -1259,25 +1266,22 @@ function pzConnectHtml(){
   const busy=_loading;
   const err=pzS.note&&pzS.note.kind==='err'?pzS.note.m:'';
   const errHtml=err?`<p class="pz-fine pz-err" role="alert">${esc(err)}</p>`:'';
-  if(acctWantsUnlock()&&SOC.cfg&&SOC.cfg.enabled)return `<div class="pz-welcome">${pzWelcomeHero()}<section class="pz-wl-card">${acctConnectHtml()}${errHtml}</section></div>`;
+  if(acctWantsUnlock()&&SOC.cfg&&SOC.cfg.enabled)return pzWelcome(`<div class="pz-wl-form">${acctConnectHtml()}${errHtml}</div>`);
   const link=pzLinkCardHtml(), cex=!!pzS.cex;
-  return `<div class="pz-welcome">${pzWelcomeHero()}
-    <section class="pz-wl-card" aria-labelledby="pzWlT">${link}
-    <h2 id="pzWlT">Connect your trades</h2>
-    <div class="pz-seg full" role="group" aria-label="Where you trade"><button type="button" data-pz-cexoff aria-pressed="${!cex}">Wallet address</button><button type="button" data-pz-cex="${esc(cex&&pzS.cex.venue||'bybit')}" aria-pressed="${cex}">Exchange API key</button></div>
-    ${cex?pzCexFormHtml(true):`
+  return pzWelcome(`${link}
+    <div class="pz-wl-form">${cex?`
+      <div class="pz-wl-formh"><span>Read-only API key</span><button type="button" class="pz-wl-link" data-pz-cexoff>← Use a wallet address</button></div>
+      ${pzCexFormHtml(true)}`:`
+      <div class="pz-wl-formh"><label for="pzAddr">Start with your wallet</label><button type="button" class="pz-wl-link" data-pz-cex="bybit">Bybit or Binance? Use an API key →</button></div>
       ${settings.wallets.length&&!busy?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map(w=>esc(labelFor(w))).join(', ')}. Add another address, or look around with sample data.</p>`:''}
-      <div class="pz-field"><label for="pzAddr">Hyperliquid or Lighter address</label><input type="text" id="pzAddr" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
-      ${errHtml}
-      <button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Connect'}</button>`}
-    <div class="pz-wl-or"><span>or</span></div>
-    <button type="button" class="pz-ghost" id="pzDemo">Try it with sample data</button>
-    <p class="pz-fine pz-wl-safe">${pzI('lock',14)}<span>Read-only. ${cex?'Bybit and Binance through a key that can’t trade or withdraw':'A public address: no wallet connection, no signature, no keys'}. Your journal ${synced?'syncs to this server.':'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</span></p>
-    <div class="pz-wl-more">
+      <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid or Lighter" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
+      ${errHtml}`}</div>
+    <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>
+      <span class="pz-wl-safe" id="pzWlSafe">${pzI('lock',14)}Read-only. ${cex?'A key that can’t trade or withdraw.':'No wallet connection, no signature, no keys.'}</span></div>
+    <p class="pz-fine pz-wl-sync">Your journal ${synced?'syncs to this server.':'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</p>
+    ${(link?'':acctConnectHtml())||tokenAsk?`<div class="pz-wl-more">
       ${link?'':acctConnectHtml()}
-      ${tokenAsk?`<details><summary class="pz-fine" style="cursor:pointer">Own this server? Sign in to sync</summary>${pzTokenHtml()}</details>`:''}
-      <a class="pz-fine" href="${esc(pzFullHref())}">Open the full journal instead →</a></div>
-    </section></div>`;
+      ${tokenAsk?`<details><summary class="pz-fine" style="cursor:pointer">Own this server? Sign in to sync</summary>${pzTokenHtml()}</details>`:''}</div>`:''}`);
 }
 // Bybit / Binance: a read-only API key (venues.js: cexConnect, CEX_HELP)
 function pzCexFormHtml(inCard){ const v=pzS.cex.venue||'bybit';
