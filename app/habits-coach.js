@@ -1102,7 +1102,7 @@ function coachContext(){
     avoid.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }
   let findings=[];
   if(closed.length>=5){ try{
-    const s=computeStats(closed,trades);
+    const s=computeStatsMemo(closed,trades); // the dashboard just ran it on the same trades (period "all")
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
     findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
@@ -1223,7 +1223,7 @@ function renderCoach(){
   const cw=coachWins(ctx).filter(w=>!(gw.some(x=>/discipline streak/.test(x))&&/good-process days in a row/.test(w)));
   const wins=[...new Set([...gw,...cw])].slice(0,4);
   const dt=tzParts(Date.now());
-  ensureWeekChallenge(ctx).then(made=>{ if(made){ renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{});
+  ensureWeekChallenge(ctx).then(made=>{ if(made){ if(allTrades.length>=5000&&typeof coachStaged==='function'&&activeTab!=='review')coachStaged(); else renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{}); // big accounts: rebuilt in idle steps (journal.js)
   el.classList.remove('hide');
   el.innerHTML=`<div class="coach-head"><h3>Coach</h3><span class="hint">${DOWN[dt.dow]}, ${MONTHS[dt.mo]} ${dt.day} · from your own trades and journal</span>${g?`<button type="button" class="lvl-chip" id="coachLvl" data-tip="${esc(g.level.into+' / '+g.level.need+' XP to the next level \u00b7 discipline streak '+g.streak.current+' days, '+g.streak.shields+' shield'+(g.streak.shields===1?'':'s')+'. Open Review \u2192 Progress.')}">Lv ${g.level.level} \u00b7 ${esc(g.level.title)} ${shieldsHtml(g.streak.shields)}</button>`:''}<button type="button" class="coach-hide" id="coachHide" data-tip="Turns coach mode off: hides the coach card, habits, wins, process score and trade questions. Switch it back on in the settings panel (⚙ next to the clock toggle).">hide coach</button></div>
     ${rows.map(r=>`<div class="coach-row"><div class="coach-k">${r.k}</div><div class="coach-v">${r.v}</div><div class="coach-a">${r.act||''}</div></div>`).join('')}

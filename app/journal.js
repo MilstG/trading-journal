@@ -538,7 +538,17 @@ function render(){
   const _drafts=captureDrafts();
   try{ renderInner(); } finally { restoreDrafts(_drafts); }
 }
-let _coachFirst=true, _orphSeen='';
+let _coachFirst=true, _orphSeen='', _coachStage=0;
+// Big accounts: when the coach's inputs changed (a journal save, new fills) rebuilding it is ~1 s at 30k
+// trades — its context, then the game. Each is its own idle task here, then the panel, instead of one
+// block inside render(). Memoized steps cost nothing, so an unchanged coach just redraws; a newer
+// render() supersedes the steps still queued.
+function coachStaged(){
+  const tok=++_coachStage, ok=()=>tok===_coachStage&&allTrades.length&&coachOn();
+  const steps=[()=>{ if(ok())coachContext(); }, ()=>{ if(ok())gameContext(); }, ()=>{ if(tok===_coachStage)renderCoach(); }];
+  const next=()=>{ const f=steps.shift(); if(f)requestIdleCallback(()=>{ try{ f(); }catch(e){ console.warn(e); } next(); },{timeout:1000}); };
+  next();
+}
 function renderInner(){
   syncDexTog(); syncCoachMode(); // a sync pull or backup restore can flip coach mode
   const pt=periodTrades(); const ptAll=periodTradesAll();
@@ -547,7 +557,8 @@ function renderInner(){
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
   renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
-  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); } else renderCoach();
+  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
   renderTripwire(); renderEdge(pt);
   const coins=[...new Set(allTrades.filter(viewFilter).map(dcoin))].sort(); const csel=$('fCoin'),cur=csel.value;
   csel.innerHTML='<option value="">All markets</option>'+coins.map(c=>`<option value="${esc(c)}">${esc(dispMarket(c))}</option>`).join(''); csel.value=cur;

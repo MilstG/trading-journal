@@ -24,9 +24,10 @@ const { createApp } = require(join(here, '..', 'server.js'));
 
 const SLOW = Math.max(1, +process.env.E2E_SLOW || 1);
 const [BLOCKS, GROUPS] = (process.env.HEAVY || '6x30').split('x').map(Number);
-// measured locally at ~18k trades: import ~0.6 s, render ~0.8 s, Diagnostic ~0.3 s, Review ~0.2 s,
-// the other tabs ~0.1 s, longest task while switching tabs ~0.3 s (it was 3 s)
-const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, mcLands: 15000, daruma: 4000 };
+// measured locally at ~18k trades: import ~0.8 s, render ~0.3 s and then the coach in idle steps
+// (each under ~0.3 s; it was one ~1 s block), Diagnostic ~0.3 s, Review ~0.2 s, the other tabs ~0.1 s,
+// longest task while switching tabs ~0.3 s (it was 3 s)
+const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, renderTask: 900, mcLands: 15000, daruma: 4000 };
 const within = (what, ms) => ok(ms <= BUDGET_MS[what] * SLOW, `${what} took ${ms} ms — over its ${BUDGET_MS[what] * SLOW} ms budget`);
 const timings = {};
 
@@ -69,10 +70,17 @@ try {
     eq(errors, [], 'no uncaught errors');
   });
   await settle();
+  // the coach picks the week's challenge once a week, on its first run: let that happen first, so the
+  // render below measures what a journal save costs
+  await page.waitForFunction(() => typeof weekChallenge === 'function' && !!weekChallenge(), null, { timeout: 15000 });
+  await page.waitForTimeout(1500);
   await t('a full render (dashboard, coach, game, Trader Age history) stays inside the budget', async () => {
     await page.evaluate(() => { window.__phase = 'render'; });
     const ms = await page.evaluate(() => { _jrev++; const t0 = performance.now(); render(); return Math.round(performance.now() - t0); }); // a journal edit: every memo cold
     timings.render = ms; within('render', ms);
+    // big accounts rebuild the coach (its context, the game) in idle steps after render(): none of them a long block either
+    await page.waitForFunction(() => { const el = document.getElementById('coach'); return el && el.innerText.trim().length > 50 && _gameMemo.key && _gameMemo.key.startsWith(_coachMemo.key); }, null, { timeout: 15000 });
+    const lt = await longest('render'); timings['task:render'] = lt; within('renderTask', lt);
     ok(await page.evaluate(() => { const g = gameContext(); return g.days.length > 100 && g.catalog && g.catalog.families.length > 10; }), 'the game and its badge catalog were built');
     eq(errors, [], 'no uncaught errors');
   });
