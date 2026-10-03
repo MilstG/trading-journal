@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
 <title>Daruma admin</title>
+<link rel="icon" href="/pulse-icon.svg">
 <style>
 :root{--bg:#090B0E;--side:#0D1014;--card:#12161B;--card2:#0E1216;--hover:#171C22;--line:#1E242C;--line2:#2A313A;--text:#EEF1F4;--muted:#8D97A3;--soft:#C9D1D9;--good:#3FE0A0;--mid:#F4C04E;--low:#FF7A59;--risk:#5AA9FF;--xp:#B69CFF;--r:12px}
 *{box-sizing:border-box}
@@ -27,7 +28,8 @@ body.in .shell{display:grid;grid-template-columns:236px minmax(0,1fr);background
 .side{display:none}
 body.in .side{display:grid;grid-template-rows:auto 1fr auto auto;position:sticky;top:0;height:100vh;background:var(--side);padding:18px 12px 14px;gap:6px;overflow-y:auto;scrollbar-width:thin}
 .brand{display:flex;align-items:center;gap:10px;padding:2px 8px 14px}
-.brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--good),#2BB5C9);display:grid;place-items:center;color:#05130D;font-weight:800;font-size:14px;flex:0 0 auto}
+.brand .logo{width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto}
+.brand .logo svg{display:block}
 .brand b{font-size:15px;letter-spacing:-.01em}
 .brand small{display:block;font-size:11.5px;color:var(--muted);font-weight:500;margin-top:-2px}
 .side .me .menu{display:none}
@@ -213,14 +215,14 @@ details>summary{list-style-position:inside}
 <body>
 <div class="shell">
   <aside class="side" id="side">
-    <div class="brand"><span class="logo" aria-hidden="true">D</span><div><b>Daruma</b><small>Admin</small></div></div>
+    <div class="brand"><span class="logo" aria-hidden="true"><svg class="dm" viewBox="0 0 100 100" width="28" height="28" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--card);stroke:var(--line2)" stroke-width="10"/><path class="dm-live" d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:var(--good)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="dm-live" cx="40.5" cy="48" r="9.25" style="fill:var(--good)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg></span><div><b>Daruma</b><small>Admin</small></div></div>
     <nav class="tabs" id="tabs" aria-label="Admin sections"></nav>
     <div class="links"><a href="/daruma">Open Daruma ↗</a><a href="/ledger.html">Full journal ↗</a></div>
     <div class="me"><span id="whoami"></span><span class="row fit" style="gap:6px;flex-wrap:nowrap"><button id="signout" class="hide sm fit">Sign out</button><button class="sm fit menu" id="menuBtn" aria-expanded="false" aria-controls="tabs">Menu</button></span></div>
   </aside>
   <main>
     <section class="card" id="login">
-      <div class="brand" style="padding:0 0 16px"><span class="logo" aria-hidden="true">D</span><div><b>Daruma</b><small>Admin</small></div></div>
+      <div class="brand" style="padding:0 0 16px"><span class="logo" aria-hidden="true"><svg class="dm" viewBox="0 0 100 100" width="28" height="28" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--card);stroke:var(--line2)" stroke-width="10"/><path class="dm-live" d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:var(--good)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="dm-live" cx="40.5" cy="48" r="9.25" style="fill:var(--good)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg></span><div><b>Daruma</b><small>Admin</small></div></div>
       <h1 style="margin-bottom:6px">Sign in</h1>
       <p class="muted" style="margin:0">An admin the owner added: open the sign-in link they sent you, or enter its code. The same works for any admin already signed in to Daruma on this device.</p>
       <div class="row" style="margin-top:12px"><input id="acode" autocomplete="one-time-code" placeholder="sign-in code" aria-label="Admin sign-in code" style="text-transform:uppercase"><button class="primary fit" id="ago">Sign in</button></div>

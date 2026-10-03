@@ -166,6 +166,8 @@ await t('/daruma (and the old /keel and /pulse) serve the app, their trailing-sl
     const m = await (await fetch(b + '/pulse.webmanifest')).json();
     eq(m.start_url, '/daruma'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq(m.short_name, 'Daruma'); eq(m.icons.map(i => i.src + ' ' + i.purpose), ['/icons/pulse-192.png any', '/icons/pulse-512.png any', '/icons/pulse-maskable-512.png maskable']);
     const ic = await fetch(b + '/pulse-icon.svg'); eq(ic.headers.get('content-type'), 'image/svg+xml');
+    ok((await ic.text()).includes('stroke-dasharray="72 100"'), 'the icon is the daruma mark (icons/daruma.svg), its outline 72% painted');
+    for (const n of ['pulse-180', 'pulse-192', 'pulse-512', 'pulse-maskable-512']) eq((await fetch(b + '/icons/' + n + '.png')).headers.get('content-type'), 'image/png', n);
     const sw = await (await fetch(b + '/sw.js')).text();
     ok(sw.includes("'/daruma'") && sw.includes("'/keel'") && sw.includes("'/pulse'") && !sw.includes("mode==='navigate'"), 'only the app shell is cached — help pages never overwrite it');
   } finally { await new Promise(res => app.close(res)); }

@@ -338,6 +338,17 @@ function wireProgress(){
 }
 
 // ---- shareable images (no dollar amounts) ----
+// Daruma's logo (icons/build-daruma.mjs; pzMark in pulse.js is the page's copy): a daruma whose outline is a
+// progress track, 72% painted, with one eye filled in. Drawn on a canvas at (left, top), `s` px square.
+const DARUMA_BODY='M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z', DARUMA_LEN=247.2;
+function drawDarumaMark(x, left, top, s, c){ // c: {acc, track, fill, eye}
+  const body=new Path2D(DARUMA_BODY);
+  x.save(); x.translate(left,top); x.scale(s/100,s/100); x.lineCap='round'; x.lineWidth=10;
+  x.fillStyle=c.fill; x.fill(body); x.strokeStyle=c.track; x.stroke(body);
+  x.setLineDash([DARUMA_LEN*.72,DARUMA_LEN]); x.strokeStyle=c.acc; x.stroke(body); x.setLineDash([]);
+  x.fillStyle=c.acc; x.beginPath(); x.arc(40.5,48,9.25,0,2*Math.PI); x.fill();
+  x.strokeStyle=c.eye; x.lineWidth=3.5; x.beginPath(); x.arc(59.5,48,7.5,0,2*Math.PI); x.stroke();
+  x.restore(); }
 function cardColors(){ const cs=getComputedStyle(document.body), v=n=>cs.getPropertyValue(n).trim();
   return {bg:v('--bg')||'#0A0E18',panel:v('--panel2')||'#0F1522',line:v('--line')||'#1A2233',text:v('--text')||'#E8ECF5',muted:v('--muted')||'#6B7488',
     gold:v('--gold')||'#C9A85C',profit:v('--profit')||'#2FD08C',loss:v('--loss')||'#F4586A',lbl:v('--lbl')||'#5C6578'}; }
@@ -368,7 +379,8 @@ async function drawCardPng(spec){
     x.fillStyle=c.muted; x.font='400 24px Inter, sans-serif'; x.fillText(l,P,y);
     x.fillStyle=col==='good'?c.profit:col==='bad'?c.loss:col==='gold'?c.gold:c.text; x.font='600 26px "IBM Plex Mono", monospace';
     const tw=x.measureText(r).width; x.fillText(r,W-P-tw,y); }
-  x.fillStyle=c.muted; x.font='400 18px "IBM Plex Mono", monospace'; x.fillText(spec.foot||'Ledger · process, not profit',P,H-36);
+  drawDarumaMark(x,P,H-62,32,{acc:c.profit,track:c.line,fill:c.panel,eye:c.muted});
+  x.fillStyle=c.muted; x.font='400 18px "IBM Plex Mono", monospace'; x.fillText(spec.foot||'Ledger · process, not profit',P+46,H-40);
   return await new Promise(res=>cv.toBlob(res,'image/png'));
 }
 let _gmUrl=null;
