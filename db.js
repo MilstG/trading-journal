@@ -53,6 +53,14 @@ const MIGRATIONS = [
    CREATE TABLE review_comments (id TEXT PRIMARY KEY, review TEXT NOT NULL, member TEXT NOT NULL, at INTEGER NOT NULL, text TEXT NOT NULL);
    CREATE INDEX review_comments_review ON review_comments (review, at);
    CREATE INDEX review_comments_member ON review_comments (member);`,
+  // a trade sent to one picked mentor (`mentor`; null: every mentor, as before) and the XP its review
+  // costs: fee_state 'free' (the first trade with that mentor), 'held' (until they mark it reviewed),
+  // 'paid' or 'refunded'; null when nothing was charged
+  `ALTER TABLE reviews ADD COLUMN mentor TEXT;
+   ALTER TABLE reviews ADD COLUMN fee INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE reviews ADD COLUMN fee_state TEXT;
+   CREATE INDEX reviews_fee ON reviews (fee_state, at);
+   CREATE INDEX reviews_mentor ON reviews (mentor);`,
 ];
 
 function open(dataDir) {

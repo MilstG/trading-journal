@@ -655,8 +655,42 @@ link to join *your* league. A server upgraded from an older version imports its
   every mentor, most recently active first: picture, level, bio, trading style, shared
   leagues and what they're open to. Search by name or bio; filter **Open to duels**,
   **Looking for a partner** (members who switch that on under What you share) or
-  **Mentors**. Each card can challenge, ask to partner or ask to mentor. Never trades,
-  P&L or wallets.
+  **Mentors** (which opens the mentor directory). Each card can challenge, ask to partner
+  or open a mentor's page. Never trades, P&L or wallets.
+- **Mentor directory** (Social → Mentors, `#mentors`, and `#mentors/<handle>`). Every
+  mentor with their rate, how many mentee slots are open and a track record the server
+  measured itself over 90 days: trades they marked reviewed with a comment, the median
+  time from a trade being sent to their first comment, and the share of members who
+  sent another trade within 30 days (shown only from 10 reviews; members whose first
+  trade was under 30 days ago count only once they came back). Their mentees' verified
+  milestones (leaks plugged, perfect weeks, Trader Age milestones) and, if they share
+  verified results, their own Trader Age and 90-day Discipline. Never mentees' P&L,
+  never star ratings. Filter by trading style or **Has room**, search, and sort by
+  **Room first** (the default: picked, then open slots, then fastest reply), fastest
+  reply, most come back or lowest rate.
+- **Picking mentors.** A member picks up to two. Picked mentors are the only ones who see
+  their days and the trades they send; a member who picked no one is seen by every mentor,
+  as before. Each mentor sets how many mentees they take (**Mentees at once**, 1 to 50,
+  default 5); a full mentor offers a **waitlist**, and everyone on it hears once when a slot
+  opens. Picking turns on Let mentors see my days (after a yes); switching that off drops
+  every pick. Routes: `GET /mentors?style=&open=1&sort=&q=`, `GET /mentors/<handle>`,
+  `POST /mentors/<handle>` `{action: pick | drop | wait | unwait}`.
+- **Mentor rates and XP to spend.** Each mentor sets a rate in XP per reviewed trade,
+  kept inside the owner's range (Levels & XP → Mentor rates and the pool; default 0 to
+  100, or rates off). A member's first trade with each paid mentor is free (given back if
+  they take it back before the mentor said anything). After that the rate is **held** when
+  the trade is sent and **paid** the first time the mentor marks it reviewed with a comment
+  of theirs in it; it goes back if the mentor hasn't within the hold time (default 72
+  hours), if the member takes the trade back or drops the mentor, or if the mentor is
+  stood down or suspended. Payments come out of the member's **XP to spend**: their XP
+  (as their level counts it) less what they paid and what's held. Their level never goes
+  down for it. The mentor gets the payment on their mentoring ledger (it counts toward
+  their level, never leagues or duels), less the **pool share** the owner sets (0% by
+  default), which goes to the owner's pool (`GET /admin/pool`: what it holds, everything
+  it took in, the latest payments and what's held now). A profile sharing a wallet with
+  the mentor never pays. With two mentors, a trade names the one it goes to
+  (`POST /reviews` `{to, fee}`; `fee` is the most the member agreed to, so a rate raised
+  in between is refused).
 - **Accountability partners.** Up to three per member, by mutual request (Social →
   Feed, or from Find people). Partners see each other's streak, the last 14 days' Discipline scores and
   which slips happened — never trades, P&L or wallets — can send a nudge (one every
@@ -687,8 +721,8 @@ link to join *your* league. A server upgraded from an older version imports its
   duels never count it. Two badge families for mentors: **Teacher** (trades reviewed) and
   **Made a difference** (mentee results). The owner sets the amounts and the cap, or switches
   it off, in Levels & XP.
-- **Trade reviews.** A member who lets mentors in can send one trade to the league's
-  mentors: **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
+- **Trade reviews.** A member who lets mentors in can send one trade to their picked
+  mentor (or, without picks, the league's mentors): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
   trade** under an expanded trade in the full journal. What goes is the shape of a trade
   post (market, side, open and close times, entry, exit, planned stop and target, %
   and R, a size range instead of the size) plus their note and the day's plan; the
