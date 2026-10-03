@@ -62,8 +62,14 @@ tests/          test suites (`npm test`; CI runs them on every push)
 - **Two devices:** writes carry a revision number. A stale write is refused
   (HTTP 409); the client then applies the newer server state but **merges your
   unsynced edits on top** — journal entries you touched since the last sync,
-  and settings fields you changed — and re-syncs the merge at the new
-  revision. Neither device's note is silently lost.
+  settings fields you changed, and wallets you added or removed (merged by
+  address) — and re-syncs the merge at the new revision. Neither device's note
+  is silently lost. A restore (a pasted backup or journal, or a server
+  snapshot) counts as an edit of everything it touched, and says "restored"
+  only once the server has saved it; the server first keeps the state it
+  replaces as `snapshots/pre-restore-<time>.json` (newest 5, listed in the
+  app's snapshot history as "before restore"). A few settings stay per
+  device and never sync: auto-refresh and tilt notifications.
 - **Closing right after an edit:** a save goes out 0.8 s after the last change.
   If the page is closed or reloaded before that, the browser remembers it has
   unsent edits and the server revision they were made on; at the next start, if
@@ -78,7 +84,8 @@ tests/          test suites (`npm test`; CI runs them on every push)
   the link, or everyone who opens it shares your journal.
 - **Social + admin:** Daruma's leagues, competitions, feed and posts live in an
   SQLite database, `DATA_DIR/pulse.db` (with `pulse.db-wal` beside it while the server
-  runs: back up both, or stop the server first), and members' pictures in
+  runs: back up both, or stop the server first; the off-site bundle ships one consistent
+  copy made by SQLite itself), and members' pictures in
   `DATA_DIR/media/` (2 GB in all). It uses Node's built-in `node:sqlite`, so the
   server needs **Node 22.13 or newer** (`engines` in `package.json` says so; Railway
   follows it) and still installs nothing. A server upgraded from an older version

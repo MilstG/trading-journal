@@ -59,7 +59,8 @@ capital-flow fetches, failing browser storage — for as long as it's true,
 instead of a status message that scrolls away.
 
 No wallet? **Paste data manually** accepts raw fill JSON (e.g. copied from an
-API response) and runs the same reconstruction. It also accepts **CSV** — a
+API response) and runs the same reconstruction (fills without `startPosition`
+get their position derived by average cost, as below). It also accepts **CSV** — a
 header row plus columns for time, symbol, side, price, and size, matched
 against common aliases with exact names beating loose ones — so fills
 exported from another venue or a hand-built spreadsheet feed the exact same
