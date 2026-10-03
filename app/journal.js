@@ -373,7 +373,7 @@ const _attKey=id=>btoa(unescape(encodeURIComponent(id))).replace(/\+/g,'-').repl
 // data URL — the server validates on PUT, but the client must not trust the read path
 // (a compromised sync server could otherwise inject markup through /api/att).
 const _attSrcOk=s=>typeof s==='string'&&/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]*$/i.test(s);
-async function syncAttUp(id){ if(!SRV.enabled)return;
+async function syncAttUp(id){ if(!SRV.enabled||(typeof isDemoData==='function'&&isDemoData()))return; // a sample trade's images stay in this browser
   try{ const arr=(await idbGet('att:'+id))||[];
     const r=arr.length?await srvFetch('/api/att/'+_attKey(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(arr)})
       :await srvFetch('/api/att/'+_attKey(id),{method:'DELETE'});
@@ -381,7 +381,7 @@ async function syncAttUp(id){ if(!SRV.enabled)return;
     if(r&&!r.ok&&r.status!==404){ let m='HTTP '+r.status; try{ const j=await r.json(); if(j&&j.error)m=j.error; }catch(e){}
       setErr('Screenshots saved in this browser but not on the server: '+m); }
   }catch(e){} }
-async function syncAttDown(id){ if(!SRV.enabled)return null;
+async function syncAttDown(id){ if(!SRV.enabled||(typeof isDemoData==='function'&&isDemoData()))return null;
   try{ const r=await srvFetch('/api/att/'+_attKey(id));
     if(!r.ok)return null; let arr=await r.json();
     if(Array.isArray(arr)) arr=arr.filter(_attSrcOk);
