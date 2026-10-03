@@ -124,14 +124,14 @@ function pzCoachLine(D){
 }
 
 // ---- UI state (never stored) ----
-const PZ_TABS=['compose','today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues','lessons','mentor','mentee','duels','reviews','podnew','plan','people'];
+const PZ_TABS=['compose','today','trends','checkin','progress','discipline','journal','social','sharing','account','deep','how','badges','report','review','coach','leagues','lessons','mentor','mentee','duels','reviews','podnew','plan','people','mentors','askmentor'];
 var _pzQuiet=false; // a background refresh of data Pulse already shows: no status toasts
 var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,jr:{},note:null};
 // a sign-in link from the league owner (/pulse#link=CODE): keep the code for the sign-in form, drop it from the address bar
 (function(){ const m=/^#link=([A-Za-z0-9-]{4,20})$/.exec(location.hash||''); if(!m)return; pzS.linkCode=m[1].toUpperCase(); pzS.acctOpen=true;
   try{ history.replaceState(null,'',location.pathname+location.search+'#today'); }catch(e){} })();
 function pzTab(){ const h=(location.hash||'').slice(1);
-  if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^mentee\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentee'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo'; if(/^post\/[0-9a-f]{12}$/.test(h))return 'post'; if(/^tr\/[0-9a-f]{12}(\/mod)?$/.test(h))return 'tr'; if(/^duel\/[A-Za-z0-9_]{3,20}$/.test(h))return 'duelnew';
+  if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^mentee\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentee'; if(/^mentors\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentorp'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo'; if(/^post\/[0-9a-f]{12}$/.test(h))return 'post'; if(/^tr\/[0-9a-f]{12}(\/mod)?$/.test(h))return 'tr'; if(/^duel\/[A-Za-z0-9_]{3,20}$/.test(h))return 'duelnew';
   if(/^link=[A-Za-z0-9-]{4,20}$/.test(h))return 'today'; if(/^people\/(duels|partner|mentor)$/.test(h))return 'people';
   return PZ_TABS.includes(h)?h:'today'; }
 function pzHashArg(){ return (location.hash||'').slice(1).split('/')[1]||''; }
@@ -177,7 +177,7 @@ function pzFullHref(){ return /^https?:$/.test(location.protocol)?'/ledger.html'
 
 function pzNav(tab, level){
   const ft=pzFeatTab(tab);
-  const cur=ft?(ft.tab.nav||'today'):tab==='discipline'||tab==='journal'||tab==='review'||tab==='plan'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='reviews'||tab==='tr'||tab==='lginfo'||tab==='duels'||tab==='people'||tab==='duelnew'||tab==='podnew'||tab==='post'||tab==='compose'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
+  const cur=ft?(ft.tab.nav||'today'):tab==='discipline'||tab==='journal'||tab==='review'||tab==='plan'||tab==='askmentor'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='mentors'||tab==='mentorp'||tab==='reviews'||tab==='tr'||tab==='lginfo'||tab==='duels'||tab==='people'||tab==='duelnew'||tab==='podnew'||tab==='post'||tab==='compose'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   if(typeof pzCoachStatus==='function')pzCoachStatus(); // asked once per profile, so the bar knows whether there is a coach
   const noCoach=typeof COACH!=='undefined'&&COACH&&COACH.status&&!COACH.status.enabled; // the owner hasn't switched the AI coach on: no tab for it
   const items=[['today','Today'],['trends','Stats'],['checkin','Prep'],...(noCoach?[]:[['coach','Coach']]),['social','Social'],['progress','Progress']];
@@ -1368,7 +1368,7 @@ function pzRender(){
       :tab==='trends'?pzTrendsHtml(D):tab==='deep'?pzDeepHtml(D):tab==='how'?pzHowHtml():tab==='badges'?pzBadgesHtml(D):tab==='report'?pzReportHtml(D)
       :tab==='review'?pzReviewHtml(D):tab==='coach'?pzCoachHtml(D):tab==='leagues'?socFindHtml(D):tab==='lginfo'?socLeagueInfoHtml(D,pzHashArg()):tab==='checkin'?pzCheckinHtml(D):tab==='progress'?pzProgressHtml(D)
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='duels'?socDuelsHtml(D):tab==='people'?socPeopleHtml(D):tab==='duelnew'?socDuelNewHtml(D,pzHashArg()):tab==='podnew'?socPodNewHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
-      :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='post'?socPostHtml(D,pzHashArg()):tab==='compose'?socComposeHtml(D):tab==='reviews'?mrListHtml(D):tab==='tr'?mrThreadHtml(D,pzHashArg(),/\/mod$/.test(location.hash)):tab==='plan'?planPzHtml(D):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
+      :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='post'?socPostHtml(D,pzHashArg()):tab==='compose'?socComposeHtml(D):tab==='reviews'?mrListHtml(D):tab==='mentors'?socMentorsHtml(D):tab==='mentorp'?socMentorPageHtml(D,pzHashArg()):tab==='askmentor'?mrAskHtml(D):tab==='tr'?mrThreadHtml(D,pzHashArg(),/\/mod$/.test(location.hash)):tab==='plan'?planPzHtml(D):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
     socSync(D.g); }
   view.innerHTML=html;
@@ -1462,6 +1462,7 @@ function wirePulse(){
   });
   root.addEventListener('input',ev=>{ const t=ev.target; if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; } if(t.id==='socBio'){ SOC.draftBio=t.value; return; }
     if(t.id==='socPq'){ clearTimeout(SOC.pqT); SOC.pqT=setTimeout(()=>{ SOC.pq=t.value.trim(); SOC.ppage=0; pzRender(); const el=$('socPq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
+    if(t.id==='socMq'){ clearTimeout(SOC.mqT); SOC.mqT=setTimeout(()=>{ SOC.mq=t.value.trim(); pzRender(); const el=$('socMq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='socLq'){ clearTimeout(SOC.lqT); SOC.lqT=setTimeout(()=>{ SOC.lq=t.value.trim(); pzRender(); const el=$('socLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='pzLq'){ clearTimeout(pzS.lqT); pzS.lqT=setTimeout(()=>{ pzS.lq=t.value.trim(); pzRender(); const el=$('pzLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },250); return; }
     if(pzS.ck&&t.id==='pzUntil'){ (pzS.ck.rules=pzS.ck.rules||{}).until=t.value; return; }
@@ -1472,6 +1473,7 @@ function wirePulse(){
   root.addEventListener('change',async ev=>{ const t=ev.target;
     if(t.type==='file'&&await socFilePicked(t))return;
     if(t.id==='socBoardSel'){ SOC.board=t.value; pzRender(); return; }
+    if(t.id==='socMsort'){ pzS.msort=t.value; pzRender(); return; }
     if((t.id==='pzPushAm'||t.id==='pzPushPm')&&/^\d{2}:\d{2}$/.test(t.value)){ const pr=Object.assign({},SOC.me&&SOC.me.push&&SOC.me.push.prefs,t.id==='pzPushAm'?{morning:t.value}:{eod:t.value});
       try{ const r=await socFetch('/push',{method:'PUT',body:JSON.stringify({prefs:pr})}); SOC.me.push.prefs=r.prefs; pzNote('Saved.'); }catch(e){ pzNote(e.message,'err'); } return; }
     if(t.id==='socGboardSel'){ SOC.gboard=t.value; pzRender(); return; }
