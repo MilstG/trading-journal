@@ -964,7 +964,15 @@ new value (`2`, …) to reset again. Everything lives in `DATA_DIR/admin-2fa.jso
 and sessions. If that file can't be read, the admin panel answers 503 instead of
 dropping everyone's second factor, until it's fixed or reset.
 
-**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` (the owner) or as an admin. The
+**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` (the owner) or as an admin. A
+browser whose journal already has the token opens signed in; a token typed here is checked
+with one call first (one wrong token is one wrong guess toward the lockout) and remembered
+only once it works. **Sign out** leaves the panel only: the journal on that browser keeps
+its token and keeps syncing, and the sign-in card offers "Sign in with it" to come back.
+Without `AUTH_TOKEN` on the server the panel says so straight away. Settings are checked
+before they're sent: a value outside a field's range (or an empty one) is named under the
+field and nothing is saved, and the server refuses such values with a 400 instead of
+clamping them. "Levels stop at" has an explicit **No limit** switch. The
 sections sit in a sidebar, grouped (People, Compete, Progress, Coaching, Community),
 with counts for open reports and wallets waiting for you; on a phone they fold into a
 menu under the top bar. Each page opens with its title, what it's for and its main
@@ -1759,7 +1767,7 @@ switches moved into **Settings**).
 | **Koinly CSV / CoinTracker CSV** (in Tax export by country…) | Files in the import formats of the two most used crypto tax tools. **Koinly** (universal format): `Date, Sent Amount, Sent Currency, Received Amount, Received Currency, Fee Amount, Fee Currency, Net Worth Amount, Net Worth Currency, Label, Description, TxHash`, dates `YYYY-MM-DD HH:mm:ss` UTC. **CoinTracker**: `Date, Received Quantity, Received Currency, Sent Quantity, Sent Currency, Fee Amount, Fee Currency, Tag`, dates `MM/DD/YYYY HH:mm:ss` UTC. Spot fills are trades (the fee in its own coin). Perps keep the other exports' treatment, one closed trade at its close time: realised profit is received, a loss sent (Koinly `realized gain`, CoinTracker `margin_gain` / `margin_loss`), with the trade's fees in the fee column; its funding is its own row (paid: Koinly `margin fee`, CoinTracker `margin_fee`; received: `realized gain` / `margin_gain`); a fee rebate is `realized gain` / `margin_rebate`. Deposits and withdrawals (capital flows) are untagged transfers in USDC. Amounts stay in the coins traded (both tools price them in your currency); Net Worth is the USD value where the quote is a stablecoin. Pick all history, one tax year (the country's tax year) or a date range. |
 | **Export journal** | Journal entries as JSON. |
 | **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
-| **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. List and fetch them back via `GET /api/backups`. |
+| **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. The sync bar's **History** lists them under "Server backups": restoring one works like opening the file (wallets and settings from the backup, your journal merged), and the server first keeps a copy of what it replaces. Scripts: `GET /api/backups`. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
 | **Export PDF** (Diagnostic) | Print-grade PDF sibling of the report: headline stats, every visible chart embedded as a JPEG image (the built-in PDF writer gained DCTDecode image XObjects for this), and the recommendations — opens anywhere, no browser needed. |
 | **Clear candle cache** | Frees the (large) cached candles; saved measurements are kept. |
@@ -1776,12 +1784,19 @@ switches moved into **Settings**).
    survives reboots and redeploys, works across devices. The status bar shows
    `☁ Server sync · rev N · saved`. Concurrent edits from two devices are
    revision-checked: a stale write is refused, and that client loads the newer
-   state, re-applies the journal entries and settings fields it changed since
-   its last sync on top, and saves the merge — neither device's edit to a
-   different entry is lost.
+   state, re-applies the settings fields it changed since its last sync, and
+   merges the journal entries it changed field by field against the last copy
+   both devices agreed on, then saves the merge. Two devices editing different
+   fields of one entry both keep their edit; the same note changed on both keeps
+   both texts, under an "also edited on another device" line (see
+   [How syncing behaves](README-deploy.md#how-syncing-behaves)). An open tab
+   notices another device's save when it comes back into view, and once a minute.
+   If the server has no `AUTH_TOKEN`, the sync bar says so in red.
 
-In all modes, image attachments and the fill/candle caches stay in the browser
-(large; re-fetchable or re-attachable). "Backup all" is the full portable copy.
+The fill/candle caches stay in the browser in every mode (large; re-fetchable).
+Image attachments stay in the browser too, except with server sync, where each
+trade's screenshots sync separately. "Backup all" is the full portable copy
+(attachments aside).
 
 ## Deploying with the companion server
 
@@ -1962,8 +1977,11 @@ behavior.
   counted per client address: `AUTH_FAIL_MAX` (default 20) wrong guesses inside
   10 minutes lock that address out of every token-gated route for
   `AUTH_LOCK_MIN` (default 15) minutes — a 429 with `Retry-After`, even for the
-  right token. A request with no token at all, or a `READ_TOKEN` asking for a
-  full-token route, never counts as a guess. A wrong admin second-factor code or
+  right token (the journal and `/admin` say how long is left). A request with no
+  token at all, or a `READ_TOKEN` asking for a full-token route, never counts as
+  a guess, and one wrong token counts once however many requests carry it (only a
+  hash of it is kept, for the window), so a page's parallel calls can't lock you
+  out over one typo; distinct wrong tokens each count. A wrong admin second-factor code or
   passkey does count.
 - **Admin two-factor** (`ADMIN_2FA`, see *Two-factor for the admin panel* above) only
   gates `/api/social/admin/*`. Nothing here, and nothing else the token opens, ever asks
@@ -2077,7 +2095,7 @@ npm run test:e2e   # browser smoke tests (needs Playwright, see below)
 npm run test:e2e:heavy  # a ~18k-trade account in the browser, with real time budgets
 ```
 
-About 620 tests across 33 suites cover reconstruction (flips, funding
+The suites in `tests/` cover reconstruction (flips, funding
 windows, spot/perp separation, partial-history flagging), the Web Worker
 dispatcher end-to-end with byte-parity against the synchronous fallback,
 excursion math and the retention/ratchet behavior, miner families and
@@ -2092,7 +2110,9 @@ process score, the end-of-day nudge, demo-fill
 generation through real reconstruction, the Student-t CDF against reference
 values, a whole-file parse check of every script block, and the server over
 real HTTP (auth, revision conflicts, restart survival, the capital endpoint,
-digest lifecycle, server-held backups, the metrics endpoint). The suites extract functions **directly from `ledger.html`**, so
+digest lifecycle, server-held backups, the metrics endpoint, the token lockout,
+admin settings refused out of range, response headers), and two devices editing one
+journal entry. The suites extract functions **directly from `ledger.html`**, so
 they test exactly what ships — there is no second copy of the code to drift
 out of sync. `tests/test-budget.mjs` adds size budgets, one per screen, measured as
 the server sends them: the journal (`/`: the page plus its `app/` scripts) and Daruma

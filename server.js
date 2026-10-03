@@ -25,11 +25,11 @@
 //
 // Persistence API (unchanged):
 //   GET  /api/health         -> {ok:true, auth:<bool>, appSyncCapable} (no auth)
-//   GET  /api/data           -> {rev, snapshot|null}                   (AUTH_TOKEN)
+//   GET  /api/data           -> {rev, snapshot|null}; ?only=rev -> {rev} (AUTH_TOKEN)
 //   PUT  /api/data {rev,snapshot,restore?} -> {rev:new}                (AUTH_TOKEN)
 //        stale rev -> 409 {rev, snapshot}; restore:true keeps the state it replaces (snapshots/pre-restore-<time>.json)
 //   GET  /api/snapshots , GET /api/snapshots/<YYYY-MM-DD | pre-restore-<time>>  (AUTH_TOKEN)
-//   GET/PUT/DELETE /api/att/<key>                                     (AUTH_TOKEN)
+//   GET/PUT/DELETE /api/att/<key>  (GET of none stored -> 200 [])      (AUTH_TOKEN)
 //   POST /api/backup , GET /api/backups , GET /api/backups/<name>     (AUTH_TOKEN)
 //        server-held copies of the app's "Backup all" JSON (gzipped, newest 10 kept)
 //   POST /api/offsite/run                                             (AUTH_TOKEN)
@@ -700,24 +700,30 @@ function createApp(opts) {
   // AUTH_LOCK_MIN minutes (429, even with the right token — otherwise guessing would carry
   // on). Only a presented token that matches neither credential counts: a visitor with no
   // token at all, or a READ_TOKEN script asking for a full-token route, is never a guess.
+  // And one wrong token is one guess, however often it's sent: a page signing in fires a dozen
+  // calls at once, and a journal with a stale stored token retries — neither may burn the lock.
+  // Distinct tokens still each count; only a hash of each is kept, for the window.
   const failMax = opts.authFailMax || parseInt(process.env.AUTH_FAIL_MAX, 10) || 20;
   const failWindowMs = 10 * 60000;
   const lockMs = (opts.authLockMin || parseInt(process.env.AUTH_LOCK_MIN, 10) || 15) * 60000;
-  const authFails = new Map(); // ip -> {n, since, until}
+  const authFails = new Map(); // ip -> {n, since, until, seen: Set of token hashes counted this window}
   const failCounted = new WeakSet(); // one request checked twice (authOk then readOk) is one guess
   let ipOf = req => (req.socket && req.socket.remoteAddress) || ''; // replaced by clientIp once the proxy setting is read
   const lockedOut = (req) => {
     const f = authFails.get(ipOf(req));
     return !!(f && f.until && f.until > Date.now());
   };
-  const noteBadToken = (req) => {
+  const lockLeftMs = (req) => { const f = authFails.get(ipOf(req)); return f && f.until ? Math.max(0, f.until - Date.now()) : 0; };
+  // key: a hash of what was presented (a repeat isn't a new guess); none (a wrong 2FA code) always counts
+  const noteBadToken = (req, key) => {
     if (failCounted.has(req)) return;
     failCounted.add(req);
     const ip = ipOf(req), now = Date.now();
     let f = authFails.get(ip);
     // a fresh count once the window has passed, or once a lock has run out (else a lock shorter
     // than the window would leave guessing unlimited until the window ends)
-    if (!f || now - f.since > failWindowMs || (f.until && f.until <= now)) { f = { n: 0, since: now, until: 0 }; authFails.set(ip, f); }
+    if (!f || now - f.since > failWindowMs || (f.until && f.until <= now)) { f = { n: 0, since: now, until: 0, seen: new Set() }; authFails.set(ip, f); }
+    if (key) { if (f.seen.has(key)) return; f.seen.add(key); } // at most failMax per address: the lock comes first
     if (++f.n >= failMax && !f.until) {
       f.until = now + lockMs;
       console.warn('[ledger] auth: ' + f.n + ' wrong tokens from ' + (ip || 'unknown address') + ' — locked out for ' + Math.round(lockMs / 60000) + ' min');
@@ -729,7 +735,7 @@ function createApp(opts) {
   const tokenCheck = (req) => {
     const h = req.headers['authorization'] || '';
     const full = timingSafeEq(h, 'Bearer ' + auth);
-    if (!full && h && !(readAuth && timingSafeEq(h, 'Bearer ' + readAuth))) noteBadToken(req);
+    if (!full && h && !(readAuth && timingSafeEq(h, 'Bearer ' + readAuth))) noteBadToken(req, crypto.createHash('sha256').update(h).digest('base64').slice(0, 22));
     return full;
   };
   const authOk = (req) => {
@@ -1075,11 +1081,15 @@ function createApp(opts) {
     const dayBound = (v, end) => {
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v));
       if (!m) return parseTime(v);
+      if (+m[2] < 1 || +m[2] > 12 || +m[3] < 1 || +m[3] > 31) return null;
       const y = +m[1], mo = +m[2] - 1, d = +m[3], utc = !(E.settings && E.settings.tz === 'local');
       const at = dd => utc ? Date.UTC(y, mo, dd) : new Date(y, mo, dd).getTime();
       return end ? at(d + 1) - 1 : at(d);
     };
     const from = dayBound(q.from, false), to = dayBound(q.to, true);
+    // a date that doesn't parse used to drop the filter silently and answer for all time
+    for (const [k, v] of [['from', from], ['to', to]]) if (q[k] != null && q[k] !== '' && v == null)
+      throw { code: 400, msg: k + ' must be a date (YYYY-MM-DD), an ISO time, or a Unix time in seconds or milliseconds; got ' + JSON.stringify(String(q[k]).slice(0, 40)) };
     return trades.filter(t => {
       if (market && t.market !== market) return false;
       if (wallet && (!t.wallet || t.wallet.address.toLowerCase() !== wallet)) return false;
@@ -2422,7 +2432,7 @@ function createApp(opts) {
   if (cexRelay.relayOnly && !cexRelay.secretSet) console.warn('[ledger] CEX_RELAY_ONLY is on but CEX_RELAY_SECRET is not set — the relay will refuse every request');
   // the admin panel's optional second factor (admin2fa.js): ADMIN_2FA=required|optional|off; wrong codes
   // also count toward this address's lockout above
-  const twofa = Admin2fa.create({ dataDir, json, now: opts.now, lockedOut, noteBadToken, lockMs, sessionMs: opts.admin2faSessionMs,
+  const twofa = Admin2fa.create({ dataDir, json, now: opts.now, lockedOut, noteBadToken, lockLeftMs, lockMs, sessionMs: opts.admin2faSessionMs,
     mode: opts.admin2fa !== undefined ? opts.admin2fa : process.env.ADMIN_2FA, reset: opts.admin2faReset !== undefined ? opts.admin2faReset : process.env.ADMIN_2FA_RESET });
   const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
     behaviorFor: opts.behaviorFor || behaviorFor, traderAge: engine.ok ? E.traderAge : null,
@@ -2457,9 +2467,9 @@ function createApp(opts) {
 
     // a locked-out address gets a clear 429 for anything carrying a bearer token (see noteBadToken)
     if (auth && req.headers['authorization'] && lockedOut(req)) {
-      const f = authFails.get(ipOf(req));
-      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((f.until - Date.now()) / 1000))));
-      return json(res, 429, { error: 'too many wrong tokens from this address — try again in a few minutes' });
+      const left = Math.max(1, Math.ceil(lockLeftMs(req) / 1000));
+      res.setHeader('Retry-After', String(left));
+      return json(res, 429, { error: 'too many wrong tokens from this address — locked out for ' + (left < 90 ? left + ' more seconds' : Math.ceil(left / 60) + ' more minutes'), retryAfter: left });
     }
 
     // --- exchange relay (Bybit, Binance): the browser signs, this forwards — see cex-relay.js
@@ -2534,6 +2544,9 @@ function createApp(opts) {
           'Cache-Control': 'no-cache',
           'X-Content-Type-Options': 'nosniff',
           'Referrer-Policy': 'no-referrer',
+          // static pages: one inline <style>, no scripts, nothing fetched; and no other site frames them
+          'X-Frame-Options': 'DENY',
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         });
         res.end(buf);
       });
@@ -2622,7 +2635,7 @@ function createApp(opts) {
       fs.readFile(path.join(__dirname, 'admin.html'), (err, buf) => {
         if (err) return json(res, 404, { error: 'admin.html not deployed alongside server.js' });
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
-          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
+          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" });
         res.end(buf);
       });
       return;
@@ -2643,8 +2656,10 @@ function createApp(opts) {
       fs.readFile(path.join(__dirname, 'badges.html'), 'utf8', (err, page) => {
         if (err) return json(res, 404, { error: 'badges.html not deployed alongside server.js' });
         // the name goes into the title and link-preview tags; it's [A-Za-z0-9_] by the route, so no escaping is needed
+        // its <meta> CSP can't say frame-ancestors (browsers ignore it there): the header does, with the same rules
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
-          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+          'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
         res.end(page.split('__HANDLE__').join(bM[1]));
       });
       return;
@@ -2846,6 +2861,7 @@ function createApp(opts) {
       if (req.method === 'GET') {
         const d = readData();
         if (dataBroken === true) return json(res, 500, { error: 'The journal file on the server is damaged. Restore a copy from DATA_DIR/snapshots/ before syncing.' });
+        if (query.only === 'rev') return json(res, 200, { rev: (d && d.rev) || 0 }); // an open tab asking "has another device saved?"
         return json(res, 200, { rev: (d && d.rev) || 0, snapshot: (d && d.snapshot) || null });
       }
 
@@ -2894,8 +2910,10 @@ function createApp(opts) {
       if (!ATT_KEY.test(key)) return json(res, 400, { error: 'bad attachment key' });
       const file = path.join(attDir, key + '.json');
       if (req.method === 'GET') {
+        // none stored is an answer, not an error: every trade the app opens asks, and a 404 for each
+        // one without screenshots filled the browser console with failed requests
         return fs.readFile(file, (err, buf) => err
-          ? json(res, 404, { error: 'not found' })
+          ? (err.code === 'ENOENT' ? json(res, 200, []) : json(res, 500, { error: 'read failed' }))
           : (res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }), res.end(buf)));
       }
       if (req.method === 'PUT') {

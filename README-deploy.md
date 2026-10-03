@@ -50,6 +50,8 @@ tests/          test suites (`npm test`; CI runs them on every push)
 3. **Set `AUTH_TOKEN`** in Service → Variables to a long random string
    (e.g. `openssl rand -hex 24`). Your journal contains wallet addresses and
    trading notes; without a token, anyone who finds the URL can read and write it.
+   Until it's set, the journal's sync bar, Daruma and `/admin` say so (and the
+   admin panel stays closed).
 
 4. Open the generated URL. The app detects the server, asks for the token once
    (remembered per browser), pulls the server snapshot, and from then on every
@@ -61,10 +63,21 @@ tests/          test suites (`npm test`; CI runs them on every push)
 - **Reboots/redeploys:** data lives on the volume; the server is stateless.
 - **Two devices:** writes carry a revision number. A stale write is refused
   (HTTP 409); the client then applies the newer server state but **merges your
-  unsynced edits on top** — journal entries you touched since the last sync,
-  settings fields you changed, and wallets you added or removed (merged by
-  address) — and re-syncs the merge at the new revision. Neither device's note
-  is silently lost. A restore (a pasted backup or journal, or a server
+  unsynced edits on top** — settings fields you changed, wallets you added or
+  removed (merged by address), and journal entries you touched since the last
+  sync, **field by field**: each is compared with the copy both devices last
+  agreed on, so a tag added on the phone and a note written on the laptop both
+  stay; lists (tags, mistakes) merge item by item; an entry deleted on one device
+  and edited on the other is kept. When **both devices changed the same text**
+  (the same note), neither is dropped: the merged note holds the other device's
+  text, then a line `——— also edited on another device; this device’s version: ———`,
+  then this device's, and the sync bar shows "⚠ N notes edited on two devices —
+  both versions kept" until the next reload, so you can tidy it up. Any other
+  value both changed (a rating, a setup) keeps the device that saved last. The
+  merge is re-synced at the new revision. An open tab also checks for a newer
+  revision when it comes back into view or gets focus, and once a minute while
+  visible (a tiny `GET /api/data?only=rev`), and takes it the same way, so it
+  doesn't sit on a stale "saved". A restore (a pasted backup or journal, or a server
   snapshot) counts as an edit of everything it touched, and says "restored"
   only once the server has saved it; the server first keeps the state it
   replaces as `snapshots/pre-restore-<time>.json` (newest 5, listed in the
@@ -76,8 +89,11 @@ tests/          test suites (`npm test`; CI runs them on every push)
   no other device has saved since, it keeps its own copy and sends it (rather
   than taking the server's older one). Plugs and habits merge item by item.
 - **Stays in the browser (by design):** candle caches and fill caches
-  (re-fetchable, large) and journal image attachments. "Backup all" still
-  exports everything exportable as a portable JSON.
+  (re-fetchable, large). Journal image attachments sync on their own, per trade
+  (`/api/att`, size-capped), so they follow you to other devices, but they aren't
+  in the daily snapshots or in "Backup all", which still exports everything else
+  as a portable JSON. "Backup to server" copies sit in the sync bar's **History**,
+  ready to restore.
 - **Daruma (`/daruma`):** the same app in its simple dial view, installable as
   its own app. Visitors without the access token keep their journal in their
   own browser and never write to the server; set `AUTH_TOKEN` before sharing
@@ -92,7 +108,10 @@ tests/          test suites (`npm test`; CI runs them on every push)
   imports `DATA_DIR/social.json` once on its first start and renames it
   `social.json.migrated`. Also on the volume: 50 days of each verifying
   member's public fills in `DATA_DIR/social-fills/`. The owner's panel is at `/admin`
-  and needs `AUTH_TOKEN` (without it the admin API refuses every request), plus a second
+  and needs `AUTH_TOKEN` (without it the admin API refuses every request, and the panel
+  says so as it opens). It signs in with the token this browser's journal has saved, and
+  keeps a token typed there only once it has worked; its **Sign out** signs out of the
+  panel only, so the journal on that browser keeps syncing. Plus a second
   factor where `ADMIN_2FA` asks for one (kept in `DATA_DIR/admin-2fa.json`; the panel's
   two-factor screens are `admin2fa-ui.js`, deployed next to `admin.html`). It manages
   members (add, edit, XP boosts, full unlocks, sign-in codes), leagues, reward badges,
@@ -112,7 +131,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `PORT`                 | `8080`                           | Railway injects this automatically |
 | `AUTH_TOKEN`           | *(empty = API open — don't)*     | Bearer token — everything |
 | `READ_TOKEN`           | *(unset)*                        | Optional second token: `GET /api/v1/*` only — for scripts and dashboards. It reads trades, P&L, journal notes, wallet addresses and open positions, so share it only with people you'd show the journal to |
-| `AUTH_FAIL_MAX`        | `20`                             | Wrong tokens from one address within 10 minutes before that address is locked out (429) of every token-gated route |
+| `AUTH_FAIL_MAX`        | `20`                             | Wrong tokens from one address within 10 minutes before that address is locked out (429) of every token-gated route. Each distinct wrong token counts once, however many requests carry it (a page's parallel calls, a stale saved token retrying) |
 | `AUTH_LOCK_MIN`        | `15`                             | How long that lockout lasts, in minutes |
 | `ADMIN_2FA`            | `optional`                       | Second factor for the admin panel (`/api/social/admin/*` only; the token keeps working alone everywhere else): `optional` — each person turns it on by adding an admin passkey or an authenticator app under Settings → Security; `required` — the owner and every admin need it; `off` — never asked for. An unrecognised value counts as `required` |
 | `ADMIN_2FA_RESET`      | *(unset)*                        | Escape hatch if the owner lost every second factor: set it (e.g. `1`), restart, then remove it. Clears the owner's admin passkeys, app and recovery codes and ends every admin session; each value resets once. Or run `node server.js --reset-admin-2fa` |

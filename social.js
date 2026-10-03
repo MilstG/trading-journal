@@ -2509,6 +2509,16 @@ function createSocial(opts) {
       }
       if (sub === 'config' && M === 'PUT') {
         const c = S.config;
+        // refuse what the sanitizers would clamp (see SC.rangeError) before anything is changed
+        if (body.guestCap !== undefined && !(typeof body.guestCap === 'number' && Number.isInteger(body.guestCap) && body.guestCap >= 0 && body.guestCap <= 100))
+          return json(res, 400, { error: 'Levels stop at (guestCap) must be a whole number from 1 to 100, or 0 for no limit (not ' + JSON.stringify(body.guestCap) + ').' });
+        if (body.mentorXp && body.mentorXp.rateMin != null && body.mentorXp.rateMax != null && +body.mentorXp.rateMin > +body.mentorXp.rateMax)
+          return json(res, 400, { error: 'Mentor rates: the lowest rate (' + body.mentorXp.rateMin + ') is above the highest (' + body.mentorXp.rateMax + ').' });
+        for (const [k, label, fn] of [['mult', 'XP multiplier', sanitizeMult], ['standing', 'Standing', sanitizeStanding], ['mentorXp', 'Mentoring XP', sanitizeMentorXp],
+          ['modules', 'Features', SC.sanitizeModules], ['unlocks', 'Features', SC.sanitizeModules], ['levels', 'Levels', SC.sanitizeLevels], ['xp', 'XP rules', SC.sanitizeXp],
+          ['coach', 'Coach', SC.sanitizeCoachCfg], ['bench', 'Traders like you', Bench.sanitizeBenchCfg], ['duels', 'Duels', Duels.sanitizeDuelCfg],
+          ['risk', 'Drawdown rules', Duels.sanitizeRiskCfg], ['pots', 'Buy-ins', Pots.sanitizePotCfg]]) {
+          const e = body[k] ? SC.rangeError(label, body[k], k === 'unlocks' ? c.modules : c[k], fn) : null; if (e) return json(res, 400, { error: e }); }
         if (typeof body.open === 'boolean') c.open = body.open;
         if (typeof body.inviteCode === 'string') c.inviteCode = cleanText(body.inviteCode, 40);
         if (typeof body.unlocksOn === 'boolean') c.unlocksOn = body.unlocksOn;
@@ -2516,7 +2526,7 @@ function createSocial(opts) {
         if (body.mult) c.mult = sanitizeMult(body.mult, c.mult);
         if (body.standing) c.standing = sanitizeStanding(body.standing, c.standing);
         if (body.mentorXp) c.mentorXp = sanitizeMentorXp(body.mentorXp, c.mentorXp);
-        if (body.guestCap !== undefined && isFinite(+body.guestCap)) c.guestCap = Math.max(0, Math.min(100, Math.round(+body.guestCap)));
+        if (body.guestCap !== undefined) c.guestCap = body.guestCap;
         if (body.modules) c.modules = SC.sanitizeModules(body.modules, c.modules);
         if (body.unlocks) c.modules = SC.sanitizeModules(body.unlocks, c.modules); // v0.3 panels send this name
         if (body.levels) c.levels = SC.sanitizeLevels(body.levels, c.levels);

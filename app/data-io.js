@@ -651,7 +651,7 @@ function detectPasteType(raw){
     if(Array.isArray(d))return d.length&&d[0]&&d[0].coin!==undefined?'fills JSON · '+d.length+' fills':'JSON array';
     if(d&&typeof d==='object'){
       if(d.fills)return 'fills JSON · '+((d.fills&&d.fills.length)||0)+' fills';
-      if(d.journal||d.wallets||d.settings)return 'full backup'+(d.fillCaches?' · incl. fill caches':'');
+      if(d.journal||d.wallets||d.settings)return 'full backup'+(d.fillCaches&&typeof d.fillCaches==='object'&&Object.keys(d.fillCaches).length?' · incl. fill caches':'');
       return 'journal export · '+Object.keys(d).length+' entries';
     }
     return 'JSON';
@@ -693,30 +693,7 @@ $('modalLoad').onclick=async()=>{
   // !data.fills: a {fills:[...]} paste is fill data for reconstruction, not a journal —
   // without this guard it would fall through to the journal branch and overwrite it.
   if(data&&!Array.isArray(data)&&typeof data==='object'&&!data.coin&&!data.fills){
-    if(data.journal||data.wallets||data.settings){ // full backup
-      // applySnapshot is the one restore path that knows the whole backup shape — including
-      // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
-      const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
-      const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
-      if(!confirm('Restore this backup ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
-        +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return;
-      await applySnapshot(data);
-      // merge, not replace: a note written here since the backup was made survives the restore
-      if(incoming){ let kept=0; for(const [k,v] of Object.entries(before)){ const b=incoming[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; kept++; } }
-        if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
-      resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
-      vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
-      srvRestored(before,bw); // the owner's server sync: the same, so a 409 from another device's save can't undo it
-      schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
-      view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
-      document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
-      renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
-      const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
-      // "restored" only once the server holds it (when it syncs): a 409 merge can change the counts too
-      if(await srvSaveNow()===false){ setErr(srvNotSaved('Backup restored')); return; }
-      renderWallets();
-      setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return;
-    }
+    if(data.journal||data.wallets||data.settings){ await restoreBackup(data); return; } // full backup
     // a journal export is {"<trade id | day:… | week:…>": {…}} — anything else (an API response,
     // a settings blob) used to replace the whole journal silently
     const ents=Object.entries(data);
@@ -732,6 +709,33 @@ $('modalLoad').onclick=async()=>{
   const fills=Array.isArray(data)?data:(data.fills||[]);
   await loadFromPaste(fills);
 };
+// A full backup — pasted, or one "Backup to server" stored (History lists them) — restored.
+// applySnapshot is the one restore path that knows the whole backup shape, including the v9 fill
+// caches and saved MAE/MFE rows that pasting used to silently drop. With server sync the save says
+// it's a restore, so the server first keeps what it replaces ("before restore" in History).
+// -> true once restored (and, with sync, saved), false if cancelled or not saved yet.
+async function restoreBackup(data,what){
+  const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
+  const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
+  if(!confirm('Restore '+(what||'this backup')+' ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
+    +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return false;
+  await applySnapshot(data);
+  // merge, not replace: a note written here since the backup was made survives the restore
+  if(incoming){ let kept=0; for(const [k,v] of Object.entries(before)){ const b=incoming[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; kept++; } }
+    if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
+  resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
+  vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
+  srvRestored(before,bw); // the owner's server sync: the same, so a 409 from another device's save can't undo it
+  schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
+  view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
+  document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
+  renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
+  const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
+  // "restored" only once the server holds it (when it syncs): a 409 merge can change the counts too
+  if(await srvSaveNow()===false){ setErr(srvNotSaved('Backup restored')); return false; }
+  renderWallets();
+  setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return true;
+}
 $('exportCsv').onclick=()=>{
   const rows=filteredTrades(); if(!rows.length){ setStatus('No trades in the current filter to export.'); return; }
   const q=v=>{ v=v==null?'':String(v);

@@ -45,8 +45,11 @@ try {
     // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
     // All of audit 4 together (correctness fixes, the performance work, Daruma's split): 1895 / 1514 raw,
     // 642 / 509 gzipped — Daruma still 48 KB gzipped under where it started.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1900, 645],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1520, 512],
+    // Oct 2026: sync merges an entry both devices edited field by field, a tab notices another device's
+    // save, and the sync bar warns about a server without AUTH_TOKEN (all in core.js, so both screens):
+    // ~11 KB raw / ~3 KB gzipped, much of it comments: 1906 / 1525 raw, 645 / 512 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1915, 650],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1535, 517],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

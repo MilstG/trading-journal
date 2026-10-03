@@ -496,11 +496,34 @@ try {
   await t('a wrong token is refused with a message, not a blank page', async () => {
     const { page: p, errors: errs } = await openPage({ width: 1280, height: 900 }, { token: false });
     await p.addInitScript(() => { try { localStorage.setItem('srv_token', 'wrong'); } catch (e) {} });
+    let calls = 0; p.on('request', r => { if (r.url().includes('/api/social/admin')) calls++; });
     await p.goto(BASE + '/admin');
     await p.waitForSelector('#loginErr:not(.hide)');
     ok(/token/i.test(await p.textContent('#loginErr')));
+    eq(calls, 1, 'one call checks the token: one wrong guess, not one per admin list');
+    await p.reload(); await p.waitForSelector('#loginErr:not(.hide)');
+    ok(/refused last time/.test(await p.textContent('#loginErr'))); eq(calls, 1, 'a saved token that was refused isn’t sent again');
+    eq(await p.evaluate(() => localStorage.getItem('srv_token')), 'wrong', 'and it stays: it’s the journal’s');
     eq(errs, []);
     await p.close();
+  });
+
+  await t('a server without AUTH_TOKEN: the journal’s sync bar and /admin say so at once', async () => {
+    const open = createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-e2e-open-')), htmlPath: join(here, '..', 'ledger.html'), push: false, offsiteTimer: false,
+      fetchImpl: async () => { throw new Error('offline'); } });
+    const OB = await new Promise(r => open.listen(0, '127.0.0.1', () => r('http://127.0.0.1:' + open.address().port)));
+    const p = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    await p.route('**/*', r => r.request().url().startsWith(OB) ? r.continue() : r.abort());
+    try {
+      await p.goto(OB + '/');
+      await p.waitForFunction(() => /no AUTH_TOKEN/.test(document.getElementById('datafile').textContent));
+      ok(/syncs to this server/.test(await p.textContent('#emptySaved')), 'the welcome line follows the mode');
+      await p.goto(OB + '/admin');
+      await p.waitForSelector('#noAuth:not(.hide)');
+      ok(await p.isHidden('#ownerIn'), 'no token box to type into');
+      eq(errs, []);
+    } finally { await p.close(); await new Promise(r => open.close(r)); }
   });
 
   // Admin two-factor, on a server of its own (the owner turns it on here), as localhost: WebAuthn
@@ -599,9 +622,12 @@ try {
       const cookie = (await ctx.cookies()).find(c => c.name === 'pz_admin2fa');
       ok(cookie && cookie.httpOnly && cookie.sameSite === 'Strict' && cookie.path === '/api/social/admin', JSON.stringify(cookie));
       await Promise.all([p.waitForNavigation(), p.click('#signout')]);
-      await p.waitForSelector('#a2fStep'); // the token comes back with this test's page, the session doesn't
+      // signed out of the panel only: the token stays for the journal, unused here until asked
+      await p.waitForSelector('#reuseRow:not(.hide)'); ok(await p.isHidden('#app'));
+      eq(await p.evaluate(() => [!!localStorage.getItem('srv_token'), localStorage.getItem('admin_signin')]), [true, 'out']);
       let st = 0; for (let i = 0; i < 20 && st !== 401; i++) { st = (await fetch(LB2 + '/api/social/admin/overview', { headers: { Authorization: 'Bearer ' + TOKEN, Cookie: 'pz_admin2fa=' + cookie.value } })).status; if (st !== 401) await new Promise(r => setTimeout(r, 100)); }
       eq(st, 401, 'signing out ended the session');
+      await p.click('#reuse'); await p.waitForSelector('#a2fStep'); // the saved token signs in again; the session is gone
       eq(errs, []);
       await ctx.close();
     });

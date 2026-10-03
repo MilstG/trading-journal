@@ -83,6 +83,7 @@ input[type=checkbox]{width:16px;height:16px;min-height:0;margin:0;padding:0;acce
 .row>*{flex:1;min-width:140px}
 .row>.fit{flex:0 0 auto;min-width:0}
 .hint{margin:5px 0 0;font-size:12.5px;color:var(--muted)}
+.fielderr{margin:5px 0 0;font-size:12.5px;color:var(--low)}input[aria-invalid=true]{border-color:var(--low)}
 label.inline+.hint{margin:0 0 6px 26px}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 /* ---- buttons ---- */
@@ -224,10 +225,12 @@ details>summary{list-style-position:inside}
     <section class="card" id="login">
       <div class="brand" style="padding:0 0 16px"><span class="logo" aria-hidden="true"><svg class="dm" viewBox="0 0 100 100" width="28" height="28" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--card);stroke:var(--line2)" stroke-width="10"/><path class="dm-live" d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:var(--good)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="dm-live" cx="40.5" cy="48" r="9.25" style="fill:var(--good)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg></span><div><b>Daruma</b><small>Admin</small></div></div>
       <h1 style="margin-bottom:6px">Sign in</h1>
-      <p class="muted" style="margin:0">An admin the owner added: open the sign-in link they sent you, or enter its code. The same works for any admin already signed in to Daruma on this device.</p>
-      <div class="row" style="margin-top:12px"><input id="acode" autocomplete="one-time-code" placeholder="sign-in code" aria-label="Admin sign-in code" style="text-transform:uppercase"><button class="primary fit" id="ago">Sign in</button></div>
-      <p class="muted" style="margin:20px 0 0;padding-top:16px;border-top:1px solid var(--line)">The owner: use the access token set as <code>AUTH_TOKEN</code> on the server. It’s remembered in this browser.</p>
+      <div id="codeIn"><p class="muted" style="margin:0">An admin the owner added: open the sign-in link they sent you, or enter its code. The same works for any admin already signed in to Daruma on this device.</p>
+      <div class="row" style="margin-top:12px"><input id="acode" autocomplete="one-time-code" placeholder="sign-in code" aria-label="Admin sign-in code" style="text-transform:uppercase"><button class="primary fit" id="ago">Sign in</button></div></div>
+      <div id="ownerIn"><p class="muted" style="margin:20px 0 0;padding-top:16px;border-top:1px solid var(--line)">The owner: use the access token set as <code>AUTH_TOKEN</code> on the server. It’s remembered in this browser, and the journal here uses it too.</p>
       <div class="row" style="margin-top:12px"><input type="password" id="tok" autocomplete="current-password" placeholder="access token" aria-label="Access token"><button class="fit" id="go">Sign in as owner</button></div>
+      <p class="muted small hide" id="reuseRow" style="margin:10px 0 0">This browser has the token saved. <button class="sm fit" id="reuse">Sign in with it</button></p></div>
+      <p id="noAuth" class="warn hide" role="alert" style="margin:16px 0 0">This server has no <code>AUTH_TOKEN</code> set, so the admin panel stays closed: with no token, anyone with the address would be an admin, and anyone can read and change the journal. Set <code>AUTH_TOKEN</code> on the server (README-deploy.md, step 3) and restart it.</p>
       <p id="loginErr" class="warn hide" role="alert" style="margin:12px 0 0"></p>
     </section>
     <div id="app" class="hide"><div id="view" class="stack"></div></div>
@@ -275,16 +278,27 @@ details>summary{list-style-position:inside}
     routines:['Routines','The morning prep and end-of-day questions members answer, by how they trade.'],
     feed:['Feed & reports','Reported posts, announcements to everyone, and what members can post.'],
     settings:['Settings','Joining, wallets, sync, and the security of this panel.']};
-  // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Daruma member key
-  let tok=''; try{ tok=localStorage.getItem('srv_token')||''; }catch(e){}
-  let mkey=''; try{ mkey=localStorage.getItem('pz_social_key')||''; }catch(e){}
+  // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Daruma member key.
+  // The token is the journal's too (srv_token): the panel reuses it, stores one only after it has
+  // worked, and never deletes it, or signing out here would stop the journal syncing. admin_signin
+  // is how this browser last chose to use the panel: unset = the saved token, 'key' = as the admin a
+  // sign-in code made it, 'out' = signed out (nothing is used until someone signs in again).
+  // admin_bad: a hash of a saved token that was refused, so it isn't sent again on every visit.
+  const LS=k=>{ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } };
+  const LSset=(k,v)=>{ try{ if(v==null)localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} };
+  const tokHash=t=>{ let h=2166136261; for(let i=0;i<t.length;i++)h=Math.imul(h^t.charCodeAt(i),16777619); return (h>>>0).toString(36)+'.'+t.length; };
+  const how=LS('admin_signin'), saved=LS('srv_token'), savedBad=!!saved&&LS('admin_bad')===tokHash(saved);
+  let tok=how||savedBad?'':saved;
+  let mkey=how==='out'?'':LS('pz_social_key');
   let ME={owner:false,name:''};
   let noteT=null;
   const note=(m,err)=>{ const n=$('note'); n.className='note'+(err?' err':''); n.textContent=m||''; clearTimeout(noteT); if(m)noteT=setTimeout(()=>{ n.textContent=''; },err?6000:3500); };
   async function api(p,o){ o=o||{}; const body=o.body!==undefined?JSON.stringify(o.body):undefined;
     const r=await fetch('/api/social/admin'+p,{method:o.method||(body?'POST':'GET'),body,headers:Object.assign(tok?{'Authorization':'Bearer '+tok}:{'X-Pulse-Key':mkey},body?{'Content-Type':'application/json'}:{})});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok){ const e=new Error(d.error||('HTTP '+r.status)); e.status=r.status; throw e; } return d; }
+    if(!r.ok){ const e=new Error(d.error||('HTTP '+r.status)); e.status=r.status; e.retry=+r.headers.get('Retry-After')||0; throw e; } return d; }
+  const waitFor=s=>s<90?Math.max(1,s)+' seconds':Math.ceil(s/60)+' minutes';
+  const lockMsg=e=>'Too many wrong tokens from this address: it’s locked out'+(e.retry?' for '+waitFor(e.retry):' for a while')+', even with the right token. Try again after that.';
   const ago=ms=>{ if(!ms)return 'never'; const m=Math.round((Date.now()-ms)/60000); return m<1?'just now':m<60?m+'m ago':m<1440?Math.round(m/60)+'h ago':Math.round(m/1440)+'d ago'; };
   const size=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
   const fmt=n=>(+n||0).toLocaleString('en-US');
@@ -307,8 +321,10 @@ details>summary{list-style-position:inside}
   // level n starts at base·n·(n−1) XP, or at a table entry — mirrors social-config.js levelStart
   const levelStart=(c,n)=>n<=1?0:c.mode==='table'?(n-2<c.thresholds.length?c.thresholds[n-2]:Infinity):c.base*n*(n-1);
 
-  async function load(){
-    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl]=await Promise.all([api('/me'),api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null)]);
+  async function load(signin){
+    // signing in: one call first, so a wrong token is one wrong guess (and one second step), not thirteen
+    const first=signin?await api('/me'):api('/me');
+    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl]=await Promise.all([first,api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null)]);
     D.perf={}; // a member's numbers are read again when their page opens
     if(UI.tab==='insights')await loadIns();
     ME=me; $('whoami').textContent=me.owner?'Owner':'Admin · '+me.name;
@@ -830,7 +846,8 @@ details>summary{list-style-position:inside}
       <p class="hint">Members see a lock with the level it opens at. The server enforces it for competitions and the coach too.</p></section>
       <section class="card"><h2>Without a profile</h2>
         <p class="hint" style="margin-top:0">People can use Daruma with just a wallet. Their levels stop here until they create a profile: their XP keeps counting, and creating a profile unlocks everything they’ve earned at once.</p>
-        ${field('fGuest','Levels stop at',`<input id="fGuest" type="number" min="0" max="100" value="${c.guestCap||0}" style="max-width:200px">`,c.guestCap?'Level '+c.guestCap+' · 0 = no limit':'No limit')}
+        ${field('fGuest','Levels stop at',`<input id="fGuest" type="number" min="1" max="100" value="${c.guestCap||''}" style="max-width:200px"${c.guestCap?'':' disabled'}>`,c.guestCap?'Level '+c.guestCap:'No limit')}
+        ${box('fGuestOff','No limit',!c.guestCap,'Their levels go as high as anyone’s.')}
         ${guestSplit(c)}
         <div class="actions"><button class="primary" id="fSaveGuest">Save</button></div></section>`;
   }
@@ -1143,6 +1160,22 @@ details>summary{list-style-position:inside}
   const put=b=>api('/config',{method:'PUT',body:b});
   // number fields left empty keep their saved value instead of becoming 0
   const nums=(keys,pre)=>{ const o={}; for(const k of keys){ const v=val(pre+k).trim(); if(v!=='')o[k]=+v; } return o; };
+  // A form's number fields, checked before anything is sent (the server used to clamp a wrong value
+  // and the panel said "Saved"): each wrong one gets a line under it naming the field and its range,
+  // and nothing goes out. Empty is wrong too, unless the field has a placeholder (= "default"/"none").
+  const SAVES=new Set(['mSave','mxSave','mrSave','stSave','lvSave','xpSave','fSave','fSaveGuest','cSave','potSave','riskSave','dSave','benchSave','bSave','lgSave','mkComp']);
+  function badNumbers(scope,extra){ let first=null;
+    scope.querySelectorAll('.fielderr').forEach(e=>e.remove()); scope.querySelectorAll('[aria-invalid]').forEach(e=>e.removeAttribute('aria-invalid'));
+    const flag=(el,m)=>{ const p=document.createElement('p'); p.className='fielderr'; p.id=el.id+'_err'; p.setAttribute('role','alert'); p.textContent=m;
+      el.setAttribute('aria-invalid','true'); el.setAttribute('aria-describedby',p.id); el.insertAdjacentElement('afterend',p); if(!first)first=[el,m]; };
+    for(const el of scope.querySelectorAll('input[type=number]')){ if(el.disabled)continue;
+      const v=el.value.trim(), lo=el.min===''?null:+el.min, hi=el.max===''?null:+el.max, n=+v;
+      const range=lo!=null&&hi!=null?' from '+fmt(lo)+' to '+fmt(hi):lo!=null?' of at least '+fmt(lo):hi!=null?' up to '+fmt(hi):'';
+      const lab=(el.labels&&el.labels[0]?el.labels[0].textContent:el.getAttribute('aria-label')||el.id).trim();
+      if(el.validity&&el.validity.badInput||v!==''&&!isFinite(n)||v===''&&!el.placeholder&&(lo!=null||hi!=null))flag(el,lab+' needs a number'+range+'.');
+      else if(v!==''&&((lo!=null&&n<lo)||(hi!=null&&n>hi)))flag(el,lab+' must be'+range.replace(/^ of/,'')+' (not '+v+').'); }
+    if(!first&&extra){ const [el,m]=extra(); if(el)flag(el,m); }
+    if(first){ note(first[1],true); first[0].focus(); } return !!first; }
   document.addEventListener('input',ev=>{ const t=ev.target;
     if(t.id==='q'){ UI.q=t.value; UI.pages.members=0; $('mRows').innerHTML=memberRows(); $('mPager').innerHTML=memberPg().html; }
     if(t.id==='wq'){ UI.wq=t.value; UI.pages.wallets=0; $('wRows').innerHTML=walletRows(); $('wPager').innerHTML=walletPg().html; } });
@@ -1157,6 +1190,7 @@ details>summary{list-style-position:inside}
       $('wBulkApprove').disabled=$('wBulkReject').disabled=!UI.wsel.size; $('wBulkApprove').textContent='Approve selected ('+UI.wsel.size+')'; $('wBulkApprove').parentNode.classList.toggle('on',!!UI.wsel.size); return; }
     if(t.id==='mFilter'){ UI.filter=t.value; UI.pages.members=0; $('mRows').innerHTML=memberRows(); $('mPager').innerHTML=memberPg().html; }
     else if(t.id==='lvMode'){ UI.levelDraft=levelDraft(); render(); }
+    else if(t.id==='fGuestOff'){ $('fGuest').disabled=t.checked; if(!t.checked)$('fGuest').focus(); }
     else if(t.id&&/^rc_\d+_b$/.test(t.id)){ keepRoutines(); UI.fresh=true; render(); } });
   document.addEventListener('click',async ev=>{
     const qa=ev.target.closest('a[data-open]'); if(qa){ UI.open=qa.dataset.open; return; }
@@ -1164,6 +1198,8 @@ details>summary{list-style-position:inside}
     if(ev.target.closest('#insClear')){ UI.ins.f={}; loadIns().then(render); return; }
     const b=ev.target.closest('button'); if(!b||!$('app').contains(b)||BUSY)return;
     const d=b.dataset, id=b.id; UI.submitted=b.closest('.sub,.card');
+    if(SAVES.has(id)&&badNumbers(id==='fSave'||id==='fSaveGuest'?$('view'):b.closest('.card')||$('view'),
+      id==='mrSave'?()=>+val('mrMin')>+val('mrMax')?[$('mrMin'),'The lowest rate ('+val('mrMin')+') is above the highest ('+val('mrMax')+').']:[]:null))return;
     // a member's wallet: verify (approve) or unverify (reject), from the list or their page
     if(d.wtoggle){ const verify=d.to==='approve';
       if(!verify&&!confirm('Unverify this wallet? It stops counting for returns, verified Discipline and return competitions until you verify it again.'))return;
@@ -1289,7 +1325,7 @@ details>summary{list-style-position:inside}
     if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
     if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Daruma.'); }
     // features
-    if(id==='fSave'||id==='fSaveGuest') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),guestCap:+val('fGuest')||0}),'Saved.');
+    if(id==='fSave'||id==='fSaveGuest') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),guestCap:chk('fGuestOff')?0:+val('fGuest')}),'Saved.');
     // coach
     if(id==='cSave') return act(()=>put({coach:Object.assign({members:chk('cMembers'),detail:chk('cDetail'),
       packs:Object.assign({on:chk('pOn'),rise:chk('pRise'),keepLevel:chk('pKeep'),lapsed:chk('pLapsed')},...[['cost','pCost'],['msgs','pMsgs'],['max','pMax']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))},
@@ -1328,26 +1364,41 @@ details>summary{list-style-position:inside}
     const r=await fetch('/api/social/link/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok||!d.key){ const el=$('loginErr'); el.classList.remove('hide'); el.textContent=d.error||'That code didn’t work.'; return false; }
-    mkey=d.key; try{ localStorage.setItem('pz_social_key',mkey); }catch(e){} return true;
+    mkey=d.key; LSset('pz_social_key',mkey); LSset('admin_signin','key'); return true;
   }
-  async function start(){
+  const loginErr=m=>{ $('login').classList.remove('hide'); $('app').classList.add('hide'); const el=$('loginErr'); el.classList.toggle('hide',!m); el.textContent=m||''; };
+  // the token already saved here can sign in with one click (after a sign-out, or once it's right again)
+  const showReuse=()=>$('reuseRow').classList.toggle('hide',!LS('srv_token')||!!tok||LS('admin_bad')===tokHash(LS('srv_token')));
+  let noAuth=false;
+  // how: 'typed' (the owner's token from the box), 'saved' (the one this browser has), or undefined (a page load)
+  async function start(how){
+    if(noAuth)return;
     const m=/(?:^#|&)code=([^&]+)/.exec(location.hash);
     if(m){ history.replaceState(null,'',location.pathname+location.search+'#overview'); let c=''; try{ c=decodeURIComponent(m[1]); }catch(e){} if(await redeem(c))tok=''; }
-    if(!tok&&!mkey)return;
-    try{ route(); await load(); }
-    catch(e){ $('login').classList.remove('hide'); $('app').classList.add('hide');
-      const el=$('loginErr'); el.classList.remove('hide');
-      el.textContent=e.status===401?(tok?'That token isn’t right.':'This browser is signed in to Daruma, but that profile isn’t an admin. Ask the owner for an admin link.'):e.status===403?e.message:'Couldn’t reach the admin API ('+e.message+').'; }
+    if(!how&&!m&&savedBad&&!mkey){ loginErr('The access token saved in this browser was refused last time. Type the right one (the journal here asks for it too).'); return showReuse(); }
+    if(!tok&&!mkey)return showReuse();
+    try{ route(); await load(true);
+      // it worked: remember it (the journal shares it) and use it on the next visit
+      if(how&&tok){ LSset('srv_token',tok); LSset('admin_signin',null); LSset('admin_bad',null); } }
+    catch(e){ const bad=e.status===401&&!!tok;
+      // a saved token that's wrong is tried once, not on every visit; the journal keeps it and asks for it
+      if(bad&&how!=='typed'&&tok===LS('srv_token'))LSset('admin_bad',tokHash(tok));
+      if(bad||e.status===429)tok='';
+      loginErr(e.status===429?lockMsg(e):e.status===401?(bad?(how==='typed'?'That token isn’t right.':'The access token saved in this browser was refused. Type the right one.'):'This browser is signed in to Daruma, but that profile isn’t an admin. Ask the owner for an admin link.')
+        :e.status===403?e.message:'Couldn’t reach the admin API ('+e.message+').'); showReuse(); }
   }
-  $('go').onclick=()=>{ tok=$('tok').value.trim(); try{ localStorage.setItem('srv_token',tok); }catch(e){} start(); };
+  $('go').onclick=()=>{ const t=$('tok').value.trim(); if(!t)return loginErr('Type the access token first.'); tok=t; start('typed'); };
+  $('reuse').onclick=()=>{ tok=LS('srv_token'); LSset('admin_bad',null); start('saved'); };
   $('tok').addEventListener('keydown',e=>{ if(e.key==='Enter')$('go').click(); });
   document.addEventListener('keydown',e=>{ const sg=e.target.closest&&e.target.closest('tr[data-insset]'); if(sg&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); sg.click(); } });
-  $('ago').onclick=async()=>{ if(await redeem($('acode').value)){ tok=''; try{ localStorage.removeItem('srv_token'); }catch(e){} start(); } };
+  $('ago').onclick=async()=>{ if(await redeem($('acode').value)){ tok=''; start(); } };
   $('acode').addEventListener('keydown',e=>{ if(e.key==='Enter')$('ago').click(); });
-  $('signout').onclick=()=>{ try{ localStorage.removeItem('srv_token'); }catch(e){}
-    if(!ME.owner&&mkey){ if(!confirm('Sign out? This also signs this browser out of Daruma.'))return; try{ localStorage.removeItem('pz_social_key'); }catch(e){} }
-    location.reload(); };
-  start();
+  // signs out of this panel only: the journal on this browser keeps its token, and keeps syncing
+  $('signout').onclick=()=>{
+    if(!ME.owner&&mkey){ if(!confirm('Sign out? This also signs this browser out of Daruma.'))return; LSset('pz_social_key',null); }
+    LSset('admin_signin','out'); location.reload(); };
+  // an open server (no AUTH_TOKEN): say so at once instead of asking for a token nothing can check
+  fetch('/api/health').then(r=>r.json()).then(h=>{ if(h&&h.auth===false){ noAuth=true; $('noAuth').classList.remove('hide'); $('ownerIn').classList.add('hide'); $('codeIn').classList.add('hide'); loginErr(''); } }).catch(()=>{}).finally(()=>start());
 })();
 </script>
 </body>

@@ -131,7 +131,9 @@ function create(opts) {
   const mode = pm.mode;
   const sessionMs = opts.sessionMs || SESSION_MS;
   const lockMs = opts.lockMs || 15 * 60000;
-  const lockedOut = opts.lockedOut || (() => false), noteBad = opts.noteBadToken || (() => {});
+  const lockedOut = opts.lockedOut || (() => false), noteBad = opts.noteBadToken || (() => {}), lockLeft = opts.lockLeftMs || (() => lockMs);
+  // "in 7 minutes": how long a lock has left, for the message and Retry-After
+  const waitWords = ms => { const s = Math.max(1, Math.ceil(ms / 1000)); return s < 90 ? s + ' seconds' : Math.ceil(s / 60) + ' minutes'; };
   const json = opts.json;
 
   let S = null, broken = null;
@@ -221,7 +223,7 @@ function create(opts) {
     }
     if (a === 'verify') {
       if (M !== 'POST') return json(res, 405, { error: 'method not allowed' });
-      if (lockedOut(req)) { res.setHeader('Retry-After', String(Math.ceil(lockMs / 1000))); return json(res, 429, { error: 'Too many wrong attempts from this address. Try again in a few minutes.' }); }
+      if (lockedOut(req)) { const ms = lockLeft(req); res.setHeader('Retry-After', String(Math.max(1, Math.ceil(ms / 1000)))); return json(res, 429, { error: 'Too many wrong attempts from this address. Try again in ' + waitWords(ms) + '.' }); }
       if (!enrolled(u)) return json(res, 400, { error: 'You haven’t set up a second factor yet.', twofa: info(u) });
       const site = ctx.siteOf(req);
       if (b === 'start') { // a passkey challenge for this person's admin passkeys
@@ -245,7 +247,7 @@ function create(opts) {
         catch (e) { noteBad(req); return json(res, 401, { error: 'That passkey didn’t check out (' + e.message + ').' }); }
       } else {
         const lock = codeLock(u);
-        if (lock) { res.setHeader('Retry-After', String(Math.max(1, Math.ceil((lock - now()) / 1000)))); return json(res, 429, { error: 'Too many wrong codes. Try again later, or use a passkey.' }); }
+        if (lock) { res.setHeader('Retry-After', String(Math.max(1, Math.ceil((lock - now()) / 1000)))); return json(res, 429, { error: 'Too many wrong codes. Try again in ' + waitWords(lock - now()) + ((x.passkeys || []).length ? ', or use a passkey.' : '.') }); }
         const code = String(body.code || '').replace(/\s/g, '').slice(0, 40);
         if (x.totp && /^\d{6}$/.test(code)) {
           const s = totpMatch(b32decode(x.totp.secret), code, now(), x.totp.lastStep);
@@ -322,7 +324,7 @@ function create(opts) {
       const p = pending.get('totp:' + u);
       if (!p || p.exp < now()) return json(res, 400, { error: 'That setup expired. Start again.' });
       const lock = codeLock(u);
-      if (lock) { res.setHeader('Retry-After', String(Math.max(1, Math.ceil((lock - now()) / 1000)))); return json(res, 429, { error: 'Too many wrong codes. Try again later.' }); }
+      if (lock) { res.setHeader('Retry-After', String(Math.max(1, Math.ceil((lock - now()) / 1000)))); return json(res, 429, { error: 'Too many wrong codes. Try again in ' + waitWords(lock - now()) + '.' }); }
       const s = totpMatch(b32decode(p.secret), String(body.code || '').replace(/\s/g, ''), now(), null);
       if (s < 0) { codeFailed(req, u); return json(res, 400, { error: 'That code didn’t match. Check the time on your phone, then try the next code.' }); }
       pending.delete('totp:' + u);

@@ -194,7 +194,7 @@
     return `<h2 id="a2fT">Second step</h2>
       <p class="muted" style="margin:0">Confirm it’s you to open the admin panel. This browser then stays signed in for 12 hours.</p>
       ${m.passkey ? `<div class="row" style="margin-top:12px"><button class="primary fit" data-a2f="stepPk"${hasPk() ? '' : ' disabled'}>Use a passkey</button></div>${hasPk() ? '' : '<p class="hint">Passkeys need https (or localhost) and a browser that supports them.</p>'}` : ''}
-      <label for="a2fCode">${m.totp ? 'Or a code from your authenticator app, or a recovery code' : 'Or a recovery code'}</label>
+      <label for="a2fCode">${m.passkey ? 'Or a' : 'A'} ${m.totp ? 'code from your authenticator app, or a recovery code' : 'recovery code'}</label>
       <div class="row"><input id="a2fCode" autocomplete="one-time-code" maxlength="20" placeholder="${m.totp ? '123456' : 'xxxxx-xxxxx'}" aria-describedby="a2fErr"><button class="${m.passkey ? '' : 'primary '}fit" data-a2f="stepCode">Verify</button></div>${err}${cancel}`;
   }
   function drawStep(opening) {
@@ -323,10 +323,11 @@
     else if (ev.key === 'Escape' && S && S.view !== 'codes' && $('a2fStep')) endStep(false);
   });
   // signing out ends the admin session too. This listener goes on after admin.html's own (set while
-  // its script ran), so the token, or the key after its confirm, is already gone when it's a sign-out.
+  // its script ran), so admin_signin already says 'out' when it's a sign-out (not a cancelled confirm).
+  // The token itself stays: it's the journal's too.
   document.addEventListener('DOMContentLoaded', () => { const so = $('signout'); if (so) so.addEventListener('click', () => {
     const f = first; if (!f) return;
-    let gone = false; try { gone = !localStorage.getItem(f.Authorization ? 'srv_token' : 'pz_social_key'); } catch (e) {}
+    let gone = false; try { gone = localStorage.getItem('admin_signin') === 'out'; } catch (e) {}
     if (gone) realFetch('/api/social/admin/2fa/logout', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, f), body: '{}' }).catch(() => {}); }); });
 
   window.A2F = { card };
