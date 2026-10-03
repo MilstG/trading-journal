@@ -37,14 +37,25 @@ try {
     // took both screens past their raw lines and the journal past its gzipped one: 1853 / 1653 raw, 623 / 555 gzipped.
     // Oct 2026: outcome-blind routine score, timestamped logging and fill-by-fill loss limits (AUDIT-4 E1–E5,
     // X4, X10) with their comments: about 4 KB raw / 3 KB gzipped on each screen (1854 / 1654, 623 / 555).
-    // Together (audit 4 merged): 1875 / 1674 raw, 631 / 563 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1880, 635],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1680, 565],
+    // Oct 2026: the heavy-account work (AUDIT-4 P1/P2: the Diagnostic's worker batch and memos, lazy
+    // below-the-fold charts and sections, the near-linear Trader Age history) is ~17 KB raw / ~6 KB
+    // gzipped, about half of it comments: 1858 / 1657 raw, 625 / 557 gzipped.
+    // Oct 2026: the Diagnostic view, the excursion/miner panels and replay chart, and the exports moved
+    // to journal-only files (diagnostic-view.js, excursions-view.js, exports.js): Daruma 1657 -> 1479 KB
+    // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
+    // All of audit 4 together (correctness fixes, the performance work, Daruma's split): 1895 / 1514 raw,
+    // 642 / 509 gzipped — Daruma still 48 KB gzipped under where it started.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1900, 645],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1520, 512],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
     ok(journal.scripts.some(s => s.startsWith('app/chart.umd.js')), 'the journal draws charts');
     ok(!keel.scripts.some(s => s.startsWith('app/chart.umd.js')), 'Daruma never does');
+    // nor the Diagnostic view, the excursion/miner panels and replay chart, or the exports: it never shows them
+    for (const f of ['diagnostic-view.js', 'excursions-view.js', 'exports.js']) {
+      ok(journal.scripts.some(s => s.startsWith('app/' + f)), 'the journal loads ' + f);
+      ok(!keel.scripts.some(s => s.startsWith('app/' + f)), 'Daruma leaves out ' + f); }
   });
   t('no font is embedded in the page any more', () => {
     for (const p of [journal, keel]) { ok(!p.html.includes('data:font/'), 'a data: font in the page'); ok(/url\(app\/fonts\/inter-400\.woff2\?v=[0-9a-f]{12}\)/.test(p.html), 'fonts are versioned files'); }

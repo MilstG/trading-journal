@@ -1204,17 +1204,22 @@ function coachContext(all){
     avoid.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }
   let findings=[];
   if(closed.length>=5){ try{
-    const s=computeStats(closed,trades);
+    const s=computeStatsMemo(closed,trades); // the dashboard just ran it on the same trades (period "all")
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
-    findings=buildFindings(closed,s,{scan:diagScan(closed),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
+    findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
   const ctx={trades,closed,days:pc.days,byDay,preds,findings,rulePreds};
   memo.key=key; memo.ctx=ctx; return ctx;
 }
 function habitProgress(h, ctx, fromMs){
   const fromKey=dayKey(Math.max(h.createdAt||0,fromMs||0));
+  // memoized per coach context: the coach, the game (twice) and the badge passes ask for the same habit
+  // several times a rebuild. A hit needs the same habit (by content), start day, journal revision and
+  // slip days ('slip' habits read _pzSlipDays, which the game sets); callers only read the result.
+  const M=habitProgress._m||(habitProgress._m=new WeakMap()); let C=M.get(ctx); if(!C)M.set(ctx,C=new Map());
+  const k=JSON.stringify(h)+'|'+fromKey+'|'+_jrev, hit=C.get(k); if(hit&&hit.slips===_pzSlipDays&&hit.J===journal)return hit.v;
   const res=habitDayResults(h,ctx.days,ctx.byDay,ctx.preds[h.id],fromKey,journal);
-  return {res,...habitSummary(res)};
+  const v={res,...habitSummary(res)}; C.set(k,{slips:_pzSlipDays,J:journal,v}); return v;
 }
 function dotsHtml(res,max){ const r=res.slice(-(max||7));
   return `<span class="hdots" aria-label="${r.filter(x=>x.kept).length} of ${r.length} days kept">${r.map(x=>`<i class="${x.kept?'k':'m'}" data-tip="${esc(x.key)} · ${x.kept?'kept':'missed'}"></i>`).join('')}</span>`; }
@@ -1320,7 +1325,7 @@ function renderCoach(){
   const cw=coachWins(ctx).filter(w=>!(gw.some(x=>/discipline streak/.test(x))&&/good-process days in a row/.test(w)));
   const wins=[...new Set([...gw,...cw])].slice(0,4);
   const dt=tzParts(Date.now());
-  ensureWeekChallenge(ctx).then(made=>{ if(made){ renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{});
+  ensureWeekChallenge(ctx).then(made=>{ if(made){ if(allTrades.length>=5000&&typeof coachStaged==='function'&&activeTab!=='review')coachStaged(); else renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{}); // big accounts: rebuilt in idle steps (journal.js)
   el.classList.remove('hide');
   el.innerHTML=`<div class="coach-head"><h3>Coach</h3><span class="hint">${DOWN[dt.dow]}, ${MONTHS[dt.mo]} ${dt.day} · from your own trades and journal</span>${g?`<button type="button" class="lvl-chip" id="coachLvl" data-tip="${esc(g.level.into+' / '+g.level.need+' XP to the next level \u00b7 discipline streak '+g.streak.current+' days, '+g.streak.shields+' shield'+(g.streak.shields===1?'':'s')+'. Open Review \u2192 Progress.')}">Lv ${g.level.level} \u00b7 ${esc(g.level.title)} ${shieldsHtml(g.streak.shields)}</button>`:''}<button type="button" class="coach-hide" id="coachHide" data-tip="Turns coach mode off: hides the coach card, habits, wins, process score and trade questions. Switch it back on in the settings panel (⚙ next to the clock toggle).">hide coach</button></div>
     ${rows.map(r=>`<div class="coach-row"><div class="coach-k">${r.k}</div><div class="coach-v">${r.v}</div><div class="coach-a">${r.act||''}</div></div>`).join('')}

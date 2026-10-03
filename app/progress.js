@@ -33,11 +33,15 @@ function pzLevelCfg(){ const c=PZ_CFG.levels; return c&&(c.mode==='table'||c.bas
 const PZ_XP_DEF={discipline:1,checkin:10,plan:15,journal:15,stops:10,limit:10,review:15,achievement:50,challenge:150,focus:25};
 function pzXpCfg(){ return Object.assign({},PZ_XP_DEF,PZ_CFG.xp||{}); }
 function pzLevelTitle(n){ const T=pzLevelCfg().titles; const t=T&&T.length?T:LEVELS; return t[Math.min(n,t.length)-1]; }
-// ISO week ('GGGG-Www') of a 'YYYY-MM-DD' calendar key — pure, no clock or tz involved.
+// ISO week ('GGGG-Www') of a 'YYYY-MM-DD' calendar key — pure, no clock or tz involved. Cached per key
+// (on the function itself, so the server's extracted copy carries its own): the game asks it for the
+// same few hundred days thousands of times a rebuild, two Date allocations each.
 function isoWeekOfKey(k){
+  const C=isoWeekOfKey._c||(isoWeekOfKey._c=new Map()), hit=C.get(k); if(hit!==undefined)return hit;
   const d=new Date(k+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7)+3);
   const ft=new Date(Date.UTC(d.getUTCFullYear(),0,4)); ft.setUTCDate(ft.getUTCDate()-((ft.getUTCDay()+6)%7)+3);
-  return d.getUTCFullYear()+'-W'+String(1+Math.round((d-ft)/(7*86400000))).padStart(2,'0');
+  const w=d.getUTCFullYear()+'-W'+String(1+Math.round((d-ft)/(7*86400000))).padStart(2,'0');
+  if(C.size>20000)C.clear(); C.set(k,w); return w;
 }
 // Good-process streak that forgives. Days without trades never count either way; a finished
 // perfect week (every trading day 70+, at least 3 of them) earns a shield (max 2) that absorbs
@@ -1254,6 +1258,7 @@ const PZ_FAMILIES=[
   ['traderage','milestones','Seasoned',t=>'a Trader Age of '+t+' year'+(t===1?'':'s'),[1,2,4,6,8,12],2],
 ];
 // days -> keys where a condition held; nth key = the day the nth was reached
+let _pzCatPass=null; // the last pass's XP-independent families (see `again` below)
 function pzBadgeCatalog(G){
   const ctx=G.ctx, D=G.days, X=pzXpCfg(), J=journal, today=dayKey(G.now||Date.now());
   const byDay=ctx.byDay||{}, closed=[...(ctx.closed||[])].sort((a,b)=>a.closeTime-b.closeTime);
@@ -1262,6 +1267,12 @@ function pzBadgeCatalog(G){
   const add=(id,keys)=>{ EV[id]=keys.filter(Boolean).sort(); };
   const run=(id,pairs)=>{ SER[id]=pairs; };
   const lossDay=d=>dayTr(d.key).some(loss), f=d=>(d.behavior&&d.behavior.flags)||{};
+  // Only the XP and level families read G.xp. gameContext runs this twice per rebuild (the second pass
+  // counts the first pass's badge XP), so the second pass takes every other family from the first —
+  // same rebuild, same inputs, checked below — instead of working them all out again.
+  const sig=[_jrev,G.now,G.nowWeek,JSON.stringify([settings.pzGoals||null,settings.habits||null,settings.pzPlugs||null]),typeof SOC!=='undefined'&&SOC.me?JSON.stringify(SOC.me.mentorXp||null):''].join('|');
+  const P=_pzCatPass, again=!!P&&P.D===D&&P.ctx===ctx&&P.streak===G.streak&&P.pa===G.pa&&P.ach===G.achievements&&P.ch===G.challenges&&P.slips===_pzSlipDays&&P.sig===sig;
+  if(again){ Object.assign(EV,P.EV); Object.assign(SER,P.SER); } else {
   add('clean',D.filter(d=>d.n>=1&&d.score===100).map(d=>d.key));
   add('good',D.filter(d=>d.score>=70).map(d=>d.key));
   // the same shield-bridged streak the hero shows
@@ -1322,8 +1333,10 @@ function pzBadgeCatalog(G){
     const gp=tr.filter(t=>t.net>0).reduce((a,t)=>a+t.net,0), gl=-tr.filter(t=>t.net<0).reduce((a,t)=>a+t.net,0); return gl>0&&gp/gl>=1.5; }).map(m=>lastKey(M[m])));
   // milestones
   add('trades',closed.map(t=>dayKey(t.closeTime)));
+  }
   { let cum=0; const pairs=Object.keys((G.xpByDay)||{}).sort().map(k=>{ cum+=G.xpByDay[k]; return [k,cum]; });
     run('xp',pairs.length?pairs:[[today,G.xp||0]]); run('level',(pairs.length?pairs:[[today,G.xp||0]]).map(([k,v])=>[k,levelFor(v).level])); }
+  if(!again){
   // mentoring (mentors only): reviews and mentees' results, counted per day by the server
   { const md=(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp&&SOC.me.mentorXp.days)||{}, rk=[], ok=[];
     for(const k of Object.keys(md).sort()){ for(let i=0;i<(md[k].r||0);i++)rk.push(k); for(let i=0;i<(md[k].o||0);i++)ok.push(k); }
@@ -1331,6 +1344,7 @@ function pzBadgeCatalog(G){
   // Trader Age (app/features/trader-age.js): its value at the end of each trading day
   if(typeof taHistoryOf==='function'){ try{ run('traderage',taHistoryOf(D).filter(h=>h.age!=null).map(h=>[h.key,h.age])); }catch(e){ console.warn('trader age history',e); } }
   { const first=D.length?D[0].key:null; if(first){ const span=Math.floor((Date.parse(today)-Date.parse(first))/86400000); run('tenure',[[today,span]]); SER.tenureFrom=first; } }
+  _pzCatPass={D,ctx,streak:G.streak,pa:G.pa,ach:G.achievements,ch:G.challenges,slips:_pzSlipDays,sig,EV:Object.assign({},EV),SER:Object.assign({},SER)}; }
   // tiers -> badges
   const out=[], fams=[], xpScale=(X.achievement||0)/50;
   const mentorFams=typeof SOC!=='undefined'&&SOC.me&&(SOC.me.mentor||SOC.me.mentorXp), fams0=PZ_FAMILIES.filter(f=>f[1]!=='mentoring'||mentorFams);

@@ -24,7 +24,7 @@ const FNS = ['gameContext', 'pzEarned', 'pzEarnedRecord', 'pzBadgeStub', 'pzEarn
   'specKey', 'pzGoalEval', 'pzGoalMet', 'pzGoalsCtx', '_syncMerge', 'pzLessonsNorm', 'duelPrize'];
 const CONSTS = ['LEVELS', 'PZ_XP_DEF', 'PZ_TIERS', 'PZ_TIER_XP', 'pzN', 'pzUsd', 'PZ_FAMILIES', 'pzAddDays', 'pzHabitKind', 'pzChallengeLocked', 'PZ_BEH', 'PZ_LOSS',
   'dayKey', 'pzMonthEnd', 'pzDaysBetween'];
-vm.runInContext(`var settings={tz:'utc'}, journal={}, allTrades=[], _jrev=0, _excM={}, _pzSlipDays=new Map(), _gameMemo={key:null,g:null}, _coachMemo={key:'k'}, _coachMemoAll={key:'k'};
+vm.runInContext(`var settings={tz:'utc'}, journal={}, allTrades=[], _jrev=0, _excM={}, _pzSlipDays=new Map(), _gameMemo={key:null,g:null}, _coachMemo={key:'k'}, _coachMemoAll={key:'k'}, _pzCatPass=null;
 var PZ_CFG={rev:0,levels:null,xp:null}, SOC={me:null,cache:{}}, S_KEY='s', J_KEY='j', saves=0, Store={ async set(){ saves++; } }, markJEdit=()=>{}, pbNorm=a=>a||[];
 var _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0, isLoss=n=>n<-1, pzReadinessManual=()=>null, viewFilter=()=>true, dayLabel=k=>k;
 var COACH=null, coachCtx=null, coachContext=()=>coachCtx, planAdherence=()=>({items:[]}), pzBonus=()=>({total:0});

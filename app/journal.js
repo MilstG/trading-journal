@@ -538,16 +538,27 @@ function render(){
   const _drafts=captureDrafts();
   try{ renderInner(); } finally { restoreDrafts(_drafts); }
 }
-let _coachFirst=true, _orphSeen='';
+let _coachFirst=true, _orphSeen='', _coachStage=0;
+// Big accounts: when the coach's inputs changed (a journal save, new fills) rebuilding it is ~1 s at 30k
+// trades — its context, the game's every-trade context (X10), then the game. Each is its own idle task here, then the panel, instead of one
+// block inside render(). Memoized steps cost nothing, so an unchanged coach just redraws; a newer
+// render() supersedes the steps still queued.
+function coachStaged(){
+  const tok=++_coachStage, ok=()=>tok===_coachStage&&allTrades.length&&coachOn();
+  const steps=[()=>{ if(ok())coachContext(); }, ()=>{ if(ok())coachContext(true); }, ()=>{ if(ok())gameContext(); }, ()=>{ if(tok===_coachStage)renderCoach(); }];
+  const next=()=>{ const f=steps.shift(); if(f)requestIdleCallback(()=>{ try{ f(); }catch(e){ console.warn(e); } next(); },{timeout:1000}); };
+  next();
+}
 function renderInner(){
   syncDexTog(); syncCoachMode(); // a sync pull or backup restore can flip coach mode
   const pt=periodTrades(); const ptAll=periodTradesAll();
   _be=(settings.beThreshold!=null?settings.beThreshold:50);
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
-  renderPositions(); renderRiskPanel(); renderStats(computeStats(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
+  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
-  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); } else renderCoach();
+  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
   renderTripwire(); renderEdge(pt);
   const coins=[...new Set(allTrades.filter(viewFilter).map(dcoin))].sort(); const csel=$('fCoin'),cur=csel.value;
   csel.innerHTML='<option value="">All markets</option>'+coins.map(c=>`<option value="${esc(c)}">${esc(dispMarket(c))}</option>`).join(''); csel.value=cur;
@@ -557,6 +568,7 @@ function renderInner(){
   else wsel.classList.add('hide');
   refreshTagFilter(); renderTable();
   if(activeTab==='diag') renderDiagnostic(pt,ptAll);
+  else if(typeof diagWarm==='function') diagWarm(pt); // big accounts: the Diagnostic's Monte Carlo starts in the worker now
   if(activeTab==='review') renderReview();
   if(activeTab==='proj') renderProjection();
 }
@@ -675,7 +687,7 @@ function renderReviewInner(){
    ${playbooksSectionHtml()}
    <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
    ${procHtml}
-   ${routineSectionHtml()}
+   ${routineSectionLazyHtml(closed.length)}
    <div id="peersSec">${peersSectionHtml()}</div>
    ${costVar}
    <div class="diag-section"><h2>Highlights · last 30 days</h2><div class="diag-grid">
@@ -694,6 +706,7 @@ function renderReviewInner(){
   wireDayJournal(); wireHabits(); wireInbox(); wireWeeklyReview(); wireGoals(); wirePlaybooks(); wireProgress();
   try{ drawRoutineCharts(); }catch(e){ console.warn('routine charts',e); }
   try{ drawHabitCharts(); }catch(e){ console.warn('habit charts',e); }
+  wireRoutineLazy();
   wirePeers();
   loadCoachLetter();
 }
@@ -828,8 +841,9 @@ function wirePlaybooks(){
 // memoized on the game's context (it runs ~3k seeded permutations/resamples). Like Discipline and XP it
 // reads every trade, whatever the view and dex filters show — the days and their trades must match.
 let _rvMemo={key:null,r:null}, _rvCharts=[];
+const _rvKey=g=>_coachMemoAll.key+'|'+g.days.length;
 function rvModel(){
-  const g=gameContext(), ctx=g.ctx, key=_coachMemoAll.key+'|'+g.days.length;
+  const g=gameContext(), ctx=g.ctx, key=_rvKey(g);
   if(_rvMemo.key===key)return _rvMemo.r;
   const entryOf=k=>{ const e=journal['day:'+k]; return {checkin:typeof pzReadinessManual==='function'&&pzReadinessManual(e)!=null, review:!!(e&&e.eod&&e.eod.at)}; };
   const r=routineVsResults(g.days,ctx.byDay,{rOf:rFor,pctOf:retPct,weekOf:isoWeekOfKey,entryOf,seed:_hashSeed('rv|all')});
@@ -842,11 +856,31 @@ function rvLinkWords(c){
   const dir=c.rho>=0?'better':'worse';
   return {size,dir,chance:c.p>=0.05,text:(a<0.1?'No real link':size[0].toUpperCase()+size.slice(1)+' link: more disciplined weeks, '+dir+' results')+(c.p>=0.05&&a>=0.1?' — but it could still be chance':'')};
 }
+const RV_HEAD=`<h2>Routine vs results <span style="font-size:11px;color:var(--faint);font-weight:400">the long view · does your discipline pay? · all your trades</span></h2>`;
+// Big accounts: this section (routineVsResults — ~3k seeded resamples over every trade, ~500 ms at
+// 30k trades — and the habits-vs-results model) sits far down the Review. While either model isn't
+// memoized yet it's a placeholder with the same heading, filled in when it nears the viewport
+// (wireRoutineLazy), so opening the tab doesn't wait on it. Same section, same numbers, built later.
+let _rvLazyIO=null;
+function routineSectionLazyHtml(n){
+  if(n<2000||typeof IntersectionObserver!=='function')return routineSectionHtml();
+  try{ const g=gameContext(); if(_rvMemo.key===_rvKey(g)&&_hlMemo.key===_hlKey(g))return routineSectionHtml(); }catch(e){}
+  return `<div class="diag-section" id="rvLazy">${RV_HEAD}<p class="lead">Working out how your routine lines up with your results\u2026</p></div>`;
+}
+function wireRoutineLazy(){
+  if(_rvLazyIO){ _rvLazyIO.disconnect(); _rvLazyIO=null; }
+  const ph=$('rvLazy'); if(!ph)return;
+  _rvLazyIO=new IntersectionObserver(es=>{ if(!es.some(e=>e.isIntersecting))return; _rvLazyIO.disconnect(); _rvLazyIO=null;
+    if(!ph.isConnected)return; ph.outerHTML=routineSectionHtml();
+    try{ drawRoutineCharts(); }catch(e){ console.warn('routine charts',e); }
+    try{ drawHabitCharts(); }catch(e){ console.warn('habit charts',e); } },{rootMargin:'600px 0px'});
+  _rvLazyIO.observe(ph);
+}
 function routineSectionHtml(){
   let r; try{ r=rvModel(); }catch(e){ console.warn('routine vs results',e); return ''; }
   const u=r.unit, fmt=v=>v==null?'—':(v>=0?'+':'')+(u==='R'?v.toFixed(2)+'R':v.toFixed(2)+'%');
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
-  const head=`<div class="diag-section"><h2>Routine vs results <span style="font-size:11px;color:var(--faint);font-weight:400">the long view · does your discipline pay? · all your trades</span></h2>`;
+  const head=`<div class="diag-section">${RV_HEAD}`;
   const hl=`<div id="hlSec">${hlSectionInner()}</div>`;
   if(r.weeks.length<r.need.weeks)return head+hl+`<p class="lead" style="margin-top:14px">The week-by-week test below needs at least ${r.need.weeks} weeks with trades to say anything honest — you have ${r.weeks.length}. Keep trading your process; the link (or the lack of one) shows up here once there’s enough history.</p>
     <div class="rvbar" role="progressbar" aria-valuemin="0" aria-valuemax="${r.need.weeks}" aria-valuenow="${r.weeks.length}" data-tip="${r.weeks.length} of ${r.need.weeks} weeks with trades"><i style="width:${Math.round(100*r.weeks.length/r.need.weeks)}%"></i></div></div>`;
@@ -886,8 +920,9 @@ function routineSectionHtml(){
 // Shown from three trading days (the week-by-week test above waits for eight weeks). Same model
 // as Pulse → Stats → Habits vs results (habitLink), on the whole history of every trade.
 let _hlUnit='$', _hlMemo={key:null,v:null}, _hlCharts=[];
+const _hlKey=g=>_coachMemoAll.key+'|'+g.days.length+'|'+_hlUnit+'|'+_jrev;
 function hlModel(){
-  const g=gameContext(), ctx=g.ctx, key=_coachMemoAll.key+'|'+g.days.length+'|'+_hlUnit+'|'+_jrev;
+  const g=gameContext(), ctx=g.ctx, key=_hlKey(g);
   if(_hlMemo.key===key)return _hlMemo.v;
   const entryOf=k=>{ const e=journal['day:'+k]; return {checkin:typeof pzReadinessManual==='function'&&pzReadinessManual(e)!=null, review:!!(e&&e.eod&&e.eod.at)}; };
   const v=habitLink(g.days,ctx.byDay,{unit:_hlUnit,rOf:rFor,pctOf:retPct,entryOf,seed:_hashSeed('hl|all')});

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node tests/run-all.mjs",
-    "test:e2e": "node e2e/run.mjs"
+    "test:e2e": "node e2e/run.mjs",
+    "test:e2e:heavy": "node e2e/heavy.mjs"
   },
   "engines": {
     "node": ">=22.13"
