@@ -907,7 +907,7 @@ function createApp(opts) {
   const appDir = path.join(path.dirname(htmlPath), 'app');
   const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash}
   const appFile = (name) => {
-    if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name)) return null; // app/ or app/features/ only: no other paths, no dotfiles
+    if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name) && !/^img\/[a-z0-9][a-z0-9.-]*\.png$/.test(name)) return null; // app/, app/features/ and app/img/ only: no other paths, no dotfiles
     const file = path.join(appDir, name);
     let st; try { st = fs.statSync(file); } catch (e) { return null; }
     if (!st.isFile()) return null;
@@ -2471,7 +2471,7 @@ function createApp(opts) {
       const f = appFile(url.slice(5));
       if (!f) return json(res, 404, { error: 'not found' });
       const etag = '"' + f.hash + '"';
-      const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
+      const head = { 'Content-Type': url.slice(5).split('?')[0].endsWith('.png') ? 'image/png' : 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
         'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
       const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');

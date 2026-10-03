@@ -295,7 +295,7 @@ function pzOneThingHtml(D){
 function pzNextHtml(D){
   const g=D.g, h=tzParts(Date.now()).h, e=D.dayE||{}, traded=D.risk.trades>0||D.todayTrades.length>0;
   const checked=!!(e.sleep||e.stress||e.focus||e.plan||e.rules), reviewed=!!(e.eod&&e.eod.at), lockR=pzLocked('review',g.level.level);
-  const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
+  const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink pz-nextcard" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
   if(!checked&&!traded)return card('#checkin','checkin',PZ_COL.risk,'Morning prep','Thirty seconds: readiness, limits and today’s rules · +'+pzXpCfg().checkin+' XP');
   if(!lockR&&!reviewed&&(traded||h>=16))return card('#review','pen',PZ_COL.good,'End-of-day review',(D.day?'Five minutes, +'+pzXpCfg().review+' XP. ':'Five minutes. ')+'One lesson, one focus for tomorrow.');
   if(D.inbox.length)return card('#journal','pen',PZ_COL.xp,D.inbox.length+' trade'+(D.inbox.length===1?'':'s')+' to journal','From the last 30 days: a rating, a setup or one line each'+(reviewed?' · today is reviewed':''));
