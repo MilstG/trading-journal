@@ -18,10 +18,13 @@ const { grabFn } = makeExtractor(html);
 
 console.log('\nValidation');
 t('stats are clamped and filtered: bad days, badges and oversized text never get stored', () => {
-  const s = S.sanitizeStats({ xp: -5, level: 9999, streak: 'x', week: 'nope', weekXp: 1e9,
+  const s = S.sanitizeStats({ xp: -5, level: 9999, streak: 'x', week: 'nope', weekXp: 1e9, xpDays: { '2026-09-01': 1e9 },
+    xpLog: { '2026-09-01': { s: 180, b: 1e9, e: -4, m: 'x' }, bad: { s: 50 }, '2026-09-02': 7, '2026-09-03': { e: 1e9, m: 20.4 } },
     days: [{ k: '2026-09-01', s: 180, b: 1, j: 0 }, { k: 'bad', s: 50 }], badges: [{ id: 'ok-1', t: 'Fine' }, { id: 'BAD ID', t: 'x' }],
-    habits: ['a'.repeat(500), '', 'b', 'c', 'd', 'e', 'f'] });
-  eq(s.xp, 0); eq(s.level, 500); eq(s.streak, 0); eq(s.week, null); eq(s.weekXp, 1e6);
+    habits: ['a'.repeat(500), '', 'b', 'c', 'd', 'e', 'f'] }, { parts: { bonus: 75, extra: 675 } });
+  eq([s.xp, s.level, s.xpDays, 'weekXp' in s], [0, 1, {}, false], 'XP, level and XP by day are the server’s (xpDerive), never what the app posts');
+  eq(s.xpLog, { '2026-09-01': { s: 100, b: 75 }, '2026-09-03': { e: 675, m: 20 } }, 'each part capped at what a day can pay; bad days and parts dropped');
+  eq(s.streak, 0); eq(s.week, null);
   eq(s.days, [{ k: '2026-09-01', s: 100, b: true, j: false }]);
   eq(s.badges, [{ id: 'ok-1', t: 'Fine', c: '', r: 0, k: null, d: '' }]);
   eq(s.habits.length, 5); eq(s.habits[0].length, 140);
@@ -60,16 +63,17 @@ t('competitions need a known type, a title and a window of at most 92 days', () 
 });
 
 console.log('\nFeed events');
-const base = S.sanitizeStats({ xp: 900, level: 2, streak: 6, badges: [{ id: 'a', t: 'A' }], habits: ['When x, y.'], challengesDone: 1 });
+// xp and level are the server's (filled in after sanitizing, from its ledger)
+const base = Object.assign(S.sanitizeStats({ streak: 6, badges: [{ id: 'a', t: 'A' }], habits: ['When x, y.'], challengesDone: 1 }), { xp: 900, level: 2 });
 t('milestones become feed posts: level, streak marks, new badges, challenges and habits', () => {
-  const next = S.sanitizeStats({ xp: 1300, level: 3, streak: 7, badges: [{ id: 'a', t: 'A' }, { id: 'b', t: 'Walked away' }],
-    habits: ['When x, y.', 'When I lose twice, I stop.'], challengesDone: 2, lastChallenge: 'When done, stop.' });
+  const next = Object.assign(S.sanitizeStats({ streak: 7, badges: [{ id: 'a', t: 'A' }, { id: 'b', t: 'Walked away' }],
+    habits: ['When x, y.', 'When I lose twice, I stop.'], challengesDone: 2, lastChallenge: 'When done, stop.' }), { xp: 1300, level: 3 });
   const E = S.eventsFromStats(base, next, S.sanitizeShare({}));
   eq(E.map(e => e.type), ['level', 'streak', 'badge', 'challenge', 'habit']);
   eq(E[1].text, 'hit a 7-day discipline streak'); eq(E[2].text, 'unlocked Walked away'); eq(E[4].quote, 'When I lose twice, I stop.');
 });
 t('no posts on a first sync, with the feed off, or for habits kept private', () => {
-  const next = S.sanitizeStats({ level: 5, habits: ['When a, b.'] });
+  const next = Object.assign(S.sanitizeStats({ habits: ['When a, b.'] }), { level: 5 });
   eq(S.eventsFromStats(null, next, S.sanitizeShare({})), []);
   eq(S.eventsFromStats(base, next, S.sanitizeShare({ feed: false })), []);
   eq(S.eventsFromStats(base, next, S.sanitizeShare({ habits: false })).map(e => e.type), ['level']);
@@ -201,14 +205,18 @@ try {
     eq(lb.d.optedIn, false, 'bravo is told they are not on the board');
   });
   await t('stats posts feed the league, the boards and the feed', async () => {
-    // weekly XP is the server's sum of XP by day (the week and weekXp the app sends are ignored)
-    const st = (xp, level, streak) => ({ xp, level, week: '2026-W40', weekXp: 99999, xpDays: { '2026-09-30': xp / 10 }, streak, best: streak,
-      days: [{ k: '2026-09-28', s: 90 }, { k: '2026-09-29', s: 80 }, { k: '2026-09-30', s: 70 }] });
-    eq((await call('/stats', { method: 'POST', key: A, body: st(1000, 2, 6) })).status, 200);
-    await call('/stats', { method: 'POST', key: A, body: st(1300, 3, 7) });
-    await call('/stats', { method: 'POST', key: Bk, body: st(500, 2, 1) });
+    // XP is the server's, from each day's parts: weekly XP is its sum of XP by day (the xp, level, week and
+    // weekXp the app sends are ignored); a day the server scored from the wallet counts with its score
+    const st = (extra, streak) => ({ xp: 1e8, level: 500, week: '2026-W40', weekXp: 99999, xpDays: { '2026-09-30': 1e5 }, streak, best: streak,
+      days: [{ k: '2026-09-28', s: 90 }, { k: '2026-09-29', s: 80 }, { k: '2026-09-30', s: 70 }],
+      xpLog: { '2026-09-28': { s: 90 }, '2026-09-29': { s: 80, e: extra }, '2026-09-30': { s: 70, e: extra } } });
+    const p1 = await call('/stats', { method: 'POST', key: A, body: st(0, 6) });
+    eq([p1.status, p1.d.xp, p1.d.level], [200, 250, 1], 'alpha’s wallet scored the days 100, 100 and 50: the server’s XP, sent back to the app');
+    await call('/stats', { method: 'POST', key: A, body: st(500, 7) });
+    await call('/stats', { method: 'POST', key: Bk, body: st(0, 1) });
     const lg = await call('/league', { key: A });
-    eq(lg.d.rows.map(r => [r.handle, r.value, r.me]), [['alpha_1', 130, true], ['bravo', 50, false]]);
+    eq(lg.d.rows.map(r => [r.handle, r.value, r.me]), [['alpha_1', 1250, true], ['bravo', 240, false]], 'bravo has no wallet the server reads: the app’s scores');
+    eq([(await call('/me', { key: A })).d.me.xp, (await call('/me', { key: A })).d.me.level], [1250, 3]);
     const disc = await call('/leaderboard?board=discipline', { key: A });
     eq(disc.d.rows.map(r => [r.handle, r.value]), [['alpha_1', 83]], 'the board shows the score recomputed from fills (100, 100, 50), not the posted 90/80/70');
     ok(/^verified/.test(disc.d.rows[0].sub));
@@ -266,7 +274,7 @@ try {
     await call('/admin/config', { method: 'PUT', admin: true, body: { open: true } });
     const keys = [];
     for (const h of ['carl1', 'carl2', 'carl3']) keys.push((await call('/join', { method: 'POST', body: { handle: h } })).d.key);
-    for (let i = 0; i < 3; i++) await call('/stats', { method: 'POST', key: keys[i], body: { xp: 50, level: 1, xpDays: { '2026-09-29': i * 10 } } });
+    for (let i = 0; i < 3; i++) await call('/stats', { method: 'POST', key: keys[i], body: { xpLog: { '2026-09-29': { s: i * 10 } } } });
     clock = Date.parse('2026-10-06T12:00:00Z'); // Tuesday of W41
     await call('/config');
     const me = await call('/me', { key: A });
@@ -365,7 +373,7 @@ console.log('\nClient helpers');
 const ctx = { Math, Object, Array, String, JSON, Intl, settings: { tz: "utc" } };
 vm.createContext(ctx);
 vm.runInContext('const PZ_UNLOCK_DEFAULTS=' + html.slice(html.indexOf('const PZ_UNLOCK_DEFAULTS=') + 25, html.indexOf(';\n', html.indexOf('const PZ_UNLOCK_DEFAULTS='))) + ';\n'
-  + ['pzNeeds', 'socHabitSpec', 'pzSocialStats', 'pzClockZone'].map(grabFn).join('\n') + '\nfunction habitSentence(s){ return "When "+s.when+", "+s.then+"."; }', ctx);
+  + ['pzNeeds', 'socHabitSpec', 'pzXpLog', 'pzSocialStats', 'pzClockZone'].map(grabFn).join('\n') + '\nfunction habitSentence(s){ return "When "+s.when+", "+s.then+"."; }', ctx);
 t('unlock levels: owner settings, off switch and sample data', () => {
   eq(ctx.pzNeeds('trends', 1), 2); eq(ctx.pzNeeds('trends', 2), 0);
   eq(ctx.pzNeeds('compete', 3, { unlocksOn: true, unlocks: { compete: 6 } }), 6);
@@ -377,11 +385,15 @@ t('a shared habit sentence becomes a self-graded habit', () => {
   eq(ctx.socHabitSpec('When I close two losing trades in a row, I stop for the day.'), { kind: 'self', when: 'I close two losing trades in a row', then: 'I stop for the day' });
   eq(ctx.socHabitSpec('Always use a stop.').then, 'Always use a stop');
 });
-t('leagues and duels get XP before the multiplier; the total (and level) count it', () => {
-  const g = { xp: { total: 1500, byDay: { '2026-10-19': 150 } }, xpBase: { total: 1000, byDay: { '2026-10-19': 100 } }, weekXp: 150, weekXpBase: 100,
-    level: { level: 3 }, nowWeek: '2026-W43', streak: { current: 1, best: 1, shields: 0 }, challenges: [], achievements: [], days: [] };
+t('each day goes out as its parts, never as XP: what the server paid stays out, mentoring badges apart', () => {
+  const g = { xp: { total: 1500, byDay: { '2026-10-19': 150 } }, level: { level: 3 }, nowWeek: '2026-W43', streak: { current: 1, best: 1, shields: 0 }, challenges: [], achievements: [],
+    days: [{ key: '2026-10-19', score: 72.5, bonus: { total: 25 }, parts: {} }, { key: '2026-10-20', score: 0, bonus: { total: 0 }, parts: {} }],
+    bonuses: [{ key: '2026-10-19', xp: 50, why: 'Walked away' }, { key: '2026-10-19', xp: 25, why: 'focus habit' }, { key: '2026-10-20', xp: 20, why: 'XP · Silver', src: 'badge', badge: true },
+      { key: '2026-10-20', xp: 10, why: 'Teacher · Bronze', src: 'mentor', badge: true }, { key: '2026-10-20', xp: 40, why: 'mentoring', src: 'mentor' },
+      { key: '2026-10-19', xp: 100, why: 'bonus', src: 'grant' }, { key: '2026-10-19', xp: -150, why: 'coach', src: 'coach' }, { key: '2026-10-21', xp: 30, why: 'badge', src: 'award' }] };
   const p = ctx.pzSocialStats(g, []);
-  eq([p.xp, p.weekXp, p.xpDays['2026-10-19']], [1500, 100, 100]);
+  eq(p.xpLog, { '2026-10-19': { s: 72.5, b: 25, e: 75 }, '2026-10-20': { s: 0, e: 20, m: 10 } });
+  eq([p.xp, p.level, p.weekXp, p.xpDays], [undefined, undefined, undefined, undefined], 'no totals: the server works them out');
 });
 t('only process numbers go out: no trades, notes, P&L or addresses in the stats payload', () => {
   const g = { xp: { total: 1234 }, level: { level: 3 }, nowWeek: '2026-W40', weekXp: 210, streak: { current: 4, best: 9, shields: 1 },
@@ -390,9 +402,9 @@ t('only process numbers go out: no trades, notes, P&L or addresses in the stats 
     days: [{ key: '2026-09-30', score: 88, breached: false, parts: { journal: 1 }, net: -500, n: 3 }] };
   const p = ctx.pzSocialStats(g, ['When a, b.']);
   // firstAt: when the trading history starts (a date, for Trader Age's "trading for"), never a trade
-  // coachSpent: XP spent on coach messages that xp already counts (a number the server checks purchases against)
-  eq(Object.keys(p).sort(), ['badgeN', 'badgeTotal', 'badges', 'best', 'challengesDone', 'coachSpent', 'days', 'firstAt', 'habits', 'lastChallenge', 'level', 'shields', 'streak', 'tz', 'week', 'weekXp', 'xp', 'xpDays']);
-  eq(p.coachSpent, 0);
+  // xpLog: each day's XP as its parts (score, bonus, the rest), for the server's XP ledger
+  eq(Object.keys(p).sort(), ['badgeN', 'badgeTotal', 'badges', 'best', 'challengesDone', 'days', 'firstAt', 'habits', 'lastChallenge', 'shields', 'streak', 'tz', 'week', 'xpLog']);
+  eq(p.xpLog, { '2026-09-30': { s: 88 } });
   eq(p.days, [{ k: '2026-09-30', s: 88, b: false, j: true, jn: 1 }], 'a day carries its score and flags (and the share journaled) — never its P&L');
   eq(p.badges, [{ id: 'x', t: 'X' }]); eq(p.lastChallenge, 'When a, b.');
 });

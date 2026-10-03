@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { t, ok, eq, report } from './harness.mjs';
+import { t, ok, eq, report, xpLogFor } from './harness.mjs';
 import { readAppSource } from '../app-source.js'; // ledger.html with its app/*.js inlined, in load order
 
 const require = createRequire(import.meta.url);
@@ -64,7 +64,8 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
     body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
   return { status: r.status, d: await r.json() }; };
 const adm = (p, method, body) => call('/admin' + p, { method, body, admin: true });
-const st = (level, xp, extra) => Object.assign({ xp, level, week: '2026-W40', weekXp: xp / 10, streak: 3, best: 5, days: [] }, extra || {});
+// a member at some XP: the day parts that add up to it (the server works out the XP and level; the ones sent are ignored)
+const st = (level, xp, extra) => Object.assign({ xp, level, week: '2026-W40', streak: 3, best: 5, days: [], xpLog: xpLogFor(xp, new Date(clock).toISOString().slice(0, 10)) }, extra || {});
 let A, Bk, Cid;
 try {
   await t('a v0.3 league becomes the main league, numbered, with everyone in it at their tier; old unlock levels carry over', async () => {

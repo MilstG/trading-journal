@@ -532,6 +532,15 @@ feeding verified XP if the owner switches off "only count claimed wallets"; a se
 during its one-day grace. Mentor fees are not counted toward the monthly pair cap. README
 "Limitations" lists these.
 
+**Follow-up: XP is now tracked by the server.** The app no longer reports XP totals. It sends each
+day's parts (`xpLog`: Discipline score, logging bonus, the rest the app pays), each capped at what a
+day can pay and fixed once a week old. The server keeps them in its own ledger of days (`m.xpl`) and
+works out the total, level, XP by day and weekly XP itself (`xpDerive`/`xpSync`, `social.js`),
+counting a verified wallet's days at its own score and adding what it paid. A posted total or level
+is ignored, so X2's "total capped at a perfect player" bound is gone: there is no total to bound.
+Existing profiles kept the total their app last reported, once (`xplStart`). The journal-based parts
+remain app-reported (X3), but only one capped day at a time.
+
 **Performance, measured after (31k trades):** Diagnostic 5.3 s → ~0.7 s (no main-thread task over
 ~0.5 s), full `render()` 2.2 s → ~0.35 s, Daruma 557 → 509 KB gzipped (the Diagnostic, excursion
 and export code moved to journal-only files). Results are bit-identical to before, pinned by

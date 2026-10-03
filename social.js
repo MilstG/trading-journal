@@ -175,17 +175,24 @@ function sanitizeStats(b, opts) {
   const badges = (Array.isArray(b.badges) ? b.badges : []).slice(0, 400)
     .filter(x => x && BADGE_RE.test(x.id) && !seenB.has(x.id) && seenB.add(x.id)).map(x => ({ id: x.id, t: cleanText(x.t, 60), c: cleanText(x.c, 20), r: Math.round(clampNum(x.r, 0, 5) || 0), k: DAY_RE.test(x.k) ? x.k : null, d: cleanText(x.d, 120) }));
   const habits = (Array.isArray(b.habits) ? b.habits : []).slice(0, 20).map(h => cleanText(h, 140)).filter(Boolean).slice(0, 5);
-  // XP by day, so a season ranks on exactly its own days (weeks straddle month ends)
-  const xpDays = {}; if (b.xpDays && typeof b.xpDays === 'object' && !Array.isArray(b.xpDays))
-    for (const k of Object.keys(b.xpDays).filter(inRange).sort().slice(-100)) { const v = clampNum(b.xpDays[k], 0, opts.capOf ? opts.capOf(k) : 1e5); if (v) xpDays[k] = Math.round(v); }
+  // The parts of each day's XP the app works out from fills and the journal, for the server's XP ledger
+  // (xplWrite): s the Discipline score (0–100), b the logging bonus, e the rest the app pays (focus-habit
+  // days, challenges, achievements, badges), m badge XP reached only through mentoring (the level's, never a
+  // league's). Each part is capped at what the league's weights can pay in a day (opts.parts, dayXpParts).
+  // The totals the app also sends (xp, level, weekXp, xpDays) are its own view: the server works its own out.
+  const P = opts.parts || { bonus: 1e4, extra: 1e5 };
+  let xpLog = null; if (b.xpLog && typeof b.xpLog === 'object' && !Array.isArray(b.xpLog)) { xpLog = {};
+    for (const k of Object.keys(b.xpLog).filter(inRange).sort().slice(-100)) { const r = b.xpLog[k]; if (!r || typeof r !== 'object') continue;
+      const o = {}, s = clampNum(r.s, 0, 100), bo = clampNum(r.b, 0, P.bonus), e = clampNum(r.e, 0, P.extra), m = clampNum(r.m, 0, P.extra);
+      if (s) o.s = Math.round(s * 100) / 100; if (bo) o.b = Math.round(bo); if (e) o.e = Math.round(e); if (m) o.m = Math.round(m);
+      if (Object.keys(o).length) xpLog[k] = o; } }
   return {
-    xp: clampNum(b.xp, 0, 1e8) || 0, level: clampNum(b.level, 1, 500) || 1,
-    week: WEEK_RE.test(b.week) ? b.week : null, weekXp: clampNum(b.weekXp, 0, 1e6) || 0,
-    coachSpent: clampNum(b.coachSpent, 0, 1e8) || 0, // XP spent on coach packs that the reported xp already counts
+    xp: 0, level: 1, xpLog, // xp and level: the server's (xpSync)
+    week: WEEK_RE.test(b.week) ? b.week : null,
     streak: clampNum(b.streak, 0, 10000) || 0, best: clampNum(b.best, 0, 10000) || 0, shields: clampNum(b.shields, 0, 2) || 0,
     challengesDone: clampNum(b.challengesDone, 0, 10000) || 0, lastChallenge: cleanText(b.lastChallenge, 140),
     tz,
-    badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days, xpDays,
+    badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days, xpDays: {},
     // the first fill in the app's history, for "trading for" next to Trader Age (2015 onwards, never in the future)
     firstAt: clampNum(b.firstAt, 1420070400000, Date.now() + 864e5) || null,
   };
@@ -650,7 +657,10 @@ function createSocial(opts) {
   const writeRow = (key, val) => { if (val === undefined) return; const s = JSON.stringify(val), d = digest(s); if (written.get(key) === d) return; fresh.set(key, d);
     if (key.startsWith('m:')) q('INSERT OR REPLACE INTO members (id, data) VALUES (?, ?)').run(key.slice(2), s); else q('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)').run(key, s); };
   const touch = (...xs) => { for (const x of xs) if (typeof x === 'string') dirty.add(x); else if (x && x.id) dirty.add('m:' + x.id); };
+  let xpSyncOnSave = null; // the XP ledger's xpSync, once it's defined below
   const save = (...xs) => { const all = !xs.length; touch(...xs);
+    // every member written by name or touched gets XP that matches its ledger (not each member a full save writes: that's xpSyncAll)
+    if (xpSyncOnSave) for (const k of dirty) if (k.startsWith('m:') && own(S.members, k.slice(2))) xpSyncOnSave(S.members[k.slice(2)]);
     if (all || dirty.has('follows')) folCount = null;
     if (dirty.has('leagues')) dirty.add('leagueSeq'); // a new league's number and the counter go together
     fresh = new Map();
@@ -846,31 +856,89 @@ function createSocial(opts) {
       a = [{ id: list[0].id, xp: list.reduce((n, x) => n + x.xp, 0), why: 'Coach: ' + msgs + ' extra messages, earlier', at: list[list.length - 1].at, coach: true, day: 'earlier', msgs },
         ...a.filter(x => !old.has(x))]; }
     let drop = a.filter(x => !x.coach).length - 200;
-    m.grants = drop > 0 ? a.filter(x => { if (x.coach || drop <= 0) return true; drop--; if (!x.self) m.grantsOld = (+m.grantsOld || 0) + (+x.xp || 0); return false; }) : a; };
-  // ---- what a member's app reports, checked against itself and against what the server knows ----
-  const STATS_DAYS = 100, STATS_FREEZE = 7; // days back a post may carry; days after which a day's XP is fixed
-  // XP the server itself paid a member, by their calendar day (grants and reward badges: the app counts them
-  // in its XP by day), with the rest it paid (mentoring) in plus, and what came off the total only in minus
-  const serverXpByDay = (m, tz) => { const days = {}; let plus = Math.max(0, +m.grantsOld || 0), minus = Math.max(0, -(+m.grantsOld || 0));
-    const add = (at, x) => { const k = zoneKey(tz, at); days[k] = (days[k] || 0) + x; plus += x; };
-    for (const g of m.grants || []) if (g.xp > 0) add(g.at, g.xp); else minus -= +g.xp || 0;
-    for (const [id, at] of Object.entries(m.awards || {})) if (own(S.badges, id) && S.badges[id].xp > 0) add(at, S.badges[id].xp);
-    plus += Object.values((m.mentorXp && m.mentorXp.days) || {}).reduce((a, d) => a + (+d.xp || 0), 0);
-    return { days, plus, minus }; };
-  const validateStats = (m, next, known, cap) => {
-    const today = zoneKey(next.tz, now()), freeze = addDaysKey(today, -STATS_FREEZE), oldest = addDaysKey(today, -STATS_DAYS);
-    // a day more than a week old keeps the XP it was first reported with, so the past can't be rewritten (a
-    // season in its grace day, a duel already played); a day never reported before still comes in (back from a break)
-    const prev = (m.stats && m.stats.xpDays) || {}, xd = {};
-    for (const [k, x] of Object.entries(prev)) if (k >= oldest && k < freeze) xd[k] = x;
-    for (const [k, x] of Object.entries(next.xpDays)) if (!(k < freeze && own(prev, k))) xd[k] = x;
-    next.xpDays = Object.fromEntries(Object.entries(xd).sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-120));
-    // the total: at most what a perfect player could have earned since their first trade (every day at the cap,
-    // at the multiplier's top tier), plus what the server paid them itself. The level is the league's for it.
-    const since = Math.max(Date.parse('2015-01-01T00:00:00Z'), Math.min(now(), next.firstAt || 0)), span = Math.floor((now() - since) / 86400000) + 2;
-    const top = S.config.mult.on ? Math.max(1, ...S.config.mult.tiers.map(t => t[1])) : 1;
-    next.xp = Math.round(Math.min(next.xp, span * cap * top + known.plus));
-    next.level = SC.levelOf(S.config.levels, next.xp);
+    m.grants = drop > 0 ? a.filter(x => { if (x.coach || drop <= 0) return true; drop--; if (!x.self) m.grantsOld = (+m.grantsOld || 0) + (+x.xp || 0); return false; }) : a;
+    xpSync(m); };
+  // ---- XP: the server's own ledger of days ----
+  // A member's XP, level, XP by day and weekly XP are worked out here, never taken from the app. The app reports
+  // each day's parts (sanitizeStats' xpLog: the Discipline score, the logging bonus, the rest it pays); the server
+  // keeps them by day in m.xpl and adds what it paid itself (grants, coach purchases off the total, reward badges,
+  // mentoring). For a member who verifies their wallet, a day the server scored from fills (m.vdays) counts with
+  // the server's score, not the app's. m.xpl = {d: {day: {s, b, e, m, v}}, old, seed, since}:
+  //   d     the days, newest XPL_KEEP of them; older ones fold into old (their XP, fixed)
+  //   seed  the XP a profile had before the server kept days (the app's last total, once: the xpl migration)
+  //   since days before it are in the seed: they count for nothing more ({l}: the XP by day the app had reported, for
+  //         the weeks and seasons they fall in)
+  // The XP by day is before the Trader Age multiplier and without mentoring (what leagues, seasons and duels rank on);
+  // the total counts both. The level is the league's for the total.
+  const STATS_DAYS = 100, STATS_FREEZE = 7; // days back a post may carry; days after which the app can't change a day
+  const XPL_KEEP = 400;
+  const xplOf = m => { let L = m.xpl;
+    if (!L || typeof L !== 'object') L = m.xpl = { d: {}, old: 0, seed: 0, since: '' };
+    if (!L.d || typeof L.d !== 'object') L.d = {}; return L; };
+  const xplMult = m => { const H = m.multHist || {}; return k => { const v = +H[isoWeekOfKey(k)]; return v > 1 ? v : 1; }; };
+  // a day's XP: [by day (before the multiplier, no mentoring), toward the total]
+  const xplDay = (r, w, mult) => { const s = r.v != null ? +r.v : +r.s || 0, base = Math.round(s * w) + (+r.b || 0), e = +r.e || 0;
+    return [base + e, Math.round(base * mult) + e + (+r.m || 0)]; };
+  const xpDerive = (m, tz) => {
+    const L = xplOf(m), since = L.since || '', w = S.config.xp.discipline, mult = xplMult(m), days = {};
+    let total = (+L.seed || 0) + (+L.old || 0);
+    for (const [k, r] of Object.entries(L.d)) { if (!r) continue;
+      if (k < since) { if (r.l) days[k] = r.l; continue; }
+      const [x, t] = xplDay(r, w, mult(k)); if (x) days[k] = x; total += t; }
+    // what the server paid: grants (a coach purchase comes off the total only), reward badges, mentoring (the total only)
+    const add = (at, x) => { const k = zoneKey(tz, at); if (k >= since) days[k] = (days[k] || 0) + x; };
+    for (const g of m.grants || []) { const x = +g.xp || 0; total += x; if (!g.coach) add(g.at, x); }
+    total += +m.grantsOld || 0;
+    for (const [id, at] of Object.entries(m.awards || {})) { const x = own(S.badges, id) ? +S.badges[id].xp || 0 : 0; if (x) { total += x; add(at, x); } }
+    total += Object.values((m.mentorXp && m.mentorXp.days) || {}).reduce((a, d) => a + (+(d && d.xp) || 0), 0);
+    const ks = Object.keys(days).filter(k => days[k] > 0).sort().slice(-120);
+    return { total: Math.max(0, Math.round(total)), days: Object.fromEntries(ks.map(k => [k, Math.round(days[k])])) }; };
+  // the numbers everything else reads (stats.xp, stats.level, stats.xpDays, weekXp), from the ledger. Run whenever an
+  // input changes; save() also runs it for every member touched or saved by name, so a path that forgets still lands consistent.
+  const xpSync = m => { if (!m || !m.stats) return;
+    const X = xpDerive(m, m.stats.tz || 'UTC'); m.stats.xp = X.total; m.stats.level = SC.levelOf(S.config.levels, X.total); m.stats.xpDays = X.days;
+    m.weekXp = weekXpOf(m.weekXp, m.stats); };
+  xpSyncOnSave = xpSync;
+  // what every member's XP reads changed (the XP weights, the levels, a reward badge's XP): all of them again
+  const xpSyncAll = () => { for (const m of members()) xpSync(m); };
+  // older days fold into one sum, at what they were worth when they left
+  const xplFold = m => { const L = xplOf(m), ks = Object.keys(L.d).sort(), n = ks.length - XPL_KEEP; if (n <= 0) return;
+    const w = S.config.xp.discipline, mult = xplMult(m);
+    for (const k of ks.slice(0, n)) { if (k >= (L.since || '')) L.old = (+L.old || 0) + xplDay(L.d[k], w, mult(k))[1]; delete L.d[k]; } };
+  // the app's report: its parts for each day it sent. A day more than a week old keeps what was first reported for
+  // it, so the past can't be rewritten (a season in its grace day, a duel already played); a day never reported
+  // before still comes in (back from a break). A recent day the app no longer reports loses its parts (a wallet
+  // removed, a day re-scored to nothing). The server's own score for a day (v) stays whatever the app says.
+  const XPL_PARTS = ['s', 'b', 'e', 'm'];
+  const xplWrite = (m, log, tz) => {
+    const L = xplOf(m), since = L.since || '', freeze = addDaysKey(zoneKey(tz, now()), -STATS_FREEZE);
+    const has = r => !!r && XPL_PARTS.some(p => r[p] != null);
+    for (const k of Object.keys(L.d)) { const r = L.d[k]; if (k < freeze || k < since || own(log, k) || !has(r)) continue;
+      for (const p of XPL_PARTS) delete r[p]; if (r.v == null) delete L.d[k]; }
+    for (const [k, x] of Object.entries(log)) { if (k < since) continue; const r = L.d[k];
+      if (k < freeze && has(r)) continue;
+      const o = Object.assign({}, r && r.v != null ? { v: r.v } : {}, x); L.d[k] = o; }
+    xplFold(m); };
+  // the days the server scored from the member's wallet (m.vdays): each one's score is the server's from now on
+  const xplVerified = m => { if (!Array.isArray(m.vdays) || !m.vdays.length) return; const L = xplOf(m), since = L.since || '';
+    for (const d of m.vdays) { if (!d || !DAY_RE.test(d.k) || d.k < since) continue; const v = clampNum(d.s, 0, 100); if (v == null) continue;
+      L.d[d.k] = Object.assign({}, L.d[d.k], { v: Math.round(v * 100) / 100 }); }
+    xplFold(m); };
+  // the update: a profile's XP until now is the total its app last reported (checked as it was then), once; what
+  // the server paid is counted from its own lists from now on, so it comes off. Today is counted again from the
+  // app's next report, so it comes off too. The days already reported stay for their weeks and seasons ({l}).
+  const xplStart = m => { if (m.xpl) return; const st = m.stats; if (!st) { xplOf(m); return; }
+    const tz = st.tz || 'UTC', today = zoneKey(tz, now()), L = { d: {}, old: 0, seed: 0, since: today };
+    for (const [k, x] of Object.entries(st.xpDays || {})) if (k < today && x > 0) L.d[k] = { l: x };
+    let paid = 0, paidToday = 0; const add = (at, x) => { paid += x; if (zoneKey(tz, at) === today) paidToday += x; };
+    for (const g of m.grants || []) if (!g.coach) add(g.at, +g.xp || 0); // coach purchases: the app counted the ones it had seen (coachSpent)
+    for (const [id, at] of Object.entries(m.awards || {})) if (own(S.badges, id) && S.badges[id].xp) add(at, +S.badges[id].xp);
+    paid += Object.values((m.mentorXp && m.mentorXp.days) || {}).reduce((a, d) => a + (+(d && d.xp) || 0), 0);
+    const todayApp = Math.max(0, ((st.xpDays || {})[today] || 0) - paidToday);
+    L.seed = Math.max(0, Math.round((+st.xp || 0) - paid + (+st.coachSpent || 0) - todayApp));
+    m.xpl = L; };
+  // a streak can't be longer than the days since the member's first trade
+  const capStreak = next => { const since = Math.max(Date.parse('2015-01-01T00:00:00Z'), Math.min(now(), next.firstAt || 0)), span = Math.floor((now() - since) / 86400000) + 2;
     next.streak = Math.min(next.streak, span); next.best = Math.min(next.best, span); };
   // weekly XP is the server's own sum of the member's XP by day, never a number the app sends (so late XP, a day
   // journaled the next week, reaches the week it belongs to). Weeks past what the days cover keep their sum.
@@ -962,6 +1030,7 @@ function createSocial(opts) {
         if (b.metric === 'discipline30' && m.share.verify && Array.isArray(m.vdays)) m.awardsV = Object.assign({}, m.awardsV, { [b.id]: 1 });
         if (m.share.feed) pushEvent(m, { type: 'badge', text: 'earned the ' + b.name + ' badge ' + b.icon }); }
     }
+    if (changed) xpSync(m); // a reward badge's XP joins the total
     return changed; };
   const awardsOut = m => Object.keys(m.awards || {}).filter(id => own(S.badges, id)).map(id => ({ id, name: S.badges[id].name, icon: S.badges[id].icon, desc: S.badges[id].desc, xp: S.badges[id].xp, at: m.awards[id] }));
   // ---- AI coach allowance: per member per day (their own clock), or the owner's own budget ----
@@ -986,16 +1055,14 @@ function createSocial(opts) {
   const coachReset = m => { for (const k of coachKeys(m)) delete S.coachUse[k]; delete m.coachUse; };
   // ---- extra messages bought with XP (S.config.coach.packs) ----
   // Packs bought today sit on the same records as the count, so profiles on one wallet share them and
-  // an admin's reset clears them too. Each purchase is a negative grant flagged coach: the member's app
-  // takes it off lifetime XP only, never the XP by day that weeks, seasons and duels rank on.
+  // an admin's reset clears them too. Each purchase is a negative grant flagged coach: it comes off lifetime
+  // XP only (xpDerive), never the XP by day that weeks, seasons and duels rank on.
   const coachExtra = m => { const tz = coachTz(m), o = { p: 0, x: 0 };
     for (const k of coachKeys(m)) { const u = coachDay(k, tz); if (u) { o.p = Math.max(o.p, u.p || 0); o.x = Math.max(o.x, u.x || 0); } }
     return o; };
   const coachLimitToday = m => { const base = coachLimitFor(m); return base == null ? null : base + coachExtra(m).x; };
-  const coachSpentAll = m => (m.grants || []).reduce((a, g) => a + (g.coach && g.xp < 0 ? -g.xp : 0), 0);
-  // earned XP (the level's, as shown): what the member's app last reported, less purchases it hadn't counted yet
-  const earnedOf = m => { const xp = (m && m.stats && m.stats.xp) || 0; if (!m) return 0;
-    return Math.max(0, xp - Math.max(0, coachSpentAll(m) - ((m.stats && m.stats.coachSpent) || 0))); };
+  // earned XP (the level's, as shown): the server's total, purchases already off it
+  const earnedOf = m => (m && m.stats && m.stats.xp) || 0;
   const coachPackPrice = (c, bought) => Math.min(1e6, c.cost * (c.rise ? 2 ** bought : 1));
   // the offer once today's messages are used up: its price and, if it can't be bought, why not
   // A purchase is paid from the balance (the server's ledger) and comes off earned XP too: what rides on open
@@ -1212,7 +1279,7 @@ function createSocial(opts) {
       for (const d of days) if (d && DAY_RE.test(d.k)) { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 };
         const f = Array.isArray(d.f) ? d.f.filter(x => SLIP_KEYS.includes(x)) : []; if (f.length) o.f = f; keep.set(d.k, o); }
       live.vdays = [...keep.values()].sort((a, b) => a.k < b.k ? -1 : 1).slice(-200); // Trader Age reads 6 months
-      live.vAt = now(); live.vFailAt = 0; taCompute(live); vxpCredit(live); awardCheck(live); save(live);
+      live.vAt = now(); live.vFailAt = 0; taCompute(live); vxpCredit(live); xplStart(live); xplVerified(live); xpSync(live); awardCheck(live); save(live);
     } catch (e) { m.vFailAt = now(); }
     finally { behaviorBusy.delete(m.id); }
   };
@@ -1254,7 +1321,7 @@ function createSocial(opts) {
     const hist = m.multHist && typeof m.multHist === 'object' ? m.multHist : {};
     hist[cur] = cfg.on ? M.of(m.multState, cfg) : 1;
     const ks = Object.keys(hist).sort(); for (const k of ks.slice(0, Math.max(0, ks.length - 520))) delete hist[k];
-    m.multHist = hist;
+    m.multHist = hist; xpSync(m);
   };
   // what the app needs: this week's multiplier, progress to the next tier, and each week's multiplier for its XP
   const multOut = m => { const cfg = S.config.mult, st = m.multState || { count: 0 }, T = cfg.tiers, tier = opts.taMult ? opts.taMult.tier(st.count, cfg) : -1, nx = T[tier + 1] || null;
@@ -1338,7 +1405,7 @@ function createSocial(opts) {
     if (kind !== 'outcome') { xp = Math.min(xp, Math.max(0, c.cap - D.effort)); D.effort += xp; }
     if (!xp) return 0;
     D.xp += xp; D[kind === 'review' ? 'r' : kind === 'note' ? 'n' : 'o']++;
-    L.paid = [...L.paid, key].slice(-3000); touch(mentor); return xp; };
+    L.paid = [...L.paid, key].slice(-3000); xpSync(mentor); touch(mentor); return xp; };
   // what the mentor's app needs: XP and counts per day (for the ledger and the mentoring badges)
   const mentorXpOut = m => { const L = m.mentorXp; if (!L || !L.days) return null; const days = {}; let total = 0;
     for (const [k, d] of Object.entries(L.days)) { days[k] = Object.assign({ xp: d.xp, r: d.r, n: d.n, o: d.o }, d.fee ? { fee: d.fee, paid: d.paid || 0 } : {}); total += d.xp; }
@@ -1637,7 +1704,7 @@ function createSocial(opts) {
         podium: podium.map(m => ({ id: m.id, handle: m.handle, gain: seasonGain(m), r: m.ladder.r })) }].slice(-12);
       podium.forEach((m, i) => { const bid = LADDER_BADGES[i], gain = seasonGain(m);
         if (!own(S.badges, bid)) { const [name, icon, desc] = SEASON_BADGES[bid]; S.badges[bid] = { id: bid, name, icon, desc, metric: null, op: 'gte', value: 0, xp: 0, system: true }; touch('badges'); }
-        m.awards = m.awards || {}; if (!own(m.awards, bid)) m.awards[bid] = now();
+        m.awards = m.awards || {}; if (!own(m.awards, bid)) { m.awards[bid] = now(); xpSync(m); }
         if (m.share.feed) pushEvent(m, { type: 'season', text: ['won', 'took second in', 'took third in'][i] + ' the ' + seasonLabel(old) + ' duel season ' + SEASON_BADGES[bid][1] });
         notify(m, 'duel', 'You finished #' + (i + 1) + ' on the duel ladder for ' + seasonLabel(old) + ', with +' + gain + ' rating.', { title: 'Duel season over ' + SEASON_BADGES[bid][1], url: duelUrl }); });
     }
@@ -2127,7 +2194,7 @@ function createSocial(opts) {
     const D = L.days[mxDay(x)] = L.days[mxDay(x)] || { xp: 0, effort: 0, r: 0, n: 0, o: 0 };
     D.xp += net; D.fee = (D.fee || 0) + net; D.paid = (D.paid || 0) + 1;
     if (cut) { S.pool.xp += cut; S.pool.total += cut; S.pool.log = [...S.pool.log, { at: now(), xp: cut, fee: r.fee, from: o.id, to: x.id, review: r.id }].slice(-500); touch('pool'); }
-    recCache.delete(x.id); touch(x, o); return net; };
+    recCache.delete(x.id); xpSync(x); touch(x, o); return net; };
   // ---- a mentor's track record: only what the server measured itself, over the last 90 days ----
   // reviewed: trades they marked reviewed with a comment of theirs in it; replyMs: median time from a trade
   // being sent to their first comment; back: of the members they reviewed for (who had 30 days to do it),
@@ -2176,7 +2243,7 @@ function createSocial(opts) {
     L.hall = [...(L.hall || []), { season: id, label: seasonLabel(id), start: b.start, end: b.end, n: rows.length, podium, at: now() }].slice(-24);
     ['season-gold', 'season-silver', 'season-bronze'].forEach((bid, i) => { const r = podium[i]; if (!r) return; const m = S.members[r.id]; if (!m) return;
       if (!own(S.badges, bid)) { const [name, icon, desc] = SEASON_BADGES[bid]; S.badges[bid] = { id: bid, name, icon, desc, metric: null, op: 'gte', value: 0, xp: 0, system: true }; }
-      m.awards = m.awards || {}; if (!own(m.awards, bid)) m.awards[bid] = now();
+      m.awards = m.awards || {}; if (!own(m.awards, bid)) { m.awards[bid] = now(); xpSync(m); }
       m.seasonWins = [...(m.seasonWins || []), { league: L.id, season: id, place: i + 1 }].slice(-50);
       if (m.share.feed) pushEvent(m, { type: 'season', text: ['won', 'took second in', 'took third in'][i] + ' the ' + L.name + ' ' + seasonLabel(id) + ' season ' + SEASON_BADGES[bid][1] });
       notify(m, 'season', 'You finished #' + (i + 1) + ' in the ' + L.name + ' ' + seasonLabel(id) + ' season.', { title: 'Season over ' + SEASON_BADGES[bid][1], url: '/daruma#lg/' + L.id }); });
@@ -2465,7 +2532,7 @@ function createSocial(opts) {
           m.pendingCodes = [...(m.pendingCodes || []).filter(c => c.exp > now()), { h: sha(code), exp: now() + 7 * 86400000 }].slice(-3);
           extra = { code, expiresAt: now() + 7 * 86400000 }; }
         else return json(res, 400, { error: 'unknown action' });
-        save(); return json(res, 200, Object.assign({ ok: true }, extra));
+        xpSync(m); save(); return json(res, 200, Object.assign({ ok: true }, extra));
       }
       // ---- wallets: the owner approves or rejects each address ----
       if (sub === 'wallets' && M === 'GET') {
@@ -2549,7 +2616,7 @@ function createSocial(opts) {
           for (const m of members()) { recheckWallet(m); if (walletFor(m)) refreshAll(m); }
         }
         c.unlocks = { trends: c.modules.trends, share: c.modules.share, compete: c.modules.compete };
-        save(); return json(res, 200, { ok: true, config: c });
+        xpSyncAll(); save(); return json(res, 200, { ok: true, config: c });
       }
       // ---- duels: settings, the ones running and waiting, and a cancel for the odd bad one ----
       if (sub === 'duels' && M === 'GET') {
@@ -2657,10 +2724,10 @@ function createSocial(opts) {
       }
       if (sub === 'badges' && parts[2] && (M === 'PUT' || M === 'DELETE')) {
         const b = own(S.badges, parts[2]) ? S.badges[parts[2]] : null; if (!b) return json(res, 404, { error: 'no such badge' });
-        if (M === 'DELETE') { delete S.badges[b.id]; for (const m of members()) if (m.awards) delete m.awards[b.id]; save(); return json(res, 200, { ok: true }); }
+        if (M === 'DELETE') { delete S.badges[b.id]; for (const m of members()) if (m.awards) delete m.awards[b.id]; xpSyncAll(); save(); return json(res, 200, { ok: true }); }
         const n = SC.sanitizeBadge(body, b); if (!n) return json(res, 400, { error: 'A badge needs a name.' }); Object.assign(b, n);
         for (const m of members()) awardCheck(m);
-        save(); return json(res, 200, { ok: true });
+        xpSyncAll(); save(); return json(res, 200, { ok: true }); // its XP may have changed for those who have it
       }
       if (sub === 'competitions' && M === 'POST' && !parts[2]) {
         const c = sanitizeComp(body); if (!c) return json(res, 400, { error: 'needs a title, a type (' + COMP_TYPES.join(', ') + '), and start ≤ end dates within 92 days' });
@@ -3487,15 +3554,15 @@ function createSocial(opts) {
     if (head === 'stats' && M === 'POST') {
       // the app sends at most every 15 seconds, and only when something changed
       if (limited(req, 'stats:' + me.id, 60, 600000, true)) return json(res, 429, { error: 'Too many updates. Try again in a few minutes.' });
-      // Days are the member's own calendar days, up to their today and at most STATS_DAYS back; a day's XP is
-      // capped at what the league's weights can pay in a day, plus what the server itself granted that day.
-      const known = serverXpByDay(me, cleanTz(body.tz)), cap = SC.dayXpCap(S.config.xp);
-      const next = sanitizeStats(body, { todayOf: tz => zoneKey(tz, now()), keepDays: STATS_DAYS, capOf: k => cap + (known.days[k] || 0) });
-      // what the app says about the numbers it reports must add up: XP by day never more than the total
-      // (less purchases and corrections, which come off the total only)
-      const byDay = Object.values(next.xpDays).reduce((a, x) => a + x, 0);
-      if (next.xp + known.minus < byDay) return json(res, 400, { error: 'Your XP by day adds up to more than your total. Update the app and try again.' });
-      validateStats(me, next, known, cap);
+      // Days are the member's own calendar days, up to their today and at most STATS_DAYS back; each part of a
+      // day's XP is capped at what the league's weights can pay in a day. The XP itself is the server's: the
+      // parts go into its ledger (xplWrite), and the total, level and XP by day come out of it (xpDerive).
+      const next = sanitizeStats(body, { todayOf: tz => zoneKey(tz, now()), keepDays: STATS_DAYS, parts: SC.dayXpParts(S.config.xp) });
+      capStreak(next);
+      xplStart(me);
+      if (next.xpLog) xplWrite(me, next.xpLog, next.tz); // an app from before the ledger sends none: its days stay as they are
+      delete next.xpLog;
+      { const X = xpDerive(me, next.tz); next.xp = X.total; next.level = SC.levelOf(S.config.levels, X.total); next.xpDays = X.days; }
       if (!me.share.mentor) for (const d of next.days) delete d.l;
       const posted = new Set(me.postedHabits || []);
       for (const e of eventsFromStats(me.stats, next, me.share, S.config.levels.titles)) {
@@ -3514,7 +3581,8 @@ function createSocial(opts) {
       me.weekXp = weekXpOf(me.weekXp, next);
       awardCheck(me);
       if (logCompDays(me)) save(me, 'comps'); else save(me); refreshAll(me);
-      return json(res, 200, { ok: true, tier: me.tier || 0 });
+      // the XP and level the server keeps, so the app shows them
+      return json(res, 200, { ok: true, tier: me.tier || 0, xp: me.stats.xp, level: me.stats.level });
     }
     // ---- leagues: browse, join, leave ----
     // ?q= finds open leagues by name or number (#1042 or 1042); without q: yours first, then the open ones, biggest first
@@ -3732,6 +3800,10 @@ function createSocial(opts) {
   // October 2026: the balance became the server's own ledger. Members' wallets already read are credited from
   // the verified days on file, once, so a balance doesn't wait for the next read.
   if (!S.migrations.ledger) { for (const m of members()) if (Array.isArray(m.vdays) && m.vdays.length && !m.vxp) vxpCredit(m); S.migrations.ledger = now(); }
+  // October 2026: XP is the server's own ledger of days. Each profile starts from the total its app last
+  // reported (xplStart), once; the verified days on file count with the server's score from then on.
+  if (!S.migrations.xpl) { for (const m of members()) { xplStart(m); xplVerified(m); } S.migrations.xpl = now(); }
+  xpSyncAll(); // every member's XP from its ledger, under the weights and levels as they are now
   save(); // what loading filled in (defaults, league numbers) is written once, so a restart reads the same
   seedSchedule(); // seed wallets still waiting from before a restart
   return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
