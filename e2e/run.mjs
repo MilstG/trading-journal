@@ -262,6 +262,19 @@ try {
   });
 
   console.log('\nPulse (phone)');
+  await t('the welcome screen: the promise, the address bar, the API-key switch and sample data, with no sideways scroll on a phone', async () => {
+    const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
+    await p.goto(BASE + '/daruma'); await p.waitForSelector('.pz-welcome');
+    eq(await p.textContent('.pz-wl-hero h1'), 'Good habits compound.');
+    ok(await p.isVisible('#pzAddr') && await p.isVisible('#pzConnect') && await p.isVisible('#pzDemo'), 'address, Start day one and sample data are all there');
+    eq((await p.textContent('#pzConnect')).trim(), 'Start day one');
+    ok(await p.isVisible('.pz-wl-art .pz-mark'), 'the daruma, one eye painted');
+    await p.click('[data-pz-cex="bybit"]'); await p.waitForSelector('#pzCexKey');
+    await p.click('[data-pz-cexoff]'); await p.waitForSelector('#pzAddr');
+    ok(await p.evaluate(() => document.documentElement.scrollWidth) <= 390, 'no sideways scrolling');
+    eq(errs, [], 'no uncaught errors');
+    await p.close();
+  });
   await t('Pulse opens at phone width with sample data and no errors, inside the budget', async () => {
     const { page: p, errors: errs } = await openPage({ width: 390, height: 844 });
     within('pulse', await timed('pulse', async () => {
