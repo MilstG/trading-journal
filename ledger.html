@@ -1556,6 +1556,17 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 .pz-chatin{display:flex;gap:8px;align-items:flex-end}
 .pz-chatin textarea{flex:1;min-height:52px;resize:vertical;padding:12px 14px;border-radius:16px!important;border:1px solid var(--pz-line2);background:var(--pz-card);color:var(--pz-text);font:inherit;font-size:15px}
 .pz-chatin .pz-cta{width:52px;min-height:52px;padding:0;border-radius:26px!important}
+.pz-pack{display:flex;flex-direction:column;gap:12px;background:var(--pz-tint-xp);border-color:color-mix(in srgb,var(--pz-xp) 30%,transparent)}
+.pz-pack.off{background:var(--pz-card);border-color:var(--pz-line)}
+.pz-pack .pz-ico{width:40px;height:40px;background:var(--pz-card);color:var(--pz-xp)}
+.pz-pack.off .pz-ico{color:var(--pz-muted)}
+.pz-pack .pz-nudge p{margin-top:2px}
+.pz-packsum{display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:12px 14px;border-radius:16px!important;background:var(--pz-card);font-variant-numeric:tabular-nums}
+.pz-packsum span{color:var(--pz-muted)}
+.pz-packsum b{font-family:var(--pz-num);font-size:18px;font-weight:600;text-align:right}
+.pz-packsum b.neg{color:var(--pz-low)}
+.pz-packsum .tot{border-top:1px solid var(--pz-line2);padding-top:6px}
+.pz-packbtns{display:flex;flex-direction:column;gap:8px}
 .pz-linkbtn{background:none;border:0;padding:0;color:var(--pz-acc);font:inherit;font-weight:600;cursor:pointer;text-decoration:underline}
 .pz-nudge{display:flex;align-items:flex-start;gap:12px}.pz-nudge p{margin:0;font-size:14px;line-height:1.45}
 .pz-nudge.warn{background:#24190F;border-color:#4A3418}.pz-nudge.warn .pz-ico{background:#3A2A16;color:#FFB25A}

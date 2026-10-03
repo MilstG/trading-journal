@@ -1768,7 +1768,13 @@ All opt-in via environment variables, still zero dependencies:
   key or the owner token; 3 messages a day per profile and per wallet (profiles that share a
   wallet share its 3), set in the admin panel's Coach tab; admins and the owner have no limit,
   and any admin can reset a member's count for the day from their page; low effort
-  for quick replies). Uses the official `@anthropic-ai/sdk`, installed as an *optional*
+  for quick replies). Once the day's messages are used, a member can **buy more with XP**
+  (`POST /api/coach/packs` with the price they were shown): by default 150 XP for 3 messages,
+  at most 2 packs a day, all set on the Coach tab, with an optional doubling price per pack.
+  A purchase comes off earned XP (the level) and the stake balance, never weekly XP, so
+  leagues, seasons and duels don't move. It's refused if it would drop a level (unless the
+  owner turns that off) or leave XP riding on open duels uncovered. Each day's purchases are
+  one grant on the member's page; packs reset with the count, the XP isn't refunded. Uses the official `@anthropic-ai/sdk`, installed as an *optional*
   dependency: without `COACH_AI` the server never loads it and stays
   dependency-free. Model `COACH_AI_MODEL` (default `claude-opus-5-5`), medium
   effort, with the API's default refusal fallback. **OpenAI instead:** set
