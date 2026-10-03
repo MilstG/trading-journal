@@ -45,8 +45,11 @@ try {
     // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
     // All of audit 4 together (correctness fixes, the performance work, Daruma's split): 1895 / 1514 raw,
     // 642 / 509 gzipped — Daruma still 48 KB gzipped under where it started.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1900, 645],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1520, 512],
+    // Oct 2026: the beta's honest-stats fixes (CSV delimiter / decimal-mark / date-order inference with
+    // named errors, the automatic break-even band, the shared edge test) add ~8 KB raw / ~2 KB gzipped
+    // to both screens, most of it the CSV importer (data-io.js loads on both): 1908 / 1526 raw, 647 / 514 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1912, 649],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1530, 516],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

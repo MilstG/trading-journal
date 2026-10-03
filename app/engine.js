@@ -215,11 +215,21 @@ function fmtDate(ms){ const p=tzParts(ms); let h=p.h,ap=h<12?'AM':'PM'; h=h%12; 
   return MONTHS[p.mo]+' '+p.day+yr+' '+h+':'+String(p.min).padStart(2,'0')+' '+ap; }
 const cls=n=>n>0?'pos-t':n<0?'neg-t':'';
 const dayKey=ms=>{ const p=tzParts(ms); return p.y+'-'+String(p.mo+1).padStart(2,'0')+'-'+String(p.day).padStart(2,'0'); };
-// break-even band: trades within ±_be of zero count as scratches, not wins or losses
+// break-even band: trades strictly inside ±_be of zero count as scratches, not wins or losses
+// (a trade exactly at the band is decided). render() sets it: beBandFor(settings, allTrades).
 let _be=50;
-const isWin =n=>n>_be;
-const isLoss=n=>n<-_be;
-const isBE  =n=>Math.abs(n)<=_be;
+const isWin =n=>n>0&&n>=_be;
+const isLoss=n=>n<0&&-n>=_be;
+const isBE  =n=>Math.abs(n)<_be||n===0;
+// The automatic band: 5% of the median |net| per closed trade, clamped to $0.50–$50. It scales with
+// the account (a flat $50 made most of a small account's trades scratches) and keeps $50 for big ones.
+function autoBeBand(trades){ const a=[]; for(const t of trades||[])if(t&&!t.isOpen&&isFinite(t.net))a.push(Math.abs(t.net));
+  if(!a.length)return 0.5; a.sort((x,y)=>x-y); const n=a.length, m=n%2?a[(n-1)/2]:(a[n/2-1]+a[n/2])/2;
+  return Math.round(Math.min(50,Math.max(0.5,m*0.05))*100)/100; }
+// The fixed band the user set, or null for auto. A stored 50 without beFixed is the old default that
+// boot wrote into every profile (never chosen; the input only showed it), so it reads as auto.
+function beFixedOf(s){ const v=s&&s.beThreshold; return typeof v==='number'&&isFinite(v)&&v>=0&&(v!==50||s.beFixed===true)?v:null; }
+function beBandFor(s,trades){ const v=beFixedOf(s); return v!=null?v:autoBeBand(trades); }
 const outClass=n=>isWin(n)?'pos-t':isLoss(n)?'neg-t':'be-t';
 
 /* ============================ risk / R ============================ */
@@ -326,6 +336,17 @@ function mcMaxDD(nets,iters){ if(nets.length<2)return null; const dds=new Array(
     let peak=0,cum=0,mdd=0; for(const n of a){ cum+=n; if(cum>peak)peak=cum; const dd=cum-peak; if(dd<mdd)mdd=dd; } dds[k]=-mdd; }
   dds.sort((a,b)=>a-b); const q=p=>dds[Math.min(iters-1,Math.floor(p*iters))];
   return {median:q(0.5),p95:q(0.95)}; }
+// The Diagnostic headline's test for an edge: the daily Sharpe's 95% lower bound or the per-trade
+// expectancy's bootstrap 95% lower bound clears 0. Shared so Project can't claim more than it does.
+function edgeEstablished(sharpeLo, boot){ return (sharpeLo!=null&&sharpeLo>0)||!!(boot&&boot.lo>0); }
+// That test on a set of closed trades (Project's basis). Seed, order and B match the Diagnostic's
+// Monte Carlo (_diagMCInput), so the same trades get the same answer on both tabs.
+function edgeTest(closed){ const N=closed.length; if(N<5)return {proven:false,sharpeLo:null,boot:null};
+  const sh=sharpeStats(dailySeriesCalendar(closed)), lo=sh?sh.lo:null;
+  if(lo!=null&&lo>0)return {proven:true,sharpeLo:lo,boot:null};
+  _srand(_hashSeed('diag|'+N+'|'+closed[0].id+'|'+closed[N-1].id));
+  const boot=bootstrapMeanCI(closed.map(t=>t.net),N>3000?800:2000);
+  return {proven:edgeEstablished(lo,boot),sharpeLo:lo,boot}; }
 /* ============================ forward projection (Project tab) ============================ */
 // Calendar daily net series over a lookback window (flat days included, ending today).
 // Pure given tzMidnight/addDays/isWin/isLoss, so the Node harness can pin exact outputs.
@@ -1213,6 +1234,8 @@ function periodTrades(){ const closed=allTrades.filter(t=>!t.isOpen && viewFilte
 function periodTradesAll(){ const inv=allTrades.filter(viewFilter);
   if(rangeActive())return inv.filter(inRange);
   if(!period)return inv; const cut=Date.now()-period*86400000; return inv.filter(t=>t.closeTime>=cut); }
+// maxDDpct's label: |maxDD| ÷ the all-time high of cumulative PnL, which is not "% off the peak it fell from"
+function ddPctOfBest(x){ return (x*100).toFixed(x<0.1?1:0)+'% of best cumulative profit'; }
 function computeStats(closed, allv){
   allv=allv||closed;
   const wins=closed.filter(t=>isWin(t.net)), losses=closed.filter(t=>isLoss(t.net)), scratches=closed.filter(t=>isBE(t.net));

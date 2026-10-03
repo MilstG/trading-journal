@@ -296,7 +296,7 @@ html{scroll-behavior:smooth}
   <ul>
     <li><b>Perps / Spot</b> toggle, period buttons (7/30/90 days…), and a custom date range apply everywhere.</li>
     <li><b>Timezone toggle</b> (UTC / local) changes what "a day" means for the calendar, day×hour heatmap, day journal, and daily PnL.</li>
-    <li><b>Break-even band</b> (default $50): trades inside ±band count as scratches — neither wins nor losses — so tiny outcomes don't pollute your win rate. Set it to match your sizing.</li>
+    <li><b>Break-even band</b> (automatic unless you set one: 5% of your median trade's net, between $0.50 and $50): trades strictly inside ±band count as scratches — neither wins nor losses — so tiny outcomes don't pollute your win rate. Type a dollar amount to fix it, or 0 to turn it off.</li>
     <li><b>R basis</b>: R multiples scale to your average loss by default, or to a fixed $ risk; either can be overridden per trade with journaled risk.</li>
     <li><b>Install app</b>: when served over https, Ledger installs as a PWA.</li>
   </ul>
@@ -382,7 +382,7 @@ html{scroll-behavior:smooth}
   <h3>Numbers look off / trades missing</h3>
   <p><b>Shift-click Load all</b> for a full re-fetch. Check the data-health strip: a "truncated" flag means the exchange API stopped serving older pages — history past that point exists only in your cached fills and backups.</p>
   <h3>My win rate seems wrong</h3>
-  <p>Trades within the break-even band (default ±$50) count as scratches and don't enter the win rate. Adjust the band in settings to match your sizing.</p>
+  <p>Trades strictly inside the break-even band (automatic by default: 5% of your median trade's net, $0.50–$50) count as scratches and don't enter the win rate. Set a fixed band in settings if you prefer.</p>
   <h3>Spot symbols show as @123</h3>
   <p>Spot pairs resolve to token names from exchange metadata; reload once with a network connection and they map through.</p>
   <h3>The browser is using a lot of storage</h3>

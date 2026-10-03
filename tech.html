@@ -169,7 +169,7 @@ html{scroll-behavior:smooth}
   <p class="kicker">05</p>
   <h2>Analytics engine</h2>
   <ul>
-    <li><b>Scratch handling.</b> <code>isWin/isLoss/isBE</code> classify against the configurable break-even band (<code>_be</code>, default $50); scratches are excluded from win rate and never break streaks.</li>
+    <li><b>Scratch handling.</b> <code>isWin/isLoss/isBE</code> classify against the configurable break-even band (<code>_be</code>: the user's fixed $, else automatic — 5% of the median |net| per closed trade, clamped to $0.50–$50; strictly inside is a scratch); scratches are excluded from win rate and never break streaks.</li>
     <li><b>computeStats</b> returns the full headline block in one pass: net/fees/funding/volume, win rate, profit factor, payoff, expectancy, drawdown (absolute and % of high-water mark), streaks, R aggregates, hold times, Sharpe/Sortino from the calendar daily series, green days, median.</li>
     <li><b>Determinism.</b> All Monte Carlo (projections, drawdown expectations, variance card, alert p95) runs on a seeded PRNG: <code>_srand(_hashSeed(label))</code>. Same inputs, same numbers, in the app, the worker, the server, and the tests.</li>
     <li><b>Significance.</b> Edge significance uses a Student-t CDF built from <code>_lgamma</code>/<code>_ibetaReg</code> (tested against reference values); the pattern miner applies Benjamini-Hochberg FDR correction across all mined conditions so multiple testing cannot manufacture an edge.</li>

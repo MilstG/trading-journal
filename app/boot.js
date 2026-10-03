@@ -42,10 +42,9 @@ try{ if(window.Chart&&Chart.defaults)Chart.defaults.animation=false; }catch(e){}
   applyTheme(settings.colorway);
   syncTzBtn(); syncCoachMode();
   if(settings.pageSize&&[10,20,50].includes(settings.pageSize))pageSize=settings.pageSize;
-  if(settings.beThreshold==null)settings.beThreshold=50;
   if(!settings.rules||typeof settings.rules!=='object')settings.rules={};
   if(!(settings.assumedLev>0))settings.assumedLev=5;
-  _be=settings.beThreshold; $('beThresh').value=settings.beThreshold;
+  applyBeBand(); // the input empty = the automatic band (beFixedOf)
   const fixed=settings.rBasis==='fixed'; $('riskDefault').classList.toggle('hide',!fixed);
   $('rBasisNote').textContent=fixed?'$ risk per trade · override per trade':'R-multiples scale to your average loss · override per trade';
   if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;

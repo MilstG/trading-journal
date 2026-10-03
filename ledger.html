@@ -211,7 +211,7 @@ body.bb .settings-pop{border-color:#3A3A32}
 body.coach-off #calModeBtn{display:none}
 .coach-hide{background:none;border:none;color:var(--faint);font-family:var(--mono);font-size:11.5px;cursor:pointer;margin-left:auto;padding:0}
 .coach-hide:hover{color:var(--text)}
-.bediv{display:inline-flex;align-items:center;gap:6px}
+.bediv{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .bediv input{width:70px}
 
 .topnav{display:flex}
@@ -1719,10 +1719,10 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
             <input type="number" id="riskDefault" placeholder="e.g. 100" min="0" step="any" class="hide">
           </div>
           <div class="sp-note" id="rBasisNote">R-multiples scale to your average loss · override per trade</div>
-          <div class="sp-row" data-tip="Trades whose net PnL lands within this dollar band of zero are treated as break-even scratches — excluded from win rate and streaks (profit factor still counts every dollar), and shown with a B/E tag. Set to 0 to disable."><label>Break-even band</label>
-            <span class="bediv">±$<input type="number" id="beThresh" min="0" step="any" value="50"></span>
+          <div class="sp-row" data-tip="Trades whose net PnL lands strictly inside this dollar band around zero are treated as break-even scratches — excluded from win rate and streaks (profit factor still counts every dollar), and shown with a B/E tag. Leave it empty for the automatic band (5% of your median trade's net, $0.50–$50), type a dollar amount to fix it, or 0 to disable."><label>Break-even band</label>
+            <span class="bediv">±$<input type="number" id="beThresh" min="0" step="any" placeholder="auto"></span>
           </div>
-          <div class="sp-note">Scratches inside the band don't count as wins or losses.</div>
+          <div class="sp-note"><b id="beAuto"></b> Scratches inside the band don't count as wins or losses. Empty = auto, scaled to your trades.</div>
           <div class="sp-row" data-tip="Turns the coaching layer on or off: the dashboard coach card, habits and the weekly focus, wins, the process score, the question after each trade and the AI weekly letter. Nothing is deleted — your habits, plans and journal stay, and come back when you switch it on."><label for="coachSwitch">Coach mode</label>
             <button type="button" class="switch" id="coachSwitch" role="switch" aria-checked="true"><span class="knob"></span></button><span class="sw-state" id="coachSwitchState">On</span></div>
           <div class="sp-note">Coach card, habits, wins, process score and trade questions. Hiding them keeps your data.</div>
@@ -1847,7 +1847,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
     <div class="pager" id="pager"></div>
 
     <div class="foot">
-      The <b>Verified</b> banner shows Hyperliquid's own account PnL (all-time) and matches the app exactly. The dashboard below reconstructs each trade from fills; its totals now include realized PnL from positions that are still open or were emptied via transfers, but per-trade spot cost basis can still differ slightly from Hyperliquid's account-value figure.<br>
+      The <b>Verified</b> banner shows Hyperliquid's own account PnL (all-time), the same figure its app reports; each "recon" tag beside it is how far Ledger's fill-based reconstruction is from that figure. The dashboard below reconstructs each trade from fills; its totals now include realized PnL from positions that are still open or were emptied via transfers, but per-trade spot cost basis can still differ slightly from Hyperliquid's account-value figure.<br>
       Net PnL is all-in: realized PnL − fees + funding. R-multiple = net PnL ÷ planned risk. Use the Perps / Spot / Combined toggle to switch views; spot is long-only (no funding, no leverage).
     </div>
     </div><!-- /dashView -->
@@ -1871,7 +1871,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   <div class="modal">
     <h2>Paste data manually</h2>
     <p>If the live pull is blocked by your browser (common when opening the file directly from disk), paste a raw <span class="mono">userFills</span> JSON array here. You can also paste a <b>journal export</b> or a full <b>backup</b> (wallets + settings + journal) to restore it — the type is auto-detected.</p>
-    <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
+    <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Comma, semicolon or tab separated; decimal points or commas, read from the file (a value that could be either, like <span class="mono">1,234</span> with nothing else to tell, is refused). Dates are best as ISO (<span class="mono">2026-09-03 14:00:00</span>); <span class="mono">03/09/2026</span>-style dates need one day above 12 somewhere in the file to tell day-first from month-first. Times without a zone are read as UTC. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
       <input type="file" id="pasteFile" accept=".json,.csv,.txt" style="font-size:12px">
       <span id="pasteType" class="hint"></span>

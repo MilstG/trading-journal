@@ -231,13 +231,19 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }
 /* ============================ generic CSV fill import ============================ */
-// RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF.
-function csvParseRows(text){
-  const rows=[]; let row=[], cell='', q=false;
+// The delimiter, read off the header row: whichever of , ; or tab appears most outside quotes
+// (Excel in most of Europe saves ";"). No separator at all → ",".
+function csvDelim(text){
+  const line=String(text||'').replace(/^\s+/,'').split(/\r?\n/)[0]||''; const n={',':0,';':0,'\t':0}; let q=false;
+  for(const ch of line){ if(ch==='"')q=!q; else if(!q&&ch in n)n[ch]++; }
+  return n[';']>n[',']&&n[';']>=n['\t']?';':n['\t']>n[',']?'\t':','; }
+// RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF; delim defaults to ",".
+function csvParseRows(text,delim){
+  delim=delim||','; const rows=[]; let row=[], cell='', q=false;
   for(let i=0;i<text.length;i++){ const ch=text[i];
     if(q){ if(ch==='"'){ if(text[i+1]==='"'){ cell+='"'; i++; } else q=false; } else cell+=ch; }
     else if(ch==='"')q=true;
-    else if(ch===','){ row.push(cell); cell=''; }
+    else if(ch===delim){ row.push(cell); cell=''; }
     else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n')i++;
       row.push(cell); cell=''; if(row.length>1||row[0]!=='')rows.push(row); row=[]; }
     else cell+=ch;
@@ -245,35 +251,82 @@ function csvParseRows(text){
   if(cell!==''||row.length){ row.push(cell); if(row.length>1||row[0]!=='')rows.push(row); }
   return rows;
 }
+// What one number says about the file's decimal mark: 'dot' ("1,234.50", "0.25", "1,234,567"),
+// 'comma' ("1.234,56", "0,25", "1.234.567"), '' (no separator: says nothing) or null when it could
+// be either — "1,234" and "1.234" are a thousand in one convention and about one in the other.
+function csvNumKind(v){
+  const s=String(v==null?'':v).trim().replace(/[$€£\s]/g,'').replace(/^\(|\)$/g,'').replace(/^[-+]/,'');
+  const hasC=s.includes(','), hasD=s.includes('.');
+  if(hasC&&hasD)return s.lastIndexOf(',')>s.lastIndexOf('.')?'comma':'dot';
+  if(!hasC&&!hasD)return '';
+  const sep=hasC?',':'.', other=hasC?'dot':'comma', mine=hasC?'comma':'dot';
+  const g=sep===','?/^[1-9]\d{0,2}(,\d{3})+$/:/^[1-9]\d{0,2}(\.\d{3})+$/;
+  if(g.test(s))return s.split(sep).length>2?other:null; // 1,234,567 can only be grouping; 1,234 can be either
+  return s.split(sep).length===2?mine:null;               // 0,25 / 1234,5: a decimal mark; 1,23,456: refuse
+}
+// Locale-aware numeric parser. conv = the file's decimal mark ('dot' | 'comma', from
+// parseFillsCsv's per-column inference); without it the value must say so itself (csvNumKind).
+// Handles grouping, accounting negatives "(12.5)", $/€/£ prefixes and exponents. Returns NaN for
+// anything ambiguous or malformed — a refused row beats a silently corrupted one (parseFloat
+// alone read "1,234.50" as 1, and a guess reads "1,234" as 1234 in a file where it means 1.234).
+function csvNum(v,conv){
+  let s=String(v==null?'':v).trim().replace(/[$€£\s]/g,'');
+  if(!s)return NaN;
+  const neg=/^\(.*\)$/.test(s); if(neg)s=s.slice(1,-1).replace(/^[+-]/,''); // an inner sign inside parens is redundant — "(-5)" means −5, and keeping it double-negated the value
+  const c=conv||csvNumKind(s); if(c==null)return NaN;
+  const sg=/^[-+]/.test(s)?s[0]:''; let b=sg?s.slice(1):s;
+  if(c==='dot'&&b.includes(',')){ if(!/^[1-9]\d{0,2}(,\d{3})+(\.\d*)?([eE][-+]?\d+)?$/.test(b))return NaN; b=b.replace(/,/g,''); }
+  if(c==='comma'){ if(b.includes('.')){ if(!/^[1-9]\d{0,2}(\.\d{3})+(,\d*)?([eE][-+]?\d+)?$/.test(b))return NaN; b=b.replace(/\./g,''); }
+    if(b.split(',').length>2)return NaN; b=b.replace(',','.'); }
+  s=sg+b;
+  if(!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return NaN;
+  const n=parseFloat(s); return neg?-n:n;
+}
+// A CSV time cell → epoch ms, or null. Epoch s/ms/µs digit strings and yyyymmdd; ISO-style
+// y-m-d (or y/m/d) dates with an optional time; d/m/y or m/d/y per `order` ('dmy' | 'mdy', inferred
+// per file by parseFillsCsv — without it only a value with a part above 12 says which). A time with
+// no zone is UTC, as exchanges export it: read in the viewer's own zone the same file would land at
+// a different time (and trade ids) on every device. A Z / UTC / ±hh:mm suffix is honored.
+function csvTime(v,order){
+  v=String(v==null?'':v).trim(); if(!v)return null;
+  if(/^\d+(\.\d+)?$/.test(v)){
+    const n=parseFloat(v);
+    // digit-string heuristics: 8 digits like 20260920 is a date, not epoch seconds;
+    // plausible epoch ranges (~2001-2052) in s / ms / µs; anything else is rejected
+    // rather than silently imported as 1970 or year 55978
+    if(/^\d{8}$/.test(v)){ const t=Date.parse(v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8)); return isNaN(t)?null:t; }
+    if(n>=1e9&&n<2.6e9)return Math.round(n*1000);
+    if(n>=1e12&&n<2.6e12)return Math.round(n);
+    if(n>=1e15&&n<2.6e15)return Math.round(n/1000);
+    return null;
+  }
+  const TM='(?:[ T,]+(\\d{1,2}):(\\d{2})(?::(\\d{2})(?:[.,](\\d+))?)?\\s*([ap]\\.?m\\.?)?)?\\s*(Z|UTC|GMT|[+-]\\d{2}:?\\d{2})?$';
+  let y,mo,d,m=new RegExp('^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})'+TM,'i').exec(v);
+  if(m){ y=+m[1]; mo=+m[2]; d=+m[3]; }
+  else if((m=new RegExp('^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{4}|\\d{2})'+TM,'i').exec(v))){
+    const a=+m[1], b=+m[2]; y=+m[3]<100?2000+ +m[3]:+m[3];
+    const o=order||(a>12?'dmy':b>12?'mdy':a===b?'dmy':null); if(!o)return null;
+    d=o==='dmy'?a:b; mo=o==='dmy'?b:a; }
+  else return /(Z|GMT|UTC|[+-]\d{2}:?\d{2})$/i.test(v)&&!isNaN(Date.parse(v))?Date.parse(v):null; // other spellings only with an explicit zone
+  let h=m[4]!=null?+m[4]:0; const mi=m[5]!=null?+m[5]:0, s=m[6]!=null?+m[6]:0, ms=m[7]?+(m[7]+'00').slice(0,3):0, ap=m[8]&&m[8][0].toLowerCase();
+  if(ap){ if(h<1||h>12)return null; h=h%12+(ap==='p'?12:0); }
+  if(mo<1||mo>12||d<1||h>23||mi>59||s>59)return null;
+  const t=Date.UTC(y,mo-1,d,h,mi,s,ms); if(new Date(t).getUTCDate()!==d)return null; // 31/02 is not a date
+  const z=m[9]; if(!z||/^(Z|UTC|GMT)$/i.test(z))return t;
+  const zz=z.replace(':',''), off=(+zz.slice(1,3)*60+ +zz.slice(3,5))*(zz[0]==='-'?-1:1);
+  return t-off*60000;
+}
 // Header-mapped CSV fills → HL-shaped fills for the exact reconstruction path exchange
 // data takes. Column names are matched loosely (case/punctuation-insensitive) against the
 // aliases below, so exports from other venues or a hand-built spreadsheet both work.
 // startPosition and closedPnl are derived (running position + average-cost realization)
 // when the CSV lacks them — exact when the file carries each coin's full history, and the
-// status line says when derivation was used. Throws with a specific message on bad input.
-// Locale-tolerant numeric parser. Handles "1,234.50" (US thousands), "1.234,56" (EU),
-// "1234,56" (bare decimal comma), accounting negatives "(12.5)", $ prefixes and plain
-// floats/exponents. Returns NaN for anything ambiguous — a skipped row beats a silently
-// corrupted one (parseFloat alone read "1,234.50" as 1 and imported it as a valid price).
-function csvNum(v){
-  let s=String(v==null?'':v).trim().replace(/[$\s]/g,'');
-  if(!s)return NaN;
-  const neg=/^\(.*\)$/.test(s); if(neg)s=s.slice(1,-1).replace(/^[+-]/,''); // an inner sign inside parens is redundant — "(-5)" means −5, and keeping it double-negated the value
-  const hasC=s.includes(','), hasD=s.includes('.');
-  if(hasC&&hasD){
-    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); // EU: 1.234,56
-    else s=s.replace(/,/g,'');                                                        // US: 1,234.50
-  } else if(hasC){
-    const parts=s.split(',');
-    if(parts.length===2&&parts[1].length!==3) s=parts[0]+'.'+parts[1];        // 1234,56 → decimal comma
-    else if(parts.slice(1).every(p=>p.length===3)) s=parts.join('');          // 1,234 / 1,234,567 → thousands
-    else return NaN;                                                          // 1,23,456 — refuse to guess
-  }
-  if(!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return NaN;
-  const n=parseFloat(s); return neg?-n:n;
-}
+// status line says when derivation was used. The delimiter, the decimal mark (per column,
+// then per file) and the date order (per file) are inferred; what stays ambiguous is refused
+// with the column, value and row named. Throws with a specific message on bad input.
 function parseFillsCsv(text){
-  const rows=csvParseRows(text.trim());
+  text=String(text||'').trim(); const delim=csvDelim(text);
+  const rows=csvParseRows(text,delim);
   if(rows.length<2)throw new Error('need a header row plus at least one data row');
   const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
   const header=rows[0].map(norm);
@@ -298,45 +351,55 @@ function parseFillsCsv(text){
   }
   const missing=['time','coin','side','px','sz'].filter(k=>col[k]==null);
   if(missing.length)throw new Error('could not find column(s) for: '+missing.join(', ')
-    +' — headers seen: '+rows[0].join(', '));
-  const parseT=v=>{
-    if(/^\d+(\.\d+)?$/.test(v)){
-      const n=parseFloat(v);
-      // digit-string heuristics: 8 digits like 20260920 is a date, not epoch seconds;
-      // plausible epoch ranges (~2001-2052) in s / ms / µs; anything else is rejected
-      // rather than silently imported as 1970 or year 55978
-      if(/^\d{8}$/.test(v)){ const t=Date.parse(v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8)); return isNaN(t)?null:t; }
-      if(n>=1e9&&n<2.6e9)return Math.round(n*1000);
-      if(n>=1e12&&n<2.6e12)return Math.round(n);
-      if(n>=1e15&&n<2.6e15)return Math.round(n/1000);
-      return null;
-    }
-    // a date and time with no zone is UTC, as exchanges export it: read in the viewer's own zone
-    // the same file would land at a different time (and trade ids) on every device
-    const m=/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(v.trim());
-    const t=Date.parse(m?m[1]+'T'+(m[2].length<5||m[2].indexOf(':')===1?'0'+m[2]:m[2])+'Z':v); return isNaN(t)?null:t;
-  };
+    +' — headers seen: '+rows[0].join(', ')+(delim===','?'':' (split on '+(delim==='\t'?'tabs':'"'+delim+'"')+')'));
+  const H=k=>'"'+rows[0][col[k]]+'"', cell=(r,k)=>String(rows[r][col[k]]==null?'':rows[r][col[k]]).trim();
+  // decimal mark: per numeric column from any value that shows it, else the file's (when its columns
+  // agree), else a ";" file's European default; a column showing both is refused
+  const NUM=['px','sz','fee','closedPnl','startPosition'].filter(k=>col[k]!=null), conv={}, seen={};
+  for(const k of NUM){ const ex={};
+    for(let r=1;r<rows.length;r++){ const v=cell(r,k), kd=v&&csvNumKind(v); if(kd&&!ex[kd])ex[kd]=[v,r]; }
+    if(ex.dot&&ex.comma)throw new Error(`column ${H(k)} mixes decimal marks: "${ex.dot[0]}" (row ${ex.dot[1]+1}) uses a point, "${ex.comma[0]}" (row ${ex.comma[1]+1}) a comma — export it with one`);
+    conv[k]=ex.dot?'dot':ex.comma?'comma':null; if(conv[k])seen[conv[k]]=1; }
+  const fileConv=Object.keys(seen).length===1?Object.keys(seen)[0]:!Object.keys(seen).length&&delim===';'?'comma':null;
+  for(const k of NUM)if(!conv[k])conv[k]=fileConv;
+  // date order: any first part above 12 → day-first; any second part above 12 → month-first
+  let dmy=null, mdy=null, amb=null;
+  for(let r=1;r<rows.length;r++){ const v=cell(r,'time'), m=/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})(?!\d)/.exec(v); if(!m)continue;
+    const a=+m[1], b=+m[2]; if(a>12&&b>12)continue; // not a date either way: skipped below
+    if(a>12){ if(!dmy)dmy=[v,r]; } else if(b>12){ if(!mdy)mdy=[v,r]; } else if(a!==b&&!amb)amb=[v,r]; }
+  if(dmy&&mdy)throw new Error(`column ${H('time')} mixes day-first "${dmy[0]}" (row ${dmy[1]+1}) and month-first "${mdy[0]}" (row ${mdy[1]+1}) dates — export ISO dates (2026-09-03 14:00:00)`);
+  const order=dmy?'dmy':mdy?'mdy':null;
+  if(!order&&amb){ const p=/^(\d{1,2})[-/.](\d{1,2})/.exec(amb[0]), MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    throw new Error(`${H('time')} "${amb[0]}" on row ${amb[1]+1} is ambiguous: ${+p[1]} ${MO[+p[2]-1]} or ${+p[2]} ${MO[+p[1]-1]}? No date in the file has a day above 12 to tell. Export ISO dates (2026-09-03 14:00:00); a time without a zone is read as UTC.`); }
   // "open"/"close" alone don't say buy or sell (closing a short is a buy), so they aren't read as sides;
   // "Open Long"/"Close Short" (and "Long > Short" flips) say both
   const sideOf=v=>{ const s=norm(v); if(['b','buy','long','bid','openlong','closeshort','shortlong'].includes(s))return 'B';
     if(['a','s','sell','short','ask','openshort','closelong','longshort'].includes(s))return 'A'; return null; };
-  const fills=[]; let skipped=0;
+  // a number with no decimal-mark evidence anywhere is refused for the whole file, not guessed row by row
+  const num=(r,k)=>{ const v=cell(r,k), n=csvNum(v,conv[k]);
+    if(isNaN(n)&&!conv[k]&&csvNumKind(v)===null&&isFinite(csvNum(v,'dot'))&&isFinite(csvNum(v,'comma')))
+      throw new Error(`${H(k)} "${v}" on row ${r+1} is ambiguous: ${csvNum(v,'dot')} or ${csvNum(v,'comma')}? Nothing else in the file shows whether "," or "." is the decimal mark. Add the decimals ("1,234.00") or export plain numbers.`);
+    return n; };
+  const fills=[]; let skipped=0, firstBad=null;
   for(let r=1;r<rows.length;r++){ const row=rows[r];
-    const time=parseT(String(row[col.time]||'').trim());
-    const coin=String(row[col.coin]||'').trim();
+    const time=csvTime(cell(r,'time'),order);
+    const coin=cell(r,'coin');
     const side=sideOf(row[col.side]);
-    const px=csvNum(row[col.px]), sz=Math.abs(csvNum(row[col.sz]));
-    if(time==null||!coin||!side||!(px>0)||!(sz>0)){ skipped++; continue; }
+    const px=num(r,'px'), sz=Math.abs(num(r,'sz'));
+    const bad=time==null?['time','isn\u2019t a date/time Ledger reads (use ISO 2026-09-03 14:00:00, UTC unless it carries a zone, or epoch)']:!coin?['coin','is empty']:!side?['side','isn\u2019t buy/sell (or long/short)']
+      :!(px>0)?['px','isn\u2019t a positive number']:!(sz>0)?['sz','isn\u2019t a positive number']:null;
+    if(bad){ skipped++; if(!firstBad)firstBad=`row ${r+1}: ${H(bad[0])} "${cell(r,bad[0])}" ${bad[1]}`; continue; }
     // no `crossed` field: execution style is unknown for imported fills, and tallyFill
     // counts unknowns in neither maker nor taker instead of fabricating a signal
+    const opt=k=>col[k]!=null&&cell(r,k)!==''?num(r,k):NaN;
     const f={coin, side, time, px:String(px), sz:String(sz),
-      fee:col.fee!=null&&isFinite(csvNum(row[col.fee]))?String(csvNum(row[col.fee])):'0',
+      fee:isFinite(opt('fee'))?String(opt('fee')):'0',
       tid:'csv'+r, oid:r, dir:''};
-    if(col.closedPnl!=null&&row[col.closedPnl]!==''&&isFinite(csvNum(row[col.closedPnl])))f.closedPnl=String(csvNum(row[col.closedPnl]));
-    if(col.startPosition!=null&&row[col.startPosition]!==''&&isFinite(csvNum(row[col.startPosition])))f.startPosition=String(csvNum(row[col.startPosition]));
+    if(isFinite(opt('closedPnl')))f.closedPnl=String(opt('closedPnl'));
+    if(isFinite(opt('startPosition')))f.startPosition=String(opt('startPosition'));
     fills.push(f);
   }
-  if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped)');
+  if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped; first '+firstBad+')');
   // Stable time sort; same-millisecond ties keep the FILE's chronological direction —
   // most venue exports are newest-first, and walking a same-ms close-then-reopen
   // backwards corrupts the average-cost derivation.
@@ -347,8 +410,10 @@ function parseFillsCsv(text){
   const {derived}=deriveFillPositions(fills);
   const note=fills.length+' rows mapped ('+['time','coin','side','px','sz'].map(k=>k+'←'+rows[0][col[k]]).join(', ')
     +(col.fee!=null?', fee←'+rows[0][col.fee]:', no fee column')
-    +(skipped?', '+skipped+' rows skipped':'')+')';
-  return {fills, note, derived, skipped};
+    +(delim!==','?', '+(delim==='\t'?'tab':'"'+delim+'"')+'-separated':'')
+    +(Object.values(conv).includes('comma')?', decimal comma':'')+(order?', '+(order==='dmy'?'day/month':'month/day')+' dates':'')
+    +(skipped?', '+skipped+' rows skipped — first '+firstBad:'')+')';
+  return {fills, note, derived, skipped, firstBad};
 }
 // Coin names become part of trade ids, which land in HTML attributes and selectors — pasted
 // or imported data is untrusted, so anything outside exchange-style symbols is refused.
@@ -435,7 +500,10 @@ function openCexConnect(venue, label){
 let _setRenderTimer=null;
 const debouncedRender=()=>{ clearTimeout(_setRenderTimer); _setRenderTimer=setTimeout(()=>{ if(allTrades.length)render(); },350); };
 $('riskDefault').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.riskDefault=v>0?v:null; await Store.set(S_KEY,settings); debouncedRender(); });
-$('beThresh').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.beThreshold=(isFinite(v)&&v>=0)?v:0; await Store.set(S_KEY,settings);
+$('beThresh').addEventListener('input',async e=>{ const raw=e.target.value.trim(), v=parseFloat(raw);
+  // empty = the automatic band; a number (0 turns the band off) is the user's own and stays fixed
+  if(raw===''||!isFinite(v)||v<0){ settings.beThreshold=null; settings.beFixed=false; } else { settings.beThreshold=v; settings.beFixed=true; }
+  await Store.set(S_KEY,settings); if(!allTrades.length)applyBeBand();
   _minerCache={key:null,res:null,deep:null}; debouncedRender(); }); // wins, losses and streaks move with the band: mined patterns are stale
 $('rBasis').addEventListener('change',async e=>{ settings.rBasis=e.target.value;
   const fixed=settings.rBasis==='fixed'; $('riskDefault').classList.toggle('hide',!fixed);
@@ -657,7 +725,7 @@ function detectPasteType(raw){
     return 'JSON';
   }catch(e){}
   const first=t.split('\n')[0]||'';
-  if(t.includes('\n')&&first.includes(','))return 'CSV · '+(t.split('\n').length-1)+' rows';
+  if(t.includes('\n')&&/[,;\t]/.test(first))return 'CSV'+(csvDelim(t)===','?'':csvDelim(t)===';'?' (;-separated)':' (tab-separated)')+' · '+(t.split('\n').length-1)+' rows';
   return 'unrecognized — expected fills JSON, a backup/journal export, or CSV';
 }
 function updatePasteType(){ const el=$('pasteType'); if(!el)return;

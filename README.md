@@ -64,8 +64,19 @@ get their position derived by average cost, as below). It also accepts **CSV** �
 header row plus columns for time, symbol, side, price, and size, matched
 against common aliases with exact names beating loose ones — so fills
 exported from another venue or a hand-built spreadsheet feed the exact same
-engine. Locale-formatted numbers ("1,234.50", "1.234,56") parse correctly and
-ambiguous values are rejected rather than guessed; fee and realized-PnL
+engine. Comma-, semicolon- (European Excel) and tab-separated files are told
+apart from the header row. The decimal mark is read per column from any value
+that shows it ("1,234.50" or "0.25" → point; "1.234,56" or "0,25" → comma), then
+from the rest of the file, and a semicolon file with no such value reads as
+decimal comma; a value that could still be either ("1,234": a thousand, or about
+one) is refused with the column, value and row named, rather than guessed, and
+so is a column that mixes the two. Dates are best as ISO (`2026-09-03 14:00:00`,
+`2026-09-03T14:00:00+02:00`) or epoch seconds/ms; `03/09/2026`-style dates are
+read day-first when any date in the file has a first part above 12, month-first
+when any has a second part above 12, and refused (asking for ISO) when nothing
+tells. **A time without a zone is read as UTC**, as exchanges export it, so the
+same file gives the same trades on every device. A skipped row is reported with
+the first bad column, its value and its row number. Fee and realized-PnL
 columns are used when present, otherwise position and PnL are derived by
 average cost (exact when the file carries each coin's full history, and the
 status line says when derivation was used). Imported fills carry no
@@ -196,7 +207,7 @@ own trades and journal:
 - **Remember** — one of your own weekly lessons, matched to the focus habit
   when one mentions it.
 
-Below it, **wins** — "5 good-process days in a row", "every planned stop
+Below it, **wins** — "5 trading days in a row at Discipline 70+", "every planned stop
 honored this week", "good loss on Tue", "you're breaking your rule far less
 since you made it". Reinforcement, not only correction.
 
@@ -1176,6 +1187,13 @@ The statistician's view of your trading. Sections top to bottom:
 - **Verdict** — a letter grade with plain-English reasoning: are you net
   profitable, is your Sharpe's lower confidence bound above zero (edge
   distinguishable from noise), and do you have enough trades to say so.
+  The edge counts as established when the Sharpe's or the per-trade
+  expectancy's 95% lower bound clears zero; the Project view uses the same test.
+- **Walk-forward reality** — expectancy scored strictly out-of-sample, with its
+  own bootstrap 95% CI. Its conclusion weighs that CI the way the verdict weighs
+  the in-sample one: a positive walk-forward expectancy whose CI still includes
+  zero reads "positive out-of-sample, but not yet distinguishable from noise",
+  never "the version worth trusting".
 - **Statistical reliability** — Sharpe with CI, bootstrap CI on mean PnL,
   Monte-Carlo drawdown expectations (is your current drawdown normal for your
   strategy or a red flag), Wilson-interval win rate.
@@ -1701,7 +1719,13 @@ You get:
 - **If you keep this up** — straight-line per-week / per-month / per-year
   numbers off your average day.
 - **Simulated horizon outcomes** — median, 25th/75th/95th percentile paths and
-  the share of simulations that finish green.
+  **simulated paths ending green** (the share of the 400 replays that end above
+  zero — not a probability that you will).
+- **"If your average day holds — not yet a proven edge."** When the projection's
+  basis trades don't pass the Diagnostic's edge test (Sharpe or expectancy 95%
+  lower bound above zero, same seed and resample count), the pace, simulated
+  outcomes and milestone dates all carry that label: they replay an edge your
+  trades haven't shown yet.
 - **Drawdown reality-check** — the honest companion to the fan chart: the max
   peak-to-trough dip *inside* each simulated path, reported as median / 1-in-4
   / 1-in-20 quantiles. The fan shows where paths end; this shows how ugly the
@@ -1741,8 +1765,9 @@ Treat it as positive visualization of staying the course, nothing more.
   set the default for everyone with `DEFAULT_THEME=ts9|ink|bb` (a user's own pick still wins).
 - **R basis:** what 1R means when a trade has no planned risk journaled —
   average loss, fixed $ amount, or other bases.
-- **Breakeven threshold:** the ±$ band treated as "scratch" rather than
-  win/loss in the distribution analysis.
+- **Break-even band:** the ±$ band treated as "scratch" rather than win/loss.
+  Automatic unless you type a dollar amount (Settings shows "auto ($X)"); empty
+  goes back to auto, 0 turns it off. See *Concepts and definitions*.
 
 ## Exports and backups
 
@@ -1981,6 +2006,24 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 
 - **Net PnL** = price PnL − fees ± funding, attributed per trade. Funding
   payments land on the trade whose holding window they fall inside.
+- **Break-even band (scratches)** — a closed trade whose net is strictly inside
+  ±band of zero is a scratch: neither a win nor a loss (win rate and streaks
+  leave it out; profit factor still counts every dollar). A trade exactly at the
+  band counts. By default the band is **automatic: 5% of the median |net| per
+  closed trade, across every market and wallet, clamped to $0.50–$50** — it
+  scales with the account (a flat $50 made most of a small account's trades
+  scratches, and called a +$50, +20% winner break-even) while big accounts keep
+  the old $50. A dollar amount set in Settings is kept as is. Profiles saved
+  before the automatic band carry the old default of exactly $50, written in
+  without being chosen, so a stored $50 reads as automatic until set again;
+  any other stored value stays fixed. The server's API uses the same band.
+- **Max drawdown %** — the largest peak-to-trough fall of cumulative realized
+  PnL, as a share of your **best cumulative profit** (the PnL curve's all-time
+  high), shown as "84% of best cumulative profit". It is not the % off the peak
+  that dip fell from, and it is deposit/withdrawal independent.
+- **Verified PnL vs recon** — the Verified strip shows Hyperliquid's own
+  account PnL; each "recon" tag is how far Ledger's fill-based reconstruction is
+  from it. A large recon gap means per-trade analytics are missing PnL.
 - **R-multiple** — result divided by planned risk. Uses your journaled risk
   when present, otherwise the configurable 1R fallback.
 - **Expectancy** — average net per trade; **rolling expectancy** = the same

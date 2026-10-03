@@ -108,7 +108,7 @@ await t('disconnecting during a sync stays disconnected, and a member removed mi
 
 console.log('\nJournal');
 const PRE = "const _be=50;const isWin=n=>n>_be,isLoss=n=>n<-_be,isBE=n=>Math.abs(n)<=_be;let spotMaps={nameByCoin:{}};";
-const R = await evalModule(['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'csvParseRows', 'csvNum', 'deriveFillPositions', 'parseFillsCsv'], ['reconstructTrades', 'parseFillsCsv'], PRE);
+const R = await evalModule(['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'csvDelim', 'csvParseRows', 'csvNumKind', 'csvNum', 'csvTime', 'deriveFillPositions', 'parseFillsCsv'], ['reconstructTrades', 'parseFillsCsv'], PRE);
 const fill = (t, side, px, sz, start, pnl) => ({ coin: 'BTC', time: t, side, px: String(px), sz: String(sz), startPosition: String(start), closedPnl: String(pnl || 0), fee: '0', tid: t + side + start });
 t('fills in the same millisecond are put in position order (a close and a reopen)', () => {
   const tr = R.reconstructTrades([fill(1, 'B', 100, 1, 0), fill(2, 'B', 111, 1, 0), fill(2, 'A', 110, 1, 1, 10)], '0xa', 'perp');
