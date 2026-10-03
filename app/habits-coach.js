@@ -1104,15 +1104,20 @@ function coachContext(){
   if(closed.length>=5){ try{
     const s=computeStats(closed,trades);
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
-    findings=buildFindings(closed,s,{scan:diagScan(closed),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
+    findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
   const ctx={trades,closed,days:pc.days,byDay,preds,findings,rulePreds};
   _coachMemo={key,ctx}; return ctx;
 }
 function habitProgress(h, ctx, fromMs){
   const fromKey=dayKey(Math.max(h.createdAt||0,fromMs||0));
+  // memoized per coach context: the coach, the game (twice) and the badge passes ask for the same habit
+  // several times a rebuild. A hit needs the same habit (by content), start day, journal revision and
+  // slip days ('slip' habits read _pzSlipDays, which the game sets); callers only read the result.
+  const M=habitProgress._m||(habitProgress._m=new WeakMap()); let C=M.get(ctx); if(!C)M.set(ctx,C=new Map());
+  const k=JSON.stringify(h)+'|'+fromKey+'|'+_jrev, hit=C.get(k); if(hit&&hit.slips===_pzSlipDays&&hit.J===journal)return hit.v;
   const res=habitDayResults(h,ctx.days,ctx.byDay,ctx.preds[h.id],fromKey,journal);
-  return {res,...habitSummary(res)};
+  const v={res,...habitSummary(res)}; C.set(k,{slips:_pzSlipDays,J:journal,v}); return v;
 }
 function dotsHtml(res,max){ const r=res.slice(-(max||7));
   return `<span class="hdots" aria-label="${r.filter(x=>x.kept).length} of ${r.length} days kept">${r.map(x=>`<i class="${x.kept?'k':'m'}" data-tip="${esc(x.key)} · ${x.kept?'kept':'missed'}"></i>`).join('')}</span>`; }

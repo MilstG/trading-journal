@@ -66,9 +66,18 @@ function _survivalFloor(nets,acct){
   const kelly=Math.max(0,(p*b-(1-p))/b); if(kelly<=0)return null;
   return {p,b,kelly,floor:-(kelly*acct)};
 }
+function _distSeed(closed){ return _hashSeed('dist|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:'')); }
+// The change point behind the "best period" overlay. Its 200–300-shuffle permutation test rides the
+// Diagnostic's Monte Carlo batch (diagMCCompute: the worker for big accounts, seeded with this same
+// _distSeed), so it's read from that memo; computed here only when no batch covers this set.
+// While the worker is still on it the overlay falls back to the plain shape; the tab re-renders when it lands.
+function _diagCP(closed){ const k=_diagMCKey(closed);
+  if(_diagMC.key===k)return _diagMC.cp||null;
+  if(_diagMC.pending===k)return null;
+  _srand(_distSeed(closed)); return changePoint(closed); }
 function renderDistribution(closed){
   const box=$('distChart'); if(!box)return;
-  _srand(_hashSeed('dist|'+closed.length+'|'+(closed.length?closed[0].id+'|'+closed[closed.length-1].id:'')));
+  _srand(_distSeed(closed));
   const pct=_distState.mode==='pct';
   const rows=pct ? closed.map(t=>retPct(t)).filter(v=>v!==null) : closed.map(t=>t.net);
   const empty=$('distEmpty');
@@ -107,7 +116,7 @@ function renderDistribution(closed){
       const kelly=Math.max(0,(p*b-(1-p))/b);
       if(kelly>0){ if(pct){ sf={p,b,kelly,floor:-(kelly*100)}; } else if(acct){ sf={p,b,kelly,floor:-(kelly*acct)}; } } } }
   const tShape=_bell(H.mids, mean+(mean>median?(mean-median)*0.6:(pct?0.3:80)), sd*0.82, N, binW, 1.12);
-  let tBest=null; const cp=changePoint(closed);
+  let tBest=null; const cp=_diagCP(closed);
   if(cp&&cp.sig){ const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
     const seg=cp.after.exp>=cp.before.exp?chron.slice(cp.k):chron.slice(0,cp.k);
     const segV=(pct?seg.map(t=>retPct(t)).filter(v=>v!==null):seg.map(t=>t.net));
@@ -212,7 +221,23 @@ function wireWalkForward(wf){
       scales:scales()}});
   explain(_diagCharts.wf,'Each block is judged on trades the rule never saw: bars are what it really made, the dashed line what the training window promised.');
 }
-function destroyDiagCharts(){ Object.values(_diagCharts).forEach(c=>c&&c.destroy()); _diagCharts={}; }
+function destroyDiagCharts(){ Object.values(_diagCharts).forEach(c=>c&&c.destroy()); _diagCharts={};
+  if(_diagLazyIO){ _diagLazyIO.disconnect(); _diagLazyIO=null; } _diagLazy=[]; }
+// Big accounts: a chart below the fold is built when it nears the viewport, not on every render —
+// at 30k trades the rolling-expectancy chart alone is ~150 ms, and the tab re-renders on journal
+// saves. Same chart, same data, built later; the exports flush the queue first so they see every
+// chart. Small accounts (eager) build everything at once, as before.
+let _diagLazy=[], _diagLazyIO=null;
+function _diagChartLater(el,fn,eager){
+  if(eager||!el||typeof IntersectionObserver!=='function'){ fn(); return; }
+  _diagLazy.push({el,fn});
+  if(!_diagLazyIO)_diagLazyIO=new IntersectionObserver(es=>{ for(const e of es)if(e.isIntersecting)_diagLazyRun(e.target); },{rootMargin:'300px 0px'});
+  _diagLazyIO.observe(el);
+}
+function _diagLazyRun(el){ const i=_diagLazy.findIndex(x=>x.el===el); if(i<0)return;
+  const x=_diagLazy.splice(i,1)[0]; if(_diagLazyIO)_diagLazyIO.unobserve(el);
+  if(el.isConnected)try{ x.fn(); }catch(e){ console.warn('diag chart',e); } }
+function _diagLazyFlush(){ for(const x of _diagLazy.slice())_diagLazyRun(x.el); }
 // Snapshot the whole Diagnostic view — including any miner/excursion results already on
 // screen — as one self-contained HTML file. Charts become embedded PNGs, interactive
 // controls are stripped, and the app's own stylesheet is inlined so the report renders
@@ -246,20 +271,36 @@ let _wiChart=null, _wiFns=[], _wiSel=0;
 // Builds the condition dropdown from the same miner families the pattern scan uses (so
 // thresholds and names match exactly what the miner reported), runs whatIfModel on demand,
 // and renders the side-by-side verdict plus an actual-vs-counterfactual equity chart.
-function wireWhatIf(closed){
+function wireWhatIf(closed,dk,now){
   const sel=$('wiCond'), btn=$('wiRun'), box=$('wiBox');
   if(!sel||!btn||!box)return;
   if(_wiChart){ try{_wiChart.destroy();}catch(e){} _wiChart=null; } // diag re-render replaced the canvas
   if(closed.length<10){ sel.parentElement.classList.add('hide'); box.innerHTML='<p class="lead">Needs \u226510 completed trades.</p>'; return; }
-  const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
-  let fams={}; try{ fams=minerFams(chron,tradeStates(chron)); }catch(e){}
-  _wiFns=[]; const opts=[]; const fp=fams.__params||{};
-  for(const f in fams) for(const [name,fn,cid] of fams[f]){
-    let n=0; try{ n=chron.filter(fn).length; }catch(e){ continue; }
-    if(n<3 || n>chron.length-3) continue; // nothing to learn from removing ~nothing or ~everything
-    opts.push(`<option value="${_wiFns.length}">${esc(name)} \u00b7 ${n} trades</option>`);
-    _wiFns.push({name,fn,cid,params:fp});
-  }
+  dk=dk||_diagDataKey(closed);
+  // big accounts: building the list (every miner family, then a count over every trade — ~300 ms at
+  // 30k trades) waits until the section nears the viewport or the picker is touched; it sits far
+  // below the fold, so opening the tab doesn't pay for it. The list itself is the same either way.
+  if(!now&&closed.length>=2000&&!_diagMemoHas(dk,'whatIf',closed)&&typeof IntersectionObserver==='function'){
+    sel.innerHTML='<option>Loading conditions\u2026</option>'; btn.disabled=true;
+    let io=null; const go=()=>{ if(!io)return; io.disconnect(); io=null; if(sel.isConnected)wireWhatIf(closed,dk,true); };
+    io=new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting))go(); },{rootMargin:'600px 0px'});
+    io.observe(box); sel.addEventListener('pointerdown',go,{once:true}); sel.addEventListener('focus',go,{once:true});
+    return; }
+  // the condition list is memoized on the data version: identical inputs give the identical
+  // list, and re-renders (the Monte Carlo landing, a journal save) no longer rebuild it
+  const W=_diagMemoGet(dk,'whatIf',()=>{
+    const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+    let fams={}; try{ fams=minerFams(chron,tradeStates(chron)); }catch(e){}
+    const fns=[], opts=[]; const fp=fams.__params||{};
+    for(const f in fams) for(const [name,fn,cid] of fams[f]){
+      let n=0; try{ n=chron.filter(fn).length; }catch(e){ continue; }
+      if(n<3 || n>chron.length-3) continue; // nothing to learn from removing ~nothing or ~everything
+      opts.push(`<option value="${fns.length}">${esc(name)} \u00b7 ${n} trades</option>`);
+      fns.push({name,fn,cid,params:fp});
+    }
+    return {chron,fns,opts};
+  },closed);
+  const chron=W.chron, opts=W.opts; _wiFns=W.fns;
   if(!opts.length){ box.innerHTML='<p class="lead">No condition matches between 3 trades and all-but-3 \u2014 more history needed.</p>'; btn.disabled=true; return; }
   btn.disabled=false;
   if(_wiSel>=_wiFns.length)_wiSel=0;
@@ -552,57 +593,37 @@ function renderDiagnostic(closed, allv){
   _srand(diagSeed);
   const el=$('diagView');
   if(!closed.length){ el.innerHTML='<div class="verdict"><div class="grade">No completed trades in this view</div><p>Switch the Perps / Spot / Combined toggle or widen the period, then re-open Diagnostic.</p></div>'; return; }
-  const s=computeStats(closed, allv), N=closed.length;
+  const s=computeStatsMemo(closed, allv), N=closed.length;
   const pct=x=>(x*100).toFixed(0)+'%';
-  const {strong,weak,MIN}=diagScan(closed);
-  const stab=splitStability(closed);
+  // the heavy sync panels are memoized on the data version: the tab re-renders when the Monte Carlo
+  // lands from the worker, on journal saves and on toggles, and most of those change none of this
+  const dk=_diagDataKey(closed);
+  const {strong,weak,MIN}=diagScanMemo(closed);
+  const stab=_diagMemoGet(dk,'stab',()=>splitStability(closed),closed);
 
   // trade-level edge significance (distribution-free bootstrap + parametric t-test on per-trade net)
-  const nets=closed.map(t=>t.net);
-  const chronNets=[...closed].sort((a,b)=>a.closeTime-b.closeTime).map(t=>t.net);
-  const B = N>3000?800:2000, MCI = N>3000?500:1500;
-  // Monte Carlo (bootstrap CI + shuffle/forward drawdown, up to ~4k iterations) is memoized
-  // on the closed set's identity: it used to re-run synchronously on the main thread on
-  // EVERY Diagnostic render — including each journal save while the tab was open. The PRNG
-  // is seeded from the same identity above, so cached values equal recomputed ones exactly.
-  const mcKey=[N,closed.length?closed[0].id:'',closed.length?closed[closed.length-1].id:'',s.net,_be].join('|');
+  const I=_diagMCInput(closed), nets=I.mcIn.nets, chronT=I.chronT, chronNets=I.mcIn.chron, mcKey=I.mcKey, B=I.mcIn.B, MCI=I.mcIn.MCI;
   let boot,esig,mcdd,fdd,mcPending=false;
-  const _mcSync=()=>{ // one synchronous compute — small accounts, and the fallback when the worker is unavailable
-    _srand(diagSeed);
-    const b2=nets.length>=5?bootstrapMeanCI(nets,B):null;
-    const e2=nets.length>=5?edgeSignificance(nets):null;
-    const m2=chronNets.length>=5?mcMaxDD(chronNets,MCI):null;
-    const HZ=Math.min(200,Math.max(50,N));
-    const f2=chronNets.length>=10?fwdMaxDD(chronNets,HZ,N>3000?400:800):null;
-    return {key:mcKey,boot:b2,esig:e2,mcdd:m2,fdd:f2};
-  };
   if(_diagMC.key===mcKey){ ({boot,esig,mcdd,fdd}=_diagMC); }
-  else if(N<1500){ _diagMC=_mcSync(); ({boot,esig,mcdd,fdd}=_diagMC); }
+  else if(N<1500){ _diagMC=_diagMCSync(I); ({boot,esig,mcdd,fdd}=_diagMC); }
   else{
-    // big accounts: the Monte Carlo batch (up to ~4k iterations) goes to the worker so the
-    // first Diagnostic render doesn't block the main thread; the affected panels show
-    // their empty states until the results land (~1s), then the tab re-renders once.
+    // big accounts: the Monte Carlo batch goes to the worker so the first Diagnostic
+    // render doesn't block the main thread; the affected panels show their empty states
+    // until the results land, then the tab re-renders once. render() usually started it
+    // already (diagWarm), so opening the tab tends to find it done and render just once.
     // Seed + compute order match the sync path exactly, so the values are identical.
     boot=esig=mcdd=fdd=null; mcPending=true;
-    if(_diagMC.pending!==mcKey){
-      _diagMC.pending=mcKey;
-      runInWorker('diagmc',{nets,chron:chronNets,seed:diagSeed,B,MCI,HZN:Math.min(200,Math.max(50,N)),FI:N>3000?400:800,be:_be})
-        .then(out=>{ _diagMC={key:mcKey,...out};
-          if(activeTab==='diag')renderDiagnostic(periodTrades(),periodTradesAll()); })
-        .catch(()=>{ _diagMC=_mcSync();
-          if(activeTab==='diag')renderDiagnostic(periodTrades(),periodTradesAll()); });
-    }
+    if(_diagMC.pending!==mcKey)_diagMCStart(I);
   }
   const skew = _skew(nets);
   const acf1 = _autocorr1(chronNets);
   const cdd = chronNets.length? currentDD(chronNets) : null;
-  const chronT=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   const uw = underwaterStats(chronT);
   const HZN = Math.min(200,Math.max(50,N));
   // sample adequacy
   const adeq = N<30?['no','far too few — anecdotal only']:N<100?['mid','preliminary — directional only']:N<300?['mid','moderate — trends emerging']:['ok','reasonable for stable estimates'];
   const shRel = s.sharpe==null?'—':(s.sharpeLo>1?'distinguishable from 1.0 ✓':s.sharpeLo>0?'positive, but band too wide to distinguish from ~1':'band includes 0 — not distinguishable from no edge');
-  const _sig=behaviorSignals(closed,s);
+  const _sig=behaviorSignalsMemo(closed,s);
   const {grossReal,costDragPct,big,small,bigExp,smallExp,oversizing,flagged,clean,flagExp,cleanExp,mistakeCost,ratingMono,mkts,topMkt,conc,avgWHold,avgLHold,disposition,priorClose,afterLoss,afterLossExp,tilt,dayArr,hiDays,loDays,hiExp,loExp,overtrading,topShare,netNoBest,fragile}=_sig;
   // --- Kelly / optimal sizing (risk fraction per trade) ---
   const kelly=(s.payoff>0&&s.payoff!==Infinity&&s.winRate>0)?(s.winRate-(1-s.winRate)/s.payoff):null;
@@ -648,13 +669,15 @@ function renderDiagnostic(closed, allv){
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const kellyTxt = kelly==null?'—':kelly<=0?'0% — no positive edge to size':`risk ~${pct(Math.max(0,kelly))} · half-Kelly ~${pct(Math.max(0,kelly)/2)}`;
   // --- walk-forward reality: the honest out-of-sample counterpart to the in-sample verdict ---
+  // its 800-pass bootstrap CI comes from the Monte Carlo batch above (diagMCCompute)
   _srand(_hashSeed('wf:'+closed.length));
-  const wf = walkForward(closed);
+  const wf = walkForward(closed,{ci:false});
+  if(wf) wf.wfCI = mcPending ? null : (_diagMC.wfCI||null);
   const wfHtml = (()=>{
     if(!wf) return '';
     const fA=x=>x==null?'—':(x>=0?'+':'')+fmtUsd(x);
     const wfCls=wf.wfExp>0?'ok':(wf.wfExp<0?'no':'mid');
-    const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:'need ≥8 out-of-sample trades';
+    const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:mcPending&&wf.oosN>=8?'computing…':'need ≥8 out-of-sample trades';
     // retention = wfExp / fullIS, so a negative walk-forward expectancy against a positive
     // in-sample one yields a negative ratio. "-62% of in-sample kept" is meaningless; say what
     // actually happened instead.
@@ -841,10 +864,10 @@ function renderDiagnostic(closed, allv){
     renderDiagnostic(periodTrades(),periodTradesAll()); }; });
   const runBtn=$('runMiner');
   const repBtn=$('exportReport');
-  if(repBtn)repBtn.onclick=()=>{ try{ exportReport(); }catch(e){ setErr('Report export failed: '+e.message); } };
+  if(repBtn)repBtn.onclick=()=>{ try{ _diagLazyFlush(); exportReport(); }catch(e){ setErr('Report export failed: '+e.message); } };
   const pdfBtn=$('exportDiagPdf');
-  if(pdfBtn)pdfBtn.onclick=()=>{ try{ exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
-  wireWhatIf(closed);
+  if(pdfBtn)pdfBtn.onclick=()=>{ try{ _diagLazyFlush(); exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
+  wireWhatIf(closed,dk);
   wireAssetAttrib(closed);
   wireWalkForward(wf);
   document.querySelectorAll('#anaBasisTog button').forEach(b=>{ b.classList.toggle('on',b.dataset.b===(settings.anaBasis||'usd'));
@@ -854,13 +877,15 @@ function renderDiagnostic(closed, allv){
       const rb=$('runMiner'); if(rb){ rb.disabled=false; rb.textContent='Run pattern miner + deep scan'; }
       else if($('minerBox')) $('minerBox').innerHTML='<button class="btn ghost" id="runMiner2">Run pattern miner + deep scan</button>';
       renderDiagnostic(periodTrades(),periodTradesAll()); }; });
-  renderDistribution(closed);
+  // big accounts: the charts below the fold are built as they near the viewport (see _diagChartLater)
+  const eager=N<2000;
+  _diagChartLater($('distChart'),()=>renderDistribution(closed),eager);
   wireExtraDiag(closed,allv,s);
   wireFindingCards($('fndGrid'),findings);
   wireExcursions(closed);
   renderBenchmark(closed); // async; reveals its card only when candle data exists
   // --- monthly PnL decomposition: price vs funding vs fees ---
-  (function(){ const el=$('diagDecomp'); if(!el)return;
+  _diagChartLater($('diagDecomp'),function(){ const el=$('diagDecomp'); if(!el)return;
     const by={}; for(const t of closed){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0');
       const o=by[k]=by[k]||{price:0,fund:0,fees:0}; o.price+=t.pnl; o.fund+=t.funding||0; o.fees-=t.fees; }
     const keys=Object.keys(by).sort(); if(!keys.length)return;
@@ -875,9 +900,9 @@ function renderDiagnostic(closed, allv){
         scales:{x:{stacked:true,grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:12}},
                 y:{stacked:true,grid:{color:GRID,drawTicks:false},border:{display:false}}}}});
     explain(_diagCharts.decomp,'Each month’s result split into what price moves made, what funding paid or cost, and what fees took.');
-  })();
+  },eager);
   // --- per-setup equity curves ---
-  (function(){ const el=$('setupCurves'); if(!el)return;
+  _diagChartLater($('setupCurves'),function(){ const el=$('setupCurves'); if(!el)return;
     const cards=setupScorecards(closed,journal); if(!cards.length)return;
     const PAL=['#8b93ff',themeGreen(),'#E6B450',themeRed(),'#5BC8D8','#C792EA'];
     _diagCharts.setups=new Chart(el,{type:'line',data:{datasets:cards.map((c,i)=>({
@@ -890,8 +915,9 @@ function renderDiagnostic(closed, allv){
                 y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>'$'+Number(v).toLocaleString()}}},
         interaction:{intersect:false,mode:'nearest'}}});
     explain(_diagCharts.setups,'Running total for each setup, trade by trade. A setup whose line climbs steadily is one worth trading more.');
-  })();
+  },eager);
   // --- equity vs HWM chart ---
+  _diagChartLater($('diagEq'),()=>{
   const chronAll=[...allv].sort((a,b)=>a.closeTime-b.closeTime);
   if(chronAll.length>=2){
     let cum=0,hwm=0; const eqD=[],hwmD=[],ts=[];
@@ -904,9 +930,10 @@ function renderDiagnostic(closed, allv){
         afterBody:it=>{ const a=it.find(x=>x.datasetIndex===1), b=it.find(x=>x.datasetIndex===0); if(!a||!b)return []; const dd=a.parsed.y-b.parsed.y; return [dd<0?' Drawdown '+fmtUsd(dd)+(b.parsed.y>0?' ('+Math.round(-dd/b.parsed.y*100)+'% of the high)':''):' At the high']; }}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
     explain(_diagCharts.eq,'Green: your running total. Dashed: its highest point so far. The red gap between them is the drawdown you were sitting in.');
-  }
+  } },eager);
   // --- rolling 30-trade expectancy ---
-  const chronClosed=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+  _diagChartLater($('diagRoll'),()=>{
+  const chronClosed=chronT; // closed in close order (sorted once above)
   const W=30;
   if(chronClosed.length>=40){
     $('diagRollEmpty').classList.add('hide'); $('diagRoll').style.display='';
@@ -920,7 +947,7 @@ function renderDiagnostic(closed, allv){
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtUsd(c.parsed.y)+' a trade over the last '+W,afterLabel:c=>' '+fmtUsd(c.parsed.y*W)+' in total over those '+W+' trades'}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
     explain(_diagCharts.roll,'Your average trade over a sliding window of the last '+W+'. Above zero, your recent trading is making money; a falling line is an edge fading.');
-  } else if($('diagRoll')){ $('diagRoll').style.display='none'; $('diagRollEmpty').classList.remove('hide'); }
+  } else if($('diagRoll')){ $('diagRoll').style.display='none'; $('diagRollEmpty').classList.remove('hide'); } },eager);
   if(runBtn){
     const basis=settings.anaBasis||'usd';
     const key=[view,period,customRange.from,customRange.to,closed.length,basis,dexView,_jrev].join('|'); // dex filter + journal edits change miner inputs without changing trade count
@@ -929,8 +956,13 @@ function renderDiagnostic(closed, allv){
       const seed=_hashSeed('miner|'+key+'|'+pool.length);
       const token=++_minerToken;
       try{
-        const {res,deep}=await minerScan(pool,basis,seed,(done,total)=>{
-          if(token===_minerToken&&runBtn.isConnected)runBtn.textContent='Scanning… '+Math.min(99,Math.round(done/total*100))+'%'; });
+        // one scan per selection: a re-render while it runs (the Monte Carlo landing, a journal
+        // save) joins the scan in flight instead of starting — and shipping the pool for — a second
+        if(!_minerRun||_minerRun.key!==key){ const run={key};
+          run.p=minerScan(pool,basis,seed,(done,total)=>{ const b=$('runMiner');
+            if(_minerRun===run&&b&&b.disabled)b.textContent='Scanning… '+Math.min(99,Math.round(done/total*100))+'%'; },_poolKey(pool,basis));
+          _minerRun=run; run.p.then(()=>{ if(_minerRun===run)_minerRun=null; },()=>{ if(_minerRun===run)_minerRun=null; }); }
+        const {res,deep}=await _minerRun.p;
         if(res)res.seed=seed.toString(16);
         _minerCache={key,res,deep};
         if(token===_minerToken) renderMinerResults(res,deep,basis);
@@ -1104,6 +1136,77 @@ function deepScan(closed,V){
   return {states:stateAnalysis(closed,V), cp:changePoint(closed,V), sz:sizeDependence(closed), prob:probabilityScan(closed,V)};
 }
 
+// The Diagnostic's Monte Carlo batch as one pure function, run by both the sync path and the
+// compute worker ('diagmc') — same code, same seeds, same order, so the two can't drift. Each
+// stage reseeds from its own identity, exactly as the inline code it replaced did: the walk-
+// forward CI is walkForward's bootstrap after _srand('wf:'+N), the change point is changePoint
+// after renderDistribution's _distSeed. `times` + `chron` rebuild the closed set in close order
+// ({closeTime, net} is all either reads); re-sorting it is a no-op since the sort is stable.
+function diagMCCompute(p){
+  _srand(p.seed);
+  const nets=p.nets, chron=p.chron;
+  const out={boot:nets.length>=5?bootstrapMeanCI(nets,p.B):null,
+    esig:nets.length>=5?edgeSignificance(nets):null,
+    mcdd:chron.length>=5?mcMaxDD(chron,p.MCI):null,
+    fdd:chron.length>=10?fwdMaxDD(chron,p.HZN,p.FI):null};
+  if(p.times){ const T=p.times.map((t,i)=>({closeTime:t,net:chron[i]}));
+    _srand(p.wfSeed); const wf=walkForward(T); out.wfCI=wf?wf.wfCI:null;
+    _srand(p.cpSeed); out.cp=changePoint(T); }
+  return out;
+}
+// The batch's input for a closed set. Monte Carlo (bootstrap CI + shuffle/forward drawdown, up to
+// ~4k iterations, plus the walk-forward CI's 800-pass bootstrap and the distribution's change-point
+// permutation test) is memoized in _diagMC on the closed set's identity (mcKey): it used to re-run
+// synchronously on the main thread on EVERY Diagnostic render — including each journal save while
+// the tab was open. Each stage is seeded from that identity, so cached values equal recomputed ones.
+function _diagMCInput(closed){ const N=closed.length;
+  const chronT=[...closed].sort((a,b)=>a.closeTime-b.closeTime), chronNets=chronT.map(t=>t.net);
+  const seed=_hashSeed('diag|'+N+'|'+(N?closed[0].id+'|'+closed[N-1].id:'')); // renderDiagnostic's diagSeed
+  return {mcKey:_diagMCKey(closed), chronT, mcIn:{nets:closed.map(t=>t.net),chron:chronNets,times:chronT.map(t=>t.closeTime),seed,
+    B:N>3000?800:2000,MCI:N>3000?500:1500,HZN:Math.min(200,Math.max(50,N)),FI:N>3000?400:800,be:_be,
+    wfSeed:_hashSeed('wf:'+N),cpSeed:_distSeed(closed)}}; }
+// one synchronous compute — small accounts, and the fallback when the worker is unavailable.
+// The same diagMCCompute the worker runs, so the two paths can't drift.
+function _diagMCSync(I){ return {key:I.mcKey,...diagMCCompute(I.mcIn)}; }
+function _diagMCStart(I,warm){
+  _diagMC.pending=I.mcKey;
+  const done=()=>{ if(activeTab==='diag')renderDiagnostic(periodTrades(),periodTradesAll()); };
+  runInWorker('diagmc',I.mcIn)
+    .then(out=>{ _diagMC={key:I.mcKey,...out}; done(); })
+    .catch(()=>{ if(warm){ if(_diagMC.pending===I.mcKey)_diagMC.pending=null; return; } // the tab computes it when opened
+      _diagMC=_diagMCSync(I); done(); });
+}
+// Big accounts: render() calls this while another tab is showing, and the Diagnostic's Monte Carlo
+// starts in the worker at an idle moment — so opening the tab finds it memoized and renders once,
+// instead of rendering, waiting on the worker, and rendering again. Main-thread cost is building
+// the input (a sort's worth); the compute itself stays off the main thread.
+function diagWarm(closed){
+  if(!closed||closed.length<1500||typeof Worker!=='function')return;
+  const go=()=>{ try{ const I=_diagMCInput(closed); if(_diagMC.key!==I.mcKey&&_diagMC.pending!==I.mcKey)_diagMCStart(I,true); }catch(e){} };
+  if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:3000}); else setTimeout(go,200);
+}
+// Memo keys. _diagMCKey: the closed set's identity (the Monte Carlo reads only the nets).
+// _diagDataKey: that plus everything the heavy sync panels read besides the trades — journal
+// (setups, tags, ratings, risk, check-ins), tz buckets, the break-even band and 1R, excursions,
+// spot names, coach mode — so a memo hit can only ever return what a recompute would.
+function _diagMCKey(closed){ let net=0; for(const t of closed)net+=t.net;
+  return [closed.length,closed.length?closed[0].id:'',closed.length?closed[closed.length-1].id:'',net,_be].join('|'); }
+function _diagDataKey(closed){ let ct=0, ot=0; for(const t of closed){ ct+=t.closeTime||0; ot+=t.openTime||0; }
+  return [_diagMCKey(closed),ct,ot,_oneR,_jrev,settings.tz,settings.tzZone,settings.coachMode,Object.keys(_excM||{}).length,
+    Object.keys((spotMaps&&spotMaps.nameByCoin)||{}).length].join('|'); }
+// the Diagnostic's own panels (what-if list, split stability): one data version at a time
+let _diagMemo={key:null,trades:null};
+function _diagMemoGet(key,name,fn,closed){
+  if(_diagMemo.key!==key||!_sameTrades(_diagMemo.trades,closed))_diagMemo={key,trades:closed.slice()};
+  return Object.prototype.hasOwnProperty.call(_diagMemo,name)?_diagMemo[name]:(_diagMemo[name]=fn()); }
+function _diagMemoHas(key,name,closed){ return _diagMemo.key===key&&_sameTrades(_diagMemo.trades,closed)&&Object.prototype.hasOwnProperty.call(_diagMemo,name); }
+// diagScan and behaviorSignals run on every coach rebuild (coachContext, over the view's trades) and
+// again on the Diagnostic (over the period's — the same trades when the period is "all"): the tab
+// reuses what the coach just computed, and its re-renders reuse their own (_tradesMemo, engine.js).
+function diagScanMemo(closed){ return _tradesMemo('scan',closed,_diagDataKey(closed),()=>diagScan(closed)); }
+function behaviorSignalsMemo(closed,s){ // reads s.net / fees / fund / expectancy besides the trades
+  return _tradesMemo('sig',closed,_diagDataKey(closed)+'|'+[s.net,s.fees,s.fund,s.expectancy].join('|'),()=>behaviorSignals(closed,s)); }
+
 /* ============================ compute worker (main-thread offload) ============================ */
 // The two heavy paths — fill→trade reconstruction and the permutation-test miner/deep scan —
 // run in a Web Worker so large wallets no longer freeze the UI. Single-file constraint: the
@@ -1112,26 +1215,24 @@ function deepScan(closed,V){
 // re-sent with each request. If Worker construction or execution fails for any reason, the
 // wrappers fall back to the original synchronous code path — identical results, just blocking.
 const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,addedToLoser,dcoin,dispMarket,
-  mcMaxDD,fwdMaxDD,edgeSignificance,
+  mcMaxDD,fwdMaxDD,edgeSignificance,walkForward,diagMCCompute,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,dayJKey,checkinPred,minerFams,mineInsights,deepScan});
-const _WORKER_PRELUDE="let settings={tz:'local'}, journal={}, _excM={}, spotMaps={nameByCoin:{}}, _be=50, _rng=Math.random, _progress=null;"+
+const _WORKER_PRELUDE="let settings={tz:'local'}, journal={}, _excM={}, spotMaps={nameByCoin:{}}, _be=50, _rng=Math.random, _progress=null, _pool=null;"+
   "const CHECKIN_CONDS="+JSON.stringify(CHECKIN_CONDS)+";";
 const _WORKER_DISPATCH="onmessage=function(e){var d=e.data;"+
  "try{var out;"+
  "if(d.kind==='miner'){settings=d.payload.settings||settings;journal=d.payload.journal||{};_excM=d.payload.excursions||{};if(d.payload.be!=null)_be=d.payload.be;"+
  "_srand(d.payload.seed);_progress=function(done,total){postMessage({id:d.id,type:'progress',done:done,total:total});};"+
  "var V=d.payload.basis==='pct'?function(t){return retPct(t);}:function(t){return t.net;};"+
- "var res=mineInsights(d.payload.trades,V);var deep=deepScan(d.payload.trades,V);_progress=null;out={res:res,deep:deep};}"+
+ "var P=d.payload.trades||(_pool&&_pool.key===d.payload.poolKey&&_pool.trades);if(!P)throw new Error('pool missing');"+
+ "var res=mineInsights(P,V);var deep=deepScan(P,V);_progress=null;out={res:res,deep:deep};}"+
+ "else if(d.kind==='pool'){if(d.payload.reset)_pool={key:d.payload.key,trades:[]};"+ // the miner's pool, kept here across scans (see _workerPool)
+ "if(_pool&&_pool.key===d.payload.key){for(var i=0;i<d.payload.trades.length;i++)_pool.trades.push(d.payload.trades[i]);}out={key:_pool&&_pool.key,n:_pool?_pool.trades.length:0};}"+
  "else if(d.kind==='reconstruct'){out={perp:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'perp'),d.payload.frows||[]),"+
  "spot:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'spot'),[])};}"+
- "else if(d.kind==='diagmc'){if(d.payload.be!=null)_be=d.payload.be;_srand(d.payload.seed);"+
- "var nets=d.payload.nets,chron=d.payload.chron;"+ // SAME compute order as the sync path — identical PRNG stream, identical values
- "out={boot:nets.length>=5?bootstrapMeanCI(nets,d.payload.B):null,"+
- "esig:nets.length>=5?edgeSignificance(nets):null,"+
- "mcdd:chron.length>=5?mcMaxDD(chron,d.payload.MCI):null,"+
- "fdd:chron.length>=10?fwdMaxDD(chron,d.payload.HZN,d.payload.FI):null};}"+
+ "else if(d.kind==='diagmc'){if(d.payload.be!=null)_be=d.payload.be;out=diagMCCompute(d.payload);}"+ // the sync path's own function — identical values
  "else throw new Error('unknown kind: '+d.kind);"+
  "postMessage({id:d.id,type:'done',out:out});}"+
  "catch(err){postMessage({id:d.id,type:'error',message:(err&&err.message)||String(err)});}};";
@@ -1180,10 +1281,30 @@ function runInWorker(kind,payload,onProgress){
 function _journalSubset(trades){ const j={}; for(const t of trades){ if(journal[t.id])j[t.id]=journal[t.id];
   const dk=dayJKey(t.openTime); if(journal[dk]&&!j[dk])j[dk]=journal[dk]; } return j; }
 function _excSubset(trades){ const m={}; for(const t of trades){ const e=_excM[t.id]; if(e&&e.maePct!=null)m[t.id]={maePct:e.maePct,mfePct:e.mfePct}; } return m; }
-async function minerScan(pool,basis,seed,onProgress){
+// The miner's trade pool goes to the worker once per data version and stays there: one structured
+// clone of 30k trades (fill events and all) is ~400 ms of main-thread time, and it used to be paid
+// on every scan. Sent in slices, each its own task, so no single send blocks the page; the worker
+// answers each slice with its running count, and the pool only counts as sent once it all arrived.
+// Queued, so two sends can't interleave their slices.
+const _POOL_SLICE=3000;
+let _poolQ=Promise.resolve();
+let _minerRun=null; // the scan in flight ({key, p}): a re-render on the same selection joins it
+function _poolKey(pool,basis){ let a=0,b=0,c=0; for(const t of pool){ a+=t.net; b+=t.closeTime||0; c+=(t.openTime||0)+(t.maxSize||0); }
+  return [basis,pool.length,pool.length?pool[0].id:'',pool.length?pool[pool.length-1].id:'',a,b,c].join('|'); }
+function _workerPool(key,pool){
+  const send=async()=>{ const w=computeWorker(); if(w._poolKey===key)return; w._poolKey=null; let n=0;
+    for(let i=0;i===0||i<pool.length;i+=_POOL_SLICE){ if(i)await new Promise(r=>setTimeout(r,0));
+      const r=await runInWorker('pool',{key,reset:i===0,trades:pool.slice(i,i+_POOL_SLICE)}); n=r&&r.key===key?r.n:-1; }
+    if(n!==pool.length||_worker!==w)throw new Error('pool missing');
+    w._poolKey=key; };
+  return (_poolQ=_poolQ.then(send,send));
+}
+async function minerScan(pool,basis,seed,onProgress,poolKey){
   try{
-    return await runInWorker('miner',{trades:pool,basis,seed,be:_be,
-      settings:{tz:settings.tz,coachMode:settings.coachMode},journal:_journalSubset(pool),excursions:_excSubset(pool)},onProgress);
+    const job={basis,seed,be:_be,settings:{tz:settings.tz,coachMode:settings.coachMode},journal:_journalSubset(pool),excursions:_excSubset(pool)};
+    if(poolKey){ try{ await _workerPool(poolKey,pool); return await runInWorker('miner',{...job,poolKey},onProgress); }
+      catch(e){ if(!/pool missing/.test(e&&e.message))throw e; } } // lost it (a rebuilt worker): ship it inline below
+    return await runInWorker('miner',{...job,trades:pool},onProgress);
   }catch(e){ // sync fallback: identical math on the main thread
     _srand(seed);
     const V=basis==='pct'?(t=>retPct(t)):(t=>t.net);

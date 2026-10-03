@@ -70,7 +70,9 @@ t('seeded: the same history gives the same numbers', () => {
   eq(JSON.stringify(routineVsResults(H.days, H.byDay, H.opts)), JSON.stringify(routineVsResults(H.days, H.byDay, H.opts)));
 });
 t('wired into Review (with charts) and Pulse’s “Does discipline pay?”', () => {
-  ok(grabFn('renderReviewInner').includes('routineSectionHtml()') && grabFn('renderReviewInner').includes('drawRoutineCharts()'));
+  ok(grabFn('renderReviewInner').includes('routineSectionLazyHtml(closed.length)') && grabFn('renderReviewInner').includes('drawRoutineCharts()'));
+  // big accounts get it when it nears the viewport: the same section, built later
+  ok(grabFn('routineSectionLazyHtml').includes('return routineSectionHtml();') && grabFn('wireRoutineLazy').includes('ph.outerHTML=routineSectionHtml()'));
   ok(grabFn('pzTrendsHtml').includes('pzLongViewHtml()'));
   ok(grabFn('rvModel').includes('rOf:rFor,pctOf:retPct'), 'R, else % return: both size-neutral');
 });

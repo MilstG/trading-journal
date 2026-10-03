@@ -91,10 +91,25 @@ function traderAge(days, J, opts){
 }
 // Trader Age at the end of each trading day, oldest first: the history line and the milestone badges.
 // Each day reads only the trading days before it (at most the 200 before: the window is 6 months).
+// Exactly traderAge(all.slice(max(0,i-199),i+1), J, {now: the day's end, dayOf, firstAt}) per day (what
+// it used to call: ~1 s a rebuild), in near-linear time. Day i's window is a run [s..i] (s only moves
+// forward); a day's rating depends on the window only through steadiness cut at s, so it's rated once
+// with a full 20-day spread, or once per s for the 19 days after it — by traderAge itself (opts.raw).
+// Then the same weighted sum, same order, same weights: every number identical.
 function taHistory(days, J, opts){
   opts=opts||{}; const all=(days||[]).filter(d=>d&&d.key&&isFinite(d.score)).slice().sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);
-  return all.map((d,i)=>{ const A=traderAge(all.slice(Math.max(0,i-199),i+1), J, {now:Date.parse(d.key+'T23:59:59Z'), dayOf:opts.dayOf, firstAt:opts.firstAt});
-    return {key:d.key, n:A.n, rating:A.rating, age:A.building?null:A.age, tradingYears:A.tradingYears}; });
+  const dayOf=opts.dayOf||(ms=>new Date(ms).toISOString().slice(0,10)), firstAt=opts.firstAt>0?opts.firstAt:null, S=TA.steadyN;
+  const full=[], ws=[]; let s=0, part=null;
+  const raw=(a,b,now)=>traderAge(all.slice(a,b+1), J, {now, dayOf:opts.dayOf, raw:true}).daily;
+  return all.map((d,i)=>{ const now=Date.parse(d.key+'T23:59:59Z'), from=dayOf(now-TA.windowDays*864e5);
+    const s0=s; s=Math.max(s,i-199); while(s<i&&all[s].key<from)s++; if(s!==s0)part=null;
+    const n=i-s+1; let W=0, R=0;
+    for(let j=s;j<=i;j++){ let r;
+      if(j-S+1>=s){ r=full[j]; if(r===undefined)r=full[j]=raw(j-S+1,j,now)[S-1].r; }
+      else { if(!part||part.length<=j-s)part=raw(s,Math.min(i,s+S-2),now).map(x=>x.r); r=part[j-s]; }
+      const k=n-1-(j-s), w=ws[k]!==undefined?ws[k]:(ws[k]=Math.pow(0.5,k/TA.halfLife)); W+=w; R+=w*r; }
+    const prior=TA.priorDays*Math.max(0,1-n/TA.fullDays), rating=50+(R/W-50)*(n/(n+prior));
+    return {key:d.key, n, rating, age:n<TA.minDays?null:taYears(rating), tradingYears:firstAt?Math.max(0,(now-firstAt)/(365.25*864e5)):null}; });
 }
 // ---- the habits behind the rating, and what each is worth ----
 // A slip kind, taken away: the trades with only that slip become clean (their day's Discipline goes up,
