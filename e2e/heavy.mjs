@@ -62,7 +62,7 @@ try {
         if (f.coin.includes('/')) { if (b || g) continue; } else if (g) f.coin = f.coin + 'X' + g; // more markets, not overlapping round trips
         f.tid = tid++; f.oid = 1e6 + tid; fills.push(f); }
       fills.sort((a, b) => a.time - b.time);
-      const t0 = performance.now(); await loadFromPaste(fills, { offline: true }); _demoData = true;
+      const t0 = performance.now(); await loadFromPaste(fills, { offline: true, sample: true });
       return { ms: Math.round(performance.now() - t0), trades: allTrades.length };
     }, [BLOCKS, GROUPS]);
     N = r.trades; timings.import = r.ms;
@@ -157,7 +157,7 @@ try {
       for (let b = 0; b < blocks; b++) for (let g = 0; g < groups; g++) for (const f of demoFills(b * 1000 + g + 1, now - b * 152 * DAY)) {
         if (f.coin.includes('/')) { if (b || g) continue; } else if (g) f.coin = f.coin + 'X' + g; f.tid = tid++; f.oid = 1e6 + tid; fills.push(f); }
       fills.sort((a, b) => a.time - b.time);
-      const t0 = performance.now(); await loadFromPaste(fills, { offline: true }); return Math.round(performance.now() - t0); }, [BLOCKS, GROUPS]);
+      const t0 = performance.now(); await loadFromPaste(fills, { offline: true, sample: true }); return Math.round(performance.now() - t0); }, [BLOCKS, GROUPS]);
     timings.daruma = ms; within('daruma', ms);
     ok(await p.evaluate(() => allTrades.length) >= 10000 && await p.evaluate(() => !!_worker), 'reconstructed in the worker (its function list resolves here)');
     for (const h of ['#progress', '#journal', '']) { await p.evaluate(x => { location.hash = x; }, h);

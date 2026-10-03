@@ -11,7 +11,7 @@ const grabConst = name => { const i = html.indexOf('const ' + name + '='); if (i
 const ctx = { Math, Object, Array, String, Number, JSON, isFinite, Date, Set, Map, Proxy, console };
 vm.createContext(ctx);
 const load = (consts, fns) => vm.runInContext(consts.join('\n') + '\n' + fns.map(grabFn).join('\n'), ctx);
-load([grabConst('PZ_COL_DARK'), grabConst('PZ_COL_LIGHT'), grabConst('PZ_COL'), grabConst('PZ_ITV_NAME'), grabConst('_demoAnchors'), grabConst('_demoHash'), 'let _demoData=false;'],
+load([grabConst('PZ_COL_DARK'), grabConst('PZ_COL_LIGHT'), grabConst('PZ_COL'), grabConst('PZ_ITV_NAME'), grabConst('_demoAnchors'), grabConst('_demoHash'), 'let _sample=null;'],
   ['pzPx', 'pzHeld', 'pzTicks', 'pzSnapSvg', '_hashSeed', 'isDemoData', 'demoAnchorsFor', 'demoNoise', 'demoPrice', 'demoCandles']);
 ctx.esc = x => String(x); ctx.dispMarket = x => x; ctx.dcoin = t => t.coin;
 
@@ -31,9 +31,10 @@ ctx.allTrades = [
   { coin: 'ETH', events: [[T0, 2775.33, 3.2, 1], [T0 + 5.5 * 3600e3, 2887.77, 3.2, -1]] },
   { coin: 'ETH', events: [[T0 + 3 * DAY, 2650, 1, 1], [T0 + 3 * DAY + 2 * 3600e3, 2612, 1, -1]] },
   { coin: 'DOGE', events: [[T0 + DAY, 0.12268, 112697, 1], [T0 + DAY + 6 * 3600e3, 0.12588, 112697, -1]] }];
-vm.runInContext('_demoData=true', ctx);
-t('sample mode is on while sample data is loaded and no real wallet replaced it', () => {
-  ok(ctx.isDemoData()); ctx.allTrades.push({ coin: 'BTC', events: [], wallet: { address: '0x' + '1'.repeat(40) } }); ok(!ctx.isDemoData(), 'a real wallet’s trades are on screen'); ctx.allTrades.pop();
+t('sample mode is its own flag (set while the sample is on screen), never read from the trades’ “paste” wallet tag', () => {
+  ctx.allTrades.forEach(t => { t.wallet = { address: 'paste', label: 'pasted' }; });
+  ok(!ctx.isDemoData(), 'pasted fills are the user’s own data, not the sample');
+  vm.runInContext('_sample={journal:{},settings:{}}', ctx); ok(ctx.isDemoData());
 });
 t('sample candles pass through every fill, at any interval, and the same request gives the same candles', () => {
   for (const itv of ['1m', '5m', '1h']) {

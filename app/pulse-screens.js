@@ -106,6 +106,7 @@ function pzProgressHtml(D){
     ${pzS.wk&&!share?pzWkHtml():''}
     <div class="pz-span" id="gmOut"></div>
     ${pzCustomizeLink('progress')}
+    <p class="pz-span pz-custom"><button type="button" class="pz-link" data-pz-earnreset>Reset progress awards</button></p>
   </div>`;
 }
 // ---- the badge case (#badges) ----

@@ -45,8 +45,10 @@ try {
     // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
     // All of audit 4 together (correctness fixes, the performance work, Daruma's split): 1895 / 1514 raw,
     // 642 / 509 gzipped — Daruma still 48 KB gzipped under where it started.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1900, 645],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1520, 512],
+    // Oct 2026: sample mode kept off the account (core.js sampleEnter/sampleLeave) and the award ledger's
+    // reset: about 6 KB raw on each screen took both past their raw lines (1901 / 1520 raw, 644 / 510 gzipped).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1905, 645],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1525, 512],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

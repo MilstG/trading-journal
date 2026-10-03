@@ -1438,6 +1438,7 @@ function wirePulse(){
     if(ds.pzMove){ const [sc,id,d]=ds.pzMove.split(':'); if(pzMove(sc,id,+d)){ await Store.set(S_KEY,settings); pzRender();
         const b=$('pzSheet').querySelector(`[data-pz-move="${sc}:${id}:${d}"]:not([disabled])`)||$('pzSheet').querySelector(`[data-pz-move^="${sc}:${id}:"]:not([disabled])`); if(b)b.focus(); } return; }
     if(ds.pzSect){ const [sc,id]=ds.pzSect.split(':'), L=settings.pzLayout=settings.pzLayout||{}, M=L[sc]=L[sc]||{}; M[id]=!pzShow(sc,id); await Store.set(S_KEY,settings); pzRender(); return; }
+    if(ds.pzEarnreset!==undefined){ if(!confirm(PZ_EARN_RESET_ASK))return; await pzEarnedReset(); pzRender(); pzNote('Progress awards reset — earned again from your trades.'); return; }
     if(ds.pzSectreset){ if(settings.pzLayout)delete settings.pzLayout[ds.pzSectreset]; await Store.set(S_KEY,settings); pzRender(); return; }
     if(ds.pzAmfill!==undefined){ const el=$('pzAm'+ds.pzAmfill); if(!el)return; el.value=ds.v; el.dispatchEvent(new Event('input',{bubbles:true}));
       root.querySelectorAll('[data-pz-amfill="'+ds.pzAmfill+'"]').forEach(b=>b.classList.toggle('ok',b===t)); el.focus(); return; }

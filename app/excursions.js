@@ -222,7 +222,7 @@ async function runExcursions(closed,openTrades){
   }
   // persist any newly measured closed trades (never open ones — their window still grows)
   let dirty=false;
-  for(const {t,ex} of measured.values()){ if(t._open||persisted.rows[t.id])continue;
+  for(const {t,ex} of measured.values()){ if(demo||t._open||persisted.rows[t.id])continue; // the sample's stay in memory
     persisted.rows[t.id]={maePct:ex.maePct,mfePct:ex.mfePct,nC:ex.nC,itvMs:ex.itvMs,
       maeAt:ex.maeAt!=null?ex.maeAt:null, mfeAt:ex.mfeAt!=null?ex.mfeAt:null,
       coarse:!!(ex.itvMs&&(t.closeTime-t.openTime)<2*ex.itvMs)}; dirty=true;
