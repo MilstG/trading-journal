@@ -941,7 +941,7 @@ async function pzGrowthAction(t){
       return true; }
     if(t.id==='pzSetupAddGo'&&pzS.ck){ const inp=$('pzSetupAdd'), v=pzCanonSetup(inp&&inp.value||''); if(!v)return true;
       const R=pzS.ck.rules=pzS.ck.rules||{}; R.setups=Array.isArray(R.setups)?R.setups:[]; if(!R.setups.includes(v))R.setups.push(v); inp.value=''; pzRender(); const n=$('pzSetupAdd'); if(n){ n.value=''; n.focus(); } return true; }
-    if(ds.pzSetupchip){ const sec=t.closest('[data-pz-trade]'), inp=sec&&sec.querySelector('input[type=text]'); if(inp){ inp.value=ds.pzSetupchip; inp.focus(); } return true; }
+    if(ds.pzSetupchip){ const sec=t.closest('[data-pz-trade]'), inp=sec&&sec.querySelector('input[type=text]'); if(inp){ inp.value=ds.pzSetupchip; inp.focus(); inp.dispatchEvent(new Event('input',{bubbles:true})); } return true; }
     switch(t.id){
       case 'pzRvSave': await pzSaveReview(); return true;
       case 'pzRvCoach': await pzSaveReview(); location.hash='#coach'; await pzCoachSend('Review my day. Here are my answers from tonight’s review — what went well, the one thing to fix, and my focus for tomorrow.'); return true;

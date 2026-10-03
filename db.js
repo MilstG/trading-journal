@@ -61,6 +61,14 @@ const MIGRATIONS = [
    ALTER TABLE reviews ADD COLUMN fee_state TEXT;
    CREATE INDEX reviews_fee ON reviews (fee_state, at);
    CREATE INDEX reviews_mentor ON reviews (mentor);`,
+  // playbooks members share (a setup's name, a note and its rules; `src` is the playbook's id in the
+  // author's own journal, so sharing it again updates this row), and who adopted a copy
+  `CREATE TABLE playbooks (id TEXT PRIMARY KEY, member TEXT NOT NULL, src TEXT NOT NULL, at INTEGER NOT NULL, updated INTEGER NOT NULL,
+     version INTEGER NOT NULL DEFAULT 1, name TEXT NOT NULL, about TEXT NOT NULL DEFAULT '', rules TEXT NOT NULL);
+   CREATE UNIQUE INDEX playbooks_src ON playbooks (member, src);
+   CREATE INDEX playbooks_updated ON playbooks (updated);
+   CREATE TABLE playbook_adopts (playbook TEXT NOT NULL, member TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (playbook, member)) WITHOUT ROWID;
+   CREATE INDEX playbook_adopts_member ON playbook_adopts (member);`,
 ];
 
 function open(dataDir) {

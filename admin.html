@@ -276,7 +276,7 @@ details>summary{list-style-position:inside}
     features:['Features','Which Daruma features open at which level.'],
     coach:['Coach','How much members can ask the AI coach, and what it may see.'],
     routines:['Routines','The morning prep and end-of-day questions members answer, by how they trade.'],
-    feed:['Feed & reports','Reported posts, announcements to everyone, and what members can post.'],
+    feed:['Feed & reports','Reported posts, announcements to everyone, what members can post, and shared playbooks.'],
     settings:['Settings','Joining, wallets, sync, and the security of this panel.']};
   // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Daruma member key.
   // The token is the journal's too (srv_token): the panel reuses it, stores one only after it has
@@ -313,7 +313,7 @@ details>summary{list-style-position:inside}
   const pager=(key,list,size)=>{ size=size||10; const n=list.length, pages=Math.max(1,Math.ceil(n/size)), p=Math.max(0,Math.min(UI.pages[key]||0,pages-1)); UI.pages[key]=p;
     return {items:list.slice(p*size,(p+1)*size), html:n>size?`<div class="pager"><button class="sm" data-pg="${esc(key)}" data-d="-1"${p?'':' disabled'} aria-label="Previous page">‹ Prev</button><span class="muted small">${p*size+1}–${Math.min(n,(p+1)*size)} of ${n}</span><button class="sm" data-pg="${esc(key)}" data-d="1"${p<pages-1?'':' disabled'} aria-label="Next page">Next ›</button></div>`:''}; };
   const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
-  const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
+  const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],playbooks:[],wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
   const UI={msel:new Set(),ins:{f:{},by:'style',sort:'disc30',metric:'disc30'},tab:'overview',member:null,q:'',filter:'all',wq:'',wfilter:null,wsel:new Set(),leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
   const linkFor=code=>location.origin+'/daruma#link='+encodeURIComponent(code);
   const adminLinkFor=code=>location.origin+'/admin#code='+encodeURIComponent(code);
@@ -324,11 +324,11 @@ details>summary{list-style-position:inside}
   async function load(signin){
     // signing in: one call first, so a wrong token is one wrong guess (and one second step), not thirteen
     const first=signin?await api('/me'):api('/me');
-    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl]=await Promise.all([first,api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null)]);
+    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl,pb]=await Promise.all([first,api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null),api('/playbooks').catch(()=>({playbooks:[]}))]);
     D.perf={}; // a member's numbers are read again when their page opens
     if(UI.tab==='insights')await loadIns();
     ME=me; $('whoami').textContent=me.owner?'Owner':'Admin · '+me.name;
-    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du,pool:pl});
+    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du,pool:pl,playbooks:pb.playbooks});
     for(const a of [...UI.wsel])if(!ws.wallets.some(w=>w.address===a))UI.wsel.delete(a);
     $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide'); document.body.classList.add('in');
     render();
@@ -916,7 +916,7 @@ details>summary{list-style-position:inside}
   const postBody=e=>e.post?`${e.post.trade?`<div class="small">${tradeLine(e.post.trade)}</div>`:''}${e.text?`<div class="muted" style="white-space:pre-wrap">${esc(e.text.length>400?e.text.slice(0,400)+'…':e.text)}</div>`:''}${e.post.media.length?`<div class="thumbs">${e.post.media.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Picture on the post"></a>`).join('')}</div>`:''}`
     :`${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}`;
   function vFeed(){
-    const pc=D.ov.config.posts||{on:true,plans:true,images:true};
+    const pc=D.ov.config.posts||{on:true,plans:true,images:true}, pbc=D.ov.config.playbooks||{on:true,who:'all'};
     const reports=D.reports.length?D.reports.map(r=>`<div class="ev"><div><span class="pill warnp">${r.n} report${r.n===1?'':'s'}</span> ${r.why.length?`<span class="muted small">“${r.why.map(esc).join('” · “')}”</span>`:''}
         ${r.comment?`<div><b>@${esc(r.comment.handle||'?')}</b> commented: ${esc(r.comment.text)}</div><div class="muted small">on @${esc(r.post.handle||'?')}’s post</div>`:`<div><b>@${esc(r.post.handle||'?')}</b> ${r.post.post?'· '+esc(r.post.post.kind):''}</div>${postBody(r.post)}`}
         <div class="muted small">${esc(ago(r.at))}</div></div>
@@ -931,7 +931,14 @@ details>summary{list-style-position:inside}
       ${box('pOn','Members can post (trades they took, notes)',pc.on)}
       ${box('pPlans','Posts about trades they plan to take',pc.plans,'Shown with “A member’s own plan, shared for accountability. Not advice.”')}
       ${box('pImages','Pictures on posts',pc.images,'Shrunk in the member’s browser before upload; WebP, JPEG or PNG only.')}
-      <div class="actions"><button id="pSave">Save</button></div></section>
+      <div class="actions"><button id="pSave">Save</button></div>
+      <h3>Shared playbooks</h3>
+      ${box('pbOn','Members can share playbooks and adopt others’',pbc.on,'A setup’s name, a note and its rules, with the member’s name. Never trades or results. Adopting copies it into the member’s own journal.')}
+      <label class="inline" for="pbWho" style="gap:8px">Who can share ${sel('pbWho',[['all','Every member with a profile'],['mentors','Mentors only']],pbc.who)}</label>
+      <div class="actions"><button id="pbSave">Save</button></div>
+      <div style="max-height:320px;overflow:auto">${D.playbooks.length?D.playbooks.map(x=>`<div class="ev"><div><b>${esc(x.name)}</b> <span class="muted small">@${esc(x.handle||'?')} · ${x.ruleN} rule${x.ruleN===1?'':'s'} · ${x.adopts} adopted · v${x.version}</span>
+        ${x.about?`<div class="muted small" style="white-space:pre-wrap">${esc(x.about)}</div>`:''}<ol class="small" style="margin:4px 0 0;padding-left:18px">${x.rules.map(r=>`<li>${esc(r.text)}</li>`).join('')}</ol></div>
+        <button class="sm danger" data-delpb="${esc(x.id)}">Remove</button></div>`).join(''):'<p class="muted" style="margin:0">None shared yet.</p>'}</div></section>
       <section class="card"><h2>Recent feed</h2><div style="max-height:620px;overflow:auto">
       ${pager('events',D.events).items.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${postBody(e)}<div class="muted small">${esc(ago(e.at))} · ${e.kudos} kudos${e.post?' · '+e.post.comments+' comment'+(e.post.comments===1?'':'s'):''}</div></div><button class="sm danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>'}
       </div>${pager('events',D.events).html}</section></div>`;
@@ -1340,6 +1347,8 @@ details>summary{list-style-position:inside}
     // feed
     if(id==='postAnn'){ const t=val('ann').trim(); if(!t)return; return act(()=>api('/announce',{body:{text:t}}),'Posted.'); }
     if(id==='pSave') return act(()=>put({posts:{on:chk('pOn'),plans:chk('pPlans'),images:chk('pImages')}}),'Saved.');
+    if(id==='pbSave') return act(()=>put({playbooks:{on:chk('pbOn'),who:val('pbWho')}}),'Saved.');
+    if(d.delpb){ if(!confirm('Stop sharing this playbook for everyone? Copies members adopted stay theirs.'))return; return act(()=>api('/playbooks/'+encodeURIComponent(d.delpb),{method:'DELETE'}),'Removed.'); }
     if(d.rep){ if(d.a==='remove'&&!confirm('Remove it for everyone? This can’t be undone.'))return; return act(()=>api('/reports/'+encodeURIComponent(d.rep),{body:{action:d.a}}),d.a==='remove'?'Removed.':'Kept.'); }
     if(d.delev&&!confirm('Remove this post from the feed? Its comments and pictures go with it.'))return;
     if(d.delev) return act(()=>api('/events/'+encodeURIComponent(d.delev),{method:'DELETE'}),'Removed.');
