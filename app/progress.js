@@ -210,9 +210,19 @@ function challengeStatus(res, ended){
 // a goal pushed out of the list or a new XP weight never takes back an award: it keeps the day and the XP
 // it was earned with. Daily XP (each day's Discipline score, its logging bonus, focus-habit days) is not
 // in it: that's read from fills and the journal every time, so it moves when late fills arrive.
-function pzEarned(){ const E=settings.pzEarned; return E&&typeof E==='object'&&!Array.isArray(E)?E:{}; }
-function pzEarnedRecord(add){ settings.pzEarned=Object.assign({},add,pzEarned()); // what's there already wins
+// After a reset only entries stamped with it (ep) count.
+function pzEarned(){ const E=settings.pzEarned, R=+settings.pzEarnedResetAt||0; if(!E||typeof E!=='object'||Array.isArray(E))return {};
+  if(!R)return E; const o={}; for(const id in E)if(E[id]&&+E[id].ep>=R)o[id]=E[id]; return o; }
+function pzEarnedRecord(add){ const R=+settings.pzEarnedResetAt||0; if(R)for(const id in add)add[id]=Object.assign({},add[id],{ep:R});
+  settings.pzEarned=Object.assign({},add,pzEarned()); // what's there already wins
   try{ Promise.resolve(Store.set(S_KEY,settings)).catch(()=>{}); }catch(e){} }
+// Reset progress awards: the ledger merges by union, so a delete would come back from another device;
+// the reset is a synced tombstone instead (the latest wins). This week's challenge is picked again too.
+async function pzEarnedReset(){ const now=Date.now(), k=isoWeekKey(now);
+  settings.pzEarnedResetAt=Math.max(now,(+settings.pzEarnedResetAt||0)+1); settings.pzEarned={};
+  if(journal[k]&&journal[k].challenge){ const e={...journal[k]}; delete e.challenge; journal[k]=e; markJEdit(k); await Store.set(J_KEY,journal); }
+  _gameMemo={key:null,g:null}; await Store.set(S_KEY,settings); }
+const PZ_EARN_RESET_ASK='Reset progress awards?\n\nBadges, achievements and challenges are cleared on all your devices, then earned again from your trades. Your journal stays.';
 // A badge tier from its id ('habitdays-25'), for a ledger badge the catalog no longer lists (mentoring for a former mentor)
 function pzBadgeStub(id){ const i=id.lastIndexOf('-'), fam=id.slice(0,i), need=+id.slice(i+1), F=PZ_FAMILIES.find(f=>f[0]===fam), r=F?F[4].indexOf(need):-1;
   return r<0?{id,fam,c:'milestones',r:0,t:id,desc:'',need}:{id,fam,c:F[1],r,t:F[2]+' · '+PZ_TIERS[r],desc:F[3](need),need}; }
@@ -738,7 +748,8 @@ const pzUtcDay=ms=>new Date(ms).toISOString().slice(0,10);
 const PZ_REG={map:null,at:0,busy:false};
 // worth (re)loading: never loaded, an hour old, or a new UTC day the map doesn't have yet (with a
 // five-minute pause after a failure, so being offline doesn't mean a request on every screen)
-function pzRegimeWant(){ const now=Date.now(), m=PZ_REG.map, fresh=m&&m[pzUtcDay(now)];
+function pzRegimeWant(){ if(typeof isDemoData==='function'&&isDemoData()){ PZ_REG.map=null; PZ_REG.at=0; return; } // sample mode: no regimes (nothing fetched; the account's aren't the sample's)
+  const now=Date.now(), m=PZ_REG.map, fresh=m&&m[pzUtcDay(now)];
   if(PZ_REG.busy)return; if(fresh?now-PZ_REG.at>3600000:now-PZ_REG.at>300000)pzRegimeLoad(); }
 async function pzRegimeLoad(){
   if(PZ_REG.busy||!allTrades.length||typeof hlPost!=='function')return;
@@ -754,6 +765,7 @@ async function pzRegimeLoad(){
       const f=await fetchCandles('BTC','1d',u[0],u[1]); cache.candles=mergeCandles(cache.candles,f.rows);
       if(f.coveredTo>u[0]){ covered.push([u[0],f.coveredTo]); cache.ranges=mergeRanges(covered,1); } }
     try{ await idbSet(k,cache); }catch(e){}
+    if(typeof isDemoData==='function'&&isDemoData())return; // the sample came in meanwhile
     const m=pzRegimes(cache.candles,now), before=JSON.stringify(PZ_REG.map&&PZ_REG.map[pzUtcDay(now)]||null)+(PZ_REG.map?Object.keys(PZ_REG.map).length:0);
     PZ_REG.map=m; PZ_REG.at=now;
     if(JSON.stringify(m[pzUtcDay(now)]||null)+Object.keys(m).length!==before&&PZ)pzRender();
@@ -799,6 +811,7 @@ function pzCostHtml(tr){
 // one price format everywhere a price is shown: thousands separated, decimals by size, no trailing noise
 function pzPx(v){
   if(v==null||!isFinite(v))return '—';
+  if(Math.abs(v)>=1e12)return (v<0?'−':'')+Math.abs(v).toExponential(2); // no price is this big: say it short, not in 300 digits
   const a=Math.abs(v), d=a>=1000?2:a>=1?4:a>=0.01?5:7;
   let s=(+v).toFixed(d); if(d>2)s=s.replace(/(\.\d\d\d*?)0+$/,'$1');
   const [i,f]=s.split('.'); return (i.startsWith('-')?'−':'')+Math.abs(+i).toLocaleString('en-US')+(f?'.'+f:'');
@@ -1013,7 +1026,7 @@ function pzLessonsHtml(D){
   const shown=L.filter(l=>(F==='due'?!l.done&&l.due<=now:F==='kept'?l.done:true)&&(!q||l.text.toLowerCase().includes(q)));
   const seg=`<div class="pz-seg" role="group" aria-label="Show">${[['all','All'],['due','To revisit'],['kept','Kept']].map(([k,l])=>`<button type="button" data-pz-lf="${k}" aria-pressed="${F===k}">${l}</button>`).join('')}</div>`;
   const pg=pzPage('lessons:'+F+':'+q,shown);
-  const row=l=>`<section class="pz-card pz-kv"><p style="margin:0;font-size:15px;line-height:1.45">${esc(l.text)}</p>
+  const row=l=>`<section class="pz-card pz-kv"><p style="margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere">${esc(l.text)}</p>
     <div class="pz-kvrow"><span class="pz-sub" style="font-size:12px">${l.key?esc(dayLabel(l.key)):'Added by you'}${l.kind==='mistake'?' · a mistake':''}${l.tag?' · about '+esc(PZ_SLIP_TOPIC[l.tag]):''} · ${l.done?'kept for good':l.due<=now?'to revisit now':'next '+esc(dayLabel(dayKey(l.due)))}</span>
     <span style="display:flex;gap:10px;flex-wrap:wrap">${!l.done&&l.due<=now?`<button type="button" class="pz-linkbtn" data-pz-lesson="got" data-id="${esc(l.id)}">I still live by it</button><button type="button" class="pz-linkbtn" data-pz-lesson="again" data-id="${esc(l.id)}">I slipped on it</button>`:''}${l.done?`<button type="button" class="pz-linkbtn" data-pz-lesson="back" data-id="${esc(l.id)}">Bring it back</button>`:''}<button type="button" class="pz-linkbtn" data-pz-lesson="off" data-id="${esc(l.id)}" aria-label="Remove this lesson">Remove</button></span></div></section>`;
   return `${back}${pzHead(L.length+' lesson'+(L.length===1?'':'s'),'Lessons',seg)}

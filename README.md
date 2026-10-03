@@ -64,8 +64,19 @@ get their position derived by average cost, as below). It also accepts **CSV** �
 header row plus columns for time, symbol, side, price, and size, matched
 against common aliases with exact names beating loose ones — so fills
 exported from another venue or a hand-built spreadsheet feed the exact same
-engine. Locale-formatted numbers ("1,234.50", "1.234,56") parse correctly and
-ambiguous values are rejected rather than guessed; fee and realized-PnL
+engine. Comma-, semicolon- (European Excel) and tab-separated files are told
+apart from the header row. The decimal mark is read per column from any value
+that shows it ("1,234.50" or "0.25" → point; "1.234,56" or "0,25" → comma), then
+from the rest of the file, and a semicolon file with no such value reads as
+decimal comma; a value that could still be either ("1,234": a thousand, or about
+one) is refused with the column, value and row named, rather than guessed, and
+so is a column that mixes the two. Dates are best as ISO (`2026-09-03 14:00:00`,
+`2026-09-03T14:00:00+02:00`) or epoch seconds/ms; `03/09/2026`-style dates are
+read day-first when any date in the file has a first part above 12, month-first
+when any has a second part above 12, and refused (asking for ISO) when nothing
+tells. **A time without a zone is read as UTC**, as exchanges export it, so the
+same file gives the same trades on every device. A skipped row is reported with
+the first bad column, its value and its row number. Fee and realized-PnL
 columns are used when present, otherwise position and PnL are derived by
 average cost (exact when the file carries each coin's full history, and the
 status line says when derivation was used). Imported fills carry no
@@ -81,7 +92,15 @@ to clear it. Its charts and excursions read a price path drawn from the sample
 fills themselves (`demoCandles`: one deterministic path per coin that passes through
 every fill), never the exchange's candles, which could not line up with made-up prices;
 those sample candles are cached under keys of their own, so a real coin's cache is never
-touched.
+touched. The Diagnostic's BTC benchmark reads them too, and Daruma's market regimes are
+left out rather than fetched. While the sample is up,
+the account's own journal and settings are set aside (`sampleEnter` in `app/core.js`) and the
+app works on an in-memory scratch copy: notes, prep, reviews, plans, awards, the weekly
+challenge, habits and goals made on the sample are never stored, synced or backed up. Only
+the wallet list and look-and-feel preferences (appearance, colorway, clock, layout) carry
+over and save. Real trades replacing the sample (a wallet load or pasted fills, which are your
+own data and save as usual), a backup or a synced copy applied, or a reload bring the
+account's own copy back.
 
 ## Loading your data
 
@@ -196,7 +215,7 @@ own trades and journal:
 - **Remember** — one of your own weekly lessons, matched to the focus habit
   when one mentions it.
 
-Below it, **wins** — "5 good-process days in a row", "every planned stop
+Below it, **wins** — "5 trading days in a row at Discipline 70+", "every planned stop
 honored this week", "good loss on Tue", "you're breaking your rule far less
 since you made it". Reinforcement, not only correction.
 
@@ -238,7 +257,13 @@ activity:
   focus-habit days are read from your fills and journal every time, so they move
   when late fills arrive, a day is re-scored, a wallet is removed or the time zone
   changes. The ledger is written from the whole account only (not a per-market or
-  per-dex view).
+  per-dex view). **Reset progress awards** (⚙ Settings, or Daruma → Progress) empties
+  it — for awards that came from where they shouldn't, such as sample data before
+  sample mode kept off the account. Because ledgers merge by union, the reset is a
+  synced tombstone (`pzEarnedResetAt`, the latest wins a merge): entries recorded after
+  it carry its stamp (`ep`), and older ones, even when another device merges them back,
+  are ignored. The next computation earns everything again from your trades, and this
+  week's challenge is picked again.
 - **Discipline streak with shields** — consecutive trading days at Discipline 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
@@ -356,7 +381,9 @@ use one format everywhere (`pzPx`). On a wide screen the tabs become a sidebar.
 
 **Plan a trade.** The *Plan your next trade* card on Today opens a short form:
 market, long or short, stop (required), target and entry (optional), and one line
-on why. The plan waits in your journal (synced like any note) and attaches itself
+on why. The market has to be one you've traded, hold, or one listed on Hyperliquid, and
+each price within 10× of the market's price (of the entry, or of the stop, when no price
+is known), so a typo of a few zeros is caught. The plan waits in your journal (synced like any note) and attaches itself
 to your next trade on that market and side that opens within 24 hours (a long plan
 also takes a spot buy) — the
 trade's stop and target come from it, it counts as a plan written live, and the
@@ -434,7 +461,9 @@ tend to slip after is happening right now (a fresh loss, a fast re-entry).
 **Badges.** About 270 badges in 45 families (discipline, consistency,
 journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
-on a public **badge page** at `/b/<name>` to share. Habit badges count retired
+on a public **badge page** at `/b/<name>` to share. **In the black** and **Big day**,
+whose tiers are dollar amounts, leave the device (badge page, profile, feed, counts) only
+when the member shares dollar P&L; the server holds them back too. Habit badges count retired
 habits for the days they were kept (re-adopting one starts a new copy beside the
 old), and **Toolbox** counts different habits: each library habit, leak plug or
 pattern once, and habits you write yourself as one.
@@ -575,7 +604,7 @@ fee in basis points, fees against your result on price and funding paid, with
 one line each when it matters — e.g. how much entering half your taker volume
 with limit orders would have kept.
 
-**AI coach.** With `COACH_AI=1`, a **Coach** tab lets members chat with Claude
+**AI coach.** With `COACH_AI=1`, a **Coach** tab (none without it, for visitors too) lets members chat with Claude
 about their trading, within a daily allowance (10 messages by default; the owner
 sets a server-wide default, overrides it per member, and has a larger default for fully unlocked
 members). The coach receives a summary of the member's numbers, habits and
@@ -971,7 +1000,15 @@ new value (`2`, …) to reset again. Everything lives in `DATA_DIR/admin-2fa.jso
 and sessions. If that file can't be read, the admin panel answers 503 instead of
 dropping everyone's second factor, until it's fixed or reset.
 
-**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` (the owner) or as an admin. The
+**Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` (the owner) or as an admin. A
+browser whose journal already has the token opens signed in; a token typed here is checked
+with one call first (one wrong token is one wrong guess toward the lockout) and remembered
+only once it works. **Sign out** leaves the panel only: the journal on that browser keeps
+its token and keeps syncing, and the sign-in card offers "Sign in with it" to come back.
+Without `AUTH_TOKEN` on the server the panel says so straight away. Settings are checked
+before they're sent: a value outside a field's range (or an empty one) is named under the
+field and nothing is saved, and the server refuses such values with a 400 instead of
+clamping them. "Levels stop at" has an explicit **No limit** switch. The
 sections sit in a sidebar, grouped (People, Compete, Progress, Coaching, Community),
 with counts for open reports and wallets waiting for you; on a phone they fold into a
 menu under the top bar. Each page opens with its title, what it's for and its main
@@ -1072,7 +1109,8 @@ The main dashboard:
 
 Every trade row expands into a journal entry:
 
-- **Tags** — freeform, autocompleted from your existing tags.
+- **Tags** — freeform, autocompleted from your existing tags. Case doesn't make a new tag: "scalp, SCALP"
+  saves one, spelled the first way, and the tag filter lists each name once.
 - **Setup** — what the trade was (breakout, fade, news…). Your playbook names
   are suggested as you type.
 - **Playbook checklist** — when the setup names one of your playbooks, its rules
@@ -1087,7 +1125,9 @@ Every trade row expands into a journal entry:
   last changed after the close **written after close**, and the two are scored
   separately under Plan adherence (hindsight plans flatter stop discipline).
   Perp positions opened in the last 7 days with no written stop get a
-  dashboard nudge. Once the trade closes, a line under the plan shows the
+  dashboard nudge. A plan is checked against the trade's side, as Daruma's
+  plan form does (for a short, the stop goes above the entry; a blank entry
+  is your fill): one that doesn't add up says why and isn't saved. Once the trade closes, a line under the plan shows the
   planned R:R, the achieved R and a verdict (see **Plan vs outcome** below).
 - **Notes** — free text.
 - **Attachments** — paste or drop screenshots; stored in this browser (and on
@@ -1095,6 +1135,11 @@ Every trade row expands into a journal entry:
   lines, boxes, a pen and text labels in four colours, with undo. **Save**
   replaces the screenshot; **Save as a copy** keeps the original and adds the
   marked-up version next to it.
+
+Notes, setup and tags save as you type (and when you leave the field); planned risk and the
+plan's prices save when you leave their field, never half-typed, since the plan's time stamp
+is what "written live" is scored on. **Save journal** saves everything at once and redraws the
+dashboard with it; closing or reloading the tab saves what's still waiting.
 
 **Playbooks** (Review → Playbooks) are your setups with their rules written down:
 a name ("Breakout retest") and one rule per line ("Wait for the retest", "Stop
@@ -1183,6 +1228,13 @@ The statistician's view of your trading. Sections top to bottom:
 - **Verdict** — a letter grade with plain-English reasoning: are you net
   profitable, is your Sharpe's lower confidence bound above zero (edge
   distinguishable from noise), and do you have enough trades to say so.
+  The edge counts as established when the Sharpe's or the per-trade
+  expectancy's 95% lower bound clears zero; the Project view uses the same test.
+- **Walk-forward reality** — expectancy scored strictly out-of-sample, with its
+  own bootstrap 95% CI. Its conclusion weighs that CI the way the verdict weighs
+  the in-sample one: a positive walk-forward expectancy whose CI still includes
+  zero reads "positive out-of-sample, but not yet distinguishable from noise",
+  never "the version worth trusting".
 - **Statistical reliability** — Sharpe with CI, bootstrap CI on mean PnL,
   Monte-Carlo drawdown expectations (is your current drawdown normal for your
   strategy or a red flag), Wilson-interval win rate.
@@ -1366,6 +1418,9 @@ It also carries the habit loops:
 
 - **Day journal** — pre-market plan (bias, plan, committed max loss) and
   end-of-day review. A committed max loss becomes today's tripwire threshold.
+  The text saves as you type; the max loss once you leave its field (a half-typed
+  "1" of "150" never arms a $1 tripwire or moves `limitAt`). The weekly review's
+  answers save as you type too.
 - **Weekly review wizard** — three questions about the last completed Mon–Sun
   week (best/worst trade prefilled): what worked, what changes, and a one-line
   lesson. Answers are keyed `week:GGGG-Www` on the same journal plumbing as
@@ -1709,7 +1764,13 @@ You get:
 - **If you keep this up** — straight-line per-week / per-month / per-year
   numbers off your average day.
 - **Simulated horizon outcomes** — median, 25th/75th/95th percentile paths and
-  the share of simulations that finish green.
+  **simulated paths ending green** (the share of the 400 replays that end above
+  zero — not a probability that you will).
+- **"If your average day holds — not yet a proven edge."** When the projection's
+  basis trades don't pass the Diagnostic's edge test (Sharpe or expectancy 95%
+  lower bound above zero, same seed and resample count), the pace, simulated
+  outcomes and milestone dates all carry that label: they replay an edge your
+  trades haven't shown yet.
 - **Drawdown reality-check** — the honest companion to the fan chart: the max
   peak-to-trough dip *inside* each simulated path, reported as median / 1-in-4
   / 1-in-20 quantiles. The fan shows where paths end; this shows how ugly the
@@ -1749,8 +1810,9 @@ Treat it as positive visualization of staying the course, nothing more.
   set the default for everyone with `DEFAULT_THEME=ts9|ink|bb` (a user's own pick still wins).
 - **R basis:** what 1R means when a trade has no planned risk journaled —
   average loss, fixed $ amount, or other bases.
-- **Breakeven threshold:** the ±$ band treated as "scratch" rather than
-  win/loss in the distribution analysis.
+- **Break-even band:** the ±$ band treated as "scratch" rather than win/loss.
+  Automatic unless you type a dollar amount (Settings shows "auto ($X)"); empty
+  goes back to auto, 0 turns it off. See *Concepts and definitions*.
 
 ## Exports and backups
 
@@ -1767,7 +1829,7 @@ switches moved into **Settings**).
 | **Koinly CSV / CoinTracker CSV** (in Tax export by country…) | Files in the import formats of the two most used crypto tax tools. **Koinly** (universal format): `Date, Sent Amount, Sent Currency, Received Amount, Received Currency, Fee Amount, Fee Currency, Net Worth Amount, Net Worth Currency, Label, Description, TxHash`, dates `YYYY-MM-DD HH:mm:ss` UTC. **CoinTracker**: `Date, Received Quantity, Received Currency, Sent Quantity, Sent Currency, Fee Amount, Fee Currency, Tag`, dates `MM/DD/YYYY HH:mm:ss` UTC. Spot fills are trades (the fee in its own coin). Perps keep the other exports' treatment, one closed trade at its close time: realised profit is received, a loss sent (Koinly `realized gain`, CoinTracker `margin_gain` / `margin_loss`), with the trade's fees in the fee column; its funding is its own row (paid: Koinly `margin fee`, CoinTracker `margin_fee`; received: `realized gain` / `margin_gain`); a fee rebate is `realized gain` / `margin_rebate`. Deposits and withdrawals (capital flows) are untagged transfers in USDC. Amounts stay in the coins traded (both tools price them in your currency); Net Worth is the USD value where the quote is a stablecoin. Pick all history, one tax year (the country's tax year) or a date range. |
 | **Export journal** | Journal entries as JSON. |
 | **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
-| **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. List and fetch them back via `GET /api/backups`. |
+| **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. The sync bar's **History** lists them under "Server backups": restoring one works like opening the file (wallets and settings from the backup, your journal merged), and the server first keeps a copy of what it replaces. Scripts: `GET /api/backups`. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
 | **Export PDF** (Diagnostic) | Print-grade PDF sibling of the report: headline stats, every visible chart embedded as a JPEG image (the built-in PDF writer gained DCTDecode image XObjects for this), and the recommendations — opens anywhere, no browser needed. |
 | **Clear candle cache** | Frees the (large) cached candles; saved measurements are kept. |
@@ -1784,12 +1846,19 @@ switches moved into **Settings**).
    survives reboots and redeploys, works across devices. The status bar shows
    `☁ Server sync · rev N · saved`. Concurrent edits from two devices are
    revision-checked: a stale write is refused, and that client loads the newer
-   state, re-applies the journal entries and settings fields it changed since
-   its last sync on top, and saves the merge — neither device's edit to a
-   different entry is lost.
+   state, re-applies the settings fields it changed since its last sync, and
+   merges the journal entries it changed field by field against the last copy
+   both devices agreed on, then saves the merge. Two devices editing different
+   fields of one entry both keep their edit; the same note changed on both keeps
+   both texts, under an "also edited on another device" line (see
+   [How syncing behaves](README-deploy.md#how-syncing-behaves)). An open tab
+   notices another device's save when it comes back into view, and once a minute.
+   If the server has no `AUTH_TOKEN`, the sync bar says so in red.
 
-In all modes, image attachments and the fill/candle caches stay in the browser
-(large; re-fetchable or re-attachable). "Backup all" is the full portable copy.
+The fill/candle caches stay in the browser in every mode (large; re-fetchable).
+Image attachments stay in the browser too, except with server sync, where each
+trade's screenshots sync separately. "Backup all" is the full portable copy
+(attachments aside).
 
 ## Deploying with the companion server
 
@@ -1970,8 +2039,11 @@ behavior.
   counted per client address: `AUTH_FAIL_MAX` (default 20) wrong guesses inside
   10 minutes lock that address out of every token-gated route for
   `AUTH_LOCK_MIN` (default 15) minutes — a 429 with `Retry-After`, even for the
-  right token. A request with no token at all, or a `READ_TOKEN` asking for a
-  full-token route, never counts as a guess. A wrong admin second-factor code or
+  right token (the journal and `/admin` say how long is left). A request with no
+  token at all, or a `READ_TOKEN` asking for a full-token route, never counts as
+  a guess, and one wrong token counts once however many requests carry it (only a
+  hash of it is kept, for the window), so a page's parallel calls can't lock you
+  out over one typo; distinct wrong tokens each count. A wrong admin second-factor code or
   passkey does count.
 - **Admin two-factor** (`ADMIN_2FA`, see *Two-factor for the admin panel* above) only
   gates `/api/social/admin/*`. Nothing here, and nothing else the token opens, ever asks
@@ -1989,6 +2061,24 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 
 - **Net PnL** = price PnL − fees ± funding, attributed per trade. Funding
   payments land on the trade whose holding window they fall inside.
+- **Break-even band (scratches)** — a closed trade whose net is strictly inside
+  ±band of zero is a scratch: neither a win nor a loss (win rate and streaks
+  leave it out; profit factor still counts every dollar). A trade exactly at the
+  band counts. By default the band is **automatic: 5% of the median |net| per
+  closed trade, across every market and wallet, clamped to $0.50–$50** — it
+  scales with the account (a flat $50 made most of a small account's trades
+  scratches, and called a +$50, +20% winner break-even) while big accounts keep
+  the old $50. A dollar amount set in Settings is kept as is. Profiles saved
+  before the automatic band carry the old default of exactly $50, written in
+  without being chosen, so a stored $50 reads as automatic until set again;
+  any other stored value stays fixed. The server's API uses the same band.
+- **Max drawdown %** — the largest peak-to-trough fall of cumulative realized
+  PnL, as a share of your **best cumulative profit** (the PnL curve's all-time
+  high), shown as "84% of best cumulative profit". It is not the % off the peak
+  that dip fell from, and it is deposit/withdrawal independent.
+- **Verified PnL vs recon** — the Verified strip shows Hyperliquid's own
+  account PnL; each "recon" tag is how far Ledger's fill-based reconstruction is
+  from it. A large recon gap means per-trade analytics are missing PnL.
 - **R-multiple** — result divided by planned risk. Uses your journaled risk
   when present, otherwise the configurable 1R fallback.
 - **Expectancy** — average net per trade; **rolling expectancy** = the same
@@ -2090,7 +2180,7 @@ npm run test:e2e   # browser smoke tests (needs Playwright, see below)
 npm run test:e2e:heavy  # a ~18k-trade account in the browser, with real time budgets
 ```
 
-About 620 tests across 33 suites cover reconstruction (flips, funding
+The suites in `tests/` cover reconstruction (flips, funding
 windows, spot/perp separation, partial-history flagging), the Web Worker
 dispatcher end-to-end with byte-parity against the synchronous fallback,
 excursion math and the retention/ratchet behavior, miner families and
@@ -2105,7 +2195,9 @@ process score, the end-of-day nudge, demo-fill
 generation through real reconstruction, the Student-t CDF against reference
 values, a whole-file parse check of every script block, and the server over
 real HTTP (auth, revision conflicts, restart survival, the capital endpoint,
-digest lifecycle, server-held backups, the metrics endpoint). The suites extract functions **directly from `ledger.html`**, so
+digest lifecycle, server-held backups, the metrics endpoint, the token lockout,
+admin settings refused out of range, response headers), and two devices editing one
+journal entry. The suites extract functions **directly from `ledger.html`**, so
 they test exactly what ships — there is no second copy of the code to drift
 out of sync. `tests/test-budget.mjs` adds size budgets, one per screen, measured as
 the server sends them: the journal (`/`: the page plus its `app/` scripts) and Daruma
@@ -2118,8 +2210,9 @@ names the screen that grew, so growth is a choice rather than a drift.
 
 **Browser smoke tests** (`e2e/run.mjs`) run the real app in Chromium against the
 real server, fully offline (every request off the local server is blocked). They
-boot the full journal with a token, load sample data, open every tab, save a journal
-note and check it reaches the server and survives a reload, check that a reload
+boot the full journal with a token, load sample data, open every tab, check that a note and
+the awards made on it never reach the server, save a journal note on pasted fills and check
+it reaches the server and survives a reload, check that a reload
 takes every `app/` script from cache, open the app offline through the service
 worker, open `ledger.html` straight from disk, open Daruma at phone width (no
 sideways scroll), open every admin tab, and run admin two-factor at 360 and 1280 px

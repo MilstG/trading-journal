@@ -126,7 +126,8 @@ try {
   await t('below the smallest group size nothing is shown', async () => {
     await call('/admin/config', { method: 'PUT', owner: true, body: { bench: { min: 25 } } });
     const r = (await call('/bench?style=day', { key: keys[1] })).d; eq([r.groups.length, r.min, r.contributors], [0, 25, 11]);
-    eq((await call('/admin/config', { method: 'PUT', owner: true, body: { bench: { min: 3 } } })).d.config.bench.min, 10, 'never under 10');
+    const rr = await call('/admin/config', { method: 'PUT', owner: true, body: { bench: { min: 3 } } });
+    eq([rr.status, rr.d.error], [400, 'Traders like you → min must be from 10 to 1000 (not 3).'], 'never under 10: refused, not clamped');
   });
   await t('seed wallets: paste anything, each address is read once from its public fills', async () => {
     const text = `wallets,label\n${W('1')},good one\n${W('2').toUpperCase().replace('0X', '0x')},tiny\n${W('9')}\n${W('1')} again\nnot a wallet 0x123`;
@@ -174,7 +175,7 @@ try {
     eq((await call('/admin/bench', { method: 'POST', owner: true, body: { action: 'remove', which: 'err' } })).d.removed, 1);
     await new Promise(r => app.close(r)); app = mk(); B = await listen();
     const a = (await call('/admin/bench', { owner: true })).d;
-    eq([a.config.min, a.seedCounts.ok, a.seedCounts.skip, a.seedCounts.err || 0], [10, 1, 1, 0]);
+    eq([a.config.min, a.seedCounts.ok, a.seedCounts.skip, a.seedCounts.err || 0], [25, 1, 1, 0]);
     eq((await call('/admin/bench', { method: 'POST', key: keys[1], body: { action: 'remove', which: 'all' } })).status, 401, 'members can’t');
     const many = Array.from({ length: 6000 }, (_, i) => '0x' + (i + 1000).toString(16).padStart(40, '0')).join('\n'); // ~260 KB
     const big = (await call('/admin/bench', { method: 'POST', owner: true, body: { action: 'seed', text: many } })).d;

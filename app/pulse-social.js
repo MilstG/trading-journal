@@ -20,7 +20,7 @@ const SOC_SHARE_ROWS=[
   ['habits','Habits you run','Others can see and adopt them'],
   ['verify','Verify my discipline','The server reads your public fills to confirm your Discipline score — the discipline board only counts verified scores. The owner can see your address'],
   ['ret','Show % return','30-day return and drawdown, read from your first wallet on chain'],
-  ['usd','Show dollar P&L','Reveals your account size to everyone',true],
+  ['usd','Show dollar P&L','Reveals your account size to everyone, and your In the black and Big day badges',true],
   ['addr','Show wallet address','Anyone could look up every trade and balance',true],
   ['mentor','Let mentors see my days','Mentors the owner appointed see your scores, slips and the lesson you write each night, and can leave you notes. They see a trade only when you send it for review; never your wallet'],
   ['seek','Looking for an accountability partner','Shows you under “Looking for a partner” in Find people, so someone who wants one can ask you'],
@@ -69,13 +69,16 @@ function pzXpLog(g){ const L={}, at=k=>L[k]||(L[k]={});
   for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp; }
   return Object.fromEntries(Object.keys(L).sort().slice(-100).map(k=>[k,L[k]])); }
 // The numbers a member shares, from the shared game context. Pure given its inputs.
-function pzSocialStats(g, habits, J, withLessons){
-  const done=g.challenges.filter(c=>c.status==='done');
+// Badges whose tiers are dollar amounts (In the black, Big day: the id, title and tier all give the
+// amount away) stay home unless the member shares dollar P&L; the count leaves them out too.
+const PZ_USD_BADGE=/^(netprofit|bestday)-/;
+function pzSocialStats(g, habits, J, withLessons, usd){
+  const done=g.challenges.filter(c=>c.status==='done'), earned=g.catalog?g.catalog.earned.filter(b=>usd||!PZ_USD_BADGE.test(b.id)):null;
   return {week:g.nowWeek, tz:pzClockZone(), xpLog:pzXpLog(g),
     streak:g.streak.current, best:g.streak.best, shields:g.streak.shields,
     challengesDone:done.length, lastChallenge:done.length?habitSentence(done[done.length-1].ch.spec):'',
-    badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
-    badgeN:g.catalog?g.catalog.earned.length:g.achievements.filter(a=>a.at).length, badgeTotal:g.catalog?g.catalog.total:0,
+    badges:earned?earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
+    badgeN:earned?earned.length:g.achievements.filter(a=>a.at).length, badgeTotal:g.catalog?g.catalog.total:0,
     habits:(habits||[]).slice(0,5),
     days:g.days.slice(-45).map(d=>{ const o={k:d.key,s:d.score,b:!!d.breached,j:d.parts.journal===1}, fl=(d.behavior&&d.behavior.flags)||{};
       const f=Object.keys(fl).filter(k=>fl[k]>0); if(f.length)o.f=f;
@@ -115,7 +118,12 @@ function pzGuestCap(){ try{
 // a feature that opens past the cap needs a profile, not more XP
 function pzNeedsProfile(need){ const cap=pzGuestCap(); return !!(cap&&need>cap); }
 function pzLockWord(need){ return pzNeedsProfile(need)?'needs a profile':'level '+need; }
-function pzLocked(feature, level){ return pzNeeds(feature,level,pzUnlockCfg(),pzS.demo,SOC.me?!!SOC.me.unlocked:!!(SRV.token&&!SRV.badAuth)); }
+// Sample data opens every screen, but duels, competitions and peer groups run on the server, which
+// checks the profile's real level: with sample data on, those follow it (else the form says no on submit).
+const PZ_SRV_GATED=new Set(['duels','compete','peers']);
+function pzLocked(feature, level){
+  if(pzS.demo&&SOC.me&&PZ_SRV_GATED.has(feature))return pzNeeds(feature,SOC.me.level||1,pzUnlockCfg(),false,!!SOC.me.unlocked);
+  return pzNeeds(feature,level,pzUnlockCfg(),pzS.demo,SOC.me?!!SOC.me.unlocked:!!(SRV.token&&!SRV.badAuth)); }
 function socValue(board,v){ if(v==null)return '—';
   if(board==='ret')return (v>=0?'+':'−')+Math.abs(v*100).toFixed(1)+'%';
   if(board==='usd')return signedPlain(v);
@@ -201,7 +209,7 @@ function socGet(name, p, maxAge){
 function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;
-  let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor)),
+  let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor),!!(SOC.share&&SOC.share.usd)),
     {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())})); }catch(e){ return; }
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
@@ -496,6 +504,8 @@ function socAccountHtml(D){
 function pzXpToGo(need,g){ const s=pzLevelStart(need); return isFinite(s)?Math.max(0,s-g.level.xp).toLocaleString()+' XP to go.':'Past the top level the league set — ask the owner.'; }
 function pzLockedHtml(title, need, g){
   const L=g.level;
+  if(pzS.demo&&SOC.me)return `${pzHead('Unlocks at level '+need,title)}<section class="pz-card pz-lock">${pzRing(SOC.me.level||1,0,PZ_COL.xp,{size:96,cap:'Level'})}
+    <div class="pz-big">${esc(title)} unlocks at level ${need}</div><p class="pz-sub">Sample data shows every screen, but this one runs on the league with your profile’s own level: ${SOC.me.level||1}. Leave sample data and earn XP from your own trading to open it.</p></section>`;
   if(pzNeedsProfile(need))return `${pzHead('Needs a profile',title)}<section class="pz-card pz-lock">${pzRing(L.level,1,PZ_COL.xp,{size:96,cap:'Level'})}
     <div class="pz-big">${esc(title)} needs a profile</div><p class="pz-sub">Without a profile, levels stop at ${pzGuestCap()}${L.capped?`. You’ve earned level ${L.earned}: create a profile and it all unlocks at once`:''}. A profile is free and takes a name. You choose what’s shared, and you can leave every ranking off.</p>
     <a class="pz-cta" href="#social" style="max-width:320px">Create your profile</a></section>`;
@@ -1237,9 +1247,12 @@ async function socAction(t){
     if(ds.pzColorway){ await setColorway(ds.pzColorway); return true; }
     if((t.id||(t.dataset&&t.dataset.pkDel))&&await acctAction(t))return true;
     switch(t.id){
-      case 'socJoin': { const h=($('socHandle')||{value:''}).value.trim(), inv=($('socInvite')||{value:''}).value.trim();
+      case 'socJoin': { if(SOC.joining)return true; // a second tap while the first is joining would be told "That name is taken."
+        const h=($('socHandle')||{value:''}).value.trim(), inv=($('socInvite')||{value:''}).value.trim();
         const share=SOC.draft||SOC_DEFAULT_SHARE;
-        const r=await socFetch('/join',{method:'POST',body:JSON.stringify({handle:h,invite:inv,share,address:socAddressFor(share),skip:SOC.joinSkip||[],visitor:socWasVisitor()})});
+        SOC.joining=true; t.disabled=true; let r;
+        try{ r=await socFetch('/join',{method:'POST',body:JSON.stringify({handle:h,invite:inv,share,address:socAddressFor(share),skip:SOC.joinSkip||[],visitor:socWasVisitor()})}); }
+        finally{ SOC.joining=false; t.disabled=false; }
         vaultForget(); COACH.tried=false; COACH.msgs=null; SOC.key=r.key; try{ localStorage.setItem(SOC_KEY_STORE,r.key); }catch(e){}
         SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.cache={}; SOC.lastSent='';
         SOC.joinSkip=null; try{ localStorage.removeItem(SOC_INVITE_STORE); }catch(e){}
@@ -1351,7 +1364,8 @@ function vaultMark(id){ if(!VAULT.key)return; if(id==null)VAULT.sGen++; else VAU
 function vaultMarkAll(prev, journalOnly){ if(!VAULT.key)return;
   for(const id of new Set([...Object.keys(prev||{}),...Object.keys(journal)]))VAULT.dirty.set(id,(VAULT.dirty.get(id)||0)+1);
   if(!journalOnly){ VAULT.base=null; VAULT.sGen++; } vaultSaveLocal(); }
-function vaultSchedule(){ if(!vaultActive()||_applying)return; clearTimeout(VAULT.timer); VAULT.timer=setTimeout(()=>vaultPush(),3000); vaultSaveLocal(); }
+// sample mode: the push (and a merge) waits for sampleLeave
+function vaultSchedule(){ if(!vaultActive()||_applying||_sample)return; clearTimeout(VAULT.timer); VAULT.timer=setTimeout(()=>vaultPush(),3000); vaultSaveLocal(); }
 // Another device's copy, merged: theirs wins, except journal entries edited here since the last push,
 // settings fields changed here (against the last synced values), and wallets added or removed here.
 async function vaultMerge(d){
@@ -1377,7 +1391,7 @@ async function vaultMerge(d){
   return JSON.stringify(settings.wallets)!==wBefore;
 }
 async function vaultPush(){
-  if(!vaultActive())return;
+  if(!vaultActive()||_sample)return;
   if(VAULT.busy){ VAULT.again=true; return; } VAULT.busy=true;
   try{
     const sentIds=[...VAULT.dirty.entries()], sentS=VAULT.sGen, sentBase=vaultSnapS();
@@ -1438,6 +1452,7 @@ async function vaultUnlock(pass){
   const d=await socFetch('/vault'); if(!d.blob)throw new Error('There’s no synced journal for this profile yet.');
   const key=await vaultDerive(pass,d.blob.salt,d.blob.iter);
   let data; try{ data=await vaultOpen(key,d.blob); }catch(e){ throw new Error('That passphrase doesn’t open your synced journal.'); }
+  sampleEnd(); // kept below: the account's, not the sample's
   const mineJ=journal||{}, mineW=settings.wallets||[];
   await applySnapshot(data);
   VAULT.key=key; VAULT.salt=d.blob.salt; VAULT.rev=d.rev; VAULT.mid=d.member||(SOC.me&&SOC.me.id); VAULT.dirty=new Map(); VAULT.base=vaultSnapS(); VAULT.sGen=VAULT.sSent=0; VAULT.err=null;

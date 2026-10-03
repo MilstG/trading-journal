@@ -121,7 +121,7 @@ html{scroll-behavior:smooth}
     <li>Explore the four tabs: <b>Trades</b>, <b>Diagnostic</b>, <b>Review</b>, and <b>Project</b>.</li>
   </ol>
   <h3>Just looking?</h3>
-  <p>Click <b>Load sample data</b> (on the welcome screen, or <b>Sample data</b> in the setup panel). It generates a realistic five-month synthetic history and runs it through the normal import pipeline, so every panel is populated; the charts draw candles from the sample trades’ own prices. Nothing is saved — reload or add a real address to clear it.</p>
+  <p>Click <b>Load sample data</b> (on the welcome screen, or <b>Sample data</b> in the setup panel). It generates a realistic five-month synthetic history and runs it through the normal import pipeline, so every panel is populated; the charts draw candles from the sample trades’ own prices. Nothing is fetched or saved: notes, prep, plans, awards and challenges you make on the sample stay in that tab and never reach your own journal (wallets you add and the look you pick do stay). Reload, add a real address or paste your own fills to clear it.</p>
   <h3>No wallet, or fills from another venue?</h3>
   <p><b>Paste data</b> accepts raw fill JSON or a <b>CSV</b> (a header row with time, symbol, side, price, size — common column aliases are matched automatically, and you can also pick a file instead of pasting). The modal tells you live what format it detected. Imported fills feed the exact same engine.</p>
 </section>
@@ -177,6 +177,7 @@ html{scroll-behavior:smooth}
   <p>Review → <b>Progress</b> turns good process into a game — never profit, never trade count. Each trading day earns its Discipline score as XP — read from your fills, so it needs no logging (one clean trade earns as much as ten) — plus bonus XP for what you log (prep, a plan before your first trade, journaling, stops, a respected loss limit), plus bonuses for focus-habit days, completed <b>weekly challenges</b> (one target a week, picked from your biggest leak) and <b>achievements</b> such as "walked away at the limit" or "ten good losses". Your <b>discipline streak</b> counts trading days at Discipline 70+; days you don't trade never break it, and a perfect week earns a <b>shield</b> that absorbs one bad day. You also get personal bests, an estimate of what discipline has saved you, a <b>monthly report card</b> and a <b>weekly share card</b> — images with grades but no dollar amounts, which you can download, copy, or send to an accountability partner if your server has one set up.</p>
   <h3>Turning coach mode off</h3>
   <p>Prefer a plain journal? Switch <b>Coach mode</b> off in the settings panel (⚙), or click <b>hide coach</b> on the coach card. That hides everything from the coach, habits and progress work: the coach card, habits, progress and achievements, wins, the process score, the journal inbox, prep, rules from findings, live-plan badges, the question after each trade, the AI letter and the end-of-day nudge. Nothing is deleted: switch it back on and everything returns as it was. The setting follows you across devices.</p>
+  <p><b>Reset progress awards</b> (⚙ settings, or the foot of Daruma’s Progress screen) clears every badge, achievement and completed challenge on all your devices and earns them again from your own trades, with a new challenge for this week. Use it if awards turned up that aren’t yours, e.g. from sample data in an older version. Your trades, journal and habits stay.</p>
   <h3>Daruma: the simple view</h3>
   <p>Open <code>/daruma</code> on your server (or <b>Daruma view</b> in the footer) for a phone-first version that works with zero effort: three dials read from your fills — <b>Form</b> (your recent trading against your usual), <b>Discipline</b> (trades free of revenge entries, sizing up after losses, adding to losers, trading on after two losses, overtrading and over-held losers) and <b>Load</b> (today against your usual day) — plus a Stats tab. <b>Plan your next trade</b> on Today saves a stop, target and one-line reason before you trade; it attaches itself to your next trade on that market and side within 24 hours (or expires), and Stats → <b>Your plans</b> tells you how often you follow your plans and what not following them cost. Logging prep, a plan or journal only adds bonus XP and sharper insights. <b>Colorway</b> in Settings picks the look: TS9 (acid green on black, the default), Ink (midnight) or BB (black and amber); the full journal's footer button does the same, and the pick follows you across devices. The ✎ count at the top of Today opens the quick journal; <b>Skip</b> on a card takes a trade out of the backlog and <b>Clear them</b> skips everything from before today in one tap, with an Undo until you leave the screen. A skipped trade is not journaled (no XP, streak or discipline credit), it is just out of the way, and a note on it later counts as usual. It installs as its own app from the browser's share or install menu. Anyone you send the link to adds their own wallet address, and their journal stays in their browser; set an access token on your server before sharing, or everyone shares one journal.</p>
   <h3>Social: leagues, competitions and following</h3>
@@ -297,7 +298,7 @@ html{scroll-behavior:smooth}
   <ul>
     <li><b>Perps / Spot</b> toggle, period buttons (7/30/90 days…), and a custom date range apply everywhere.</li>
     <li><b>Timezone toggle</b> (UTC / local) changes what "a day" means for the calendar, day×hour heatmap, day journal, and daily PnL.</li>
-    <li><b>Break-even band</b> (default $50): trades inside ±band count as scratches — neither wins nor losses — so tiny outcomes don't pollute your win rate. Set it to match your sizing.</li>
+    <li><b>Break-even band</b> (automatic unless you set one: 5% of your median trade's net, between $0.50 and $50): trades strictly inside ±band count as scratches — neither wins nor losses — so tiny outcomes don't pollute your win rate. Type a dollar amount to fix it, or 0 to turn it off.</li>
     <li><b>R basis</b>: R multiples scale to your average loss by default, or to a fixed $ risk; either can be overridden per trade with journaled risk.</li>
     <li><b>Install app</b>: when served over https, Ledger installs as a PWA.</li>
   </ul>
@@ -315,7 +316,7 @@ html{scroll-behavior:smooth}
     <tr><td>Tax export by country…</td><td>Tax files set up for your country (US, UK, Germany, Australia, Canada or FIFO by calendar year), in your currency, with a preview per tax year. Also <b>Koinly CSV</b> and <b>CoinTracker CSV</b> for those tools to import: for all your history, one tax year, or dates you pick. Spot fills are trades; each closed perp’s realised P&amp;L is a margin gain or loss (“realized gain” in Koinly) with its fees, and its funding a row of its own (paid: a margin fee); deposits and withdrawals are transfers. In Koinly or CoinTracker, add a wallet for the exchange and import the file. Import your whole history once so spot buys carry their cost.</td></tr>
     <tr><td>Export journal</td><td>Your journal entries as JSON.</td></tr>
     <tr><td>Backup all</td><td><b>The important one.</b> Everything portable in one JSON — journal, wallets, settings, MAE/MFE measurements, and the fill caches that preserve history beyond the API's pagination cap. Re-import it to restore, including on another device.</td></tr>
-    <tr><td>Backup to server</td><td>(when server sync is connected) The same full backup stored on your server — newest 10 kept.</td></tr>
+    <tr><td>Backup to server</td><td>(when server sync is connected) The same full backup stored on your server — newest 10 kept. Restore one from <b>History</b> in the sync bar.</td></tr>
     <tr><td>Clear candle cache</td><td>Frees the largest thing in browser storage; saved measurements are kept and candles re-fetch on the next run.</td></tr>
   </table></div>
   <div class="note warn"><b>Make a habit of Backup all.</b> Your fill caches are the only copy of history older than the exchange API serves. One JSON in a safe place covers you.</div>
@@ -327,15 +328,15 @@ html{scroll-behavior:smooth}
   <ul>
     <li><b>Browser storage</b> (default) — works out of the box; tied to this browser on this device.</li>
     <li><b>Linked data file</b> — bind the journal to a real JSON file on disk that auto-saves on every change. Put it in a cloud-synced folder to use across devices. Chrome/Edge only.</li>
-    <li><b>Server sync</b> — deploy the companion server (next section) and every edit auto-saves within about a second, follows you across devices, and survives reinstalls. The status bar shows <code>☁ Server sync · rev N · saved</code>. Edits from two devices are merged, not lost: the newer state wins and your unsynced edits are re-applied on top.</li>
+    <li><b>Server sync</b> — deploy the companion server (next section) and every edit auto-saves within about a second, follows you across devices, and survives reinstalls. The status bar shows <code>☁ Server sync · rev N · saved</code>. Edits from two devices are merged, not lost: your unsynced edits are laid over the newer state field by field, so a tag added on one device and a note written on the other both stay. If both devices changed the same note, both texts are kept, the other device's first, under an “also edited on another device” line, and the sync bar flags it so you can tidy up. If the server has no access token set, the sync bar warns you in red: anyone with the address could read and change your journal.</li>
   </ul>
-  <p>With server sync, the server also keeps <b>rotating daily snapshots</b> (last 14 days) — the <b>History</b> button restores any of them if an edit went wrong.</p>
+  <p>With server sync, the server also keeps <b>rotating daily snapshots</b> (last 14 days) — the <b>History</b> button restores any of them if an edit went wrong. It also lists the copies made with <b>Backup to server</b>, and restores those the way opening a backup file does.</p>
 </section>
 
 <section id="server">
   <p class="kicker">13</p>
   <h2>The companion server</h2>
-  <p>Optional, zero-dependency, and small: one <code>server.js</code> that serves the app, persists your journal, and adds automation. The quick version (Railway, but any Node 18+ host works):</p>
+  <p>Optional, zero-dependency, and small: one <code>server.js</code> that serves the app, persists your journal, and adds automation. The quick version (Railway, but any host with Node 22.13 or newer works — it uses Node's built-in SQLite):</p>
   <ol class="steps">
     <li>Deploy the repo (start command <code>node server.js</code>).</li>
     <li>Attach a persistent volume at <code>/data</code> — without one, your journal is wiped on every redeploy.</li>
@@ -383,7 +384,7 @@ html{scroll-behavior:smooth}
   <h3>Numbers look off / trades missing</h3>
   <p><b>Shift-click Load all</b> for a full re-fetch. Check the data-health strip: a "truncated" flag means the exchange API stopped serving older pages — history past that point exists only in your cached fills and backups.</p>
   <h3>My win rate seems wrong</h3>
-  <p>Trades within the break-even band (default ±$50) count as scratches and don't enter the win rate. Adjust the band in settings to match your sizing.</p>
+  <p>Trades strictly inside the break-even band (automatic by default: 5% of your median trade's net, $0.50–$50) count as scratches and don't enter the win rate. Set a fixed band in settings if you prefer.</p>
   <h3>Spot symbols show as @123</h3>
   <p>Spot pairs resolve to token names from exchange metadata; reload once with a network connection and they map through.</p>
   <h3>The browser is using a lot of storage</h3>

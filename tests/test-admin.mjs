@@ -205,6 +205,28 @@ try {
     await adm('/config', 'PUT', { coach: { members: false } });
     ok(/hasn’t opened the coach/.test(soc.coach.statusFor(req).reason));
   });
+  await t('settings out of range are refused by name and range, not clamped and “Saved”; a stored config still loads', async () => {
+    const before = (await adm('/overview', 'GET')).d.config;
+    for (const [body, re] of [
+      [{ xp: { checkin: 5000 } }, /^XP rules → checkin must be from 0 to 1000 \(not 5000\)\.$/],
+      [{ xp: { discipline: -1 } }, /XP rules → discipline must be from 0 to 5/],
+      [{ coach: { packs: { cost: 0 } } }, /^Coach → packs → cost must be from 1 to 100000/],
+      [{ modules: { coach: 0 } }, /Features → coach must be from 1 to 100/],
+      [{ levels: { base: 'lots' } }, /Levels → base needs a number from 10 to 5000/],
+      [{ mentorXp: { rateMin: 50, rateMax: 10 } }, /lowest rate \(50\) is above the highest \(10\)/],
+      [{ mentorXp: { holdHours: 1 } }, /Mentoring XP → holdHours must be from 12 to 336/],
+      [{ pots: { burnMax: 10, burnPct: 20 } }, /Buy-ins → burnPct must be from 0 to 10 \(not 20\)/],
+      [{ guestCap: -3 }, /Levels stop at/], [{ guestCap: '' }, /Levels stop at/]]) {
+      const r = await adm('/config', 'PUT', Object.assign({ open: !before.open }, body));
+      eq(r.status, 400, JSON.stringify(body)); ok(re.test(r.d.error), r.d.error);
+    }
+    const after = (await adm('/overview', 'GET')).d.config;
+    eq([after.open, after.xp, after.coach, after.guestCap], [before.open, before.xp, before.coach, before.guestCap], 'nothing in a refused request is applied');
+    eq((await adm('/config', 'PUT', { xp: { checkin: 1000, discipline: 2.5 }, coach: { packs: { cost: 1 } }, mentorXp: { rateMin: 10, rateMax: 10 }, guestCap: 0 })).status, 200, 'the edges are fine');
+    // loading is separate: a config written by hand (or an older version) is still clamped into shape
+    eq(SC.sanitizeXp({ checkin: 5000 }, null).checkin, 1000);
+    eq(SC.rangeError('XP rules', { checkin: 20, review: '15' }, null, SC.sanitizeXp), null);
+  });
   await t('removing a member', async () => {
     eq((await adm('/members/' + Cid, 'POST', { action: 'remove' })).status, 200);
     eq((await call('/me', { key: A })).status, 401);

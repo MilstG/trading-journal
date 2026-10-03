@@ -142,6 +142,19 @@ await t('wrong tokens lock the address out (429, right token included); no-token
   ok(+locked.headers.get('retry-after') > 0, 'Retry-After set');
   eq((await fetch(b + '/api/v1/stats', { headers: { Authorization: 'Bearer reader' } })).status, 429, 'read token locked too');
   eq((await fetch(b + '/api/health')).status, 200, 'tokenless public routes still answer');
+  ok(/locked out for \d+ more minutes/.test((await locked.json()).error), 'the 429 says how long');
+  await new Promise(res => app.close(res));
+});
+await t('one wrong token is one guess, however many requests carry it (a sign-in burst, a stale saved token)', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'ledger-lock-'));
+  const app = createApp({ dataDir, auth: 'secret', authFailMax: 3, htmlPath: join(here, '..', 'ledger.html') });
+  const b = await listen(app);
+  // the admin panel used to send its 13 calls at once with a mistyped token: 13 guesses, and two typos locked the owner out
+  const burst = tok => Promise.all(Array.from({ length: 13 }, (_, i) => fetch(b + (i % 2 ? '/api/data' : '/api/social/admin/me'), { headers: { Authorization: 'Bearer ' + tok } })));
+  for (const tok of ['secrte', 'secrte', 'Secret']) eq([...new Set((await burst(tok)).map(r => r.status))], [401], tok);
+  eq((await fetch(b + '/api/data', { headers: authH })).status, 200, 'two distinct typos, sent 39 times: not locked');
+  eq((await fetch(b + '/api/data', { headers: { Authorization: 'Bearer third' } })).status, 401);
+  eq((await fetch(b + '/api/data', { headers: authH })).status, 429, 'a third distinct wrong token still locks (AUTH_FAIL_MAX 3)');
   await new Promise(res => app.close(res));
 });
 
@@ -236,7 +249,8 @@ await t('attachment CRUD round-trip', async () => {
   const g = await fetch(base3 + '/api/att/dHJhZGUx', { headers: authH3 });
   eq(await g.json(), arr);
   await fetch(base3 + '/api/att/dHJhZGUx', { method: 'DELETE', headers: authH3 });
-  eq((await fetch(base3 + '/api/att/dHJhZGUx', { headers: authH3 })).status, 404);
+  const gone = await fetch(base3 + '/api/att/dHJhZGUx', { headers: authH3 });
+  eq([gone.status, await gone.json()], [200, []], 'none stored: an empty list, not a 404 (the app asks for every trade it opens)');
 });
 await t('attachments require auth and validate keys + payload', async () => {
   eq((await fetch(base3 + '/api/att/dHJhZGUx')).status, 401);

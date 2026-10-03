@@ -16,7 +16,7 @@ const _be=50; const isWin=n=>n>_be; const isLoss=n=>n<-_be;
 let _rng=Math.random;
 `;
 const M = await evalModule(
-  ['planCoinKey', 'pplanCheck', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planStopBand', 'planVerdict', 'planWords', 'planStats',
+  ['planCoinKey', 'pplanCheck', 'planPzPx', 'pzPx', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planStopBand', 'planVerdict', 'planWords', 'planStats',
    'replayFillSteps', 'replayPnlAt', 'nextPlan', '_srand', '_hashSeed', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
   ['planCoinKey', 'pplanCheck', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planVerdict', 'planWords', 'planStats',
    'replayFillSteps', 'replayPnlAt', 'nextPlan', 'demoFills', 'reconstructTrades'], PRELUDE);
@@ -37,6 +37,20 @@ t('the form check: a market and a stop are required, prices must sit on the righ
   ok(pplanCheck({ coin: 'BTC', dir: 'Short', entry: 100, stop: 110, target: 101 }).includes('below'), 'short target above entry');
   eq(pplanCheck({ coin: 'BTC', dir: 'Long', stop: 90 }), '', 'entry and target are optional');
   eq(pplanCheck({ coin: 'BTC', dir: 'Short', entry: 100, stop: 110, target: 80 }), '');
+});
+t('the form check refuses markets nobody knows and prices that aren’t prices', () => {
+  const known = { BTC: 62000, ETH: 0, SOL: 150 };
+  ok(/No market called ZZZNOTACOIN/.test(pplanCheck({ coin: 'zzznotacoin', dir: 'Long', stop: 1 }, known)));
+  eq(pplanCheck({ coin: 'xyz:eth', dir: 'Long', stop: 3000 }, known), '', 'a known market (any spelling), no price known: fine');
+  for (const big of [1e300, 1e308, Infinity, NaN]) ok(/isn’t a price/.test(pplanCheck({ coin: 'ETH', dir: 'Long', stop: big }, known)), String(big));
+  ok(/isn’t a price/.test(pplanCheck({ coin: 'ETH', dir: 'Long', stop: 90, target: 1e300 }, known)), 'a target too');
+  ok(/far from BTC’s price \(62,000\.00\)/.test(pplanCheck({ coin: 'BTC', dir: 'Long', stop: 600 }, known)), 'a stop off by a few zeros');
+  ok(/target is far from BTC/.test(pplanCheck({ coin: 'BTC', dir: 'Long', stop: 60000, target: 6400000 }, known)));
+  ok(/entry is far from SOL/.test(pplanCheck({ coin: 'SOL', dir: 'Short', entry: 15000, stop: 16000 }, known)));
+  ok(/far from your entry/.test(pplanCheck({ coin: 'ETH', dir: 'Long', entry: 3000, stop: 2 }, known)), 'no price known: held against the entry');
+  ok(/far from your stop/.test(pplanCheck({ coin: 'ETH', dir: 'Long', stop: 3000, target: 90000 }, known)), 'nor an entry: target against stop');
+  eq(pplanCheck({ coin: 'BTC', dir: 'Long', entry: 61000, stop: 59000, target: 70000 }, known), '');
+  eq(pplanCheck({ coin: 'ANY', dir: 'Long', stop: 90 }), '', 'without the list the name isn’t checked');
 });
 const tr = (id, coin, dir, openTime, extra) => Object.assign({ id, coin, dir, openTime, closeTime: openTime + H, isOpen: false }, extra || {});
 t('a plan attaches to the NEXT trade on its market and side within 24h', () => {

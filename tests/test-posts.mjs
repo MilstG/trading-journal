@@ -269,6 +269,12 @@ await t('Today’s cards keep your order: a move swaps neighbours, cards added l
   M.settings.pzLayout.today._order = ['week', 'tilt', 'gone'];
   const o2 = M.pzOrdered('today');
   eq([o2[0], o2[1], o2.length, o2.includes('gone')], ['week', 'tilt', 14, false]); // 14 cards since Duels joined Today
+  // sections not on the screen (switched off, or empty today) are hopped: a press always moves past one you can see
+  M.settings.pzLayout.today._order = ['a', 'next', 'now', 'good', 'inbox', 'xp'].filter(x => o2.includes(x) || x === 'a').slice(1);
+  ok(M.pzMove('today', 'next', 1, new Set(['next', 'xp', 'tilt'])));
+  const o3 = M.pzOrdered('today'); eq(o3.slice(0, 5), ['now', 'good', 'inbox', 'xp', 'next'], 'past now, good and inbox (empty) to below xp');
+  ok(M.pzMove('today', 'next', -1, new Set(['next', 'xp', 'tilt']))); eq(M.pzOrdered('today').slice(0, 5), ['now', 'good', 'inbox', 'next', 'xp']);
+  ok(M.pzMove('today', 'now', 1, new Set(['now']))); eq(M.pzOrdered('today').slice(0, 2), ['good', 'now'], 'nothing visible below: one plain step');
 });
 t('profile pictures are learned from any answer and dropped when removed', () => {
   const SOC = { avs: {} }; const learn = (0, eval)('(SOC=>' + X.grabFn('socLearnAv') + ')')(SOC);

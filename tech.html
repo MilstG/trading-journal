@@ -102,7 +102,7 @@ html{scroll-behavior:smooth}
   <p>Three deliberate constraints shape everything:</p>
   <ul>
     <li><b>One page, ordered scripts, no build.</b> <code>ledger.html</code> holds the markup, styles and fonts. It loads vendored Chart.js and the app's seventeen parts from <code>app/</code> as classic scripts, in order (<code>core.js</code>, <code>engine.js</code>, … <code>boot.js</code> last), sharing one global scope as the single inline script once did. Rule: code that runs while a part loads may only use names from that part or an earlier one. A function body called later may use anything. It works opened from disk (<code>file://</code>, with <code>app/</code> beside it), from any static host, or served by the companion server, which sends each part gzipped under a content hash (<code>?v=</code>, cached immutable for a year). There is no build step, no bundler, no framework.</li>
-    <li><b>Zero dependencies.</b> <code>server.js</code> uses only Node built-ins (<code>http</code>, <code>fs</code>, <code>zlib</code>, <code>node:vm</code>, global <code>fetch</code>). <code>npm install</code> installs nothing.</li>
+    <li><b>No required dependencies.</b> <code>server.js</code> uses only Node built-ins (<code>http</code>, <code>fs</code>, <code>zlib</code>, <code>node:vm</code>, <code>node:sqlite</code>, global <code>fetch</code>), so it needs Node 22.13 or newer. The one optional dependency, the Anthropic SDK, is used only when the AI coach runs on Anthropic (<code>COACH_AI=1</code>).</li>
     <li><b>Single source of truth.</b> The server and the test suites do not reimplement any math. Both <em>extract</em> the pure functions out of the app's source text (<code>app-source.js</code> returns <code>ledger.html</code> with every <code>app/</code> part inlined in load order) and evaluate them — the server into a <code>node:vm</code> context, the tests into ephemeral ES modules. When the app's logic changes, the API's answers and the tests' subjects change with it automatically.</li>
   </ul>
   <p>The client is read-only against Hyperliquid's public info API. It never holds keys and has no code path that could place an order.</p>
@@ -113,14 +113,21 @@ html{scroll-behavior:smooth}
   <h2>Repository layout</h2>
   <div class="tblwrap"><table class="mono">
     <tr><th>Path</th><th>Role</th></tr>
-    <tr><td>ledger.html</td><td>The app: UI, analytics engine, worker source, vendored Chart.js + fonts (≈6,800 lines). The first script block is vendor code; the second is the app.</td></tr>
-    <tr><td>server.js</td><td>Companion server: persistence, /api/v1 analytics, scheduled refresh, alerts, digests, Telegram bot, backups, metrics (≈1,800 lines).</td></tr>
+    <tr><td>ledger.html</td><td>The app's page: markup, styles and fonts. It loads its code from app/ as ordinary scripts, in order.</td></tr>
+    <tr><td>app/</td><td>The app's code: vendored Chart.js, then the parts from core.js (storage, sync, the exchange API) and engine.js (reconstruction and analytics) through the views and Daruma to boot.js; app/features/ holds features in files of their own, app/fonts/ the font files.</td></tr>
+    <tr><td>app-source.js</td><td>Returns ledger.html with every app/ part inlined in load order: what the server's analytics engine and the tests extract functions from.</td></tr>
+    <tr><td>server.js</td><td>Companion server: persistence, /api/v1 analytics, scheduled refresh, alerts, digests, Telegram bot, backups, metrics, and the routes for everything below.</td></tr>
+    <tr><td>social.js · social-config.js · db.js</td><td>Daruma's leagues, competitions, feed, badges and member accounts (/api/social); the admin panel's settings and their sanitizers; the SQLite storage (DATA_DIR/pulse.db).</td></tr>
+    <tr><td>bench.js · duels.js · pots.js · insights.js</td><td>Pure rules for “traders like you”, duels and the ladder, XP pots, and the admin's insights.</td></tr>
+    <tr><td>admin.html · admin2fa.js · admin2fa-ui.js</td><td>The owner's panel at /admin, its two-factor checks on the server, and its two-factor screens.</td></tr>
+    <tr><td>badges.html · webauthn.js · push.js · wear.js</td><td>A member's public badge page (/b/&lt;name&gt;), passkey checks, web push, wearables.</td></tr>
+    <tr><td>offsite.js · cex-relay.js · vendor/</td><td>Encrypted off-site backups and their restore CLI; the Bybit/Binance relay; eth-sig.js for wallet claims.</td></tr>
     <tr><td>help.html · tech.html</td><td>This documentation, served at /help and /docs. Self-contained, no external assets.</td></tr>
-    <tr><td>tests/</td><td>18 suites + harness; run with npm test. Extract functions from ledger.html and hit the server over real HTTP.</td></tr>
-    <tr><td>package.json · railway.json</td><td>Start script (node server.js) and host config. No dependencies.</td></tr>
+    <tr><td>tests/ · e2e/</td><td>The suites and their harness (npm test): they extract functions from the app's source and hit the server over real HTTP. e2e/: the browser smoke tests (npm run test:e2e, Playwright).</td></tr>
+    <tr><td>package.json · railway.json</td><td>Start script (node server.js), Node 22.13+, one optional dependency (the Anthropic SDK); host config.</td></tr>
     <tr><td>README.md · README-deploy.md</td><td>Full feature docs and deployment guide.</td></tr>
-    <tr><td>AUDIT.md · AUDIT-2.md · AUDIT-3.md</td><td>Records of the three audit/build cycles, each marked addressed.</td></tr>
-    <tr><td>.github/workflows/test.yml</td><td>CI: the full suite on Node 18 and 22 for every push and PR.</td></tr>
+    <tr><td>AUDIT*.md</td><td>Records of the audit/build cycles, each marked addressed.</td></tr>
+    <tr><td>.github/workflows/test.yml</td><td>CI: the full suite on Node 22 and 24 for every push and PR, and the browser tests.</td></tr>
   </table></div>
 </section>
 
@@ -169,7 +176,7 @@ html{scroll-behavior:smooth}
   <p class="kicker">05</p>
   <h2>Analytics engine</h2>
   <ul>
-    <li><b>Scratch handling.</b> <code>isWin/isLoss/isBE</code> classify against the configurable break-even band (<code>_be</code>, default $50); scratches are excluded from win rate and never break streaks.</li>
+    <li><b>Scratch handling.</b> <code>isWin/isLoss/isBE</code> classify against the configurable break-even band (<code>_be</code>: the user's fixed $, else automatic — 5% of the median |net| per closed trade, clamped to $0.50–$50; strictly inside is a scratch); scratches are excluded from win rate and never break streaks.</li>
     <li><b>computeStats</b> returns the full headline block in one pass: net/fees/funding/volume, win rate, profit factor, payoff, expectancy, drawdown (absolute and % of high-water mark), streaks, R aggregates, hold times, Sharpe/Sortino from the calendar daily series, green days, median.</li>
     <li><b>Determinism.</b> All Monte Carlo (projections, drawdown expectations, variance card, alert p95) runs on a seeded PRNG: <code>_srand(_hashSeed(label))</code>. Same inputs, same numbers, in the app, the worker, the server, and the tests.</li>
     <li><b>Significance.</b> Edge significance uses a Student-t CDF built from <code>_lgamma</code>/<code>_ibetaReg</code> (tested against reference values); the pattern miner applies Benjamini-Hochberg FDR correction across all mined conditions so multiple testing cannot manufacture an edge.</li>
@@ -212,8 +219,9 @@ html{scroll-behavior:smooth}
   <ol>
     <li>Client edits mark dirty state: per-journal-id <b>edit counters</b> (<code>_dirtyJ</code>) and a settings baseline <code>_lastSyncedS</code> captured at the last successful sync.</li>
     <li>Writes are debounced ~800 ms into <code>PUT /api/data {rev, snapshot}</code>. The server accepts only if <code>rev</code> matches its current revision; otherwise it answers <b>409</b> with the newer state.</li>
-    <li>On 409 the client applies the server state, then <b>re-applies its own unsynced edits on top</b>: journal ids whose edit counters advanced since the last sync, and settings fields that differ from the <code>_lastSyncedS</code> baseline (field-level, so two devices editing different settings both win). It then re-syncs at the new revision and rebases the baseline — including when the conflict produced no local merge, so a stale baseline can never re-push server-origin values later.</li>
-    <li>A reload inside the 800 ms window doesn't lose the edit: the browser keeps a mark (<code>srv_sync</code>: the revision it last matched, and whether it has unsent edits) and the baseline (<code>srv_base</code>) in localStorage. At the next start, an unchanged server revision keeps this browser's copy and sends it; a moved one takes the server's state and re-applies the settings fields that differ from the saved baseline, the same field-level merge as a 409.</li>
+    <li>On 409 the client applies the server state, then <b>re-applies its own unsynced edits on top</b>: settings fields that differ from the <code>_lastSyncedS</code> baseline (field-level, so two devices editing different settings both win), and journal ids whose edit counters advanced since the last sync, each merged three ways (<code>jMerge3</code>) against the copy both sides last agreed on: the text of the last boot GET, saved PUT body or 409 answer, kept unparsed until a conflict needs it. A field one side changed takes that change; lists merge item by item; a text both changed keeps both, theirs first, under a marker line, and is counted for the sync bar. A restore's entries skip the merge and win whole. It then re-syncs at the new revision and rebases the baseline — including when the conflict produced no local merge, so a stale baseline can never re-push server-origin values later.</li>
+    <li>A reload inside the 800 ms window doesn't lose the edit: the browser keeps a mark (<code>srv_sync</code>: the revision it last matched, and whether it has unsent edits) and the baseline (<code>srv_base</code>) in localStorage. At the next start, an unchanged server revision keeps this browser's copy and sends it; a moved one takes the server's state and re-applies the settings fields that differ from the saved baseline, the same field-level merge as a 409. For the journal, the tab stores the server's copy of each unsent entry when it's hidden (<code>hl_jpbase_v1</code>), so those entries merge three ways too.</li>
+    <li>An open tab checks <code>GET /api/data?only=rev</code> when it becomes visible or gets focus, and once a minute while visible; a newer revision is fetched and taken like a 409's answer.</li>
     <li>The server persists atomically (tmp file + rename, previous revision kept as <code>.bak</code>) and writes a rotating daily snapshot (14 kept) on every accepted write.</li>
   </ol>
   <p>Journal image attachments sync separately (<code>/api/att/&lt;base64url-id&gt;</code>, size-capped per trade and store-wide); candle caches deliberately never sync.</p>
@@ -243,7 +251,7 @@ html{scroll-behavior:smooth}
   </ul>
   <h3>Access control</h3>
   <ul>
-    <li><code>AUTH_TOKEN</code> — everything, compared with a timing-safe equality check; 401 responses carry a flat 300 ms delay to blunt online brute force, and wrong tokens are counted per client address: <code>AUTH_FAIL_MAX</code> (20) inside 10 minutes locks the address out for <code>AUTH_LOCK_MIN</code> (15) minutes — a 429 with <code>Retry-After</code>, right token included, so parallel guessing gets nowhere.</li>
+    <li><code>AUTH_TOKEN</code> — everything, compared with a timing-safe equality check; 401 responses carry a flat 300 ms delay to blunt online brute force, and wrong tokens are counted per client address: <code>AUTH_FAIL_MAX</code> (20) inside 10 minutes locks the address out for <code>AUTH_LOCK_MIN</code> (15) minutes — a 429 with <code>Retry-After</code>, right token included, so parallel guessing gets nowhere. A repeat of the same wrong token isn't a new guess: each address keeps a hash of the tokens it has counted this window, so a page's burst of parallel calls with one typo is one guess, while distinct tokens each count.</li>
     <li><code>READ_TOKEN</code> — exactly <code>GET /api/v1/*</code>; it can never touch <code>/api/data</code>, attachments, snapshots, backups, or refresh.</li>
     <li><code>CORS_ORIGIN</code> — one exact origin, off by default. Responses set <code>nosniff</code> and <code>no-store</code>; CSV exports guard against spreadsheet formula injection.</li>
   </ul>
@@ -301,7 +309,7 @@ html{scroll-behavior:smooth}
 <section id="testing">
   <p class="kicker">15</p>
   <h2>Testing</h2>
-  <p><code>npm test</code> runs 33 suites (~620 tests) via <code>tests/run-all.mjs</code>, including size budgets per screen: the journal and Daruma pages with their scripts, and the font files (<code>test-budget</code>). <code>npm run test:e2e</code> runs the browser smoke tests in <code>e2e/run.mjs</code>: real Chromium against the real server, with all off-origin requests blocked. It covers boot, sample data, every tab, a journal note's round trip through sync and a reload, Daruma at phone width and every admin tab, failing on any uncaught page error or a blown time budget. CI runs it as a separate job, with Playwright installed only there. The harness (<code>tests/harness.mjs</code>) provides <code>makeExtractor(html)</code>: <code>evalModule(names, exports, prelude)</code> brace-matches the named functions out of <code>ledger.html</code>, prepends a prelude of one-line consts, and imports the bundle as a data-URL ES module — the tests run the shipped source, not a copy.</p>
+  <p><code>npm test</code> runs every <code>tests/test-*.mjs</code> suite via <code>tests/run-all.mjs</code>, including size budgets per screen: the journal and Daruma pages with their scripts, and the font files (<code>test-budget</code>). <code>npm run test:e2e</code> runs the browser smoke tests in <code>e2e/run.mjs</code>: real Chromium against the real server, with all off-origin requests blocked. It covers boot, sample data, every tab, a journal note's round trip through sync and a reload, Daruma at phone width and every admin tab, failing on any uncaught page error or a blown time budget. CI runs it as a separate job, with Playwright installed only there. The harness (<code>tests/harness.mjs</code>) provides <code>makeExtractor(html)</code>: <code>evalModule(names, exports, prelude)</code> brace-matches the named functions out of <code>ledger.html</code>, prepends a prelude of one-line consts, and imports the bundle as a data-URL ES module — the tests run the shipped source, not a copy.</p>
   <div class="tblwrap"><table class="mono">
     <tr><th>Suite</th><th>Covers</th></tr>
     <tr><td>test-syntax</td><td>Every script block parses (vm.Script) — catches template-literal and escaping regressions whole-file.</td></tr>
@@ -325,7 +333,7 @@ html{scroll-behavior:smooth}
     <tr><td>test-replay-auto · test-walkforward-panel</td><td>Source assertions for render-layer logic that can't be extracted.</td></tr>
     <tr><td>test-projection · decay · edge-map · attribution · dexfilter · improvements</td><td>Seeded MC determinism, tz math, statistics against hand-computed and reference values.</td></tr>
   </table></div>
-  <p>CI (<code>.github/workflows/test.yml</code>) runs the full suite on Node 18 and 22 on every push and pull request. The suites are offline — the exchange is mocked — and finish in well under a minute.</p>
+  <p>CI (<code>.github/workflows/test.yml</code>) runs the full suite on Node 22 and 24 on every push and pull request. The suites are offline — the exchange is mocked — and finish in a few minutes.</p>
 </section>
 
 <footer>

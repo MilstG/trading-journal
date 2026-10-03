@@ -124,7 +124,7 @@ body:has(#app.hide) .hdrnav{display:none}
 .brand h1::after{content:"_";color:var(--profit)} body.bb .brand h1::after{color:var(--lbl)}
 .brand .tick{font-family:var(--cond);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line);padding:3px 8px}
 .hdr-right{display:flex;align-items:center;gap:8px;margin-left:auto}
-.hdrsum{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:7px 12px;cursor:pointer;white-space:nowrap}
+.hdrsum{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:7px 12px;cursor:pointer;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .hdrsum b{font-weight:600}
 .hdrsum:hover{border-color:#3D4652} body.bb .hdrsum:hover{border-color:var(--lbl)}
 .btn{background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-family:var(--cond);letter-spacing:.04em;text-transform:uppercase;font-weight:600;font-size:13px;padding:8px 16px}
@@ -211,7 +211,7 @@ body.bb .settings-pop{border-color:#3A3A32}
 body.coach-off #calModeBtn{display:none}
 .coach-hide{background:none;border:none;color:var(--faint);font-family:var(--mono);font-size:11.5px;cursor:pointer;margin-left:auto;padding:0}
 .coach-hide:hover{color:var(--text)}
-.bediv{display:inline-flex;align-items:center;gap:6px}
+.bediv{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .bediv input{width:70px}
 
 .topnav{display:flex}
@@ -273,9 +273,11 @@ body.bb .topnav button.on{color:#FFD79A;background:#0A0A08}
 
 /* calendar heatmap */
 .cal-wrap{overflow-x:auto;padding-bottom:4px}
-.cal{display:flex;gap:3px}
-.cal-col{display:flex;flex-direction:column;gap:3px;flex:1 1 0;min-width:0}
+.cal{display:grid;grid-auto-flow:column;grid-template-rows:auto repeat(7,auto);grid-template-columns:auto;grid-auto-columns:minmax(0,1fr);gap:3px}
+.cal-col{display:contents}
 .cal-cell{aspect-ratio:1;background:var(--panel2)}
+.cal-mo{font-size:10px;line-height:12px;height:12px;color:var(--faint);white-space:nowrap;overflow:visible}.cal-mo.end{direction:rtl}
+.cal-dl{font-size:9.5px;line-height:0;height:0;align-self:center;padding-right:4px;color:var(--faint)} /* zero-height: the label never stretches its row */
 .cal-legend{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:10px;font-size:11.5px;color:var(--faint)}
 .cal-legend .sw{width:11px;height:11px;display:inline-block}
 
@@ -336,6 +338,12 @@ tbody tr:last-child td{border-bottom:none}
 tr.trow.expanded .caret{transform:rotate(90deg);display:inline-block}
 .jrow td{padding:0;background:var(--panel2)}
 .journal{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;padding:18px;text-align:left;border-bottom:1px solid var(--line)}
+/* the editor sits in the scrolling trade table: pinned to its visible width, not the table's (phones) */
+.tbl-wrap{container-type:inline-size}
+.wrap .jrow td{padding:0}
+.jrow .journal{position:sticky;left:0;width:100cqi;white-space:normal}
+.journal>*,.journal [data-j]{min-width:0}
+.jrow .journal .plan-err{font-size:12.5px;margin-top:6px;font-family:var(--prose)}.plan-err:empty{display:none}
 .field{margin-bottom:12px}
 .field label{display:block;font-family:var(--cond);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--lbl);margin-bottom:5px}
 .field textarea{width:100%;min-height:84px;resize:vertical}
@@ -459,7 +467,7 @@ body.bb .modal{border-color:#3A3A32}
 .modal p{color:var(--muted);font-size:13.5px;line-height:1.6;margin-bottom:10px;font-family:var(--prose)}
 .modal textarea{width:100%;min-height:170px}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
-.tip{position:fixed;z-index:120;max-width:320px;background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-size:13px;line-height:1.55;padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .08s;box-shadow:0 14px 34px rgba(0,0,0,.6)}
+.tip{position:fixed;z-index:120;max-width:min(320px,calc(100vw - 16px));visibility:hidden;background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-size:13px;line-height:1.55;padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .08s;box-shadow:0 14px 34px rgba(0,0,0,.6)}
 body.bb .tip{border-color:#3A3A32}
 [data-tip]{cursor:help}
 .foot{border-top:1px solid var(--line);margin-top:22px;padding-top:14px;color:var(--faint);font-size:12.5px;line-height:1.7}
@@ -473,7 +481,7 @@ body.bb .tip{border-color:#3A3A32}
   .stat:nth-child(n+3){border-top:1px solid var(--line2)}
   .charts{grid-template-columns:repeat(2,1fr)}
   .diag-grid{grid-template-columns:1fr}
-  .journal{grid-template-columns:1fr}
+  .journal{grid-template-columns:minmax(0,1fr)}
   .calrow{grid-template-columns:1fr}
 }
 @media(max-width:640px){
@@ -649,7 +657,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 /* day × hour heatmap */
 .dh-tbl{border-collapse:collapse;font-size:11px;width:100%;table-layout:fixed}
 .dh-tbl th:first-child,.dh-tbl td.dh-lab{width:44px}
-.dh-tbl th{padding:2px 3px;color:var(--faint);font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;border:none;text-align:center;overflow:hidden}
+.dh-tbl th{padding:2px 0;color:var(--faint);font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;border:none;text-align:center;overflow:visible;font-size:10px}
 .dh-tbl td.dh-lab{padding:0 8px 0 2px;color:var(--muted);font-family:var(--cond);letter-spacing:.04em;text-transform:uppercase;font-size:11px;text-align:right;white-space:nowrap}
 .dh-cell{height:17px;padding:0;border:1px solid var(--bg)}
 
@@ -691,6 +699,8 @@ body.bb .topnav button.on{color:#FFD79A;background:#141008;box-shadow:inset 2px 
   body:not(.pz-mode):has(#app:not(.hide)) .topnav button{width:100%;padding:9px 12px}
   body:not(.pz-mode):has(#app:not(.hide)) .hdr-right{margin:auto 0 0;flex-direction:column;align-items:stretch;padding-top:12px;border-top:1px solid var(--line)}
   body:not(.pz-mode):has(#app:not(.hide)) .hdr-right .btn,body:not(.pz-mode):has(#app:not(.hide)) .hdrsum{width:100%;text-align:center;justify-content:center}
+  body:not(.pz-mode):has(#app:not(.hide)) .hdrsum{white-space:normal;line-height:1.45} /* a seven-figure total wraps in the 232px sidebar */
+  .hdrsum b{white-space:nowrap}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links{display:flex;flex-direction:column;gap:2px;padding:10px 0 0;border-top:1px solid var(--line)}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links a{padding:6px 10px;border-radius:8px;color:var(--muted);font-size:13px;font-weight:550;text-decoration:none}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links a:hover{background:var(--hover);color:var(--text)}
@@ -756,7 +766,7 @@ body.light .wrap .viewtog button.on,body.light .wrap .periods button.on{backgrou
 .wrap .card>h3{font-size:14.5px;font-weight:650;color:var(--text);letter-spacing:-.005em;text-transform:none;margin-bottom:14px}
 .wrap .card>h3 .hint{font-family:var(--prose);font-size:12.5px;color:var(--muted)}
 .wrap .charts,.wrap .calrow{gap:16px;margin-top:16px}
-.cal{gap:3px}.cal-col{gap:3px}
+.cal{gap:3px}
 .cal-cell{border-radius:3px}
 .cal-legend .sw{border-radius:3px}
 .dh-cell{border-radius:3px}
@@ -992,7 +1002,7 @@ body.light .pz-nudge.warn .pz-ico{background:#F6E7BF;color:#9A5A00}
 .pz-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;min-height:52px}
 .pz-kick{display:block;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--pz-muted)}
 .pz-h1{margin:2px 0 0;text-transform:none;font-family:Inter,system-ui,sans-serif;font-size:28px;font-weight:700;line-height:1.1;letter-spacing:-.02em}
-.pz-chips{display:flex;gap:8px;align-items:center}
+.pz-chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0;max-width:100%}
 .pz-chip{display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 14px;border-radius:22px!important;text-decoration:none;font-family:var(--pz-num);font-size:20px;font-weight:600;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);cursor:pointer}
 #pz a.pz-chip.streak{background:#1A1510;border-color:#3A2C18;color:var(--pz-streak)}
 #pz a.pz-chip.pz-jchip{background:#1C1A2E;border-color:#35305E;color:#B69CFF;font-size:17px}
@@ -1673,7 +1683,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   <div id="empty" class="empty">
     <h2>Your trades, reconstructed and ready to reflect on.</h2>
     <p>Add one or more wallet addresses you trade with on Hyperliquid or Lighter, then hit <strong>Load all</strong>. Everything is pulled read-only from the exchanges' public APIs — nothing leaves your browser — and every wallet's history is pooled into one combined view. Trade on Bybit or Binance? <strong>Connect exchange</strong> takes a read-only API key.</p>
-    <p>Then attach notes, tags, a setup, a rating, mistakes, and your planned risk to any trade. Your journal is saved locally on this device.</p>
+    <p>Then attach notes, tags, a setup, a rating, mistakes, and your planned risk to any trade. <span id="emptySaved">Your journal is saved locally on this device.</span></p>
     <div class="steps"><span>1 · Load fills &amp; positions</span><span>2 · Rebuild trades + funding</span><span>3 · Read the analytics</span><span>4 · Journal each trade</span></div>
     <p style="margin-top:14px"><button class="btn ghost" id="demoBtn" data-tip="Loads a seeded, synthetic 5-month fill history (perps + spot) through the normal import pipeline so every panel is populated. Nothing is fetched and no wallet is involved — reload or add a real address to clear it.">Just looking? Load sample data</button>
     <a id="helpLink" class="hide" href="help" target="_blank" rel="noopener" style="margin-left:14px;font-size:13px">User guide →</a></p>
@@ -1719,13 +1729,15 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
             <input type="number" id="riskDefault" placeholder="e.g. 100" min="0" step="any" class="hide">
           </div>
           <div class="sp-note" id="rBasisNote">R-multiples scale to your average loss · override per trade</div>
-          <div class="sp-row" data-tip="Trades whose net PnL lands within this dollar band of zero are treated as break-even scratches — excluded from win rate and streaks (profit factor still counts every dollar), and shown with a B/E tag. Set to 0 to disable."><label>Break-even band</label>
-            <span class="bediv">±$<input type="number" id="beThresh" min="0" step="any" value="50"></span>
+          <div class="sp-row" data-tip="Trades whose net PnL lands strictly inside this dollar band around zero are treated as break-even scratches — excluded from win rate and streaks (profit factor still counts every dollar), and shown with a B/E tag. Leave it empty for the automatic band (5% of your median trade's net, $0.50–$50), type a dollar amount to fix it, or 0 to disable."><label>Break-even band</label>
+            <span class="bediv">±$<input type="number" id="beThresh" min="0" step="any" placeholder="auto"></span>
           </div>
-          <div class="sp-note">Scratches inside the band don't count as wins or losses.</div>
+          <div class="sp-note"><b id="beAuto"></b> Scratches inside the band don't count as wins or losses. Empty = auto, scaled to your trades.</div>
           <div class="sp-row" data-tip="Turns the coaching layer on or off: the dashboard coach card, habits and the weekly focus, wins, the process score, the question after each trade and the AI weekly letter. Nothing is deleted — your habits, plans and journal stay, and come back when you switch it on."><label for="coachSwitch">Coach mode</label>
             <button type="button" class="switch" id="coachSwitch" role="switch" aria-checked="true"><span class="knob"></span></button><span class="sw-state" id="coachSwitchState">On</span></div>
           <div class="sp-note">Coach card, habits, wins, process score and trade questions. Hiding them keeps your data.</div>
+          <div class="sp-row"><label for="earnResetBtn">Progress awards</label><button type="button" class="gear" id="earnResetBtn">Reset</button></div>
+          <div class="sp-note">Badges, achievements and challenges, earned again from your trades.</div>
         </div>
       </div>
     </div>
@@ -1847,7 +1859,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
     <div class="pager" id="pager"></div>
 
     <div class="foot">
-      The <b>Verified</b> banner shows Hyperliquid's own account PnL (all-time) and matches the app exactly. The dashboard below reconstructs each trade from fills; its totals now include realized PnL from positions that are still open or were emptied via transfers, but per-trade spot cost basis can still differ slightly from Hyperliquid's account-value figure.<br>
+      The <b>Verified</b> banner shows Hyperliquid's own account PnL (all-time), the same figure its app reports; each "recon" tag beside it is how far Ledger's fill-based reconstruction is from that figure. The dashboard below reconstructs each trade from fills; its totals now include realized PnL from positions that are still open or were emptied via transfers, but per-trade spot cost basis can still differ slightly from Hyperliquid's account-value figure.<br>
       Net PnL is all-in: realized PnL − fees + funding. R-multiple = net PnL ÷ planned risk. Use the Perps / Spot / Combined toggle to switch views; spot is long-only (no funding, no leverage).
     </div>
     </div><!-- /dashView -->
@@ -1871,7 +1883,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   <div class="modal">
     <h2>Paste data manually</h2>
     <p>If the live pull is blocked by your browser (common when opening the file directly from disk), paste a raw <span class="mono">userFills</span> JSON array here. You can also paste a <b>journal export</b> or a full <b>backup</b> (wallets + settings + journal) to restore it — the type is auto-detected.</p>
-    <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
+    <p><b>CSV works too</b> (fills from another venue or a spreadsheet): a header row plus columns for time, symbol, side (buy/sell), price, and size — fee and realized-PnL columns are used when present, otherwise position and PnL are derived by average cost. Comma, semicolon or tab separated; decimal points or commas, read from the file (a value that could be either, like <span class="mono">1,234</span> with nothing else to tell, is refused). Dates are best as ISO (<span class="mono">2026-09-03 14:00:00</span>); <span class="mono">03/09/2026</span>-style dates need one day above 12 somewhere in the file to tell day-first from month-first. Times without a zone are read as UTC. Name spot pairs like <span class="mono">FOO/USDC</span>; bare names reconstruct as perps.</p>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
       <input type="file" id="pasteFile" accept=".json,.csv,.txt" style="font-size:12px">
       <span id="pasteType" class="hint"></span>

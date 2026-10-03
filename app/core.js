@@ -18,6 +18,8 @@ const Store = {
     try{ const v=localStorage.getItem(key); return v?JSON.parse(v):null; }catch(e){ return null; }
   },
   async set(key,val){
+    if(_sample&&(key===J_KEY||key===S_KEY)){ // sample mode: only the account's own settings (sampleOwnS)
+      if(key===J_KEY)return; const was=JSON.stringify(_sample.settings); val=sampleOwnS(); if(JSON.stringify(val)===was)return; _sample.dirty=true; }
     const s=JSON.stringify(val);
     if(window.storage){ try{ await window.storage.set(key,s); }catch(e){ try{localStorage.setItem(key,s);}catch(e2){ storeFailed(e2); } } }
     else { try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
@@ -111,20 +113,23 @@ async function unpackFillCache(c){
   }catch(e){ return null; } }
   return null;
 }
-function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
-  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, pzEarned:settings.pzEarned,
+function snapshot(){ if(typeof _sample!=='undefined'&&_sample)return sampleOwn(snapshot); // the account's, never the sample's
+  return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
+  wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,beFixed:settings.beFixed,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, pzEarned:settings.pzEarned, pzEarnedResetAt:settings.pzEarnedResetAt,
     pzTiltAlerts:settings.pzTiltAlerts, pzCoachDetail:settings.pzCoachDetail, taxExport:settings.taxExport, playbooks:settings.playbooks, colorway:settings.colorway,appearance:settings.appearance}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 // Device-local, never in the snapshot: autoRefresh (a phone on mobile data may want it off while the
 // desktop keeps it on) and pzTiltNotify (rides on this browser's own notification permission). They
 // live only in this browser's stored settings, which a snapshot is laid over, never replaces.
-async function applySnapshot(data){ if(!data)return false; _applying=true;
+async function applySnapshot(data){ if(!data)return false;
+  if(typeof _sample!=='undefined'&&_sample)sampleEnd(); // real data ends sample mode
+  _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
     if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     if(data.settings){ if('riskDefault' in data.settings)settings.riskDefault=data.settings.riskDefault;
-      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!=null)settings.beThreshold=data.settings.beThreshold; if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout;
+      if(data.settings.view)settings.view=data.settings.view; if(data.settings.dexView)settings.dexView=data.settings.dexView; if(data.settings.rBasis)settings.rBasis=data.settings.rBasis; if(data.settings.pageSize)settings.pageSize=data.settings.pageSize; if(data.settings.beThreshold!==undefined){ settings.beThreshold=data.settings.beThreshold; settings.beFixed=data.settings.beFixed===true; /* null = auto */ } if(data.settings.theme)settings.theme=data.settings.theme; if(data.settings.anaBasis)settings.anaBasis=data.settings.anaBasis; if(data.settings.tz)settings.tz=data.settings.tz; if(data.settings.assumedLev>0)settings.assumedLev=data.settings.assumedLev; if(data.settings.rules&&typeof data.settings.rules==='object')settings.rules=data.settings.rules; if(data.settings.attribBasis)settings.attribBasis=data.settings.attribBasis; if(Array.isArray(data.settings.pins))settings.pins=data.settings.pins.filter(p=>p&&typeof p.pid==='string'); if(Array.isArray(data.settings.habits))settings.habits=data.settings.habits.filter(h=>h&&typeof h.id==='string'&&typeof h.kind==='string'); if(typeof data.settings.tzZone==='string')settings.tzZone=data.settings.tzZone; if(data.settings.calMode==='pnl'||data.settings.calMode==='process')settings.calMode=data.settings.calMode; if(data.settings.calWeeks===26||data.settings.calWeeks===52)settings.calWeeks=data.settings.calWeeks; if(typeof data.settings.coachMode==='boolean')settings.coachMode=data.settings.coachMode; if(Array.isArray(data.settings.pzPlugs))settings.pzPlugs=data.settings.pzPlugs.filter(p=>p&&typeof p.slip==='string'); if(typeof data.settings.pzProfile==='string')settings.pzProfile=data.settings.pzProfile; if(['all','perp','spot'].includes(data.settings.pzMarket))settings.pzMarket=data.settings.pzMarket; if(data.settings.pzLayout&&typeof data.settings.pzLayout==='object')settings.pzLayout=data.settings.pzLayout;
       if(data.settings.pzLessons&&typeof data.settings.pzLessons==='object')settings.pzLessons=pzLessonsNorm(data.settings.pzLessons);
       if(Array.isArray(data.settings.playbooks))settings.playbooks=pbNorm(data.settings.playbooks,true);
       if(['auto','dark','light'].includes(data.settings.appearance))settings.appearance=data.settings.appearance;
@@ -132,7 +137,8 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
       if(typeof data.settings.pzTiltAlerts==='boolean')settings.pzTiltAlerts=data.settings.pzTiltAlerts; if(typeof data.settings.pzCoachDetail==='boolean')settings.pzCoachDetail=data.settings.pzCoachDetail;
       const tx=data.settings.taxExport; // the tax screen indexes its presets by this name: an unknown one would throw there
       if(tx&&typeof tx==='object'&&typeof tx.preset==='string'&&(typeof TAX_PRESETS==='undefined'||Object.prototype.hasOwnProperty.call(TAX_PRESETS,tx.preset)))settings.taxExport={preset:tx.preset,cur:String(tx.cur||'USD').toUpperCase().replace(/[^A-Z]/g,'').slice(0,3)||'USD'};
-      if(data.settings.pzEarned&&typeof data.settings.pzEarned==='object')settings.pzEarned=Object.assign({},data.settings.pzEarned,settings.pzEarned||{}); // the award ledger only grows (pzEarned)
+      if(data.settings.pzEarned&&typeof data.settings.pzEarned==='object')settings.pzEarned=_syncMerge('pzEarned',settings.pzEarned,data.settings.pzEarned); // the award ledger only grows (pzEarned)
+      if(+data.settings.pzEarnedResetAt>0)settings.pzEarnedResetAt=Math.max(+settings.pzEarnedResetAt||0,+data.settings.pzEarnedResetAt); // the latest reset wins
       if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
@@ -147,13 +153,34 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
   return true;
 }
 // write to local store WITHOUT re-triggering a file write (avoids loops on load)
-async function rawSet(key,val){ const s=JSON.stringify(val);
+async function rawSet(key,val){ if(_sample&&(key===J_KEY||key===S_KEY))val=key===J_KEY?_sample.journal:sampleOwnS();
+  const s=JSON.stringify(val);
   if(window.storage){ try{ await window.storage.set(key,s); return; }catch(e){} }
   try{ localStorage.setItem(key,s); }catch(e){ storeFailed(e); } }
 // The browser refused to save (its storage for this site is full): say so, instead of a "saved"
 // tick over an edit that will be gone on the next load.
 function storeFailed(e){ const full=e&&(e.name==='QuotaExceededError'||e.code===22||/quota/i.test(e.message||''));
   try{ setErr(full?'This browser’s storage for the journal is full, so the last change wasn’t saved here. Use Backup all, then clear old attachments or link a data file.':'Couldn’t save in this browser: '+(e&&e.message||e)); }catch(_){} }
+
+/* ============================ sample mode ============================ */
+// Sample data never touches the account: its journal and settings are set aside here while the app works
+// on a scratch copy kept in memory. Store and every sync see only the account's own, which takes just the
+// wallets and preferences from it. Real trades, applied data or a reload put the account's back.
+let _sample=null; // {journal, settings, dirty}: the account's own, while sample data is loaded
+const SAMPLE_KEEP=['wallets','theme','appearance','colorway','tz','tzZone','view','dexView','pageSize','calMode','calWeeks','coachMode','pzLayout','pzMarket','autoRefresh'];
+function sampleEnter(){ if(_sample)return; _sample={journal,settings,dirty:false}; _jrev++; if(typeof pzS!=='undefined')pzS.demo=true;
+  journal={}; settings=JSON.parse(JSON.stringify(settings)); delete settings.pzEarned; delete settings.pzEarnedResetAt; }
+// the account's own settings, with the scratch copy's wallets and preferences
+function sampleOwnS(){ const s=_sample.settings;
+  for(const k of SAMPLE_KEEP){ if(settings[k]===undefined)delete s[k]; else s[k]=JSON.parse(JSON.stringify(settings[k])); } return s; }
+function sampleOwn(fn){ const s=_sample, sj=journal, ss=settings; journal=s.journal; settings=sampleOwnS(); _sample=null;
+  try{ return fn(); }finally{ _sample=s; journal=sj; settings=ss; } }
+function sampleLeave(){ if(!_sample)return false; const s=_sample, was=JSON.stringify(s.settings);
+  settings=sampleOwnS(); journal=s.journal; _sample=null; _jrev++;
+  if(typeof pzS!=='undefined')pzS.demo=false;
+  // what changed or met a 409 meanwhile goes out now
+  if(s.dirty||JSON.stringify(settings)!==was)Promise.resolve(Store.set(S_KEY,settings)).catch(()=>{});
+  return true; }
 
 function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout(_writeTimer); _writeTimer=setTimeout(writeLinked,600); }
 
@@ -165,7 +192,8 @@ function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout
 // probed once at boot and sync only activates if it answers. All compute stays in the
 // browser; the server persists one JSON blob and nothing else.
 // Concurrency: every write carries the last-known revision. A stale write gets a 409
-// with the server's current state, which the client applies instead of clobbering it.
+// with the server's current state, which the client applies instead of clobbering it,
+// laying back what it changed since (an entry both devices edited merges field by field).
 const SRV={enabled:false,needsAuth:false,badAuth:false,token:null,rev:0};
 let _srvTimer=null;
 // Journal ids edited locally since the last successful sync, with a per-id edit counter.
@@ -181,18 +209,64 @@ let _jrev=0;
 // every edit passes here, so this is where an entry gets its time: restoring a backup keeps
 // whichever copy of a note is newer, and it can only tell when both carry one
 function markJEdit(id){ const e=typeof journal!=='undefined'&&journal&&journal[id]; if(e&&typeof e==='object'&&!Array.isArray(e))e.updatedAt=Date.now();
-  _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); _jrev++; vaultMark(id); jPendingSave(); }
+  _jrev++; if(_sample)return; // never saved or synced
+  _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); vaultMark(id); jPendingSave(); }
 // The ids edited here and not yet confirmed saved (to the server, or the linked file) are kept in
 // localStorage too: a reload or a closed tab before the save went through used to let the older
 // copy from the server win at the next start. At boot they're laid back over what loaded.
 const JP_KEY='hl_jpending_v1';
 let _jpQ=false; // once per burst of edits (a bulk change marks thousands)
 function jPendingSave(){ if(_jpQ)return; _jpQ=true; queueMicrotask(()=>{ _jpQ=false;
-  try{ if(_dirtyJ.size)localStorage.setItem(JP_KEY,JSON.stringify([..._dirtyJ.keys()].slice(-5000))); else localStorage.removeItem(JP_KEY); }catch(e){} }); }
+  try{ if(_dirtyJ.size)localStorage.setItem(JP_KEY,JSON.stringify([..._dirtyJ.keys()].slice(-5000))); else { localStorage.removeItem(JP_KEY); localStorage.removeItem(JP_BASE); } }catch(e){} }); }
 function jPendingLoad(){ try{ const a=JSON.parse(localStorage.getItem(JP_KEY)||'[]'); return Array.isArray(a)?a.filter(x=>typeof x==='string'):[]; }catch(e){ return []; } }
-async function jPendingOverlay(localJ,pend){ if(!pend.length||!localJ)return; _jrev++;
-  for(const id of pend){ if(localJ[id]!==undefined)journal[id]=localJ[id]; else delete journal[id]; _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); }
+// base (server sync only): the server's copy of each pending entry as of the last sync (jPendingBaseLoad);
+// an entry with one merges field by field with what the server has now, the rest are laid over whole
+async function jPendingOverlay(localJ,pend,base){ if(!pend.length||!localJ)return; _jrev++; let conflicts=0;
+  for(const id of pend){
+    if(base&&Object.prototype.hasOwnProperty.call(base,id)){ const r=jMerge3(base[id]===null?undefined:base[id],localJ[id],journal[id]); conflicts+=r.conflicts;
+      if(r.v===undefined)delete journal[id]; else journal[id]=r.v; }
+    else if(localJ[id]!==undefined)journal[id]=localJ[id]; else delete journal[id];
+    _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); }
+  if(conflicts)SRV.conflicts=(SRV.conflicts||0)+conflicts;
   await rawSet(J_KEY,journal); jPendingSave(); schedulePersist(); }
+// The journal as the server last had it, for that three-way merge: the text of the last full copy
+// both sides agreed on (the boot GET, the last saved PUT's body, a 409's answer), kept as it came and
+// parsed only when a conflict needs it — one string, no cost per edit.
+let _jBaseTxt=null,_jBaseObj=null;
+function jBaseSet(txt){ _jBaseTxt=typeof txt==='string'?txt:null; _jBaseObj=null; }
+// null: no base known (nothing synced yet); else {has, v}
+function jBaseOf(id){ if(!_jBaseTxt)return null;
+  if(!_jBaseObj){ try{ const o=JSON.parse(_jBaseTxt); _jBaseObj=(o&&o.snapshot&&o.snapshot.journal)||{}; }catch(e){ _jBaseTxt=null; return null; } }
+  return Object.prototype.hasOwnProperty.call(_jBaseObj,id)?{has:true,v:_jBaseObj[id]}:{has:false}; }
+// At a hide (a reload, a closed tab, a phone switching apps) with edits unsent: the server's copy of
+// each, so the next start can merge them field by field if another device saved meanwhile.
+const JP_BASE='hl_jpbase_v1';
+function jPendingBaseSave(){ if(!_dirtyJ.size||!_jBaseTxt)return;
+  try{ const o={}; for(const id of [..._dirtyJ.keys()].slice(-5000)){ const b=jBaseOf(id); if(!b)return; o[id]=b.has?b.v:null; }
+    const t=JSON.stringify(o); if(t.length<1500000)localStorage.setItem(JP_BASE,t); }catch(e){} }
+function jPendingBaseLoad(){ try{ const o=JSON.parse(localStorage.getItem(JP_BASE)||'null'); return o&&typeof o==='object'&&!Array.isArray(o)?o:null; }catch(e){ return null; } }
+// One entry edited here and on another device since the last sync, merged against that base: a field
+// only one side changed takes that change; lists (tags, mistakes…) merge item by item; a text both
+// changed keeps both, theirs first, under J_CONFLICT (counted, so the sync bar can say so); any other
+// value both changed keeps this device's. Deleted on one side and changed on the other: kept.
+const J_CONFLICT='\n\n——— also edited on another device; this device’s version: ———\n';
+function jMerge3(base,mine,theirs){
+  const S=v=>JSON.stringify(v===undefined?null:v), obj=v=>!!v&&typeof v==='object'&&!Array.isArray(v);
+  let conflicts=0;
+  const one=(b,m,t,k)=>{ const sm=S(m),st=S(t),sb=S(b);
+    if(sm===st)return m; if(sm===sb)return t; if(st===sb)return m;
+    if(m===undefined)return t; if(t===undefined)return m;
+    if(k==='updatedAt')return Math.max(+m||0,+t||0);
+    if(obj(m)&&obj(t))return fields(obj(b)?b:{},m,t);
+    if(Array.isArray(m)&&Array.isArray(t)){ const bs=new Set((Array.isArray(b)?b:[]).map(S)), ms=new Set(m.map(S));
+      const out=t.filter(x=>!(bs.has(S(x))&&!ms.has(S(x)))), os=new Set(out.map(S));
+      for(const x of m){ const s=S(x); if(!bs.has(s)&&!os.has(s)){ out.push(x); os.add(s); } } return out; }
+    if(typeof m==='string'&&typeof t==='string'){ if(m.includes(t))return m; if(t.includes(m))return t; conflicts++; return t+J_CONFLICT+m; }
+    return m; };
+  const fields=(b,m,t)=>{ const out={}; for(const k of new Set([...Object.keys(t),...Object.keys(m)])){ const v=one(b[k],m[k],t[k],k); if(v!==undefined)out[k]=v; } return out; };
+  const v=obj(mine)&&obj(theirs)?fields(obj(base)?base:{},mine,theirs):one(base,mine,theirs);
+  return {v,conflicts}; }
+const jConflictMsg=n=>n+' journal note'+(n===1?' was':'s were')+' edited on this device and another at the same time: both versions are kept, the other device’s first, under an “also edited on another device” line. Tidy '+(n===1?'it':'them')+' up when you can.';
 // Settings as of the last successful sync — powers a field-level 409 merge: a goal/rule/tz
 // edit made here since the last sync wins over the incoming snapshot instead of silently
 // bouncing back. The wallet list rides along (`wallets`) and merges by address, as the encrypted
@@ -200,12 +274,14 @@ async function jPendingOverlay(localJ,pend){ if(!pend.length||!localJ)return; _j
 // is theirs. (It used to be last-write-wins, which on a 409 meant the server always won: a wallet
 // added here was dropped.) A baseline saved before wallets were in it merges no wallets: theirs win.
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','pzEarned','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','beFixed','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pzTiltAlerts','pzCoachDetail','taxExport','pins','habits','pzEarned','pzEarnedResetAt','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
 // lessons and goals are lists edited on several devices: a conflict merges them by id instead of
 // letting one device's copy replace the other's (the newest change to an item wins; removals stick)
 function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }
 function _syncMerge(k, mine, theirs){
-  if(k==='pzEarned')return Object.assign({},theirs&&typeof theirs==='object'?theirs:{},mine&&typeof mine==='object'?mine:{}); // the award ledger: both devices' awards
+  if(k==='pzEarned'){ const o=Object.assign({},theirs&&typeof theirs==='object'?theirs:{}); // the award ledger: both devices' awards; mine, unless theirs was earned since a later reset (ep)
+    for(const [id,e] of Object.entries(mine&&typeof mine==='object'?mine:{}))if(!o[id]||(+(e&&e.ep)||0)>=(+(o[id]&&o[id].ep)||0))o[id]=e; return o; }
+  if(k==='pzEarnedResetAt')return Math.max(+mine||0,+theirs||0)||undefined; // the latest reset
   if(k==='playbooks'){ const by=new Map(); // per playbook, the newest edit wins; a deletion is a dated tombstone so it sticks
     for(const p of [...pbNorm(theirs,true),...pbNorm(mine,true)]){ const o=by.get(p.id); if(!o||(p.at||0)>=(o.at||0))by.set(p.id,p); }
     return [...by.values()].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); }
@@ -227,7 +303,7 @@ function _syncMerge(k, mine, theirs){
     return Object.assign({},b,a,{items,own:[...own.values()].slice(-300),since:Math.min(a.since||Infinity,b.since||Infinity)===Infinity?undefined:Math.min(a.since||Infinity,b.since||Infinity)}); }
   return mine;
 }
-function _snapS(){ const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; o.wallets=settings.wallets; return JSON.parse(JSON.stringify(o)); }
+function _snapS(){ if(typeof _sample!=='undefined'&&_sample)return sampleOwn(_snapS); const o={}; for(const k of _SYNC_S_FIELDS)o[k]=settings[k]; o.wallets=settings.wallets; return JSON.parse(JSON.stringify(o)); }
 // base: the list at the last sync; mine: this device's now; theirs: the incoming copy's
 function _walletMerge(base, mine, theirs){ const wk=w=>String(w&&w.address).toLowerCase();
   const was=new Set((base||[]).map(wk)), now=new Set((mine||[]).map(wk));
@@ -235,9 +311,10 @@ function _walletMerge(base, mine, theirs){ const wk=w=>String(w&&w.address).toLo
   for(const w of mine||[])if(!was.has(wk(w))&&!out.some(x=>wk(x)===wk(w)))out.push(w); // added here
   return out; }
 function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); vaultSchedule(); }
-// A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min).
-function syncFailed(msg){
-  SRV.err=msg; SRV.retryMs=Math.min(120000,(SRV.retryMs||2500)*2);
+// A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min), or
+// once a lockout's wait (ms) is over.
+function syncFailed(msg,wait){
+  SRV.err=msg; SRV.retryMs=wait>0?wait+1000:Math.min(120000,(SRV.retryMs||2500)*2);
   renderDatafile('error');
   clearTimeout(_srvTimer); _srvTimer=setTimeout(writeServer,SRV.retryMs);
 }
@@ -272,47 +349,19 @@ async function writeServer(){
     const sentDirty=[..._dirtyJ.entries()]; // (id, counter) pairs — edits made while in flight bump the counter and stay dirty
     const sentS=_snapS(), sentGen=_srvGen, sentRestore=SRV.restoring||0;
     const body={rev:SRV.rev,snapshot:snap}; if(sentRestore)body.restore=true; // the server keeps a copy of what a restore replaces
-    const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
+    const sent=JSON.stringify(body); // once saved, the base the next conflict merges against
+    const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},body:sent});
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return 'auth'; }
+    if(r.status===429){ syncFailed(srvLockMsg(r),(+r.headers.get('retry-after')||0)*1000); return 'error'; } // locked out: retry when it ends
     if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
-      const j=await r.json(); SRV.rev=j.rev||0;
-      if(j.snapshot){
-        const mine=journal, dirty=[..._dirtyJ.keys()], localS=_snapS();
-        await applySnapshot(j.snapshot);
-        const theirsS=_snapS(); // the incoming copy, before anything of ours is laid back
-        let merged=false;
-        if(dirty.length){
-          for(const id of dirty){ if(mine[id]!==undefined)journal[id]=mine[id]; else delete journal[id]; }
-          await rawSet(J_KEY,journal); merged=true;
-        }
-        // field-level settings merge: fields changed here since the last successful sync
-        // win over the incoming snapshot (the edit that triggered this very PUT used to
-        // silently bounce back). Never-synced sessions skip this — server wins there.
-        if(_lastSyncedS){
-          let sChanged=false;
-          for(const k of _SYNC_S_FIELDS){
-            if(JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])){ settings[k]=_syncMerge(k,localS[k],settings[k]); sChanged=true; }
-          }
-          if(Array.isArray(_lastSyncedS.wallets)){ const w=_walletMerge(_lastSyncedS.wallets,localS.wallets,settings.wallets);
-            if(JSON.stringify(w)!==JSON.stringify(settings.wallets)){ settings.wallets=w; sChanged=true; } }
-          if(sChanged){ await rawSet(S_KEY,settings); merged=true; }
-        }
-        try{ renderWallets(); }catch(e){}
-        // Rebase the baseline to the incoming copy (as the encrypted sync does): fields the merge
-        // didn't touch now match it, and those it re-applied from here still differ — so a second
-        // 409 before this merge is pushed keeps them again instead of reading them as synced.
-        // Without a rebase, a conflict applied with merged=false left the OLD baseline in place,
-        // and the NEXT conflict misread server-origin values as local edits — pushing them back
-        // over the other device's newer state.
-        _lastSyncedS=theirsS; srvBaseSave();
-        srvMark(merged);
-        if(merged)scheduleServerWrite(); // push the merge at the new revision
-      }
-      setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local edits were kept and will re-sync.':''));
+      if(_sample){ _sample.dirty=true; srvMark(true); renderDatafile(); return 'conflict'; } // merged after sampleLeave
+      const txt=await r.text(), j=JSON.parse(txt); SRV.rev=j.rev||0;
+      const n=j.snapshot?await srvTakeNewer(j,txt):0;
+      if(n)setErr('Loaded newer data saved from another device. '+jConflictMsg(n));
+      else setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local edits were kept and will re-sync.':''));
       renderDatafile(); return 'conflict';
     }
-    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1;
+    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1; jBaseSet(sent);
       for(const [id,rev] of sentDirty) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); // only clear what was actually sent unchanged
       jPendingSave();
       _lastSyncedS=sentS; srvBaseSave(); SRV.err=null; SRV.retryMs=0;
@@ -325,6 +374,74 @@ async function writeServer(){
   }catch(e){ syncFailed('server unreachable'); return 'error'; }
   finally{ _srvWriting=false; if(_srvAgain){ _srvAgain=false; writeServer(); } }
 }
+// The server's newer copy (a 409's answer, or one srvCheckNewer fetched): take it, laying back what
+// this device changed since the last sync — journal entries merged field by field against the base
+// (jMerge3; laid over whole when there's none), settings fields, wallets by address — and send the
+// merge at the new revision. txt: the response as text, the base from now on. Returns the number of
+// notes both devices changed (kept twice, see J_CONFLICT).
+async function srvTakeNewer(j,txt){
+  const mine=journal, dirty=[..._dirtyJ.keys()], localS=_snapS();
+  await applySnapshot(j.snapshot);
+  const theirsS=_snapS(); // the incoming copy, before anything of ours is laid back
+  let merged=false, conflicts=0;
+  if(dirty.length){
+    for(const id of dirty){ const b=SRV.restoring?null:jBaseOf(id); // a restore's entries are its word, whole
+      if(b){ const r=jMerge3(b.has?b.v:undefined,mine[id],journal[id]); conflicts+=r.conflicts; if(r.v===undefined)delete journal[id]; else journal[id]=r.v; }
+      else if(mine[id]!==undefined)journal[id]=mine[id]; else delete journal[id]; }
+    await rawSet(J_KEY,journal); merged=true;
+  }
+  jBaseSet(txt);
+  // field-level settings merge: fields changed here since the last successful sync
+  // win over the incoming snapshot (the edit that triggered this very PUT used to
+  // silently bounce back). Never-synced sessions skip this — server wins there.
+  if(_lastSyncedS){
+    let sChanged=false;
+    for(const k of _SYNC_S_FIELDS){
+      if(JSON.stringify(localS[k])!==JSON.stringify(_lastSyncedS[k])){ settings[k]=_syncMerge(k,localS[k],settings[k]); sChanged=true; }
+    }
+    if(Array.isArray(_lastSyncedS.wallets)){ const w=_walletMerge(_lastSyncedS.wallets,localS.wallets,settings.wallets);
+      if(JSON.stringify(w)!==JSON.stringify(settings.wallets)){ settings.wallets=w; sChanged=true; } }
+    if(sChanged){ await rawSet(S_KEY,settings); merged=true; }
+  }
+  try{ renderWallets(); }catch(e){}
+  // Rebase the baseline to the incoming copy (as the encrypted sync does): fields the merge
+  // didn't touch now match it, and those it re-applied from here still differ — so a second
+  // 409 before this merge is pushed keeps them again instead of reading them as synced.
+  // Without a rebase, a conflict applied with merged=false left the OLD baseline in place,
+  // and the NEXT conflict misread server-origin values as local edits — pushing them back
+  // over the other device's newer state.
+  _lastSyncedS=theirsS; srvBaseSave();
+  srvMark(merged);
+  if(merged)scheduleServerWrite(); // push the merge at the new revision
+  if(conflicts)SRV.conflicts=(SRV.conflicts||0)+conflicts;
+  return conflicts; }
+// Another device saved: notice it without a reload (this tab used to read "saved" over a stale copy
+// until then). A cheap revision check (GET /api/data?only=rev) when the tab comes back into view or
+// gets focus, and once a minute while it's visible; a newer revision is fetched and taken like a
+// 409's answer. It holds the save lock meanwhile, so a save waits for it instead of racing it.
+let _srvChk=0;
+async function srvCheckNewer(){
+  if(!SRV.enabled||(SRV.needsAuth&&(!SRV.token||SRV.badAuth))||_srvWriting||_applying||SRV.err)return false;
+  if(_sample)return false; // taking it would end sample mode under the viewer: the next check after it ends takes it
+  if(Date.now()-_srvChk<5000)return false; _srvChk=Date.now();
+  _srvWriting=true;
+  try{ const r=await srvFetch('/api/data?only=rev'); if(!r.ok)return false;
+    const v=await r.json(); if(!(v&&v.rev>SRV.rev))return false;
+    const d=await srvFetch('/api/data'); if(!d.ok)return false;
+    const txt=await d.text(), j=JSON.parse(txt); if(!(j.rev>SRV.rev)||!j.snapshot)return false;
+    SRV.rev=j.rev; const n=await srvTakeNewer(j,txt);
+    if(n)setErr('Loaded newer data saved from another device. '+jConflictMsg(n)); else setStatus('Loaded newer data saved from another device.');
+    renderDatafile(); srvRefreshView(); return true;
+  }catch(e){ return false; }
+  finally{ _srvWriting=false; if(_srvAgain){ _srvAgain=false; writeServer(); } } }
+// redraw with what was fetched, unless someone is typing (their field would be redrawn under them)
+function srvRefreshView(){ try{ const a=document.activeElement; if(a&&(/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable))return;
+  if(typeof PZ!=='undefined'&&PZ){ if(typeof pzRender==='function')pzRender(); } else if(typeof allTrades!=='undefined'&&allTrades.length)render(); }catch(e){} }
+function srvWatch(){ if(typeof document.addEventListener!=='function'||typeof window.addEventListener!=='function')return;
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')srvCheckNewer(); else jPendingBaseSave(); });
+  window.addEventListener('focus',()=>{ srvCheckNewer(); });
+  window.addEventListener('pagehide',jPendingBaseSave);
+  setInterval(()=>{ if(document.visibilityState==='visible')srvCheckNewer(); },60000); }
 // A restore (a pasted backup or journal, a server snapshot) is this device's word on everything it
 // touched, as vaultMarkAll makes it for the encrypted sync. Before, nothing marked it: the next save
 // went out at this tab's old revision, met a 409 if another device had saved since, and the 409
@@ -365,13 +482,14 @@ async function initServerSync(){
     const early=tok?srvFetch('/api/data').catch(()=>null):null;
     const h=await fetch('/api/health'); if(!h.ok)return false;
     const info=await h.json(); if(!info||info.ok!==true)return false;
-    SRV.enabled=true; SRV.needsAuth=!!info.auth;
+    SRV.enabled=true; SRV.needsAuth=!!info.auth; srvWatch();
     if(SRV.needsAuth){ SRV.token=tok;
       if(!SRV.token){ renderDatafile(); return true; } }
     const d=(early&&await early)||await srvFetch('/api/data');
     if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
     if(d.status===429){ SRV.badAuth=true; renderDatafile(); setErr(srvLockMsg(d)); return true; } // locked out: never sync blind at rev 0
-    if(d.ok){ const j=await d.json(); SRV.rev=j.rev||0;
+    if(d.ok){ const txt=await d.text(), j=JSON.parse(txt); SRV.rev=j.rev||0;
+      const jBase=jPendingBaseLoad(); jBaseSet(txt); // the stored base is the one the pending edits were made on
       const m=srvMarkRead();
       if(m&&m.dirty&&m.rev===SRV.rev){ // nobody saved since this browser's unsent edits: keep them all (boot sends them)
         SRV.pushLocal=true; const ss=(j.snapshot&&j.snapshot.settings)||{};
@@ -387,7 +505,7 @@ async function initServerSync(){
         srvMark(false);
         // (no readable local journal: nothing to lay over — a missing copy isn't "every edit was a delete")
         if(j.snapshot){ const pend=jPendingLoad(), localJ=pend.length?await Store.get(J_KEY):null;
-          await applySnapshot(j.snapshot); await jPendingOverlay(localJ,pend); }
+          await applySnapshot(j.snapshot); await jPendingOverlay(localJ,pend,jBase); }
         _lastSyncedS=_snapS(); // baseline for the field-level 409 settings merge
         if(localS&&j.snapshot){ let kept=false;
           for(const k of _SYNC_S_FIELDS)if(JSON.stringify(localS[k])!==JSON.stringify(base[k])){ settings[k]=_syncMerge(k,localS[k],settings[k]); kept=true; }
@@ -404,7 +522,7 @@ async function initServerSync(){
 }
 // the server locks an address out after too many wrong tokens (AUTH_FAIL_MAX): say so, and for how long
 const srvLockMsg=d=>{ const s=+(d.headers&&d.headers.get('retry-after'))||0;
-  return 'Too many wrong tokens from this network — try again'+(s?' in about '+Math.max(1,Math.ceil(s/60))+' min':' in a few minutes')+'.'; };
+  return 'Locked out: too many wrong tokens from this network — try again'+(s?' in about '+Math.max(1,Math.ceil(s/60))+' min':' in a few minutes')+'.'; };
 async function connectServerToken(){
   const inp=$('srvTok'); if(!inp)return;
   const tok=inp.value.trim(); if(!tok)return;
@@ -422,19 +540,27 @@ async function toggleSnapHistory(){
   if(p){ p.remove(); return; }
   const host=$('datafile'); if(!host)return;
   p=document.createElement('div'); p.id='snapPanel'; p.className='datafile'; p.style.cssText='display:block;margin-top:6px';
-  p.innerHTML='<span>Loading snapshot history\u2026</span>'; host.insertAdjacentElement('afterend',p);
+  p.innerHTML='<span>Loading snapshot history…</span>'; host.insertAdjacentElement('afterend',p);
   try{
-    const r=await srvFetch('/api/snapshots'); if(!r.ok)throw new Error('HTTP '+r.status);
+    // the server's own daily snapshots, and the full backups "Backup to server" stored (fill caches included)
+    const [r,rb]=await Promise.all([srvFetch('/api/snapshots'),srvFetch('/api/backups').catch(()=>null)]); if(!r.ok)throw new Error('HTTP '+r.status);
     const j=await r.json(); const snaps=j.snapshots||[];
-    if(!snaps.length){ p.innerHTML='<span>No snapshots yet \u2014 one is kept per day (UTC), updated with each save.</span>'; return; }
+    const backups=rb&&rb.ok?((await rb.json()).backups||[]):[];
     // a day's snapshot is that day's last save; a "before restore" copy is what a restore (or a save
     // that dropped many journal entries) replaced, kept by the server just before it wrote
-    const label=s=>s.kind==='pre-restore'?'before restore '+String(s.at||'').slice(5,16).replace('T',' ')+' UTC':s.date;
-    p.innerHTML='<span data-tip="One snapshot per day (UTC), kept for 14 days: the last save of that day. Restoring loads it and saves it as the newest revision \u2014 nothing is deleted: the server first keeps a copy of what the restore replaces, listed here as \u201cbefore restore\u201d (the newest 5 are kept).">Server snapshots \u2014 restore a previous day:</span> '+
-      snaps.map(s=>`<button class="df-btn snapRestore" data-d="${esc(s.id||s.date)}" data-l="${esc(label(s))}">${esc(label(s))}${s.rev!=null?' \u00b7 rev '+esc(s.rev):''} \u00b7 ${(s.bytes/1024).toFixed(0)}kB</button>`).join(' '); // server JSON is still an external input \u2014 escape like every other sink
+    const when=s=>String(s.at||'').slice(5,16).replace('T',' ')+' UTC';
+    const label=s=>s.kind==='pre-restore'?'before restore '+when(s):s.date;
+    const what=s=>s.kind==='pre-restore'?'the copy kept before the restore of '+when(s):'the snapshot of '+s.date;
+    // backup-2026-10-03T18-41-07-123Z.json.gz -> 10-03 18:41 UTC
+    const bkWhen=n=>{ const m=/^backup-\d{4}-(\d\d-\d\d)T(\d\d)-(\d\d)/.exec(n); return m?m[1]+' '+m[2]+':'+m[3]+' UTC':n; };
+    p.innerHTML=(snaps.length?'<span data-tip="One snapshot per day (UTC), kept for 14 days: the last save of that day. Restoring loads it and saves it as the newest revision — nothing is deleted: the server first keeps a copy of what the restore replaces, listed here as “before restore” (the newest 5 are kept).">Server snapshots — restore a previous day:</span> '+
+      snaps.map(s=>`<button class="df-btn snapRestore" data-d="${esc(s.id||s.date)}" data-l="${esc(label(s))}" data-w="${esc(what(s))}">${esc(label(s))}${s.rev!=null?' · rev '+esc(s.rev):''} · ${(s.bytes/1024).toFixed(0)}kB</button>`).join(' ') // server JSON is still an external input — escape like every other sink
+      :'<span>No snapshots yet — one is kept per day (UTC), updated with each save.</span>')
+      +(backups.length&&typeof restoreBackup==='function'?'<div style="margin-top:6px"><span data-tip="Full backups made with Export &amp; tools → Backup to server (the newest 10), fill caches included. Restoring one works like opening a backup file: wallets and settings come from it, your journal is merged, and the server first keeps a copy of what it replaces.">Server backups:</span> '+
+        backups.map(b=>`<button class="df-btn bkRestore" data-n="${esc(b.name)}" data-l="${esc(bkWhen(b.name))}">${esc(bkWhen(b.name))} · ${(b.bytes/1024).toFixed(0)}kB</button>`).join(' ')+'</div>':'');
     p.querySelectorAll('.snapRestore').forEach(b=>{ b.onclick=async()=>{
-      if(!confirm('Restore the '+b.dataset.l+' snapshot? Your current data will be replaced (the server keeps a copy of it first, listed here as \u201cbefore restore\u201d).'))return;
-      b.disabled=true; b.textContent='restoring\u2026';
+      if(!confirm('Restore '+b.dataset.w+'? Your current data will be replaced (the server keeps a copy of it first, listed here as “before restore”).'))return;
+      b.disabled=true; b.textContent='restoring…';
       try{
         const rr=await srvFetch('/api/snapshots/'+encodeURIComponent(b.dataset.d)); if(!rr.ok)throw new Error('HTTP '+rr.status);
         const jj=await rr.json();
@@ -442,9 +568,19 @@ async function toggleSnapHistory(){
         const before=journal, bw=settings.wallets;
         await applySnapshot(jj.snapshot); srvRestored(before,bw);
         // reload only once the server holds it: a 409 or a save in flight used to undo it
-        if(await srvSaveNow()===false){ setErr(srvNotSaved('Snapshot restored')); b.textContent='restored here \u2014 not saved yet'; return; }
+        if(await srvSaveNow()===false){ setErr(srvNotSaved('Snapshot restored')); b.textContent='restored here — not saved yet'; return; }
         location.reload();
       }catch(e){ setErr('Restore failed: '+e.message); b.disabled=false; b.textContent=b.dataset.l; }
+    }; });
+    // the same restore as opening the backup file (restoreBackup, app/data-io.js): it asks first
+    p.querySelectorAll('.bkRestore').forEach(b=>{ b.onclick=async()=>{
+      b.disabled=true; const t=b.textContent; b.textContent='loading…';
+      try{
+        const rr=await srvFetch('/api/backups/'+encodeURIComponent(b.dataset.n)); if(!rr.ok)throw new Error('HTTP '+rr.status);
+        const data=await rr.json(); if(!(data&&(data.journal||data.wallets||data.settings)))throw new Error('not a backup');
+        b.textContent=await restoreBackup(data,'the server backup of '+b.dataset.l)?'restored':t;
+      }catch(e){ setErr('Restore failed: '+e.message); b.textContent=t; }
+      b.disabled=false;
     }; });
   }catch(e){ p.innerHTML='<span>Could not load snapshots: '+esc(e.message)+'</span>'; }
 }
@@ -487,6 +623,9 @@ async function reconnectFile(){ const h=await idbGet('handle'); if(!h){ renderDa
 async function unlinkFile(){ linkedHandle=null; linkedName=''; await idbDel('handle'); renderDatafile(); }
 
 function renderDatafile(state){ const el=$('datafile'); if(!el)return;
+  // the welcome screen's line on where the journal lives follows the mode actually in use
+  const es=$('emptySaved'); if(es)es.textContent=SRV.enabled&&!(SRV.needsAuth&&(!SRV.token||SRV.badAuth))?'Your journal syncs to this server, so it’s there on every device you open it on.'
+    :SRV.enabled?'Your journal is saved in this browser until you enter the server’s access token.':linkedHandle?'Your journal auto-saves to '+linkedName+'.':'Your journal is saved locally on this device.';
   if(SRV.enabled){
     // the companion server also serves the built-in docs — surface the entry points
     for(const id of ['helpBtn','helpLink']){ const h=$(id); if(h)h.classList.remove('hide'); }
@@ -499,12 +638,15 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
       $('srvTok').addEventListener('keydown',e=>{ if(e.key==='Enter')connectServerToken(); });
       return;
     }
-    el.className='datafile on';
+    el.className='datafile'+(SRV.needsAuth?' on':''); // no green light on an open server
     { const bs=$('backupSrv'); if(bs)bs.classList.remove('hide'); } // server present + authed — offer server-held backups
     const tag=SRV.err?`<span style="color:var(--loss)" data-tip="Your edits are kept in this browser and retried automatically.">not saved — ${esc(SRV.err)} · retrying</span>`
       :state==='saved'?'<span style="color:var(--profit)">saved</span>':'synced';
-    el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>
-      <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days). Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>`;
+    // an open server (no AUTH_TOKEN): sync works, and so does everyone else's access — say it every time
+    const open=SRV.needsAuth?'':`<span style="color:var(--loss)" data-tip="Set AUTH_TOKEN on the server (README-deploy.md, step 3: a long random string) and restart it. The app then asks for it once per browser.">⚠ This server has no AUTH_TOKEN — anyone with the URL can read and change your journal</span>`;
+    const both=SRV.conflicts?`<span style="color:var(--gold)" data-tip="${esc(jConflictMsg(SRV.conflicts))}">⚠ ${SRV.conflicts} note${SRV.conflicts===1?'':'s'} edited on two devices — both versions kept</span>`:'';
+    el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>${open}${both}
+      <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days), and the full backups made with Backup to server. Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>`;
     $('srvSaveNow').onclick=writeServer;
     $('srvHist').onclick=toggleSnapHistory;
     return;
@@ -532,7 +674,7 @@ async function hlPost(body){
   while(true){
     let res;
     try{ res=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-    catch(e){ if(attempt++<MAX){ await sleep(backoff(attempt)); continue; } throw new Error('Network error reaching Hyperliquid — check your connection.'); }
+    catch(e){ if(attempt++<MAX&&(typeof navigator==='undefined'||navigator.onLine!==false)){ await sleep(backoff(attempt)); continue; } throw new Error('Network error reaching Hyperliquid — check your connection.'); } // offline: say so now, not after the retries
     if(res.ok) return res.json();
     // 429 (rate limit) and 5xx are transient: honor Retry-After, else exponential backoff
     if((res.status===429||res.status>=500)&&attempt++<MAX){

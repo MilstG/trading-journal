@@ -200,7 +200,10 @@ t('the denominator ambiguity is explained in the UI, not just in tests', () => {
 });
 t('recommendations quantify the top leak and the profit concentration', () => {
   ok(html.includes("const A=assetContribution(closed,'usd',5);"), 'recs never consult attribution');
-  ok(html.includes('of every dollar you lost this period'));
+  // the share is of the net loss of the markets that lost overall, and is said that way (beta: "100% of
+  // every dollar you lost" was false when winning markets had losing trades too)
+  ok(html.includes('of their combined net loss'), 'the top leak is quantified against the losing markets');
+  ok(!html.includes('of every dollar you lost this period'), 'the old, false denominator is gone');
   ok(html.includes('If it holds up, trade it smaller instead of dropping it.'),
     'a big-dollar leak with a fine per-trade return is a sizing call — say so');
 });

@@ -181,6 +181,7 @@ try {
   await call('/admin/config', { method: 'PUT', admin: true, body: { unlocksOn: false } });
   await t('a new server only counts claimed wallets; these tests then count every wallet, as a server from before that did', async () => {
     eq((await call('/config')).d.requireClaim, true);
+    eq((await call('/config')).d.coach.ai, false, 'no COACH_AI: visitors are told there is no coach, so Daruma shows no Coach tab');
     eq((await call('/admin/config', { method: 'PUT', admin: true, body: { requireClaim: false } })).status, 200);
     eq((await call('/config')).d.requireClaim, false);
   });
@@ -352,6 +353,31 @@ try {
     eq(prof.verified, true);
     await call('/me', { method: 'DELETE', key: ny });
   });
+  await t('dollar-threshold badges stay private unless the member shares dollar P&L (page, profile, feed)', async () => {
+    clock += 2 * 3600000; // past the five-joins-an-hour limit
+    const k = (await call('/join', { method: 'POST', body: { handle: 'richie', share: { usd: true, feed: true } } })).d.key, V = (await call('/join', { method: 'POST', body: { handle: 'viewer' } })).d.key;
+    const bd = (id, t, r, d) => ({ id, t, c: 'results', r, k: '2026-09-29', d });
+    const one = [bd('green-1', 'Green day · Bronze', 0, '1 green trading days')];
+    // stats posted before the app held these back: the server still has them
+    const all = [...one, bd('bestday-250000', 'Big day · Legend', 5, 'a $250k day'), bd('netprofit-250000', 'In the black · Diamond', 4, '$250k net profit, all time')];
+    await call('/stats', { method: 'POST', key: k, body: { level: 2, badges: one, badgeN: 1 } });
+    await call('/stats', { method: 'POST', key: k, body: { level: 2, badges: all, badgeN: 3 } });
+    const pub = async () => (await fetch(B + '/api/social/public/richie')).json();
+    eq((await pub()).badges.length, 3, 'shared: all there');
+    ok((await call('/feed?scope=discover', { key: V })).d.events.some(e => e.handle === 'richie' && /Big day|In the black/.test(e.text + ' ' + (e.quote || ''))));
+    await call('/me', { method: 'PUT', key: k, body: { share: { usd: false } } });
+    const p = await pub(), raw = JSON.stringify(p);
+    eq(p.badges.map(b => b.id), ['green-1']); eq(p.badgeN, 1, 'the count leaves them out too');
+    ok(!/\$|250k|Big day|In the black|bestday|netprofit/.test(raw), 'no amount, family or tier on the public page');
+    const prof = (await call('/profile/richie', { key: V })).d.profile;
+    eq(prof.badges, ['Green day · Bronze']); eq(prof.badgeN, 1);
+    const ev = (await call('/feed?scope=discover', { key: V })).d.events.filter(e => e.handle === 'richie');
+    ok(ev.length && !ev.some(e => /Big day|In the black|\$/.test(e.text + ' ' + (e.quote || ''))), 'old feed lines are scrubbed: ' + JSON.stringify(ev.map(e => [e.text, e.quote])));
+    // a new one never posts while the toggle is off
+    eq(S.eventsFromStats(S.sanitizeStats({ badges: one }), S.sanitizeStats({ badges: all }), S.sanitizeShare({})), []);
+    eq(S.eventsFromStats(S.sanitizeStats({ badges: one }), S.sanitizeStats({ badges: all }), S.sanitizeShare({ usd: true })).length, 2);
+    await call('/me', { method: 'DELETE', key: k }); await call('/me', { method: 'DELETE', key: V });
+  });
   await t('leaving deletes the profile, posts and entries', async () => {
     eq((await call('/me', { method: 'DELETE', key: A })).status, 200);
     eq((await call('/me', { key: A })).status, 401);
@@ -407,6 +433,16 @@ t('only process numbers go out: no trades, notes, P&L or addresses in the stats 
   eq(p.xpLog, { '2026-09-30': { s: 88 } });
   eq(p.days, [{ k: '2026-09-30', s: 88, b: false, j: true, jn: 1 }], 'a day carries its score and flags (and the share journaled) — never its P&L');
   eq(p.badges, [{ id: 'x', t: 'X' }]); eq(p.lastChallenge, 'When a, b.');
+});
+t('badges with dollar thresholds (In the black, Big day) only go out when dollar P&L is shared', () => {
+  vm.runInContext('const PZ_USD_BADGE=/^(netprofit|bestday)-/;', ctx);
+  const b = (id, t) => ({ id, t, c: 'results', r: 5, k: '2026-09-01', desc: t });
+  const g = { xp: { total: 1 }, level: { level: 1 }, streak: { current: 0, best: 0, shields: 0 }, challenges: [], achievements: [], days: [],
+    catalog: { total: 270, earned: [b('green-1', 'Green day · Bronze'), b('bestday-250000', 'Big day · Legend'), b('netprofit-1000000', 'In the black · Legend')] } };
+  const off = ctx.pzSocialStats(g, [], null, false, false), on = ctx.pzSocialStats(g, [], null, false, true);
+  eq(off.badges.map(x => x.id), ['green-1']); eq(off.badgeN, 1);
+  ok(!/\$|Big day|In the black/.test(JSON.stringify(off)));
+  eq(on.badges.length, 3); eq(on.badgeN, 3);
 });
 t('the wallet address goes to the server only when a money toggle or “show address” needs it', () => {
   const c2 = { settings: { wallets: [{ address: '0xabc' }] } }; vm.createContext(c2); vm.runInContext(grabFn('socWallet') + grabFn('socAddressFor'), c2);

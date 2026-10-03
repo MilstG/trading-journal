@@ -188,7 +188,7 @@ t('a challenge done stays done when the week is graded again; ledger entries mer
   eq(ctx._syncMerge('pzEarned', { 'b:x-1': { at: '2026-09-01', xp: 5 } }, { 'b:y-1': { at: '2026-09-02', xp: 5 }, 'b:x-1': { at: '2026-09-09', xp: 9 } }),
     { 'b:y-1': { at: '2026-09-02', xp: 5 }, 'b:x-1': { at: '2026-09-01', xp: 5 } });
   const core = grabFn('applySnapshot');
-  ok(core.includes('settings.pzEarned=Object.assign({},data.settings.pzEarned,settings.pzEarned||{})'), 'a snapshot adds to the ledger, never replaces it');
+  ok(core.includes("settings.pzEarned=_syncMerge('pzEarned',settings.pzEarned,data.settings.pzEarned)"), 'a snapshot adds to the ledger, never replaces it');
   ok(grabFn('snapshot').includes('pzEarned:settings.pzEarned') && /const _SYNC_S_FIELDS=\[[^\]]*'pzEarned'/.test(html), 'synced and backed up');
 });
 t('only the whole account writes the ledger: a per-market view could earn what the account didn’t', () => {
@@ -197,6 +197,19 @@ t('only the whole account writes the ledger: a per-market view could earn what t
   ctx.allTrades = [...ctx.allTrades, { id: 'other', openTime: 0, closeTime: 1, net: -5 }];
   game(); eq(run('settings.pzEarned'), undefined);
   ctx.allTrades = ctx.allTrades.slice(0, -1); game(); ok(run("settings.pzEarned['b:habitdays-5']"));
+});
+
+t('a reset empties the ledger and the next computation earns it again from the trades; awards from before it stay ignored after a merge', () => {
+  run("settings={tz:'utc',habits:[{id:'hA',tpl:'journal-all',kind:'process',part:'journal',createdAt:Date.UTC(2026,8,1)}]}"); ctx.journal = {};
+  account(range('2026-09-01', 25, { j: 1 })); clock = Date.UTC(2026, 9, 1, 15);
+  const g1 = game(), before = run('JSON.parse(JSON.stringify(settings.pzEarned))');
+  run("settings.pzEarned['b:fake-1']={at:'2026-09-02',xp:900}; settings.pzEarnedResetAt=Date.UTC(2026,9,1,15)"); // polluted, then reset
+  const g2 = game(), E = run('settings.pzEarned');
+  eq(Object.keys(E).sort(), Object.keys(before).sort(), 'everything the trades earn is back, the fake award is gone');
+  ok(Object.values(E).every(e => e.ep === clock), 'stamped with the reset');
+  eq(g2.xp.total, g1.xp.total);
+  run("settings.pzEarned=_syncMerge('pzEarned',settings.pzEarned,{'b:fake-1':{at:'2026-09-02',xp:900},'b:habitdays-5':{at:'2026-09-05',xp:5}})"); // a device that never saw the reset
+  eq(game().xp.total, g1.xp.total, 'its old awards don’t count');
 });
 
 console.log('\nX14 · mentoring stays out of league XP');

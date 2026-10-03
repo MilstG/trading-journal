@@ -78,10 +78,15 @@ try {
     const c = (await call('/config')).d;
     eq([c.guestCap, c.requireClaim], [3, true]);
   });
-  await t('the owner sets the cap (0 = none), kept in range', async () => {
-    for (const [v, want] of [[5, 5], [0, 0], [500, 100], [-2, 0], [3, 3]]) {
+  await t('the owner sets the cap (0 = none); out of range is refused, not clamped to “no limit”', async () => {
+    for (const [v, want] of [[5, 5], [0, 0], [3, 3]]) {
       eq((await call('/admin/config', { method: 'PUT', owner: true, body: { guestCap: v } })).status, 200);
       eq((await call('/config')).d.guestCap, want, String(v));
+    }
+    for (const v of [500, -2, -3, '', null, 2.5]) {
+      const r = await call('/admin/config', { method: 'PUT', owner: true, body: { guestCap: v } });
+      eq(r.status, 400, String(v)); ok(/Levels stop at .* from 1 to 100, or 0 for no limit/.test(r.d.error), r.d.error);
+      eq((await call('/config')).d.guestCap, 3, 'unchanged after ' + String(v));
     }
     eq((await call('/admin/config', { method: 'PUT', body: { guestCap: 0 } })).status, 401, 'owner only');
   });

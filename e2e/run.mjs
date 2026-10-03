@@ -94,8 +94,27 @@ try {
     await page.waitForSelector('#tbody tr.trow');
     eq(errors, [], 'no uncaught errors');
   });
+  await t('sample data never reaches the account: a note on a sample trade and the awards it earned stay off the server and out of storage', async () => {
+    const row = page.locator('#tbody tr.trow').first(), id = await row.getAttribute('data-id');
+    await row.click();
+    await page.locator(`[data-j="notes"][data-id="${id}"]`).fill('e2e: a note on a sample trade');
+    await page.click(`[data-save="${id}"]`);
+    ok(await page.evaluate(i => isDemoData() && journal[i] && journal[i].notes, id), 'saved on screen');
+    await page.click('#topnav [data-tab="review"]'); await page.click('#topnav [data-tab="dash"]'); // the game runs and earns
+    ok(await page.evaluate(() => Object.keys(settings.pzEarned || {}).length > 0), 'the sample earned awards on screen');
+    await page.waitForTimeout(1500); // longer than the save debounce
+    const snap = (await (await fetch(BASE + '/api/data', { headers: { Authorization: 'Bearer ' + TOKEN } })).json()).snapshot || {};
+    ok(!(snap.journal || {})[id], 'the note is not on the server');
+    eq(Object.keys((snap.settings || {}).pzEarned || {}), [], 'no awards on the server');
+    ok(!Object.keys(snap.journal || {}).some(k => k.startsWith('paste:') || k.startsWith('week:') || k.startsWith('pplan:')), 'nothing derived from the sample');
+    eq(await page.evaluate(i => [JSON.parse(localStorage.getItem('hl_journal_v1') || '{}')[i] || null, Object.keys(JSON.parse(localStorage.getItem('hl_settings_v3') || '{}').pzEarned || {}).length], id), [null, 0], 'nor in this browser’s storage');
+    eq(errors, [], 'no uncaught errors');
+  });
   let tradeId;
-  await t('a journal note saves, syncs to the server, and survives a reload', async () => {
+  await t('a journal note on pasted fills (the user’s own data) saves, syncs to the server, and survives a reload', async () => {
+    await page.evaluate(() => { window.__pasted = loadFromPaste(demoFills(7), { offline: true }).then(() => true); });
+    await page.waitForFunction(() => window.__pasted && allTrades.length && !isDemoData()); // pasted fills end sample mode
+    await page.waitForSelector('#tbody tr.trow');
     const row = page.locator('#tbody tr.trow').first();
     tradeId = await row.getAttribute('data-id');
     await row.click();
@@ -179,6 +198,69 @@ try {
     eq(errors, [], 'no uncaught errors');
   });
   await page.close();
+
+  console.log('\nJournal editing (autosave, plan check, phone width)');
+  const demoPage = async (viewport) => { const o = await openPage(viewport);
+    await o.page.goto(BASE + '/'); await o.page.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0);
+    // the sample's own fills, pasted: the user's data (sample mode never saves, and these test saving)
+    await o.page.evaluate(() => { window.__pasted = loadFromPaste(demoFills(1), { offline: true }).then(() => true); });
+    await o.page.waitForFunction(() => window.__pasted && allTrades.length && !isDemoData());
+    await o.page.waitForSelector('#tbody tr.trow'); return o; };
+  await t('the trade journal saves as you type: no Save click, the caret stays put, and it survives a reload', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    const id = await p.locator('#tbody tr.trow').nth(2).getAttribute('data-id');
+    await p.click(`#tbody tr.trow[data-id="${id}"]`);
+    await p.click(`[data-j="notes"][data-id="${id}"]`); await p.keyboard.type('autosaved, never clicked Save');
+    await p.waitForFunction(i => journal[i] && journal[i].notes === 'autosaved, never clicked Save', id);
+    eq(await p.evaluate(() => document.activeElement.dataset.j), 'notes', 'still in the note after the autosave');
+    // typed right before a reload, inside the autosave's pause: saved on the way out
+    await p.click(`[data-j="tags"][data-id="${id}"]`); await p.keyboard.type('scalp, , SCALP, scalp ,  fomo');
+    await p.reload();
+    await p.waitForFunction(i => typeof journal !== 'undefined' && journal[i] && (journal[i].tags || []).length, id);
+    eq(await p.evaluate(i => [journal[i].notes, journal[i].tags], id), ['autosaved, never clicked Save', ['scalp', 'fomo']], 'note kept, tags de-duplicated');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('a trade plan with the stop on the wrong side is refused with a reason, not saved', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    const id = await p.evaluate(() => [...document.querySelectorAll('#tbody tr.trow')].map(r => r.dataset.id).find(i => allTrades.find(x => x.id === i).dir === 'Short'));
+    await p.click(`#tbody tr.trow[data-id="${id}"]`);
+    const px = await p.evaluate(i => allTrades.find(x => x.id === i).avgEntry, id);
+    await p.fill(`[data-j="plan_stop"][data-id="${id}"]`, String(+(px * 0.98).toPrecision(6)));
+    await p.press(`[data-j="plan_stop"][data-id="${id}"]`, 'Tab');
+    ok(/For a short, the stop goes above the entry/.test(await p.evaluate(i => document.getElementById('planErr-' + i).textContent, id)), 'says why');
+    eq(await p.evaluate(i => !!(journal[i] && journal[i].plan), id), false, 'no plan saved');
+    await p.fill(`[data-j="plan_stop"][data-id="${id}"]`, String(+(px * 1.02).toPrecision(6)));
+    await p.press(`[data-j="plan_stop"][data-id="${id}"]`, 'Tab');
+    await p.waitForFunction(i => journal[i] && journal[i].plan && journal[i].plan.stop > 0, id);
+    eq(await p.evaluate(i => document.getElementById('planErr-' + i).textContent, id), '', 'the message goes once it’s right');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('the day journal saves its text as you type; the committed max loss only once the field is left', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    await p.click('#topnav [data-tab="review"]'); await p.waitForSelector('#djBias');
+    const k = await p.evaluate(() => dayJKey(Date.now()));
+    await p.click('#djBias'); await p.keyboard.type('chop until CPI');
+    await p.waitForFunction(k => journal[k] && journal[k].bias === 'chop until CPI', k);
+    await p.click('#djMaxLoss'); await p.keyboard.type('15');
+    await p.waitForTimeout(1200);
+    eq(await p.evaluate(k => journal[k].maxLoss || null, k), null, 'a half-typed limit isn’t armed');
+    await p.keyboard.type('0'); await p.keyboard.press('Tab');
+    eq(await p.evaluate(k => journal[k].maxLoss, k), 150);
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('on a phone the trade editor fits the screen: every field and Save inside 390 px, even with the table scrolled', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 390, height: 844 });
+    const id = await p.locator('#tbody tr.trow').first().getAttribute('data-id');
+    await p.locator('#tbody tr.trow').first().click(); await p.waitForSelector('tr.jrow');
+    const offscreen = () => p.evaluate(() => [...document.querySelectorAll('tr.jrow textarea, tr.jrow input, tr.jrow button')]
+      .filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.left < 0 || r.right > innerWidth); }).map(e => e.dataset.j || e.textContent.trim()));
+    eq(await offscreen(), [], 'nothing past the screen edge');
+    ok(await p.locator(`[data-save="${id}"]`).isVisible(), 'Save is there');
+    await p.evaluate(() => { document.querySelector('.tbl-wrap').scrollLeft = 1000; });
+    eq(await offscreen(), [], 'nor with the table scrolled sideways');
+    ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no sideways page scroll');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
 
   await t('an edit made right before a reload is kept, not replaced by the server\'s older copy', async () => {
     const { page: p, errors: errs } = await openPage({ width: 1366, height: 900 });
@@ -518,11 +600,34 @@ try {
   await t('a wrong token is refused with a message, not a blank page', async () => {
     const { page: p, errors: errs } = await openPage({ width: 1280, height: 900 }, { token: false });
     await p.addInitScript(() => { try { localStorage.setItem('srv_token', 'wrong'); } catch (e) {} });
+    let calls = 0; p.on('request', r => { if (r.url().includes('/api/social/admin')) calls++; });
     await p.goto(BASE + '/admin');
     await p.waitForSelector('#loginErr:not(.hide)');
     ok(/token/i.test(await p.textContent('#loginErr')));
+    eq(calls, 1, 'one call checks the token: one wrong guess, not one per admin list');
+    await p.reload(); await p.waitForSelector('#loginErr:not(.hide)');
+    ok(/refused last time/.test(await p.textContent('#loginErr'))); eq(calls, 1, 'a saved token that was refused isn’t sent again');
+    eq(await p.evaluate(() => localStorage.getItem('srv_token')), 'wrong', 'and it stays: it’s the journal’s');
     eq(errs, []);
     await p.close();
+  });
+
+  await t('a server without AUTH_TOKEN: the journal’s sync bar and /admin say so at once', async () => {
+    const open = createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-e2e-open-')), htmlPath: join(here, '..', 'ledger.html'), push: false, offsiteTimer: false,
+      fetchImpl: async () => { throw new Error('offline'); } });
+    const OB = await new Promise(r => open.listen(0, '127.0.0.1', () => r('http://127.0.0.1:' + open.address().port)));
+    const p = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errs = [];
+    p.on('pageerror', e => errs.push(e.message));
+    await p.route('**/*', r => r.request().url().startsWith(OB) ? r.continue() : r.abort());
+    try {
+      await p.goto(OB + '/');
+      await p.waitForFunction(() => /no AUTH_TOKEN/.test(document.getElementById('datafile').textContent));
+      ok(/syncs to this server/.test(await p.textContent('#emptySaved')), 'the welcome line follows the mode');
+      await p.goto(OB + '/admin');
+      await p.waitForSelector('#noAuth:not(.hide)');
+      ok(await p.isHidden('#ownerIn'), 'no token box to type into');
+      eq(errs, []);
+    } finally { await p.close(); await new Promise(r => open.close(r)); }
   });
 
   // Admin two-factor, on a server of its own (the owner turns it on here), as localhost: WebAuthn
@@ -621,9 +726,12 @@ try {
       const cookie = (await ctx.cookies()).find(c => c.name === 'pz_admin2fa');
       ok(cookie && cookie.httpOnly && cookie.sameSite === 'Strict' && cookie.path === '/api/social/admin', JSON.stringify(cookie));
       await Promise.all([p.waitForNavigation(), p.click('#signout')]);
-      await p.waitForSelector('#a2fStep'); // the token comes back with this test's page, the session doesn't
+      // signed out of the panel only: the token stays for the journal, unused here until asked
+      await p.waitForSelector('#reuseRow:not(.hide)'); ok(await p.isHidden('#app'));
+      eq(await p.evaluate(() => [!!localStorage.getItem('srv_token'), localStorage.getItem('admin_signin')]), [true, 'out']);
       let st = 0; for (let i = 0; i < 20 && st !== 401; i++) { st = (await fetch(LB2 + '/api/social/admin/overview', { headers: { Authorization: 'Bearer ' + TOKEN, Cookie: 'pz_admin2fa=' + cookie.value } })).status; if (st !== 401) await new Promise(r => setTimeout(r, 100)); }
       eq(st, 401, 'signing out ended the session');
+      await p.click('#reuse'); await p.waitForSelector('#a2fStep'); // the saved token signs in again; the session is gone
       eq(errs, []);
       await ctx.close();
     });

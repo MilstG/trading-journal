@@ -17,7 +17,7 @@ async function addWalletFromInput(){
   if(!/^0x[0-9a-fA-F]{40}$/.test(address)){ setErr('That doesn\u2019t look like a 0x wallet address (42 chars). For Bybit or Binance, use \u201cConnect exchange\u201d.'); return false; }
   // trade ids (and so your notes) include the address as written: a wallet added again in other
   // letter case takes the spelling its notes already use; a new one is stored in lower case
-  const lc=address.toLowerCase(), known=Object.keys(journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
+  const lc=address.toLowerCase(), known=Object.keys(_sample?_sample.journal:journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
   setStatus('Looking for '+walletShort(address)+' on Hyperliquid and Lighter\u2026',true);
   const ids=(await walletIdsFor(address,forced?['lighter']:null)).map(id=>venueOfAddr(id)==='lighter'?'lighter:'+lc:(known||lc));
   const have=new Set(settings.wallets.map(w=>String(w.address).toLowerCase()));
@@ -163,6 +163,10 @@ async function loadWallet(w,fresh,spotP){
   return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
     accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified};
 }
+// one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
+function loadFailNote(w,err){ err=String(err||'');
+  if(/^Network error reaching Hyperliquid/.test(err))return 'Couldn\u2019t reach Hyperliquid for '+labelFor(w)+' \u2014 check your connection';
+  return 'Couldn\u2019t load '+labelFor(w)+(err?' \u2014 '+err:''); }
 async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!opts.auto;
   if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
@@ -181,8 +185,8 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     const results=await mapLimit(settings.wallets,2,w=>loadWallet(w,fresh,spotP).catch(e=>{ console.warn('wallet load',e); return {failed:true,error:e&&e.message}; }));
     spotMaps=await spotP;
     results.forEach((r,i)=>{ const w=settings.wallets[i];
-      // another venue's reason is worth reading (a key to add on this device, a region the exchange refuses)
-      if(r.failed){ failed.push(labelFor(w)+(r.error&&venueOf(w)!=='hyperliquid'?' — '+r.error:'')); return; }
+      // the reason is worth reading (offline, a key to add on this device, a region the exchange refuses)
+      if(r.failed){ failed.push(loadFailNote(w,r.error)); return; }
       newFills+=r.added; if(r.cached)cachedN++; if(r.truncNote)truncated.push(r.truncNote);
       for(const f of r.flows)flowsAcc.push(f); skippedAcc+=r.skipped; totalFills+=r.nFills;
       trades=trades.concat(r.trades); positions=positions.concat(r.positions);
@@ -194,9 +198,11 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     if(!trades.length && !positions.length && !spotHold.length){
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
       // (offline laptop) must keep the current view instead of blanking the dashboard
-      if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' (failed: '+failed.join(', ')+')':'')+' — keeping the current view.'); return; }
-      allTrades=[]; openPositions=[]; spotHoldings=[];
-      setErr('No activity found'+(failed.length?' · failed: '+failed.join(', '):'')+'.'); return; }
+      if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' ('+failed.join('; ')+')':'')+' — keeping the current view.'); return; }
+      sampleLeave(); allTrades=[]; openPositions=[]; spotHoldings=[];
+      // every wallet failing is not "no activity": say why, and only that
+      setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
+    sampleLeave(); // real trades: the account's own journal and settings are back
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
@@ -213,7 +219,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     saveLastView();
     const perpN=allTrades.filter(t=>!t.isOpen&&t.market==='perp').length, spotN=allTrades.filter(t=>!t.isOpen&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
-    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
+    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · '+failed.join(' · '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
   }catch(e){ console.error(e);
     // a background refresh failing (offline laptop, transient outage) is not banner-worthy —
     // it retries in 3 minutes; only a user-initiated load earns the error treatment
@@ -231,13 +237,19 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }
 /* ============================ generic CSV fill import ============================ */
-// RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF.
-function csvParseRows(text){
-  const rows=[]; let row=[], cell='', q=false;
+// The delimiter, read off the header row: whichever of , ; or tab appears most outside quotes
+// (Excel in most of Europe saves ";"). No separator at all → ",".
+function csvDelim(text){
+  const line=String(text||'').replace(/^\s+/,'').split(/\r?\n/)[0]||''; const n={',':0,';':0,'\t':0}; let q=false;
+  for(const ch of line){ if(ch==='"')q=!q; else if(!q&&ch in n)n[ch]++; }
+  return n[';']>n[',']&&n[';']>=n['\t']?';':n['\t']>n[',']?'\t':','; }
+// RFC-4180-ish row splitter: quoted fields, doubled quotes, CRLF or LF; delim defaults to ",".
+function csvParseRows(text,delim){
+  delim=delim||','; const rows=[]; let row=[], cell='', q=false;
   for(let i=0;i<text.length;i++){ const ch=text[i];
     if(q){ if(ch==='"'){ if(text[i+1]==='"'){ cell+='"'; i++; } else q=false; } else cell+=ch; }
     else if(ch==='"')q=true;
-    else if(ch===','){ row.push(cell); cell=''; }
+    else if(ch===delim){ row.push(cell); cell=''; }
     else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n')i++;
       row.push(cell); cell=''; if(row.length>1||row[0]!=='')rows.push(row); row=[]; }
     else cell+=ch;
@@ -245,35 +257,82 @@ function csvParseRows(text){
   if(cell!==''||row.length){ row.push(cell); if(row.length>1||row[0]!=='')rows.push(row); }
   return rows;
 }
+// What one number says about the file's decimal mark: 'dot' ("1,234.50", "0.25", "1,234,567"),
+// 'comma' ("1.234,56", "0,25", "1.234.567"), '' (no separator: says nothing) or null when it could
+// be either — "1,234" and "1.234" are a thousand in one convention and about one in the other.
+function csvNumKind(v){
+  const s=String(v==null?'':v).trim().replace(/[$€£\s]/g,'').replace(/^\(|\)$/g,'').replace(/^[-+]/,'');
+  const hasC=s.includes(','), hasD=s.includes('.');
+  if(hasC&&hasD)return s.lastIndexOf(',')>s.lastIndexOf('.')?'comma':'dot';
+  if(!hasC&&!hasD)return '';
+  const sep=hasC?',':'.', other=hasC?'dot':'comma', mine=hasC?'comma':'dot';
+  const g=sep===','?/^[1-9]\d{0,2}(,\d{3})+$/:/^[1-9]\d{0,2}(\.\d{3})+$/;
+  if(g.test(s))return s.split(sep).length>2?other:null; // 1,234,567 can only be grouping; 1,234 can be either
+  return s.split(sep).length===2?mine:null;               // 0,25 / 1234,5: a decimal mark; 1,23,456: refuse
+}
+// Locale-aware numeric parser. conv = the file's decimal mark ('dot' | 'comma', from
+// parseFillsCsv's per-column inference); without it the value must say so itself (csvNumKind).
+// Handles grouping, accounting negatives "(12.5)", $/€/£ prefixes and exponents. Returns NaN for
+// anything ambiguous or malformed — a refused row beats a silently corrupted one (parseFloat
+// alone read "1,234.50" as 1, and a guess reads "1,234" as 1234 in a file where it means 1.234).
+function csvNum(v,conv){
+  let s=String(v==null?'':v).trim().replace(/[$€£\s]/g,'');
+  if(!s)return NaN;
+  const neg=/^\(.*\)$/.test(s); if(neg)s=s.slice(1,-1).replace(/^[+-]/,''); // an inner sign inside parens is redundant — "(-5)" means −5, and keeping it double-negated the value
+  const c=conv||csvNumKind(s); if(c==null)return NaN;
+  const sg=/^[-+]/.test(s)?s[0]:''; let b=sg?s.slice(1):s;
+  if(c==='dot'&&b.includes(',')){ if(!/^[1-9]\d{0,2}(,\d{3})+(\.\d*)?([eE][-+]?\d+)?$/.test(b))return NaN; b=b.replace(/,/g,''); }
+  if(c==='comma'){ if(b.includes('.')){ if(!/^[1-9]\d{0,2}(\.\d{3})+(,\d*)?([eE][-+]?\d+)?$/.test(b))return NaN; b=b.replace(/\./g,''); }
+    if(b.split(',').length>2)return NaN; b=b.replace(',','.'); }
+  s=sg+b;
+  if(!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return NaN;
+  const n=parseFloat(s); return neg?-n:n;
+}
+// A CSV time cell → epoch ms, or null. Epoch s/ms/µs digit strings and yyyymmdd; ISO-style
+// y-m-d (or y/m/d) dates with an optional time; d/m/y or m/d/y per `order` ('dmy' | 'mdy', inferred
+// per file by parseFillsCsv — without it only a value with a part above 12 says which). A time with
+// no zone is UTC, as exchanges export it: read in the viewer's own zone the same file would land at
+// a different time (and trade ids) on every device. A Z / UTC / ±hh:mm suffix is honored.
+function csvTime(v,order){
+  v=String(v==null?'':v).trim(); if(!v)return null;
+  if(/^\d+(\.\d+)?$/.test(v)){
+    const n=parseFloat(v);
+    // digit-string heuristics: 8 digits like 20260920 is a date, not epoch seconds;
+    // plausible epoch ranges (~2001-2052) in s / ms / µs; anything else is rejected
+    // rather than silently imported as 1970 or year 55978
+    if(/^\d{8}$/.test(v)){ const t=Date.parse(v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8)); return isNaN(t)?null:t; }
+    if(n>=1e9&&n<2.6e9)return Math.round(n*1000);
+    if(n>=1e12&&n<2.6e12)return Math.round(n);
+    if(n>=1e15&&n<2.6e15)return Math.round(n/1000);
+    return null;
+  }
+  const TM='(?:[ T,]+(\\d{1,2}):(\\d{2})(?::(\\d{2})(?:[.,](\\d+))?)?\\s*([ap]\\.?m\\.?)?)?\\s*(Z|UTC|GMT|[+-]\\d{2}:?\\d{2})?$';
+  let y,mo,d,m=new RegExp('^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})'+TM,'i').exec(v);
+  if(m){ y=+m[1]; mo=+m[2]; d=+m[3]; }
+  else if((m=new RegExp('^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{4}|\\d{2})'+TM,'i').exec(v))){
+    const a=+m[1], b=+m[2]; y=+m[3]<100?2000+ +m[3]:+m[3];
+    const o=order||(a>12?'dmy':b>12?'mdy':a===b?'dmy':null); if(!o)return null;
+    d=o==='dmy'?a:b; mo=o==='dmy'?b:a; }
+  else return /(Z|GMT|UTC|[+-]\d{2}:?\d{2})$/i.test(v)&&!isNaN(Date.parse(v))?Date.parse(v):null; // other spellings only with an explicit zone
+  let h=m[4]!=null?+m[4]:0; const mi=m[5]!=null?+m[5]:0, s=m[6]!=null?+m[6]:0, ms=m[7]?+(m[7]+'00').slice(0,3):0, ap=m[8]&&m[8][0].toLowerCase();
+  if(ap){ if(h<1||h>12)return null; h=h%12+(ap==='p'?12:0); }
+  if(mo<1||mo>12||d<1||h>23||mi>59||s>59)return null;
+  const t=Date.UTC(y,mo-1,d,h,mi,s,ms); if(new Date(t).getUTCDate()!==d)return null; // 31/02 is not a date
+  const z=m[9]; if(!z||/^(Z|UTC|GMT)$/i.test(z))return t;
+  const zz=z.replace(':',''), off=(+zz.slice(1,3)*60+ +zz.slice(3,5))*(zz[0]==='-'?-1:1);
+  return t-off*60000;
+}
 // Header-mapped CSV fills → HL-shaped fills for the exact reconstruction path exchange
 // data takes. Column names are matched loosely (case/punctuation-insensitive) against the
 // aliases below, so exports from other venues or a hand-built spreadsheet both work.
 // startPosition and closedPnl are derived (running position + average-cost realization)
 // when the CSV lacks them — exact when the file carries each coin's full history, and the
-// status line says when derivation was used. Throws with a specific message on bad input.
-// Locale-tolerant numeric parser. Handles "1,234.50" (US thousands), "1.234,56" (EU),
-// "1234,56" (bare decimal comma), accounting negatives "(12.5)", $ prefixes and plain
-// floats/exponents. Returns NaN for anything ambiguous — a skipped row beats a silently
-// corrupted one (parseFloat alone read "1,234.50" as 1 and imported it as a valid price).
-function csvNum(v){
-  let s=String(v==null?'':v).trim().replace(/[$\s]/g,'');
-  if(!s)return NaN;
-  const neg=/^\(.*\)$/.test(s); if(neg)s=s.slice(1,-1).replace(/^[+-]/,''); // an inner sign inside parens is redundant — "(-5)" means −5, and keeping it double-negated the value
-  const hasC=s.includes(','), hasD=s.includes('.');
-  if(hasC&&hasD){
-    if(s.lastIndexOf(',')>s.lastIndexOf('.')) s=s.replace(/\./g,'').replace(',','.'); // EU: 1.234,56
-    else s=s.replace(/,/g,'');                                                        // US: 1,234.50
-  } else if(hasC){
-    const parts=s.split(',');
-    if(parts.length===2&&parts[1].length!==3) s=parts[0]+'.'+parts[1];        // 1234,56 → decimal comma
-    else if(parts.slice(1).every(p=>p.length===3)) s=parts.join('');          // 1,234 / 1,234,567 → thousands
-    else return NaN;                                                          // 1,23,456 — refuse to guess
-  }
-  if(!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return NaN;
-  const n=parseFloat(s); return neg?-n:n;
-}
+// status line says when derivation was used. The delimiter, the decimal mark (per column,
+// then per file) and the date order (per file) are inferred; what stays ambiguous is refused
+// with the column, value and row named. Throws with a specific message on bad input.
 function parseFillsCsv(text){
-  const rows=csvParseRows(text.trim());
+  text=String(text||'').trim(); const delim=csvDelim(text);
+  const rows=csvParseRows(text,delim);
   if(rows.length<2)throw new Error('need a header row plus at least one data row');
   const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
   const header=rows[0].map(norm);
@@ -298,45 +357,55 @@ function parseFillsCsv(text){
   }
   const missing=['time','coin','side','px','sz'].filter(k=>col[k]==null);
   if(missing.length)throw new Error('could not find column(s) for: '+missing.join(', ')
-    +' — headers seen: '+rows[0].join(', '));
-  const parseT=v=>{
-    if(/^\d+(\.\d+)?$/.test(v)){
-      const n=parseFloat(v);
-      // digit-string heuristics: 8 digits like 20260920 is a date, not epoch seconds;
-      // plausible epoch ranges (~2001-2052) in s / ms / µs; anything else is rejected
-      // rather than silently imported as 1970 or year 55978
-      if(/^\d{8}$/.test(v)){ const t=Date.parse(v.slice(0,4)+'-'+v.slice(4,6)+'-'+v.slice(6,8)); return isNaN(t)?null:t; }
-      if(n>=1e9&&n<2.6e9)return Math.round(n*1000);
-      if(n>=1e12&&n<2.6e12)return Math.round(n);
-      if(n>=1e15&&n<2.6e15)return Math.round(n/1000);
-      return null;
-    }
-    // a date and time with no zone is UTC, as exchanges export it: read in the viewer's own zone
-    // the same file would land at a different time (and trade ids) on every device
-    const m=/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(v.trim());
-    const t=Date.parse(m?m[1]+'T'+(m[2].length<5||m[2].indexOf(':')===1?'0'+m[2]:m[2])+'Z':v); return isNaN(t)?null:t;
-  };
+    +' — headers seen: '+rows[0].join(', ')+(delim===','?'':' (split on '+(delim==='\t'?'tabs':'"'+delim+'"')+')'));
+  const H=k=>'"'+rows[0][col[k]]+'"', cell=(r,k)=>String(rows[r][col[k]]==null?'':rows[r][col[k]]).trim();
+  // decimal mark: per numeric column from any value that shows it, else the file's (when its columns
+  // agree), else a ";" file's European default; a column showing both is refused
+  const NUM=['px','sz','fee','closedPnl','startPosition'].filter(k=>col[k]!=null), conv={}, seen={};
+  for(const k of NUM){ const ex={};
+    for(let r=1;r<rows.length;r++){ const v=cell(r,k), kd=v&&csvNumKind(v); if(kd&&!ex[kd])ex[kd]=[v,r]; }
+    if(ex.dot&&ex.comma)throw new Error(`column ${H(k)} mixes decimal marks: "${ex.dot[0]}" (row ${ex.dot[1]+1}) uses a point, "${ex.comma[0]}" (row ${ex.comma[1]+1}) a comma — export it with one`);
+    conv[k]=ex.dot?'dot':ex.comma?'comma':null; if(conv[k])seen[conv[k]]=1; }
+  const fileConv=Object.keys(seen).length===1?Object.keys(seen)[0]:!Object.keys(seen).length&&delim===';'?'comma':null;
+  for(const k of NUM)if(!conv[k])conv[k]=fileConv;
+  // date order: any first part above 12 → day-first; any second part above 12 → month-first
+  let dmy=null, mdy=null, amb=null;
+  for(let r=1;r<rows.length;r++){ const v=cell(r,'time'), m=/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})(?!\d)/.exec(v); if(!m)continue;
+    const a=+m[1], b=+m[2]; if(a>12&&b>12)continue; // not a date either way: skipped below
+    if(a>12){ if(!dmy)dmy=[v,r]; } else if(b>12){ if(!mdy)mdy=[v,r]; } else if(a!==b&&!amb)amb=[v,r]; }
+  if(dmy&&mdy)throw new Error(`column ${H('time')} mixes day-first "${dmy[0]}" (row ${dmy[1]+1}) and month-first "${mdy[0]}" (row ${mdy[1]+1}) dates — export ISO dates (2026-09-03 14:00:00)`);
+  const order=dmy?'dmy':mdy?'mdy':null;
+  if(!order&&amb){ const p=/^(\d{1,2})[-/.](\d{1,2})/.exec(amb[0]), MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    throw new Error(`${H('time')} "${amb[0]}" on row ${amb[1]+1} is ambiguous: ${+p[1]} ${MO[+p[2]-1]} or ${+p[2]} ${MO[+p[1]-1]}? No date in the file has a day above 12 to tell. Export ISO dates (2026-09-03 14:00:00); a time without a zone is read as UTC.`); }
   // "open"/"close" alone don't say buy or sell (closing a short is a buy), so they aren't read as sides;
   // "Open Long"/"Close Short" (and "Long > Short" flips) say both
   const sideOf=v=>{ const s=norm(v); if(['b','buy','long','bid','openlong','closeshort','shortlong'].includes(s))return 'B';
     if(['a','s','sell','short','ask','openshort','closelong','longshort'].includes(s))return 'A'; return null; };
-  const fills=[]; let skipped=0;
+  // a number with no decimal-mark evidence anywhere is refused for the whole file, not guessed row by row
+  const num=(r,k)=>{ const v=cell(r,k), n=csvNum(v,conv[k]);
+    if(isNaN(n)&&!conv[k]&&csvNumKind(v)===null&&isFinite(csvNum(v,'dot'))&&isFinite(csvNum(v,'comma')))
+      throw new Error(`${H(k)} "${v}" on row ${r+1} is ambiguous: ${csvNum(v,'dot')} or ${csvNum(v,'comma')}? Nothing else in the file shows whether "," or "." is the decimal mark. Add the decimals ("1,234.00") or export plain numbers.`);
+    return n; };
+  const fills=[]; let skipped=0, firstBad=null;
   for(let r=1;r<rows.length;r++){ const row=rows[r];
-    const time=parseT(String(row[col.time]||'').trim());
-    const coin=String(row[col.coin]||'').trim();
+    const time=csvTime(cell(r,'time'),order);
+    const coin=cell(r,'coin');
     const side=sideOf(row[col.side]);
-    const px=csvNum(row[col.px]), sz=Math.abs(csvNum(row[col.sz]));
-    if(time==null||!coin||!side||!(px>0)||!(sz>0)){ skipped++; continue; }
+    const px=num(r,'px'), sz=Math.abs(num(r,'sz'));
+    const bad=time==null?['time','isn\u2019t a date/time Ledger reads (use ISO 2026-09-03 14:00:00, UTC unless it carries a zone, or epoch)']:!coin?['coin','is empty']:!side?['side','isn\u2019t buy/sell (or long/short)']
+      :!(px>0)?['px','isn\u2019t a positive number']:!(sz>0)?['sz','isn\u2019t a positive number']:null;
+    if(bad){ skipped++; if(!firstBad)firstBad=`row ${r+1}: ${H(bad[0])} "${cell(r,bad[0])}" ${bad[1]}`; continue; }
     // no `crossed` field: execution style is unknown for imported fills, and tallyFill
     // counts unknowns in neither maker nor taker instead of fabricating a signal
+    const opt=k=>col[k]!=null&&cell(r,k)!==''?num(r,k):NaN;
     const f={coin, side, time, px:String(px), sz:String(sz),
-      fee:col.fee!=null&&isFinite(csvNum(row[col.fee]))?String(csvNum(row[col.fee])):'0',
+      fee:isFinite(opt('fee'))?String(opt('fee')):'0',
       tid:'csv'+r, oid:r, dir:''};
-    if(col.closedPnl!=null&&row[col.closedPnl]!==''&&isFinite(csvNum(row[col.closedPnl])))f.closedPnl=String(csvNum(row[col.closedPnl]));
-    if(col.startPosition!=null&&row[col.startPosition]!==''&&isFinite(csvNum(row[col.startPosition])))f.startPosition=String(csvNum(row[col.startPosition]));
+    if(isFinite(opt('closedPnl')))f.closedPnl=String(opt('closedPnl'));
+    if(isFinite(opt('startPosition')))f.startPosition=String(opt('startPosition'));
     fills.push(f);
   }
-  if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped)');
+  if(!fills.length)throw new Error('mapped the columns but no row parsed cleanly ('+skipped+' skipped; first '+firstBad+')');
   // Stable time sort; same-millisecond ties keep the FILE's chronological direction —
   // most venue exports are newest-first, and walking a same-ms close-then-reopen
   // backwards corrupts the average-cost derivation.
@@ -347,8 +416,10 @@ function parseFillsCsv(text){
   const {derived}=deriveFillPositions(fills);
   const note=fills.length+' rows mapped ('+['time','coin','side','px','sz'].map(k=>k+'←'+rows[0][col[k]]).join(', ')
     +(col.fee!=null?', fee←'+rows[0][col.fee]:', no fee column')
-    +(skipped?', '+skipped+' rows skipped':'')+')';
-  return {fills, note, derived, skipped};
+    +(delim!==','?', '+(delim==='\t'?'tab':'"'+delim+'"')+'-separated':'')
+    +(Object.values(conv).includes('comma')?', decimal comma':'')+(order?', '+(order==='dmy'?'day/month':'month/day')+' dates':'')
+    +(skipped?', '+skipped+' rows skipped — first '+firstBad:'')+')';
+  return {fills, note, derived, skipped, firstBad};
 }
 // Coin names become part of trade ids, which land in HTML attributes and selectors — pasted
 // or imported data is untrusted, so anything outside exchange-style symbols is refused.
@@ -381,6 +452,7 @@ async function loadFromPaste(fills,opts){
   const {perp:perpTr,spot:spotTr}=await reconstructCompute(fills,[],'paste');
   spotTr.forEach(t=>{ t.symbol=spotMaps.nameByCoin[t.coin]||t.coin; t.quote=(spotMaps.quoteByCoin||{})[t.coin]||null; });
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
+  if(opts.sample)sampleEnter(); else sampleLeave(); // pasted fills are the user's own
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null};
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
@@ -435,7 +507,10 @@ function openCexConnect(venue, label){
 let _setRenderTimer=null;
 const debouncedRender=()=>{ clearTimeout(_setRenderTimer); _setRenderTimer=setTimeout(()=>{ if(allTrades.length)render(); },350); };
 $('riskDefault').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.riskDefault=v>0?v:null; await Store.set(S_KEY,settings); debouncedRender(); });
-$('beThresh').addEventListener('input',async e=>{ const v=parseFloat(e.target.value); settings.beThreshold=(isFinite(v)&&v>=0)?v:0; await Store.set(S_KEY,settings);
+$('beThresh').addEventListener('input',async e=>{ const raw=e.target.value.trim(), v=parseFloat(raw);
+  // empty = the automatic band; a number (0 turns the band off) is the user's own and stays fixed
+  if(raw===''||!isFinite(v)||v<0){ settings.beThreshold=null; settings.beFixed=false; } else { settings.beThreshold=v; settings.beFixed=true; }
+  await Store.set(S_KEY,settings); if(!allTrades.length)applyBeBand();
   _minerCache={key:null,res:null,deep:null}; debouncedRender(); }); // wins, losses and streaks move with the band: mined patterns are stale
 $('rBasis').addEventListener('change',async e=>{ settings.rBasis=e.target.value;
   const fixed=settings.rBasis==='fixed'; $('riskDefault').classList.toggle('hide',!fixed);
@@ -523,6 +598,8 @@ async function setCoachMode(on){
 }
 function syncTzBtn(){ const b=$('tzBtn'); if(b)b.textContent=(settings.tz==='utc'?'🕓 UTC':'🕓 Local'); }
 $('coachSwitch').addEventListener('click',()=>setCoachMode(!coachOn()));
+$('earnResetBtn').addEventListener('click',async()=>{ if(!confirm(PZ_EARN_RESET_ASK))return;
+  await pzEarnedReset(); if(allTrades.length)render(); setStatus('Progress awards reset — earned again from your trades.'); });
 $('tzBtn').addEventListener('click',async ()=>{ settings.tz=settings.tz==='utc'?'local':'utc'; syncTzBtn();
   _minerCache={key:null,res:null,deep:null}; // session/dow buckets changed → invalidate mined patterns
   await Store.set(S_KEY,settings);
@@ -533,7 +610,14 @@ $('settingsPop').addEventListener('click',e=>e.stopPropagation());
 document.addEventListener('click',e=>{ const p=$('settingsPop'); if(p&&!p.classList.contains('hide'))p.classList.add('hide');
   // the tools menu closes on a pick or on any click outside it
   const m=$('toolsMenu'); if(m&&m.open&&(!m.contains(e.target)||e.target.closest('.tmenu-pop button')))m.open=false; });
-document.addEventListener('keydown',e=>{ if(e.key!=='Escape')return; const m=$('toolsMenu'); if(m&&m.open){ m.open=false; m.querySelector('summary').focus(); } });
+// Escape closes the topmost of the paste modal, Settings, the tools menu and the wallets panel, and hands
+// focus back to the button that opened it (the exchange and mark-up dialogs close themselves)
+document.addEventListener('keydown',e=>{ if(e.key!=='Escape'||document.querySelector('.modal-bg.show:not(#modal)'))return;
+  const md=$('modal'), p=$('settingsPop'), m=$('toolsMenu'), sp=$('setupPanel'), back=b=>{ if(b)b.focus(); };
+  if(md&&md.classList.contains('show')){ md.classList.remove('show'); back($('importBtn')); }
+  else if(p&&!p.classList.contains('hide')){ p.classList.add('hide'); back($('gearBtn')); }
+  else if(m&&m.open){ m.open=false; back(m.querySelector('summary')); }
+  else if(sp&&!sp.classList.contains('hide')&&$('app')&&!$('app').classList.contains('hide')){ sp.classList.add('hide'); back($('walletsBtn')); } });
 $('viewtog').addEventListener('click',async e=>{ const b=e.target.closest('button'); if(!b)return;
   view=b.dataset.v; document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x===b));
   settings.view=view; await Store.set(S_KEY,settings);
@@ -571,18 +655,24 @@ $('clearFilters').onclick=()=>{ ['fCoin','fSide','fOut','fTag','fWallet','fFlag'
   $('fRating').value='0'; $('fFrom').value=''; $('fTo').value=''; $('fSearch').value=''; renderTable(); };
 /* tooltips — hover (mouse), tap (touch), and focus (keyboard) */
 (function(){ let tip=$('tip'); if(!tip){ tip=document.createElement('div'); tip.id='tip'; tip.className='tip'; document.body.appendChild(tip); }
-  let cur=null, hideT=null;
-  const hide=()=>{ cur=null; tip.style.opacity='0'; clearTimeout(hideT); };
-  const place=(el,x,y)=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.opacity='1';
+  let cur=null, hideT=null, ptrAt=0;
+  const hide=()=>{ cur=null; tip.style.opacity='0'; tip.style.visibility='hidden'; clearTimeout(hideT); };
+  const show=el=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.visibility='visible'; tip.style.opacity='1'; };
+  const clampY=(t,h)=>Math.max(8,Math.min(t,innerHeight-h-8)); // never off the top or bottom edge
+  const place=(el,x,y)=>{ show(el);
     const r=tip.getBoundingClientRect(); let l=x+14,t=y+16;
     if(l+r.width>innerWidth-8)l=innerWidth-r.width-8; if(l<8)l=8;
-    if(t+r.height>innerHeight-8)t=y-r.height-12; tip.style.left=l+'px'; tip.style.top=t+'px'; };
+    if(t+r.height>innerHeight-8)t=y-r.height-12; tip.style.left=l+'px'; tip.style.top=clampY(t,r.height)+'px'; };
   // anchor to an element's box (used for tap + keyboard focus, where there's no cursor to follow)
-  const placeAnchored=el=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.opacity='1';
+  const placeAnchored=el=>{ show(el);
     const b=el.getBoundingClientRect(), r=tip.getBoundingClientRect();
     let l=b.left+b.width/2-r.width/2, t=b.top-r.height-10;
     if(l+r.width>innerWidth-8)l=innerWidth-r.width-8; if(l<8)l=8;
-    if(t<8)t=b.bottom+10; tip.style.left=l+'px'; tip.style.top=t+'px'; };
+    if(t<8)t=b.bottom+10; tip.style.left=l+'px'; tip.style.top=clampY(t,r.height)+'px'; };
+  // a click is the user acting, not reading: the tip goes (a nav button's used to stay up over the sidebar)
+  // and the focus that click gives doesn't bring it back; Escape dismisses it too
+  document.addEventListener('pointerdown',e=>{ ptrAt=Date.now(); if(cur&&!(e.pointerType==='touch'&&e.target.closest&&e.target.closest('[data-tip]')===cur))hide(); },true);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&cur)hide(); });
   const coarse=matchMedia('(hover: none)').matches;
   if(!coarse){
     document.addEventListener('mouseover',e=>{ const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;place(el,e.clientX,e.clientY);} });
@@ -597,7 +687,7 @@ $('clearFilters').onclick=()=>{ ['fCoin','fSide','fOut','fTag','fWallet','fFlag'
       else hide(); },true);
   }
   // keyboard: reveal the tip when a tipped, focusable element receives focus
-  document.addEventListener('focusin',e=>{ const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;placeAnchored(el);} });
+  document.addEventListener('focusin',e=>{ if(Date.now()-ptrAt<600)return; const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;placeAnchored(el);} });
   document.addEventListener('focusout',()=>{ if(cur)hide(); });
   document.addEventListener('scroll',()=>{ if(cur)hide(); },true);
   window.addEventListener('resize',()=>{ if(cur)hide(); });
@@ -623,26 +713,35 @@ $('tbody').addEventListener('click',e=>{
     const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);
       markJEdit(id); Store.set(J_KEY,journal); },0); return; } // persist immediately — a toggle is an edit, not a draft
   if(e.target.closest('textarea,input,.rating,.mistakes,.pbrules,.jsave,.attgrid,.attbtn'))return;
-  const row=e.target.closest('.trow'); if(row){ const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable(); }
+  const row=e.target.closest('.trow'); if(row)toggleRow(row.dataset.id);
 });
 function setStar(star){ const id=star.parentElement.dataset.id, r=+star.dataset.r; ensureJ(id).rating=r;
   markJEdit(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
-  star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); }); }
+  star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); s.tabIndex=(i+1)===r?0:-1; }); } // one Tab stop: the chosen star
 // keyboard: expand rows with Enter/Space; set star ratings with Enter/Space/Arrows
 $('tbody').addEventListener('keydown',e=>{
   const star=e.target.closest('.star');
   if(star){ const stars=[...star.parentElement.querySelectorAll('.star')]; const i=stars.indexOf(star);
     if(e.key==='Enter'||e.key===' '){ e.preventDefault(); setStar(star); }
-    else if(e.key==='ArrowRight'||e.key==='ArrowUp'){ e.preventDefault(); (stars[i+1]||stars[i]).focus(); }
-    else if(e.key==='ArrowLeft'||e.key==='ArrowDown'){ e.preventDefault(); (stars[i-1]||stars[i]).focus(); }
+    else if(/^(Arrow(Left|Right|Up|Down)|Home|End)$/.test(e.key)){ e.preventDefault(); // a radiogroup: arrows move and select, wrapping, like Daruma's
+      const k=e.key, b=stars[k==='Home'?0:k==='End'?stars.length-1:(i+(k==='ArrowRight'||k==='ArrowDown'?1:-1)+stars.length)%stars.length];
+      setStar(b); b.focus(); }
     return; }
   if(e.target.closest('textarea,input,.mistakes,.jsave,.attgrid,.attbtn'))return;
   const row=e.target.closest('tr.trow');
-  if(row&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable();
+  if(row&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); const id=row.dataset.id; toggleRow(id);
     if(expandedId===id) setTimeout(()=>{ const r=$('tbody').querySelector(`tr.trow[data-id="${CSS.escape(id)}"]`); if(r)r.focus(); },0); }
 });
 $('tbody').addEventListener('change',e=>{ const fi=e.target.closest('input[data-att]');
-  if(fi&&fi.files&&fi.files.length){ addAttachments(fi.dataset.att,[...fi.files]); fi.value=''; } });
+  if(fi&&fi.files&&fi.files.length){ addAttachments(fi.dataset.att,[...fi.files]); fi.value=''; return; }
+  const f=e.target.closest('[data-j]'); if(f){ jCancel('t|'+f.dataset.id); jAutosave(f.dataset.id,f.type==='number'); } }); // left the field: save it now
+// text autosaves after a pause in typing; numbers wait for the change above
+$('tbody').addEventListener('input',e=>{ const f=e.target.closest('[data-j]'); if(f&&f.type!=='number'){ const id=f.dataset.id; jSoon('t|'+id,()=>jAutosave(id,false)); } });
+// closing or hiding the page: what's still waiting is saved (the field being typed in counts as left);
+// only a plan that can't be saved as typed asks before the page goes
+window.addEventListener('beforeunload',e=>{ const a=document.activeElement; if(a&&a.matches&&a.matches('input,textarea'))a.blur(); jFlush();
+  if([..._jPlanBad].some(id=>document.getElementById('planErr-'+id))){ e.preventDefault(); e.returnValue=''; } });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden)jFlush(); });
 // The paste modal does four jobs behind one box (fills JSON, CSV, journal restore, full
 // backup). Naming the detected type BEFORE Load removes the "wrong branch" surprise class.
 function detectPasteType(raw){
@@ -651,13 +750,13 @@ function detectPasteType(raw){
     if(Array.isArray(d))return d.length&&d[0]&&d[0].coin!==undefined?'fills JSON · '+d.length+' fills':'JSON array';
     if(d&&typeof d==='object'){
       if(d.fills)return 'fills JSON · '+((d.fills&&d.fills.length)||0)+' fills';
-      if(d.journal||d.wallets||d.settings)return 'full backup'+(d.fillCaches?' · incl. fill caches':'');
+      if(d.journal||d.wallets||d.settings)return 'full backup'+(d.fillCaches&&typeof d.fillCaches==='object'&&Object.keys(d.fillCaches).length?' · incl. fill caches':'');
       return 'journal export · '+Object.keys(d).length+' entries';
     }
     return 'JSON';
   }catch(e){}
   const first=t.split('\n')[0]||'';
-  if(t.includes('\n')&&first.includes(','))return 'CSV · '+(t.split('\n').length-1)+' rows';
+  if(t.includes('\n')&&/[,;\t]/.test(first))return 'CSV'+(csvDelim(t)===','?'':csvDelim(t)===';'?' (;-separated)':' (tab-separated)')+' · '+(t.split('\n').length-1)+' rows';
   return 'unrecognized — expected fills JSON, a backup/journal export, or CSV';
 }
 function updatePasteType(){ const el=$('pasteType'); if(!el)return;
@@ -693,30 +792,8 @@ $('modalLoad').onclick=async()=>{
   // !data.fills: a {fills:[...]} paste is fill data for reconstruction, not a journal —
   // without this guard it would fall through to the journal branch and overwrite it.
   if(data&&!Array.isArray(data)&&typeof data==='object'&&!data.coin&&!data.fills){
-    if(data.journal||data.wallets||data.settings){ // full backup
-      // applySnapshot is the one restore path that knows the whole backup shape — including
-      // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
-      const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
-      const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
-      if(!confirm('Restore this backup ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
-        +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return;
-      await applySnapshot(data);
-      // merge, not replace: a note written here since the backup was made survives the restore
-      if(incoming){ let kept=0; for(const [k,v] of Object.entries(before)){ const b=incoming[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; kept++; } }
-        if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
-      resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
-      vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
-      srvRestored(before,bw); // the owner's server sync: the same, so a 409 from another device's save can't undo it
-      schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
-      view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
-      document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
-      renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
-      const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
-      // "restored" only once the server holds it (when it syncs): a 409 merge can change the counts too
-      if(await srvSaveNow()===false){ setErr(srvNotSaved('Backup restored')); return; }
-      renderWallets();
-      setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return;
-    }
+    sampleEnd(); // merged into the account's journal, not the sample's
+    if(data.journal||data.wallets||data.settings){ await restoreBackup(data); return; } // full backup
     // a journal export is {"<trade id | day:… | week:…>": {…}} — anything else (an API response,
     // a settings blob) used to replace the whole journal silently
     const ents=Object.entries(data);
@@ -732,6 +809,34 @@ $('modalLoad').onclick=async()=>{
   const fills=Array.isArray(data)?data:(data.fills||[]);
   await loadFromPaste(fills);
 };
+// A full backup — pasted, or one "Backup to server" stored (History lists them) — restored.
+// applySnapshot is the one restore path that knows the whole backup shape, including the v9 fill
+// caches and saved MAE/MFE rows that pasting used to silently drop. With server sync the save says
+// it's a restore, so the server first keeps what it replaces ("before restore" in History).
+// -> true once restored (and, with sync, saved), false if cancelled or not saved yet.
+async function restoreBackup(data,what){
+  sampleEnd(); // first: `before` must be the account's journal, not the sample's (History restores come here too)
+  const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
+  const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
+  if(!confirm('Restore '+(what||'this backup')+' ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
+    +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return false;
+  await applySnapshot(data);
+  // merge, not replace: a note written here since the backup was made survives the restore
+  if(incoming){ let kept=0; for(const [k,v] of Object.entries(before)){ const b=incoming[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; kept++; } }
+    if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
+  resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
+  vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
+  srvRestored(before,bw); // the owner's server sync: the same, so a 409 from another device's save can't undo it
+  schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
+  view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
+  document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
+  renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
+  const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
+  // "restored" only once the server holds it (when it syncs): a 409 merge can change the counts too
+  if(await srvSaveNow()===false){ setErr(srvNotSaved('Backup restored')); return false; }
+  renderWallets();
+  setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return true;
+}
 $('exportCsv').onclick=()=>{
   const rows=filteredTrades(); if(!rows.length){ setStatus('No trades in the current filter to export.'); return; }
   const q=v=>{ v=v==null?'':String(v);

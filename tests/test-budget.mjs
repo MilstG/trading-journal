@@ -45,8 +45,21 @@ try {
     // raw, 557 -> 495 KB gzipped; the journal pays ~2 KB gzipped for three more files compressed apart.
     // All of audit 4 together (correctness fixes, the performance work, Daruma's split): 1895 / 1514 raw,
     // 642 / 509 gzipped — Daruma still 48 KB gzipped under where it started.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1900, 645],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1520, 512],
+    // Oct 2026: the beta's honest-stats fixes (CSV delimiter / decimal-mark / date-order inference with
+    // named errors, the automatic break-even band, the shared edge test) add ~8 KB raw / ~2 KB gzipped
+    // to both screens, most of it the CSV importer (data-io.js loads on both): 1908 / 1526 raw, 647 / 514 gzipped.
+    // Oct 2026: journal beta fixes (autosave for the trade, day and week journals, the trade-plan check, tag
+    // de-duplication, the drawer pinned to the screen on phones, calendar labels, tooltip and Escape handling):
+    // about 11 KB raw / 3 KB gzipped, a third of it comments: 1906 / 1525 raw, 646 / 513 gzipped.
+    // Oct 2026: sync merges an entry both devices edited field by field, a tab notices another device's
+    // save, and the sync bar warns about a server without AUTH_TOKEN (all in core.js, so both screens):
+    // ~11 KB raw / ~3 KB gzipped, much of it comments: 1906 / 1525 raw, 645 / 512 gzipped.
+    // Oct 2026: sample mode kept off the account (core.js sampleEnter/sampleLeave) and the award ledger's
+    // reset: about 6 KB raw on each screen took both past their raw lines (1901 / 1520 raw, 644 / 510 gzipped).
+    // Daruma's beta fixes (badges, plan checks, XP left, layout, keyboard) and all of the above together,
+    // measured after merging the five: 1944 / 1561 raw, 660 / 526 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1948, 662],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1565, 528],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

@@ -144,5 +144,32 @@ function sanitizeLeague(b, prev) {
     ddRule: ['week', 'penalty', 'off'].includes(pick('ddRule', '')) ? pick('ddRule', '') : '' };
 }
 
+// The sanitizers clamp, which is right for a config read back from disk (an old or hand-edited one still
+// loads), but a request that asks for -3 or 5000 must hear no, not "Saved" over a quietly different
+// value. This checks a request's section before its sanitizer runs: every number the sanitizer keeps
+// (nested objects too, e.g. coach.packs) must be a number inside the range the sanitizer itself would
+// keep, read off it by asking for ±1e15 with the rest of the request in place (so a limit that depends
+// on another field, like a burn under its cap, is the one this request sets). Lists, text and switches
+// aren't checked here; a number with only one possible value (a choice of two) isn't either.
+// -> an error naming the field and its range, or null.
+function rangeError(label, b, prev, sanitize) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  const walk = (bb, cur, path) => {
+    for (const k of Object.keys(bb)) {
+      const v = bb[k], c = cur ? cur[k] : undefined;
+      if (c && typeof c === 'object' && !Array.isArray(c)) { if (v && typeof v === 'object' && !Array.isArray(v)) { const e = walk(v, c, path.concat(k)); if (e) return e; } continue; }
+      if (typeof c !== 'number') continue;
+      const at = x => { const o = JSON.parse(JSON.stringify(b)); let t = o; for (const p of path) t = t[p]; t[k] = x;
+        let r = sanitize(o, prev); for (const p of path) r = r && r[p]; return r ? r[k] : undefined; };
+      const lo = at(-1e15), hi = at(1e15);
+      if (typeof lo !== 'number' || typeof hi !== 'number' || lo === hi) continue;
+      const name = label + ' → ' + path.concat(k).join(' → '), n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? +v : NaN;
+      if (!isFinite(n)) return name + ' needs a number from ' + lo + ' to ' + hi + '.';
+      if (n < lo - 1e-9 || n > hi + 1e-9) return name + ' must be from ' + lo + ' to ' + hi + ' (not ' + v + ').';
+    }
+    return null; };
+  return walk(b, sanitize(null, prev), []);
+}
+
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,
-  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, dayXpParts };
+  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, dayXpParts, rangeError };

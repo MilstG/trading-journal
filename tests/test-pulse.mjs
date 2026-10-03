@@ -25,7 +25,7 @@ Object.assign(ctx, {
 });
 vm.createContext(ctx);
 vm.runInContext(grabConst('PROCESS_W') + '\n' + grabConst('pzReadinessManual') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'realizedByDay', 'pzTrendStats',
-  'pzReadinessLink', 'pzBars', 'pzDayTip', 'pzHasPlan', 'pzBonusItems', 'pzPlain', 'pzRulesBroken', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
+  'pzReadinessLink', 'pzBars', 'pzDayTip', 'pzHasPlan', 'pzBonusItems', 'pzBonusLeft', 'pzPlain', 'pzRulesBroken', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
 
 const DAY = 86400000, T0 = Date.UTC(2026, 8, 30, 12);
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
@@ -107,6 +107,25 @@ t('the bonus card offers what’s left today and marks what’s earned; nothing 
   eq(i2.find(x => x.k === 'limit').hint, '$400 today');
   ctx.journal = {};
 });
+t('“to go” counts only XP still earnable: a late plan’s other half and a limit set after the first entry are gone', () => {
+  ctx.pzXpCfg = () => ({ checkin: 10, plan: 15, journal: 15, stops: 10, limit: 10, review: 15 }); ctx.pzLocked = () => 0;
+  const trades = [mk('a', 0, 10), mk('b', 0, 10)];
+  ctx.journal = { a: { setup: 'x' }, b: { setup: 'y' } };
+  // prep done, plan written after the first entry (half paid), every trade journaled, a limit set late, no review yet
+  const D = { dayE: { sleep: 4, plan: 'p', maxLoss: 300 }, todayTrades: trades, risk: { trades: 2, limit: 300 }, day: { bonus: { parts: { checkin: 10, plan: 8, journal: 15 } } } };
+  const items = ctx.pzBonusItems(D), plan = items.find(x => x.k === 'plan');
+  eq([plan.done, plan.partial, plan.left], [false, true, 0]);
+  eq(items.find(x => x.k === 'limit').left, 0);
+  eq(ctx.pzBonusLeft(items), 15, 'only the review is still on offer (it was 15 + 15 + 10 = 40)');
+  // no plan yet but already trading: half is still there to earn
+  const D2 = { dayE: null, todayTrades: trades, risk: { trades: 2, limit: 0 }, day: { bonus: { parts: { journal: 15 } } } };
+  eq(ctx.pzBonusItems(D2).find(x => x.k === 'plan').left, 8);
+  eq(ctx.pzBonusLeft(ctx.pzBonusItems(D2)), 10 + 8 + 15);
+  // before any trade, everything open is still worth its full amount
+  const D3 = { dayE: null, todayTrades: [], risk: { trades: 0, limit: 200 }, day: null };
+  eq(ctx.pzBonusLeft(ctx.pzBonusItems(D3)), 10 + 15 + 15 + 10 + 15);
+  ctx.journal = {};
+});
 t('the coach line: limit hit, then today’s slips from fills, then load and form, then findings', () => {
   const D = (over) => Object.assign({ risk: { limit: 0, loss: 0, closed: [] }, day: null, load: null, form: null, ctx: { findings: [] } }, over);
   ok(/loss limit/.test(ctx.pzCoachLine(D({ risk: { limit: 100, loss: 120, closed: [] } }))));
@@ -151,7 +170,7 @@ t('re-renders keep typed input and focus in the settings sheet too, and journal 
   ok(grabFn('pzConnect').includes('_loading&&i<240'), 'waits out a background refresh');
 });
 t('a trade cap set in Pulse survives a save from the full app’s day journal', () => {
-  ok(grabFn('wireDayJournal').includes('maxTrades:prevE.maxTrades||null'));
+  ok(grabFn('saveDay').includes('maxTrades:prevE.maxTrades||null')); // the day journal's save (autosave and button)
   ok(grabFn('nextDayEntry').includes("'maxTrades'"));
 });
 
