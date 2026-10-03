@@ -58,6 +58,8 @@ function pzSocialStats(g, habits, J, withLessons){
   const done=g.challenges.filter(c=>c.status==='done');
   // xp and level count the multiplier; weekly XP and XP by day (what leagues and duels rank on) don't
   return {xp:g.xp.total, level:g.level.level, week:g.nowWeek, weekXp:g.weekXpBase!=null?g.weekXpBase:g.weekXp, tz:pzClockZone(),
+    // XP spent on coach messages that xp already counts, so the server knows which purchases it's still waiting to see
+    coachSpent:(g.bonuses||[]).reduce((a,b)=>a+(b.src==='coach'&&b.xp<0?-b.xp:0),0),
     streak:g.streak.current, best:g.streak.best, shields:g.streak.shields,
     challengesDone:done.length, lastChallenge:done.length?habitSentence(done[done.length-1].ch.spec):'',
     badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),

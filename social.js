@@ -166,6 +166,7 @@ function sanitizeStats(b) {
   return {
     xp: clampNum(b.xp, 0, 1e8) || 0, level: clampNum(b.level, 1, 500) || 1,
     week: WEEK_RE.test(b.week) ? b.week : null, weekXp: clampNum(b.weekXp, 0, 1e6) || 0,
+    coachSpent: clampNum(b.coachSpent, 0, 1e8) || 0, // XP spent on coach packs that the reported xp already counts
     streak: clampNum(b.streak, 0, 10000) || 0, best: clampNum(b.best, 0, 10000) || 0, shields: clampNum(b.shields, 0, 2) || 0,
     challengesDone: clampNum(b.challengesDone, 0, 10000) || 0, lastChallenge: cleanText(b.lastChallenge, 140),
     tz: typeof b.tz === 'string' && /^[A-Za-z_+\-/0-9]{1,40}$/.test(b.tz) ? b.tz : 'UTC',
@@ -733,20 +734,64 @@ function createSocial(opts) {
   // clock, fixed for the day once they've asked (changing zones mid-day doesn't start a new count).
   const coachKeys = m => ['m:' + m.id, ...walletsOf(m).map(a => 'w:' + String(a).toLowerCase())];
   const coachTz = m => { for (const k of coachKeys(m)) { const u = S.coachUse[k]; if (u && u.tz) return u.tz; } return (m.stats && m.stats.tz) || 'UTC'; };
-  const coachUsedKey = (key, tz) => { const u = S.coachUse[key]; return u && u.k === zoneKey(u.tz || tz, now()) ? u.n : 0; };
+  // today's record for a key, {k, tz, n asked, p packs and x extra messages (shared across the keys), pb packs and s XP
+  // this key's own purchases (for the admin's totals)}, or null
+  const coachDay = (key, tz) => { const u = S.coachUse[key]; return u && u.k === zoneKey(u.tz || tz, now()) ? u : null; };
+  const coachUsedKey = (key, tz) => { const u = coachDay(key, tz); return u ? u.n || 0 : 0; };
   // (a count from before counts moved here, kept on the member, still holds for its day)
   const coachUsed = m => { const tz = coachTz(m), old = m.coachUse && m.coachUse.k === zoneKey(m.coachUse.tz || tz, now()) ? m.coachUse.n : 0;
     return Math.max(old, ...coachKeys(m).map(k => coachUsedKey(k, tz))); };
   // counts from earlier days are dropped as new ones come in
   const coachPrune = () => { const keys = Object.keys(S.coachUse); if (keys.length < 2000) return;
-    for (const k of keys) if (!coachUsedKey(k, 'UTC')) delete S.coachUse[k]; };
+    for (const k of keys) if (!coachDay(k, 'UTC')) delete S.coachUse[k]; };
   const coachReset = m => { for (const k of coachKeys(m)) delete S.coachUse[k]; delete m.coachUse; };
+  // ---- extra messages bought with XP (S.config.coach.packs) ----
+  // Packs bought today sit on the same records as the count, so profiles on one wallet share them and
+  // an admin's reset clears them too. Each purchase is a negative grant flagged coach: the member's app
+  // takes it off lifetime XP only, never the XP by day that weeks, seasons and duels rank on.
+  const coachExtra = m => { const tz = coachTz(m), o = { p: 0, x: 0 };
+    for (const k of coachKeys(m)) { const u = coachDay(k, tz); if (u) { o.p = Math.max(o.p, u.p || 0); o.x = Math.max(o.x, u.x || 0); } }
+    return o; };
+  const coachLimitToday = m => { const base = coachLimitFor(m); return base == null ? null : base + coachExtra(m).x; };
+  const coachSpentAll = m => (m.grants || []).reduce((a, g) => a + (g.coach && g.xp < 0 ? -g.xp : 0), 0);
+  // XP the member can spend: what their app last reported, less purchases it hadn't counted yet
+  const coachXp = m => Math.max(0, ((m.stats && m.stats.xp) || 0) - Math.max(0, coachSpentAll(m) - ((m.stats && m.stats.coachSpent) || 0)));
+  const coachPackPrice = (c, bought) => Math.min(1e6, c.cost * (c.rise ? 2 ** bought : 1));
+  // the offer once today's messages are used up: its price and, if it can't be bought, why not
+  const coachOffer = m => {
+    const c = S.config.coach.packs; if (!c.on || (!c.lapsed && standingLapsed(m))) return null;
+    const ex = coachExtra(m), price = coachPackPrice(c, ex.p), xp = coachXp(m), L = S.config.levels;
+    const level = SC.levelOf(L, xp), after = xp - price, levelAfter = after >= 0 ? SC.levelOf(L, after) : null;
+    const blocked = c.max && ex.p >= c.max ? 'You’ve bought today’s ' + (c.max === 1 ? 'extra pack' : c.max + ' extra packs') + '. More messages tomorrow.'
+      : after < 0 ? 'You need ' + price.toLocaleString('en-US') + ' XP and have ' + xp.toLocaleString('en-US') + '.'
+      : c.keepLevel && levelAfter < level ? 'Spending ' + price.toLocaleString('en-US') + ' XP would drop you below level ' + level + '. Earn ' + (price - (xp - SC.levelStart(L, level))).toLocaleString('en-US') + ' more XP first.'
+      : null;
+    return { price, msgs: c.msgs, bought: ex.p, max: c.max || null, xp, after: Math.max(0, after), level, levelAfter, blocked }; };
   const coachStatusFor = m => {
     const c = S.config.coach, lvl = (m.stats && m.stats.level) || 1, need = S.config.unlocksOn && !m.unlocked && S.config.modules.coach > 1 ? S.config.modules.coach : 0;
-    const limit = coachLimitFor(m), used = coachUsed(m);
-    const reason = m.banned ? 'This profile was removed from the league.' : m.admin ? null : !c.members ? 'The owner hasn’t opened the coach to members.'
-      : need && lvl < need ? 'The coach unlocks at level ' + need + '.' : limit <= 0 ? 'The coach is switched off for your profile.' : used >= limit ? 'You’ve used today’s ' + limit + ' coach message' + (limit === 1 ? '' : 's') + '. More tomorrow.' + (m.coachDaily == null && standingLapsed(m) ? ' Your full allowance comes back with your standing.' : '') : null;
-    return { allowed: !reason, reason, limit, used, remaining: limit == null ? null : Math.max(0, limit - used), detail: !!(c.detail && m.coachDetail), detailAllowed: !!c.detail, unlockLevel: need || null }; };
+    const base = coachLimitFor(m), limit = coachLimitToday(m), used = coachUsed(m), extra = limit != null && limit > base;
+    const gate = m.banned ? 'This profile was removed from the league.' : m.admin ? null : !c.members ? 'The owner hasn’t opened the coach to members.'
+      : need && lvl < need ? 'The coach unlocks at level ' + need + '.' : base <= 0 ? 'The coach is switched off for your profile.' : null;
+    const out = !gate && limit != null && used >= limit;
+    const reason = gate || (out ? 'You’ve used today’s ' + limit + ' coach message' + (limit === 1 ? '' : 's') + (extra ? ', extras included' : '') + '. More tomorrow.' + (m.coachDaily == null && standingLapsed(m) ? ' Your full allowance comes back with your standing.' : '') : null);
+    return { allowed: !reason, reason, limit, used, remaining: limit == null ? null : Math.max(0, limit - used), detail: !!(c.detail && m.coachDetail), detailAllowed: !!c.detail, unlockLevel: need || null,
+      packs: out ? coachOffer(m) : null }; };
+  // buy a pack at the price the member was shown; {error, code} when it can't be bought
+  const coachBuy = (m, body) => {
+    const st = coachStatusFor(m), o = st.packs;
+    if (!o) return { code: 409, error: st.allowed ? 'You still have messages left today.' : st.reason || 'Extra messages aren’t available.' };
+    if (o.blocked) return { code: 409, error: o.blocked };
+    if (body && body.price != null && +body.price !== o.price) return { code: 409, error: 'The price is now ' + o.price.toLocaleString('en-US') + ' XP. Check it and try again.' };
+    const tz = coachTz(m), k = zoneKey(tz, now()), ex = coachExtra(m);
+    // one grant per day, added to as packs are bought, so a busy month doesn't push older grants off the list
+    const why = n => 'Coach: ' + n + ' extra message' + (n === 1 ? '' : 's');
+    const g = (m.grants || []).find(x => x.coach && x.day === k);
+    if (g) { g.xp -= o.price; g.msgs = (g.msgs || 0) + o.msgs; g.why = why(g.msgs); g.at = now(); }
+    else m.grants = [...(m.grants || []), { id: crypto.randomBytes(4).toString('hex'), xp: -o.price, why: why(o.msgs), at: now(), coach: true, day: k, msgs: o.msgs }].slice(-200);
+    for (const key of coachKeys(m)) { const u = coachDay(key, tz) || {};
+      S.coachUse[key] = Object.assign({}, u, { k, tz, n: u.n || 0, p: ex.p + 1, x: ex.x + o.msgs, pb: (u.pb || 0) + 1, s: (u.s || 0) + o.price }); }
+    save(m); save('coachUse');
+    return { price: o.price, msgs: o.msgs }; };
   const byHandle = h => { if (!handleIdx) { handleIdx = new Map(); for (const m of members()) handleIdx.set(m.handle.toLowerCase(), m.id); }
     const id = handleIdx.get(String(h || '').toLowerCase()), m = id && own(S.members, id) ? S.members[id] : null;
     return m && m.handle.toLowerCase() === String(h || '').toLowerCase() ? m : null; };
@@ -1401,7 +1446,7 @@ function createSocial(opts) {
       needsClaim: !!(S.config.requireClaim && m.address && m.claimed !== m.address),
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
       passkeys: (m.passkeys || []).map(k => ({ id: k.id, name: k.name, at: k.at, lastUsed: k.lastUsed || null })),
-      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
+      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ...(g.coach ? { coach: true } : {}) })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
       leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })), mentor: !!m.mentor,
       push: { on: !!(m.push && m.push.subs && m.push.subs.length), prefs: sanitizePrefs(null, m.push && m.push.prefs), available: !!push },
       inbox: (m.inbox || []).filter(x => x.at > (m.inboxRead || 0)).length,
@@ -1842,6 +1887,8 @@ function createSocial(opts) {
           originPinned: origins.length > 0 || !!opts.hostVetted,
           leagues: Object.keys(S.leagues).length, badges: Object.keys(S.badges).length, coachAi: !!opts.coachAvailable,
           coachToday: Object.keys(S.coachUse).filter(k => k.startsWith('m:')).reduce((a, k) => a + coachUsedKey(k, 'UTC'), 0) + (S.ownerCoach.k === utcDayKey(now()) ? S.ownerCoach.n : 0),
+          // extra packs bought with XP today, and the XP they cost (counted per profile, so shared wallets aren't counted twice)
+          coachPacks: Object.keys(S.coachUse).filter(k => k.startsWith('m:')).reduce((a, k) => { const u = coachDay(k, 'UTC'); return u ? { n: a.n + (u.pb || 0), xp: a.xp + (u.s || 0) } : a; }, { n: 0, xp: 0 }),
           meta: { modules: SC.MODULES, leagueMetrics: SC.LEAGUE_METRICS, badgeMetrics: SC.BADGE_METRICS, profiles: SC.PROFILES },
           tiers: TIERS.map((t, i) => ({ tier: t, n: S.leagues.main ? members().filter(m => !m.banned && own(S.leagues.main.members, m.id) && leagueTier(S.leagues.main, m) === i).length : 0 })) });
       }
@@ -1851,7 +1898,7 @@ function createSocial(opts) {
           passkeys: (m.passkeys || []).length,
           address: m.address || null, walletStatus: m.address ? walletStatus(m.address) : null, joinedWith: m.joinedWith || (m.adminMade ? 'admin' : null), claimed: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
           vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: !!m.unlocked, coachDaily: m.coachDaily != null ? m.coachDaily : null,
-          coachUsed: coachUsed(m), coachLimit: coachLimitFor(m), grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
+          coachUsed: coachUsed(m), coachLimit: coachLimitToday(m), coachPacks: coachExtra(m).p, grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
           wallets: linkedOf(m).filter(a => a !== m.address),
           leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, mentor: !!m.mentor, admin: !!m.admin, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), standing: standingOn() ? standingOf(m).state : null, mentorXp: m.mentorXp ? (mentorXpOut(m) || {}).total || 0 : 0, createdAt: m.createdAt, lastSeen: m.lastSeen || null,
           av: avUrl(m), bio: m.bio || '',
@@ -3062,11 +3109,12 @@ function createSocial(opts) {
   // for the AI coach in server.js: who is asking, and whether today's allowance has room
   const coach = {
     statusFor: req => { const m = byKey(req); return m ? { who: 'member', member: m, ...coachStatusFor(m) } : null; },
+    buy: (m, body) => coachBuy(m, body),
     ownerStatus: () => { const lim = S.config.coach.ownerDaily, k = utcDayKey(now()), used = S.ownerCoach.k === k ? S.ownerCoach.n : 0;
       return { who: 'owner', allowed: !lim || used < lim, reason: lim && used >= lim ? 'You’ve used today’s ' + lim + ' coach messages.' : null, limit: lim || null, used, remaining: lim ? Math.max(0, lim - used) : null, detail: true, detailAllowed: true }; },
     // reserve a message before asking the model (so parallel requests can't all pass), and give it back if no answer came
     count: (m, d = 1) => { if (m) { const tz = coachTz(m), k = zoneKey(tz, now());
-        for (const key of coachKeys(m)) S.coachUse[key] = { k, tz, n: Math.max(0, coachUsedKey(key, tz) + d) };
+        for (const key of coachKeys(m)) S.coachUse[key] = Object.assign({}, coachDay(key, tz), { k, tz, n: Math.max(0, coachUsedKey(key, tz) + d) });
         coachPrune(); }
       else { const k = utcDayKey(now()); S.ownerCoach = { k, n: Math.max(0, (S.ownerCoach.k === k ? S.ownerCoach.n : 0) + d) }; } save(m ? 'coachUse' : 'ownerCoach'); },
   };

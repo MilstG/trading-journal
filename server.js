@@ -2722,7 +2722,7 @@ function createApp(opts) {
       const st = memberAsk ? social.coach.statusFor(req) : authOk(req) && auth ? social.coach.ownerStatus() : null;
       if (!st) return json(res, 401, { error: memberAsk ? 'not a member' : 'unauthorized' });
       const pub = { enabled: coachCfg.enabled, allowed: st.allowed, reason: st.reason, limit: st.limit, used: st.used, remaining: st.remaining,
-        detail: st.detail, detailAllowed: st.detailAllowed, who: st.who };
+        detail: st.detail, detailAllowed: st.detailAllowed, who: st.who, packs: st.packs || null };
       if (req.method === 'GET') return json(res, 200, pub);
       if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
       if (!coachCfg.enabled) return json(res, 404, { error: 'The AI coach isn’t switched on for this server yet. The owner turns it on with COACH_AI=1 and an Anthropic or OpenAI API key.' });
@@ -2733,14 +2733,34 @@ function createApp(opts) {
         if (chat.error) return json(res, 400, { error: chat.error });
         // check and reserve in one step, after the body arrived: requests sent in parallel can't all pass
         const now = memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus();
-        if (!now || !now.allowed) return json(res, 429, { error: (now && now.reason) || 'not allowed' });
+        if (!now || !now.allowed) return json(res, 429, { error: (now && now.reason) || 'not allowed', allowed: false, reason: (now && now.reason) || null, remaining: now ? now.remaining : null, packs: (now && now.packs) || null });
         const who = now.who === 'member' ? now.member : null;
         social.coach.count(who, 1);
         let r; try { r = await coachChat(chat); }
         catch (e) { social.coach.count(who, -1); return json(res, e.code || 500, { error: e.msg || e.message || String(e) }); } // only answered messages count
         // (the member may have been signed out meanwhile: the answer still stands)
         const after = (memberAsk ? social.coach.statusFor(req) : social.coach.ownerStatus()) || {};
-        return json(res, 200, { text: r.text, remaining: after.remaining != null ? after.remaining : null, limit: after.limit != null ? after.limit : null, used: after.used != null ? after.used : null });
+        return json(res, 200, { text: r.text, remaining: after.remaining != null ? after.remaining : null, limit: after.limit != null ? after.limit : null, used: after.used != null ? after.used : null,
+          allowed: after.allowed !== false, reason: after.reason || null, packs: after.packs || null });
+      })().catch(e => failed(res, e));
+      return;
+    }
+    // --- more coach messages for XP, once today's are used (a member only; the price is set in the admin panel) ---
+    if (url === '/api/coach/packs') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+      const st = req.headers['x-pulse-key'] ? social.coach.statusFor(req) : null;
+      if (!st) return json(res, 401, { error: 'not a member' });
+      if (!coachCfg.enabled) return json(res, 404, { error: 'The AI coach isn’t switched on for this server yet.' });
+      (async () => {
+        let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
+        // checked and paid in one step, after the body arrived: two taps can't buy twice at one price
+        const m = social.coach.statusFor(req);
+        if (!m) return json(res, 401, { error: 'not a member' });
+        const r = social.coach.buy(m.member, body || {});
+        const n = social.coach.statusFor(req) || {};
+        const out = { enabled: true, allowed: n.allowed, reason: n.reason, limit: n.limit, used: n.used, remaining: n.remaining,
+          detail: n.detail, detailAllowed: n.detailAllowed, who: n.who, packs: n.packs || null };
+        return json(res, r.error ? r.code : 200, r.error ? Object.assign(out, { error: r.error }) : Object.assign(out, { ok: true, bought: r }));
       })().catch(e => failed(res, e));
       return;
     }

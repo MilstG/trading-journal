@@ -28,8 +28,9 @@ try {
   const BUDGETS = [ // name, measured, raw KB, gzipped KB
     // Oct 2026: fonts moved out of the page and each screen got its own script list. Before, one page
     // carried everything: 1917 KB raw / 734 KB gzipped against 1950 / 740.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1800, 620],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1600, 560],
+    // Oct 2026: +10 KB raw each for buying coach messages with XP (the offer, its confirm step and styles).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1810, 620],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1610, 560],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

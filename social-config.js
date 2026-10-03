@@ -23,7 +23,10 @@ const DEFAULTS = {
   modules: { trends: 2, deep: 1, share: 3, compete: 4, coach: 1, review: 1, reports: 1, peers: 1, duels: 3 }, // peers: free for now; duels from level 3 (1,200 XP), so there's a record to compete on and XP to stake
   levels: { mode: 'curve', base: 200, thresholds: [], titles: DEFAULT_LEVEL_TITLES },
   xp: { discipline: 1, checkin: 10, plan: 15, journal: 15, stops: 10, limit: 10, review: 15, achievement: 50, challenge: 150, focus: 25 },
-  coach: { members: true, daily: 3, dailyUnlocked: 3, ownerDaily: 0, detail: true },
+  coach: { members: true, daily: 3, dailyUnlocked: 3, ownerDaily: 0, detail: true,
+    // extra messages bought with XP once the day's allowance is used: cost XP buys msgs messages, at most max packs a day
+    // (0 = no cap); rise doubles each pack's price that day; keepLevel refuses a purchase that would drop a level
+    packs: { on: true, cost: 150, msgs: 3, max: 2, rise: false, keepLevel: true, lapsed: false } },
   profiles: { custom: [], overrides: {} },
 };
 
@@ -70,11 +73,19 @@ function sanitizeXp(b, prev) {
 }
 function sanitizeCoachCfg(b, prev) {
   const out = Object.assign({}, DEFAULTS.coach, prev || {});
+  const p = out.packs = Object.assign({}, DEFAULTS.coach.packs, out.packs);
   if (!b || typeof b !== 'object') return out;
   for (const k of ['members', 'detail']) if (typeof b[k] === 'boolean') out[k] = b[k];
   if (own(b, 'daily')) out.daily = int(b.daily, 0, 500, out.daily);
   if (own(b, 'dailyUnlocked')) out.dailyUnlocked = int(b.dailyUnlocked, 0, 1000, out.dailyUnlocked);
   if (own(b, 'ownerDaily')) out.ownerDaily = int(b.ownerDaily, 0, 1000, out.ownerDaily);
+  const bp = b.packs;
+  if (bp && typeof bp === 'object') {
+    for (const k of ['on', 'rise', 'keepLevel', 'lapsed']) if (typeof bp[k] === 'boolean') p[k] = bp[k];
+    if (own(bp, 'cost')) p.cost = int(bp.cost, 1, 100000, p.cost);
+    if (own(bp, 'msgs')) p.msgs = int(bp.msgs, 1, 50, p.msgs);
+    if (own(bp, 'max')) p.max = int(bp.max, 0, 20, p.max);
+  }
   return out;
 }
 // Custom trader profiles (each built on one of the four) and per-profile question overrides.

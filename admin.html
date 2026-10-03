@@ -608,7 +608,7 @@ details>summary{list-style-position:inside}
         ${box('mMentor','Mentor',m.mentor,'Sees the days of members who let mentors in (scores, slips, nightly lesson) and can leave them notes.'+(m.mentorXp?' Earned '+m.mentorXp.toLocaleString()+' XP mentoring so far.':''))}
         ${ME.owner?box('mAdmin','Admin',m.admin,'Can use this admin panel with their own profile (everything except adding or removing admins). Send them the link from “New sign-in code”, or they open /admin on a device where they use Daruma.'):m.admin?'<p class="muted small">Admin — only the owner changes that.</p>':''}
         ${m.admin?'<p class="muted small">Admins ask the coach without a limit.</p>':field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
-        <div class="row" style="align-items:center;margin-top:6px"><span class="small">Coach today: <b>${m.coachUsed}</b>${m.coachLimit!=null?' of '+m.coachLimit:' (no limit)'}${m.address?' · shared with every profile on this wallet':''}</span>${m.coachUsed?`<button class="sm fit" data-m="coachreset">Reset today’s count</button>`:''}</div>
+        <div class="row" style="align-items:center;margin-top:6px"><span class="small">Coach today: <b>${m.coachUsed}</b>${m.coachLimit!=null?' of '+m.coachLimit:' (no limit)'}${m.coachPacks?` (${m.coachPacks} extra pack${m.coachPacks===1?'':'s'} bought with XP)`:''}${m.address?' · shared with every profile on this wallet':''}</span>${m.coachUsed?`<button class="sm fit" data-m="coachreset">Reset today’s count</button>`:''}</div>
         <div class="actions"><button class="primary" data-m="access">Save access</button></div>
       </section>
       <section class="card"><h2>Leagues</h2>
@@ -818,8 +818,11 @@ details>summary{list-style-position:inside}
   }
 
   // ---------------- coach ----------------
+  // the first packs of a day, e.g. "150, 300 and 600 XP"
+  const packPrices=p=>{ const n=Math.min(p.max||3,4), a=[]; for(let i=0;i<n;i++)a.push(fmt(p.cost*(p.rise?2**i:1)));
+    return (a.length>1?a.slice(0,-1).join(', ')+' and '+a[a.length-1]:a[0])+' XP'+(p.max?'':', and so on'); };
   function vCoach(){
-    const o=D.ov, c=o.config.coach, users=D.members.filter(m=>m.coachUsed>0).sort((a,b)=>b.coachUsed-a.coachUsed);
+    const o=D.ov, c=o.config.coach, p=c.packs||{}, users=D.members.filter(m=>m.coachUsed>0).sort((a,b)=>b.coachUsed-a.coachUsed), bought=o.coachPacks||{n:0,xp:0};
     return `${o.coachAi?'':'<p class="warn">The AI coach is off on this server. Set <code>COACH_AI=1</code> and <code>ANTHROPIC_API_KEY</code> (or <code>OPENAI_API_KEY</code>), then restart. These settings apply once it’s on.</p>'}
       <div class="two"><section class="card"><h2>AI coach</h2>
         ${box('cMembers','Members can use the coach',c.members)}
@@ -828,9 +831,16 @@ details>summary{list-style-position:inside}
         ${field('cOwner','Your own daily limit',`<input id="cOwner" type="number" min="0" max="1000" value="${c.ownerDaily}">`,'0 = no limit. Each member’s day resets at their local midnight.')}
         ${box('cDetail','Members may share their trades and notes with the coach',c.detail,'Each member still chooses, and it’s off until they switch it on. Off here: the coach only ever sees summaries.')}
         <p class="hint">The coach opens at level ${o.config.modules.coach} (see Features). Per-member limits are on each member’s page.</p>
+        <h3>Extra messages for XP</h3>
+        ${box('pOn','Members can spend XP for more messages',p.on,'Offered once they’ve used the day’s allowance. Spent XP comes off their lifetime total (and their level), never their weekly XP, so leagues, seasons and duels aren’t affected.')}
+        <div class="row">${field('pCost','XP per pack',`<input id="pCost" type="number" min="1" max="100000" value="${p.cost}">`)}${field('pMsgs','Messages per pack',`<input id="pMsgs" type="number" min="1" max="50" value="${p.msgs}">`)}${field('pMax','Packs a day',`<input id="pMax" type="number" min="0" max="20" value="${p.max}">`)}</div>
+        <p class="hint">0 packs = no daily cap. Packs are counted like messages: per profile and per wallet, and a reset clears them too (the XP isn’t refunded; remove the grant on their page for that).</p>
+        ${box('pRise','Double the price for each pack bought that day',p.rise,`Each member’s packs then cost ${packPrices(Object.assign({},p,{rise:true}))}.`)}
+        ${box('pKeep','Don’t let a purchase drop someone a level',p.keepLevel,'A pack that would take them below their current level can’t be bought, so nobody loses a feature they’ve unlocked.')}
+        ${box('pLapsed','Members whose standing has lapsed can buy packs too',p.lapsed)}
         <div class="actions"><button class="primary" id="cSave">Save coach settings</button></div></section>
-      <section class="card"><h2>Today</h2>${tiles([['Messages today',fmt(o.coachToday)],['Members who asked',users.length]])}
-        ${users.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${pager('coachusers',users).items.map(m=>`<tr><td><a href="${mlink(m)}">@${esc(m.handle)}</a>${m.admin?' <span class="pill ok">admin</span>':''}</td><td>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td><td><button class="sm fit" data-coachreset="${esc(m.id)}">Reset</button></td></tr>`).join('')}</tbody></table></div>${pager('coachusers',users).html}`:''}
+      <section class="card"><h2>Today</h2>${tiles([['Messages today',fmt(o.coachToday)],['Members who asked',users.length],['Extra packs bought',fmt(bought.n)],['XP spent on them',fmt(bought.xp)]])}
+        ${users.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${pager('coachusers',users).items.map(m=>`<tr><td><a href="${mlink(m)}">@${esc(m.handle)}</a>${m.admin?' <span class="pill ok">admin</span>':''}</td><td>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}${m.coachPacks?` <span class="pill">+${m.coachPacks} pack${m.coachPacks===1?'':'s'}</span>`:''}</td><td><button class="sm fit" data-coachreset="${esc(m.id)}">Reset</button></td></tr>`).join('')}</tbody></table></div>${pager('coachusers',users).html}`:''}
         <p class="hint">Messages go to the AI provider (Anthropic or OpenAI, whichever the server uses) and aren’t stored on this server; only the count is.</p></section></div>`;
   }
 
@@ -1225,7 +1235,9 @@ details>summary{list-style-position:inside}
     // features
     if(id==='fSave'||id==='fSaveGuest') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),guestCap:+val('fGuest')||0}),'Saved.');
     // coach
-    if(id==='cSave') return act(()=>put({coach:Object.assign({members:chk('cMembers'),detail:chk('cDetail')},...[['daily','cDaily'],['dailyUnlocked','cDailyU'],['ownerDaily','cOwner']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))}),'Coach settings saved.');
+    if(id==='cSave') return act(()=>put({coach:Object.assign({members:chk('cMembers'),detail:chk('cDetail'),
+      packs:Object.assign({on:chk('pOn'),rise:chk('pRise'),keepLevel:chk('pKeep'),lapsed:chk('pLapsed')},...[['cost','pCost'],['msgs','pMsgs'],['max','pMax']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))},
+      ...[['daily','cDaily'],['dailyUnlocked','cDailyU'],['ownerDaily','cOwner']].map(([k,id])=>val(id).trim()===''?{}:{[k]:+val(id)}))}),'Coach settings saved.');
     // routines
     if(id==='rAdd'){ keepRoutines(); UI.fresh=true; UI.custom.push({name:'',base:'day',desc:'',morning:[],eod:[]}); return render(); }
     if(d.rdel!=null){ keepRoutines(); UI.fresh=true; UI.custom.splice(+d.rdel,1); return render(); }
