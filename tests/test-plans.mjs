@@ -16,7 +16,7 @@ const _be=50; const isWin=n=>n>_be; const isLoss=n=>n<-_be;
 let _rng=Math.random;
 `;
 const M = await evalModule(
-  ['planCoinKey', 'pplanCheck', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planVerdict', 'planWords', 'planStats',
+  ['planCoinKey', 'pplanCheck', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planStopBand', 'planVerdict', 'planWords', 'planStats',
    'replayFillSteps', 'replayPnlAt', 'nextPlan', '_srand', '_hashSeed', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
   ['planCoinKey', 'pplanCheck', 'pplanList', 'pplanStatus', 'pplanMatches', 'nfPlan', 'planVerdict', 'planWords', 'planStats',
    'replayFillSteps', 'replayPnlAt', 'nextPlan', 'demoFills', 'reconstructTrades'], PRELUDE);

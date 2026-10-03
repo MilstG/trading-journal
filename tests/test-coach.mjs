@@ -22,7 +22,7 @@ const grabConst = (name) => {
 const FNS = ['_erf', '_lgamma', '_ibetaReg', '_tCdf', 'confLevel', 'confWords', 'sampleWords', 'usdPlain', 'signedPlain', 'daysPlain', 'welchP',
   'bucketPhrase', 'bucketHabit', 'habitSentence', 'habitDayResults', 'habitSummary', 'resolveHabitSpec',
   'behaviorSignals', 'buildFindings', 'tradeQuestion', 'nfPlan', 'addedToLoser', 'retPct',
-  'nfPlan', 'planAdherence', 'isJournaled', 'processDays', 'nfRules', 'nfMedian'];
+  'nfPlan', 'planAdherence', 'planStopBand', 'isJournaled', 'processDays', 'realizedByDay', 'nfRules', 'nfMedian'];
 const CONSTS = ['HABIT_LIBRARY', 'PROCESS_W'];
 
 const DAY = 86400000;

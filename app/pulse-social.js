@@ -75,7 +75,7 @@ function pzSocialStats(g, habits, J, withLessons){
       const f=Object.keys(fl).filter(k=>fl[k]>0); if(f.length)o.f=f;
       const e=J&&J['day:'+d.key], v=e&&e.eod; if(v&&v.at)o.r=true; if(withLessons&&v&&v.lesson)o.l=String(v.lesson).slice(0,200);
       // the parts of Trader Age the server can't read from the wallet: prep, journaling, the loss limit
-      if(e&&(e.sleep||e.stress||e.focus))o.p=1; const P=d.parts||{}; if(P.journal>0)o.jn=Math.round(P.journal*100)/100; if(P.limit===0||P.limit===1)o.lm=P.limit; if(P.plan===1||P.plan===0.5)o.pl=P.plan;
+      if(d.checkin)o.p=1; /* a check-in done on or before the day (processDays' credit), not one typed in later */ const P=d.parts||{}; if(P.journal>0)o.jn=Math.round(P.journal*100)/100; if(P.limit===0||P.limit===1)o.lm=P.limit; if(P.plan===1||P.plan===0.5)o.pl=P.plan;
       return o; }),
     firstAt:(()=>{ let a=0; for(const t of (typeof allTrades!=='undefined'?allTrades:[])){ const x=+t.openTime||0; if(x>0&&(!a||x<a))a=x; } return a||null; })(),
     xpDays:Object.fromEntries(Object.entries(((g.xpBase||g.xp)&&(g.xpBase||g.xp).byDay)||{}).filter(([k,v])=>v>0).sort().slice(-100))};

@@ -19,7 +19,7 @@ function grabArrow(name){
   if (!m) throw new Error('const not found: '+name); return m[0];
 }
 const FNS = ['nfMedian','leverageSurvival',
-  'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','nfGroupStats','leaderboard','fundingCarry','dayJKey','addedToLoser'];
+  'nfRules','evaluateRules','dailyLossToday','nfPlan','planAdherence','planStopBand','nfGroupStats','leaderboard','fundingCarry','dayJKey','addedToLoser'];
 const ARROWS = ['nfPct','nfSignPct','nfDayKey'];
 
 const ctx = { _be:50, journal:{}, settings:{rules:{},assumedLev:5}, spotMaps:{nameByCoin:{}}, Date, Math, console };

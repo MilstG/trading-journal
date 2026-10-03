@@ -215,9 +215,13 @@ the notes and in the journal inbox, where a one-line answer saves to the notes.
 **Progress (Review).** A game layer that rewards process, never profit or
 activity:
 
-- **XP and levels** — a trading day earns its process score (0–100) in XP,
-  however many trades it had; +25 for each day the focus habit holds, +150 per
-  completed weekly challenge, +50 per achievement. Levels by default start at
+- **XP and levels** — a trading day earns its **Discipline** score (0–100, read
+  from fills: see Daruma below) in XP, however many trades it had, plus bonus XP
+  for what you logged that day (the same bonus list as Daruma: a plan written
+  after your first entry earns half, 8 instead of 15); +25 for each day the focus
+  habit holds, +150 per completed weekly challenge, +50 per achievement. The
+  process score below stays a grade on the calendar and the report card; it no
+  longer decides XP or the streak. Levels by default start at
   200·n·(n−1) XP, titled Rookie → Legend (the tenth title stays from level 10 on);
   on a server, the owner can change the curve, the titles and every XP amount.
   A focus habit picked mid-week earns from the day it's picked (the next day once
@@ -233,9 +237,14 @@ activity:
   when late fills arrive, a day is re-scored, a wallet is removed or the time zone
   changes. The ledger is written from the whole account only (not a per-market or
   per-dex view).
-- **Discipline streak with shields** — consecutive trading days at process 70+;
+- **Discipline streak with shields** — consecutive trading days at Discipline 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
+- **Every trade counts, whatever you're looking at.** Discipline, XP, level, the
+  streak and the stats Daruma posts read all your trades (except orphaned
+  positions), not the dashboard's Perps / Spot view or its dex filter — switching
+  a filter never changes your XP, and it matches what the server verifies from
+  your wallet.
 - **Weekly challenge** — one target a week, picked from your biggest leak (or a
   core habit), graded day by day; "Pick another" swaps it, and the new one counts
   from the day you swap (the next day once you've traded that day), so a swap late
@@ -287,18 +296,37 @@ your fills — and gets sharper the more you log.
   is the last 7 days when they hold 5+ trades, else your last 5 trades.
 - **Discipline** (0–100): the share of a day's trades with none of six slips, all
   read from fills — re-entering within 15 minutes of a loss, trading on after two
-  losses in a row, sizing up right after a loss, adding to a losing position, more
+  losses in a row, sizing up within 2 hours of a loss, adding to a losing position, more
   trades than your usual day, and holding a loser over 3× your usual winner hold.
+  Every close in the 15-minute / 2-hour window is checked for a loss, so a winner
+  closing in between doesn't hide one.
   A loss here is a fixed "more than $1", so the server can verify the same score.
 - **Load** (50 = your usual day, 100 = twice it): trades opened and size traded
   today against your median day. Set a trade cap or loss limit in Prep and
   Load also tracks them.
 - **Bonus XP** for what you choose to log, never a penalty for skipping it:
-  morning prep +10, plan before your first trade +15, trades journaled +15, stops
-  written +10, loss limit respected +10, end-of-day review +15. A day's XP is its
-  Discipline score plus that bonus, plus achievements, kept challenges and focus
-  habits. The league owner can change every one of these numbers and the level
-  curve (see the admin panel).
+  morning prep +10, plan before your first trade +15 (written later that same day:
+  half, +8), trades journaled +15, stops written +10, loss limit respected +10,
+  end-of-day review +15. A day's XP is its Discipline score plus that bonus, plus
+  achievements, kept challenges and focus habits. The league owner can change
+  every one of these numbers and the level curve (see the admin panel).
+- **Logging counts when it was done in time.** The day entry stamps when the plan
+  (`plannedAt`), the committed max loss (`limitAt`) and the check-in (`checkinAt`)
+  were first set. The plan pays in full when it was there by your first entry of the
+  day (open positions and trades that close on a later day count as entries), half
+  when written later that day, and nothing when written on a later day. The loss
+  limit only pays when it was set before the first entry; a max loss set or raised
+  after it is ignored for the bonus and the process score (your standing daily
+  limit applies instead, if you have one; tightening it keeps its stamp). The
+  check-in pays when done on or before its day. So opening an old day from the
+  calendar still journals it, but no longer earns XP. A plan, limit or check-in
+  saved before these stamps existed keeps the credit it always had, and re-saving
+  that entry never stamps it late; anything newly added to an old day is stamped
+  when it's added.
+- **Respected your loss limit** means no new entry after the day's realized result
+  first went past the limit — the result read fill by fill, as the tripwire does
+  (partial closes of positions still open count), and the entries from all your
+  trades, including ones still open or closing tomorrow.
 
 Five tabs: **Today**, **Stats** (P&L, win rate, average trade, profit factor,
 fees, daily P&L, best and worst markets and hours; deeper insights unlock with
@@ -1122,8 +1150,10 @@ The day journal also carries a **Prep** score — sleep, stress and
 focus, 1–5. Once about ten trades carry one, the pattern miner tests them as
 conditions (`slept badly`, `high stress`, `low focus`, `sharp focus`), so how
 you felt becomes a measured edge or leak. Day entries record `plannedAt`, when
-a plan first existed for the day, so the process score can tell a plan written
-before the first entry from one written afterwards.
+a plan first existed for the day, `limitAt`, when the committed max loss took its
+value, and `checkinAt`, when the check-in was first done, so the process score
+and bonus XP can tell logging done before the first entry from logging done
+afterwards (see Daruma's bonus XP for the rules).
 
 **Monthly goals** (also Review) hold the month to three optional commitments:
 a net target (with straight-line projection and needed daily pace), a max
@@ -1305,8 +1335,10 @@ It also carries the habit loops:
   every trade is journaled (today never breaks it while it's still being traded).
 - **Process** — a 0–100 **process score** per trading day, graded on how you
   traded rather than what the market paid: plan filed before the first entry
-  (20), trades breaking no rule (20), trades with a live plan (15), planned
-  stops honored (15), no entries after the day's loss limit broke (10), trades
+  (20; written later that day 10, on a later day 0), trades breaking no rule (20),
+  trades with a live plan (15), planned stops honored (15; an exit past the stop by
+  up to 10% of the risk carried is normal slippage and still honored, the same band
+  the plan verdict uses), no entries after the day's loss limit broke (10), trades
   journaled (20). Parts that don't apply that day drop out of the weighting,
   and the two planning parts only count from the first day each habit was
   used, so older history isn't graded against habits that didn't exist yet.
@@ -1355,12 +1387,15 @@ which shows from your third trading day:
 - **Average day by habit score.** Days grouped into bands (under 50, 50–69,
   70–89, 90–100), with the average result in each band.
 - **Which habits pay.** For each habit, the average day when you kept it minus
-  the average day when you didn't.
+  the average day when you didn't. No revenge entries and no sizing up are
+  compared trade by trade instead: entries after a loss where you waited (or kept
+  your size) against those where you didn't.
 
 The habit score only counts the habits you actually use. A habit you've never
 kept (say, the end-of-day review) isn't held against every day. Stops honored
 and the loss limit stay out of the score, because they can only fail on a
-losing day.
+losing day. The four fill checks count as the share of the day's chances you
+kept (see the routine score below).
 
 Daruma tells the same story simply, for people getting started, under **Stats →
 Do your habits pay?** (near the top, for the range you pick). It gives a plain
@@ -1374,7 +1409,7 @@ scatter and no statistics in Daruma; those stay in the full journal. It never
 claims a link before 8 days or without a significant one, and it says so when
 sloppier days did better.
 
-Below that, over your whole history in the current view:
+Below that, over your whole history (every trade, like Discipline and XP):
 
 - **Week by week.** Average result per trade as bars, with your routine score
   as a line.
@@ -1386,23 +1421,30 @@ Below that, over your whole history in the current view:
   - Next-week link: does a disciplined week predict the *following* week? That's
     closer to cause and effect, because it can't run backwards.
   - Per-trade result on disciplined days vs the rest, with a bootstrapped 90%
-    range for the difference.
+    range for the difference. Days are only compared with days that had as many
+    entries after a loss (a day with no loss to react to is a better day by
+    construction), and the bootstrap resamples whole days.
   - Whether the link is growing, over a rolling 12-week window.
 - **Which habits pay.** Plan before the first trade, rules kept, stops written,
   check-in, end-of-day review, journaling, and no revenge entries, sizing up,
-  adding to losers or overtrading. Each shows days kept vs missed and the
-  difference per trade, marked *holds up* (it survives a false-discovery check
+  adding to losers or overtrading. Each shows days kept vs missed (d) and the
+  difference per trade — for revenge entries and sizing up, the entries after a
+  loss kept vs slipped (t) — marked *holds up* (it survives a false-discovery check
   across all the habits), *suggestive* or *could be chance*.
 
 Two choices keep it honest:
 
-- **The routine score here is outcome-blind.** It's the share of the day's
-  trades free of revenge entries, sizing up after a loss, adding to a loser and
-  overtrading. The two Discipline checks that can only fail on a losing trade
-  (holding a loser, trading on after two losses) are left out, so a red day
-  can't lower the score by itself and manufacture a link. For the same reason,
-  habits that follow from the result ("stayed under the loss limit", "stops
-  honored") are listed but not tested.
+- **The routine score here is outcome-blind.** For revenge entries, sizing up
+  after a loss, adding to a loser and overtrading, it's the share of your
+  *chances* at each that you kept — an entry within 2 hours of a loss is a chance
+  to wait 15 minutes and to keep your size — averaged over the four. A day with
+  no chance at one takes your own usual rate at it. Counting slips per trade
+  instead lowers the score with every loss (a revenge entry needs a loss first),
+  and on pure coin flips that found a "strong link" (ρ 0.87, p 0.001); now
+  identical behaviour scores the same every day. The two Discipline checks that
+  can only fail on a losing trade (holding a loser, trading on after two losses)
+  are left out. For the same reason, habits that follow from the result ("stayed
+  under the loss limit", "stops honored") are listed but not tested.
 - **Results are in R** (or % return on notional when most trades have no
   planned risk), so trading bigger never counts as trading better.
 
