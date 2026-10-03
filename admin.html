@@ -308,11 +308,11 @@ details>summary{list-style-position:inside}
   const levelStart=(c,n)=>n<=1?0:c.mode==='table'?(n-2<c.thresholds.length?c.thresholds[n-2]:Infinity):c.base*n*(n-1);
 
   async function load(){
-    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du]=await Promise.all([api('/me'),api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null)]);
+    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl]=await Promise.all([api('/me'),api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null)]);
     D.perf={}; // a member's numbers are read again when their page opens
     if(UI.tab==='insights')await loadIns();
     ME=me; $('whoami').textContent=me.owner?'Owner':'Admin · '+me.name;
-    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du});
+    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du,pool:pl});
     for(const a of [...UI.wsel])if(!ws.wallets.some(w=>w.address===a))UI.wsel.delete(a);
     $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide'); document.body.classList.add('in');
     render();
@@ -751,7 +751,8 @@ details>summary{list-style-position:inside}
         <div class="actions"><button class="primary" id="xpSave">Save XP rules</button></div></section>
       ${multCard(D.ov.config.mult)}
       ${standingCard(D.ov.config.standing)}
-      ${mentorXpCard(D.ov.config.mentorXp)}`;
+      ${mentorXpCard(D.ov.config.mentorXp)}
+      ${mentorRatesCard(D.ov.config.mentorXp,D.pool)}`;
   }
   // the XP multiplier for holding Trader Age: a good trading week (that week and the 6-month Trader Age
   // both at the bar) moves a member up a tier; a week below drops one
@@ -794,6 +795,25 @@ details>summary{list-style-position:inside}
         ${field('mxCap','Daily cap (reviews + notes)',`<input id="mxCap" type="number" min="0" max="1000" value="${x.cap}">`,'Results aren’t capped')}
       </div>
       <div class="actions"><button class="primary" id="mxSave">Save mentoring XP</button></div></section>`;
+  }
+  // what mentors charge: each sets a rate inside this range; the pool keeps a share of every payment
+  function mentorRatesCard(x,P){
+    x=Object.assign({rates:true,rateMin:0,rateMax:100,poolPct:0,holdHours:72},x||{});
+    const log=P&&P.log||[];
+    return `<section class="card"><h2>Mentor rates and the pool</h2>
+      <p class="hint" style="margin-top:0">Each mentor charges what they choose inside this range, in XP per trade they mark reviewed. A member’s first trade with each mentor is free. Later ones hold the rate from the member’s XP to spend when they send the trade, and pay it when the mentor marks it reviewed with a comment, or give it back after the hold time. The pool keeps its share of each payment; the mentor gets the rest. Spending never lowers a member’s level, and a profile sharing a wallet with the mentor never pays.</p>
+      ${box('mrOn','Mentors can charge',x.rates)}
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+        ${field('mrMin','Lowest rate',`<input id="mrMin" type="number" min="0" max="1000" value="${x.rateMin}">`,'XP a trade (0 lets mentors be free)')}
+        ${field('mrMax','Highest rate',`<input id="mrMax" type="number" min="0" max="1000" value="${x.rateMax}">`,'XP a trade')}
+        ${field('mrPool','Pool share',`<input id="mrPool" type="number" min="0" max="100" value="${x.poolPct}">`,'% of each payment')}
+        ${field('mrHold','Hold time',`<input id="mrHold" type="number" min="12" max="336" value="${x.holdHours}">`,'Hours a mentor has to review before the XP goes back')}
+      </div>
+      <div class="actions"><button class="primary" id="mrSave">Save rates</button></div>
+      ${P?`<h3 style="margin:18px 0 6px">The pool</h3>
+        <p style="margin:0"><b>${fmt(P.xp)} XP</b> <span class="muted">in the pool · ${fmt(P.total)} taken in so far · ${fmt(P.held.n)} XP held for ${P.held.c} trade${P.held.c===1?'':'s'} waiting on a review</span></p>
+        ${log.length?`<div class="scroll"><table><thead><tr><th>When</th><th>From</th><th>To</th><th>Paid</th><th>Pool</th></tr></thead><tbody>${log.slice(0,20).map(l=>`<tr><td class="muted">${esc(new Date(l.at).toLocaleString())}</td><td>${l.from?'@'+esc(l.from):'<span class="muted">deleted</span>'}</td><td>${l.to?'@'+esc(l.to):'<span class="muted">deleted</span>'}</td><td>${fmt(l.fee)} XP</td><td>${fmt(l.xp)} XP</td></tr>`).join('')}</tbody></table></div>`
+          :'<p class="hint">Nothing yet: the pool takes its share when a paid review is marked reviewed.</p>'}`:''}</section>`;
   }
   const levelBody=()=>({mode:val('lvMode'),base:val('lvBase'),thresholds:val('lvTable'),titles:lines(val('lvTitles'))});
   // what the server's sanitizer will make of the form, for the preview
@@ -1263,6 +1283,7 @@ details>summary{list-style-position:inside}
       if(!tiers.every((t,i)=>t[0]>=1&&t[1]>1&&(!i||(t[0]>tiers[i-1][0]&&t[1]>tiers[i-1][1]))))return note('Weeks and multipliers must both go up, tier by tier, and each multiplier be above 1.',true);
       return act(()=>put({mult:{on:chk('mOn'),bar:+val('mBar'),tiers}}),'Multiplier saved.'); }
     if(id==='mxSave')return act(()=>put({mentorXp:{on:chk('mxOn'),review:+val('mxReview'),note:+val('mxNote'),notesPerDay:+val('mxNotes'),outcome:+val('mxOutcome'),cap:+val('mxCap')}}),'Mentoring XP saved.');
+    if(id==='mrSave')return act(()=>put({mentorXp:{rates:chk('mrOn'),rateMin:+val('mrMin'),rateMax:+val('mrMax'),poolPct:+val('mrPool'),holdHours:+val('mrHold')}}),'Mentor rates saved.');
     if(id==='stSave')return act(()=>put({standing:{on:chk('stOn'),bar:+val('stBar'),grace:+val('stGrace')}}),'Standing saved.');
     if(id==='lvPreview'){ UI.levelDraft=levelDraft(); return render(); }
     if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }

@@ -727,8 +727,8 @@ function socMentorHtml(D){
   const c=socGet('mentees','/mentor',30000), L=c&&c.d?c.d.mentees:null;
   if(!L)return `${back}${pzHead('Mentor','Mentees')}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const pg=pzPage('mentees',L);
-  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
-    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
+  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}${socMentorSetHtml()}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
+    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.picked?' <span class="pz-tag win">picked you</span>':m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
       <span class="pz-sub" style="font-size:12px">7-day discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'} · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
       <span class="pz-sub" style="font-size:12px">${m.notes} note${m.notes===1?'':'s'} so far</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
       :'<section class="pz-card"><p class="pz-sub">No one has let mentors in yet. Members switch on “Let mentors see my days” under What you share.</p></section>'}`;

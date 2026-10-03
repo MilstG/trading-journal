@@ -48,7 +48,7 @@ try {
   await traded(Z, 20); // last traded 20 days ago
 
   await t('the defaults: 15 a review, 5 a note (3 a day), 25 a result, 60 a day', async () => {
-    eq((await call('/config')).d.mentorXp, { on: true, review: 15, note: 5, notesPerDay: 3, outcome: 25, cap: 60 });
+    eq((await call('/config')).d.mentorXp, { on: true, review: 15, note: 5, notesPerDay: 3, outcome: 25, cap: 60, rates: true, rateMin: 0, rateMax: 100, poolPct: 0, holdHours: 72 });
   });
   await t('a note on an active mentee’s day pays once per mentee a day, three a day at most; an inactive mentee pays nothing', async () => {
     await until(async () => (await me(N)).ta); // ned's wallet read: he traded this week

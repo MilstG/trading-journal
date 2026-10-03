@@ -98,14 +98,22 @@ function sanitizeStanding(b, prev) {
 // mentorXp: XP for mentoring (levels only: league tables and duels never count it). A trade reviewed with
 // a comment, a note on a mentee's day (a few a day), and a bonus when a mentee you've worked with in the
 // last 30 days reaches something verified; effort is capped per day.
-const DEFAULT_MENTOR_XP = { on: true, review: 15, note: 5, notesPerDay: 3, outcome: 25, cap: 60 };
+// Rates: each mentor charges what they like inside [rateMin, rateMax] XP per reviewed trade (rates off:
+// every review is free). The mentee's XP is held when they send the trade and paid when the mentor
+// marks it reviewed with a comment, or returned after holdHours; poolPct of each payment goes to the
+// owner's pool instead of the mentor. Paying comes out of the mentee's XP to spend, never their level.
+const DEFAULT_MENTOR_XP = { on: true, review: 15, note: 5, notesPerDay: 3, outcome: 25, cap: 60, rates: true, rateMin: 0, rateMax: 100, poolPct: 0, holdHours: 72 };
 function sanitizeMentorXp(b, prev) {
   const o = Object.assign({}, DEFAULT_MENTOR_XP, prev || {});
   if (b && typeof b === 'object') {
     if (typeof b.on === 'boolean') o.on = b.on;
-    for (const [k, lo, hi] of [['review', 0, 200], ['note', 0, 100], ['notesPerDay', 0, 20], ['outcome', 0, 500], ['cap', 0, 1000]]) { const v = clampNum(b[k], lo, hi); if (v != null) o[k] = Math.round(v); }
+    if (typeof b.rates === 'boolean') o.rates = b.rates;
+    for (const [k, lo, hi] of [['review', 0, 200], ['note', 0, 100], ['notesPerDay', 0, 20], ['outcome', 0, 500], ['cap', 0, 1000],
+      ['rateMin', 0, 1000], ['rateMax', 0, 1000], ['poolPct', 0, 100], ['holdHours', 12, 336]]) { const v = clampNum(b[k], lo, hi); if (v != null) o[k] = Math.round(v); }
   }
-  return { on: !!o.on, review: o.review, note: o.note, notesPerDay: o.notesPerDay, outcome: o.outcome, cap: o.cap };
+  if (o.rateMin > o.rateMax) { if (b && b.rateMin != null && b.rateMax == null) o.rateMax = o.rateMin; else o.rateMin = o.rateMax; } // the one just set wins
+  return { on: !!o.on, review: o.review, note: o.note, notesPerDay: o.notesPerDay, outcome: o.outcome, cap: o.cap,
+    rates: !!o.rates, rateMin: o.rateMin, rateMax: o.rateMax, poolPct: o.poolPct, holdHours: o.holdHours };
 }
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, approveWallets: false, vaultOn: true, guestCap: 3,
   unlocks: { trends: 2, share: 3, compete: 4 } };
@@ -520,7 +528,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -528,6 +536,9 @@ function createSocial(opts) {
   if (!S.config || typeof S.config !== 'object') S.config = {};
   if (!S.follows || typeof S.follows !== 'object') S.follows = {};
   if (!S.comps || typeof S.comps !== 'object') S.comps = {};
+  // the owner's pool: the share of each mentor payment the owner keeps (S.config.mentorXp.poolPct)
+  if (!S.pool || typeof S.pool !== 'object') S.pool = {};
+  S.pool = { xp: Math.max(0, Math.round(+S.pool.xp) || 0), total: Math.max(0, Math.round(+S.pool.total) || 0), log: Array.isArray(S.pool.log) ? S.pool.log : [] };
   if (!S.league || typeof S.league !== 'object') S.league = { week: null };
   const claimSaved = typeof S.config.requireClaim === 'boolean';
   S.config = Object.assign({}, DEFAULT_CONFIG, S.config, {
@@ -996,6 +1007,7 @@ function createSocial(opts) {
       q('UPDATE reviews SET comments = max(0, comments - (SELECT count(*) FROM review_comments c WHERE c.review = reviews.id AND c.member = ?)) WHERE id IN (SELECT review FROM review_comments WHERE member = ?)').run(id, id);
       q('DELETE FROM review_comments WHERE member = ?').run(id);
       q('UPDATE reviews SET reviewer = NULL WHERE reviewer = ?').run(id);
+      q("UPDATE reviews SET fee_state = 'refunded' WHERE mentor = ? AND fee_state = 'held'").run(id); // XP held for a mentor who's gone goes back
       dropMedia(q('SELECT id FROM media WHERE member = ?').all(id));
       q('DELETE FROM members WHERE id = ?').run(id); written.delete('m:' + id);
       if (hadVault) store.afterCommit(() => { try { fs.unlinkSync(vaultFile(id)); } catch (e) {} }); // the journal file goes once the row has
@@ -1215,7 +1227,7 @@ function createSocial(opts) {
     L.paid = [...L.paid, key].slice(-3000); touch(mentor); return xp; };
   // what the mentor's app needs: XP and counts per day (for the ledger and the mentoring badges)
   const mentorXpOut = m => { const L = m.mentorXp; if (!L || !L.days) return null; const days = {}; let total = 0;
-    for (const [k, d] of Object.entries(L.days)) { days[k] = { xp: d.xp, r: d.r, n: d.n, o: d.o }; total += d.xp; }
+    for (const [k, d] of Object.entries(L.days)) { days[k] = Object.assign({ xp: d.xp, r: d.r, n: d.n, o: d.o }, d.fee ? { fee: d.fee, paid: d.paid || 0 } : {}); total += d.xp; }
     return { days, total, today: (L.days[mxDay(m)] || { xp: 0 }).xp, cap: S.config.mentorXp.cap }; };
   // a mentee's verified results pay the mentors who worked with them in the last 30 days: a new Trader Age
   // milestone, a perfect week (3+ trading days, every one 70+), a leak plugged (a slip seen in 2+ of the 6
@@ -1634,6 +1646,7 @@ function createSocial(opts) {
       vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
       ta: m.share && m.share.verify ? m.ta || null : null, // verified Trader Age (null: the app shows its own estimate)
       mult: multOut(m), standing: standingOut(m), mentorXp: mentorXpOut(m),
+      wallet: walletOut(m), myMentors: picksOf(m).map(id => S.members[id].handle), mentorRate: m.mentor ? rateOf(m) : null, mentorSlots: m.mentor ? slotsOf(m) : null,
       needsClaim: !!(S.config.requireClaim && m.address && m.claimed !== m.address),
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
       passkeys: (m.passkeys || []).map(k => ({ id: k.id, name: k.name, at: k.at, lastUsed: k.lastUsed || null })),
@@ -1826,6 +1839,7 @@ function createSocial(opts) {
   let ticking = false;
   const tick = async () => {
     try { duelSweep(); } catch (e) { console.warn('[ledger] duels: ' + (e && e.message)); }
+    try { holdSweep(); } catch (e) { console.warn('[ledger] mentor holds: ' + (e && e.message)); }
     if (S.config.bench.seeds !== false) seedSchedule(); // daily re-reads of seed wallets come due on their own
     try { if (S.config.bench.on) benchNow(); } catch (e) {} // a daily build keeps the weekly history going without anyone asking
     if (!push || ticking) return 0; ticking = true; const t = now(), jobs = [];
@@ -1887,7 +1901,13 @@ function createSocial(opts) {
   const dropPairsOf = id => { for (const [k, p] of Object.entries(S.partners)) if (p.a === id || p.b === id) delete S.partners[k]; };
 
   // ---- mentors: members the owner appoints; they see the days of members who opted in ----
-  const menteesOf = m => members().filter(o => o.id !== m.id && !o.banned && o.share && o.share.mentor);
+  // A member who picked mentors (up to MENTORS_MAX) is seen by those only; one who picked no one, by every mentor.
+  const MENTORS_MAX = 2;
+  const isMentor = o => !!(o && o.mentor && !o.banned);
+  const picksOf = m => (Array.isArray(m.myMentors) ? m.myMentors : []).filter(id => id !== m.id && own(S.members, id) && isMentor(S.members[id]));
+  const mentorSees = (x, o) => { if (!isMentor(x) || !o || x.id === o.id || o.banned || !(o.share && o.share.mentor)) return false;
+    const p = picksOf(o); return !p.length || p.includes(x.id); };
+  const menteesOf = m => members().filter(o => mentorSees(m, o));
   const commentsFor = id => (S.comments[id] || []);
   const commentOut = c => { const by = own(S.members, c.by) ? S.members[c.by] : null; return { id: c.id, day: c.day, text: c.text, at: c.at, by: by ? by.handle : 'a mentor', read: !!c.read }; };
   const menteeSummary = o => { const st = o.stats || {}, days = (st.days || []).slice(-7);
@@ -1898,21 +1918,95 @@ function createSocial(opts) {
   // the server's mentors see it while the member lets mentors in; admins read it (read-only) ----
   const REVIEWS_PER_DAY = 10, REVIEWS_KEEP = 100, REVIEW_COMMENTS_MAX = 200;
   const reviewById = id => typeof id === 'string' && /^[a-f0-9]{12}$/.test(id) ? q('SELECT * FROM reviews WHERE id = ?').get(id) || null : null;
-  const mentorsOf = m => members().filter(o => o.mentor && !o.banned && o.id !== m.id);
+  // who a member's trades and replies go to: the mentors they picked, or every mentor
+  const mentorsOf = m => { const p = picksOf(m); return p.length ? p.map(id => S.members[id]) : members().filter(o => isMentor(o) && o.id !== m.id); };
+  // a trade sent to one mentor (r.mentor) is theirs alone; one sent before picking is any mentor's who still sees the member
   const reviewRole = (r, me) => { const o = own(S.members, r.member) ? S.members[r.member] : null; if (!o) return null;
-    return o.id === me.id ? 'mentee' : me.mentor && !o.banned && o.share.mentor ? 'mentor' : null; };
+    return o.id === me.id ? 'mentee' : mentorSees(me, o) && (!r.mentor || r.mentor === me.id) ? 'mentor' : null; };
   const reviewTrade = r => { let t = {}; try { t = JSON.parse(r.data) || {}; } catch (e) {}
     if (!(own(S.members, r.member) && S.members[r.member].share.usd)) delete t.usd; return t; }; // dollars only while they share them
   const tradeName = t => (t.label || t.coin) + ' ' + t.side;
   const reviewOut = (r, viewer) => { const o = own(S.members, r.member) ? S.members[r.member] : null, by = r.reviewer && own(S.members, r.reviewer) ? S.members[r.reviewer] : null;
     const lastBy = (q('SELECT member FROM review_comments WHERE review = ? ORDER BY at DESC, rowid DESC LIMIT 1').get(r.id) || {}).member;
+    const to = r.mentor && own(S.members, r.mentor) ? S.members[r.mentor] : null;
     return { id: r.id, key: viewer && viewer.id === r.member ? r.trade : null, at: r.at, last: r.last, handle: o ? o.handle : null, av: avUrl(o), trade: reviewTrade(r),
-      comments: r.comments, reviewed: r.reviewed ? { at: r.reviewed, by: by ? by.handle : null } : null, waiting: !r.reviewed && (!lastBy || lastBy === r.member) }; };
+      comments: r.comments, reviewed: r.reviewed ? { at: r.reviewed, by: by ? by.handle : null } : null, waiting: !r.reviewed && (!lastBy || lastBy === r.member),
+      to: to ? to.handle : null, fee: r.fee_state ? { xp: r.fee || 0, state: r.fee_state, until: r.fee_state === 'held' ? r.at + S.config.mentorXp.holdHours * 3600000 : null } : null }; };
   const threadOut = (r, viewer, role) => ({ role, review: reviewOut(r, viewer),
     comments: q('SELECT * FROM review_comments WHERE review = ? ORDER BY at, rowid').all(r.id).filter(c => own(S.members, c.member) && !S.members[c.member].banned)
       .map(c => ({ id: c.id, at: c.at, text: c.text, handle: S.members[c.member].handle, av: avUrl(S.members[c.member]), mentor: c.member !== r.member, mine: !!viewer && c.member === viewer.id })) });
   const addReviewComment = (rid, m, text) => tx(() => { q('INSERT INTO review_comments (id, review, member, at, text) VALUES (?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), rid, m.id, now(), text);
     q('UPDATE reviews SET comments = comments + 1, last = ? WHERE id = ?').run(now(), rid); });
+
+  // ---- a mentor's rate and slots, the XP a member can spend, and XP held for a review ----
+  // The rate is the mentor's own number kept inside the owner's range (rates off: free). Slots: how many
+  // members can pick them at once (a full mentor offers a waitlist).
+  const rateOf = x => { const c = S.config.mentorXp; if (!c.rates || !x) return 0; return Math.max(c.rateMin, Math.min(c.rateMax, Math.round(+x.mentorRate || 0))); };
+  const SLOTS_DEFAULT = 5, SLOTS_MAX = 50;
+  const slotsOf = x => x.mentorSlots == null ? SLOTS_DEFAULT : x.mentorSlots;
+  const pickersOf = x => members().filter(o => !o.banned && picksOf(o).includes(x.id));
+  // XP to spend: everything the member has earned (their level's XP, as their app reports it) less what they
+  // paid mentors and what's held for reviews not yet done. Paying never lowers a level.
+  const heldOf = m => q("SELECT coalesce(sum(fee), 0) AS n FROM reviews WHERE member = ? AND fee_state = 'held'").get(m.id).n;
+  const walletOut = m => { const held = heldOf(m), spent = Math.max(0, m.xpSpent || 0);
+    return { balance: Math.max(0, Math.floor((m.stats && m.stats.xp) || 0) - spent - held), held, spent }; };
+  // the first trade with each paid mentor is free: kept per mentor, and given back if the trade is taken back before they said anything
+  const firstFree = (m, x) => rateOf(x) > 0 && !(m.mentorFirst && own(m.mentorFirst, x.id));
+  // a slot opened: everyone waiting for this mentor hears it once
+  const slotOpened = x => { if (!isMentor(x) || pickersOf(x).length >= slotsOf(x)) return;
+    for (const o of members()) if (o.mentorWait && own(o.mentorWait, x.id)) { delete o.mentorWait[x.id];
+      notify(o, 'mentor', '@' + x.handle + ' has room for a mentee now. Pick them before someone else does.', { title: 'A mentor slot opened', url: '/daruma#mentors/' + x.handle }); save(o); } };
+  // held XP goes back: when the review doesn't come in time, or the mentor is gone or no longer picked
+  const refundHolds = (where, args, why) => { const rows = q("SELECT * FROM reviews WHERE fee_state = 'held' AND " + where).all(...args); if (!rows.length) return 0;
+    for (const r of rows) { q("UPDATE reviews SET fee_state = 'refunded' WHERE id = ?").run(r.id);
+      const o = own(S.members, r.member) ? S.members[r.member] : null, x = r.mentor && own(S.members, r.mentor) ? S.members[r.mentor] : null;
+      if (o && why) notify(o, 'mentor', (x ? '@' + x.handle + ' ' : 'Your mentor ') + why(r) + ' The ' + r.fee + ' XP held for your ' + tradeName(reviewTrade(r)) + ' is back to spend.', { title: 'XP returned', url: '/daruma#tr/' + r.id }); }
+    return rows.length; };
+  let holdSwept = 0;
+  const holdSweep = () => { if (now() - holdSwept < 60000) return 0; holdSwept = now();
+    const n = refundHolds('at < ?', [now() - S.config.mentorXp.holdHours * 3600000], () => 'didn’t mark it reviewed within ' + S.config.mentorXp.holdHours + ' hours.');
+    if (n) save(null); return n; };
+  // paid when the mentor marks the trade reviewed with a comment of theirs in it: poolPct to the owner's pool, the rest to the mentor
+  // (on their mentoring ledger, so it counts toward their level like the rest of their mentoring XP)
+  const payHold = (r, x, o) => { if (r.fee_state !== 'held' || r.mentor !== x.id || !(r.fee > 0)) return 0;
+    const cut = Math.min(r.fee, Math.round(r.fee * S.config.mentorXp.poolPct / 100)), net = r.fee - cut;
+    q("UPDATE reviews SET fee_state = 'paid' WHERE id = ?").run(r.id);
+    o.xpSpent = Math.max(0, o.xpSpent || 0) + r.fee;
+    const L = x.mentorXp = x.mentorXp && typeof x.mentorXp === 'object' ? x.mentorXp : {}; if (!L.days || typeof L.days !== 'object') L.days = {};
+    const D = L.days[mxDay(x)] = L.days[mxDay(x)] || { xp: 0, effort: 0, r: 0, n: 0, o: 0 };
+    D.xp += net; D.fee = (D.fee || 0) + net; D.paid = (D.paid || 0) + 1;
+    if (cut) { S.pool.xp += cut; S.pool.total += cut; S.pool.log = [...S.pool.log, { at: now(), xp: cut, fee: r.fee, from: o.id, to: x.id, review: r.id }].slice(-500); touch('pool'); }
+    recCache.delete(x.id); touch(x, o); return net; };
+  // ---- a mentor's track record: only what the server measured itself, over the last 90 days ----
+  // reviewed: trades they marked reviewed with a comment of theirs in it; replyMs: median time from a trade
+  // being sent to their first comment; back: of the members they reviewed for (who had 30 days to do it),
+  // the share who sent another trade within 30 days (null under 10 reviews: too few to say); results:
+  // mentees' verified milestones their mentoring was paid for (all time).
+  const REC_DAYS = 90, REC_MIN = 10, recCache = new Map();
+  const mentorRecord = x => { const hit = recCache.get(x.id); if (hit && now() - hit.at < 600000 && hit.at <= now()) return hit.v;
+    const since = now() - REC_DAYS * 86400000;
+    const reviewed = q('SELECT count(*) AS n FROM reviews r WHERE r.reviewer = ? AND r.reviewed > ? AND EXISTS (SELECT 1 FROM review_comments c WHERE c.review = r.id AND c.member = ?)').get(x.id, since, x.id).n;
+    const gaps = q('SELECT min(c.at) - r.at AS g FROM review_comments c JOIN reviews r ON r.id = c.review WHERE c.member = ? AND r.member != ? AND r.at > ? GROUP BY r.id').all(x.id, x.id, since).map(z => z.g).sort((a, b) => a - b);
+    const replyMs = gaps.length ? Math.round(gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2) : null;
+    const rows = q('SELECT r.member AS m, r.at AS a FROM reviews r WHERE r.at > ? AND r.member != ? AND (r.mentor = ? OR EXISTS (SELECT 1 FROM review_comments c WHERE c.review = r.id AND c.member = ?)) ORDER BY r.member, r.at').all(since, x.id, x.id, x.id);
+    const by = new Map(); for (const z of rows) { if (!by.has(z.m)) by.set(z.m, []); by.get(z.m).push(z.a); }
+    let came = 0, could = 0; for (const ats of by.values()) { const again = ats.some((a, i) => i > 0 && a - ats[i - 1] <= 30 * 86400000);
+      if (again) { came++; could++; } else if (ats[0] < now() - 30 * 86400000) could++; }
+    const paid = (x.mentorXp && Array.isArray(x.mentorXp.paid)) ? x.mentorXp.paid : [], kind = p => paid.filter(k => k.startsWith(p)).length;
+    const v = { reviewed, replyMs, back: reviewed >= REC_MIN && could ? Math.round(100 * came / could) : null, mentees: by.size, results: { age: kind('age:'), pw: kind('pw:'), plug: kind('plug:') } };
+    recCache.set(x.id, { at: now(), v }); return v; };
+  // a mentor as the directory shows them to member `me`
+  const mentorCard = (x, me) => { const st = x.stats || {}, pub = x.share.profile !== false, used = pickersOf(x).length, slots = slotsOf(x), rate = rateOf(x);
+    const ver = x.share.verify && Array.isArray(x.vdays), d30 = ver ? disciplineOver(x.vdays, addDaysKey(todayKey(), -89), todayKey(), 3) : null;
+    return { handle: x.handle, av: avUrl(x), level: st.level || 1, title: levelTitle(st.level || 1), bio: pub ? x.bio || '' : '',
+      style: x.share.bench !== false && x.bench && x.bench.style ? x.bench.style : null, active: (x.lastSeen || 0) > now() - 7 * 86400000,
+      rate, firstFree: !!me && me.id !== x.id && firstFree(me, x), slots: { used, total: slots, open: Math.max(0, slots - used) },
+      picked: !!me && picksOf(me).includes(x.id), waiting: !!(me && me.mentorWait && own(me.mentorWait, x.id)), me: !!me && me.id === x.id,
+      record: mentorRecord(x), own: { traderAge: x.ta && !x.ta.building && x.share.verify ? x.ta.age : null, discipline: d30 && d30.avg != null ? Math.round(d30.avg) : null } }; };
+  const ratesOut = () => { const c = S.config.mentorXp; return { on: c.rates, min: c.rateMin, max: c.rateMax, poolPct: c.poolPct, holdHours: c.holdHours }; };
+  const mentorsMeOut = me => ({ picks: picksOf(me).map(id => S.members[id].handle), max: MENTORS_MAX, wallet: walletOut(me), letIn: !!me.share.mentor });
+  // dropping a pick: XP held for that mentor goes back, and their slot opens for whoever's waiting
+  const dropPick = (me, x) => { me.myMentors = picksOf(me).filter(id => id !== x.id); refundHolds('member = ? AND mentor = ?', [me.id, x.id], null); slotOpened(x); };
 
   // ---- seasons ----
   const seasonInfo = L => { if (!L.season) return null; const id = seasonOf(L.season, todayKey()), b = seasonBounds(id);
@@ -2143,7 +2237,7 @@ function createSocial(opts) {
           if (!who.owner && m.id === who.id && a !== 'verify' && a !== 'unverify') { skipped.push({ id, handle: m.handle, why: 'that’s you' }); continue; }
           if (m.admin && !who.owner && m.id !== who.id) { skipped.push({ id, handle: m.handle, why: 'only the owner can change another admin' }); continue; }
           if (a === 'remove') dropMember(m.id);
-          else if (a === 'ban' || a === 'unban') m.banned = a === 'ban';
+          else if (a === 'ban' || a === 'unban') { m.banned = a === 'ban'; if (m.banned) refundHolds('(mentor = ? OR member = ?)', [m.id, m.id], null); }
           else { const ws = walletsOf(m); if (!ws.length) { skipped.push({ id, handle: m.handle, why: 'no wallet' }); continue; }
             for (const ad of ws) { S.wallets[String(ad).toLowerCase()] = { s: a === 'verify' ? 'approved' : 'rejected', at: now(), by: who.owner ? 'owner' : who.by, note: 'from the members list' }; }
             for (const o of members()) if (o.address && ws.map(x => String(x).toLowerCase()).includes(o.address)) { recheckWallet(o); if (walletFor(o)) refreshAll(o); } }
@@ -2158,7 +2252,7 @@ function createSocial(opts) {
         if ((a === 'admin' || a === 'unadmin') && !who.owner) return json(res, 403, { error: 'Only the owner can add or remove admins.' });
         if (m.admin && !who.owner && m.id !== who.id) return json(res, 403, { error: 'Only the owner can change another admin.' });
         if (a === 'admin' || a === 'unadmin') { m.admin = a === 'admin'; if (m.admin) m.adminSince = now(); else delete m.adminSince; }
-        else if (a === 'ban' || a === 'unban') m.banned = a === 'ban';
+        else if (a === 'ban' || a === 'unban') { m.banned = a === 'ban'; if (m.banned) refundHolds('(mentor = ? OR member = ?)', [m.id, m.id], null); }
         else if (a === 'tier') { const t = clampNum(body.tier, 0, TIERS.length - 1); if (t == null) return json(res, 400, { error: 'bad tier' });
           const L = own(S.leagues, body.league || 'main') ? S.leagues[body.league || 'main'] : null; if (!L || !own(L.members, m.id)) return json(res, 400, { error: 'not in that league' });
           L.members[m.id].tier = Math.round(t); if (L.id === 'main') m.tier = Math.round(t); }
@@ -2177,7 +2271,8 @@ function createSocial(opts) {
         }
         else if (a === 'clearAvatar') { dropMedia(q('SELECT id FROM media WHERE member = ? AND kind = ?').all(m.id, 'avatar')); m.avatar = null; }
         else if (a === 'clearBio') m.bio = '';
-        else if (a === 'mentor' || a === 'unmentor') m.mentor = a === 'mentor'; // sees the days of members who let mentors in, and comments on them
+        else if (a === 'mentor' || a === 'unmentor') { m.mentor = a === 'mentor'; // sees the days of members who let mentors in, and comments on them
+          if (!m.mentor) refundHolds('mentor = ?', [m.id], () => 'isn’t a mentor here any more.'); }
         else if (a === 'unlock' || a === 'lock') m.unlocked = a === 'unlock'; // every feature, theme and the bigger coach allowance
         else if (a === 'coachreset') coachReset(m); // today's count back to zero, for the profile and its wallet
         else if (a === 'link' || a === 'unlink' || a === 'primary') { // map wallets to this member by hand
@@ -2476,6 +2571,11 @@ function createSocial(opts) {
         dropComment(c); return json(res, 200, { ok: true });
       }
       // trade reviews, read-only: what members sent their mentors and the threads on them, for moderation
+      // the owner's pool: what it holds, everything it has taken in, and the latest payments it took a share of
+      if (sub === 'pool' && M === 'GET') { const h = id => own(S.members, id) ? S.members[id].handle : null;
+        return json(res, 200, { xp: S.pool.xp, total: S.pool.total, poolPct: S.config.mentorXp.poolPct,
+          log: S.pool.log.slice(-100).reverse().map(x => ({ at: x.at, xp: x.xp, fee: x.fee, from: h(x.from), to: h(x.to) })),
+          held: q("SELECT coalesce(sum(fee), 0) AS n, count(*) AS c FROM reviews WHERE fee_state = 'held'").get() }); }
       if (sub === 'reviews' && M === 'GET' && !parts[2]) return json(res, 200, { reviews: q('SELECT * FROM reviews ORDER BY last DESC LIMIT 200').all().map(r => reviewOut(r, null)) });
       if (sub === 'reviews' && M === 'GET') { const r = reviewById(parts[2]); return r ? json(res, 200, threadOut(r, null, 'admin')) : json(res, 404, { error: 'no such review' }); }
       return json(res, 404, { error: 'not found' });
@@ -2694,7 +2794,7 @@ function createSocial(opts) {
     me.lastSeen = now();
     if (now() - (me.seenSaved || 0) > 600000) { me.seenSaved = now(); save(me); } // last seen is written at most every ten minutes
 
-    if (head === 'me' && M === 'GET') return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 });
+    if (head === 'me' && M === 'GET') { holdSweep(); return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 }); } // the wallet counts only live holds
 
     // ---- inbox: nudges, mentor notes, season results ----
     if (head === 'inbox' && M === 'GET') return json(res, 200, { items: (me.inbox || []).slice().reverse().map(x => Object.assign({}, x, { unread: x.at > (me.inboxRead || 0) })) });
@@ -2925,12 +3025,57 @@ function createSocial(opts) {
           active: (o.lastSeen || 0) > now() - week, duels: duelsOn && o.share.duels !== false, seeking: !!o.share.seek, mentor: !!o.mentor,
           following: (S.follows[me.id] || []).includes(o.id), partner: pr ? (pr.status === 'active' ? 'active' : pr.from === me.id ? 'sent' : 'asked') : null,
           leagues: leaguesOf(o).filter(L => mine.has(L.id)).map(L => L.name).slice(0, 3),
-          askedMentor: !!(o.mentor && me.mentorAsks && me.mentorAsks[o.id]) }; }) });
+          askedMentor: !!(o.mentor && me.mentorAsks && me.mentorAsks[o.id]), rate: o.mentor ? rateOf(o) : null, myMentor: picksOf(me).includes(o.id) }; }) });
+    }
+    // ---- the mentor directory: every mentor with their rate, slots and track record; pick up to two ----
+    // GET /mentors?style=&open=1&sort=open|reply|back|rate&q=   GET /mentors/<handle>
+    // POST /mentors/<handle> {action: pick | drop | wait | unwait, letIn}
+    if (head === 'mentors' && M === 'GET') {
+      holdSweep();
+      if (parts[1]) { const x = byHandle(arg); if (!isMentor(x)) return json(res, 404, { error: 'No mentor by that name.' });
+        return json(res, 200, { mentor: mentorCard(x, me), me: mentorsMeOut(me), rates: ratesOut() }); }
+      const qq = cleanText(query.q, 40).replace(/^@/, '').toLowerCase(), style = ['scalper', 'day', 'swing', 'position'].includes(query.style) ? query.style : '';
+      const sort = ['open', 'reply', 'back', 'rate'].includes(query.sort) ? query.sort : 'open';
+      let list = members().filter(o => isMentor(o)).map(o => mentorCard(o, me));
+      if (style) list = list.filter(c => c.style === style);
+      if (query.open === '1') list = list.filter(c => c.slots.open > 0 || c.picked);
+      if (qq) list = list.filter(c => c.handle.toLowerCase().includes(qq) || c.bio.toLowerCase().includes(qq));
+      const last = v => v == null ? Infinity : v;
+      // room first, then whoever answers fastest: sorting by how much someone reviews only sends more to whoever is busiest
+      const cmp = { open: (a, b) => (b.picked - a.picked) || ((b.slots.open > 0) - (a.slots.open > 0)) || (last(a.record.replyMs) - last(b.record.replyMs)),
+        reply: (a, b) => last(a.record.replyMs) - last(b.record.replyMs), back: (a, b) => (b.record.back ?? -1) - (a.record.back ?? -1), rate: (a, b) => a.rate - b.rate }[sort];
+      list.sort((a, b) => cmp(a, b) || a.handle.localeCompare(b.handle));
+      return json(res, 200, { mentors: list.slice(0, 200), total: list.length, me: mentorsMeOut(me), rates: ratesOut() });
+    }
+    if (head === 'mentors' && parts[1] && !parts[2] && M === 'POST') {
+      const x = byHandle(arg), a = body.action; if (!isMentor(x)) return json(res, 404, { error: 'No mentor by that name.' });
+      if (x.id === me.id) return json(res, 400, { error: 'You can’t pick yourself.' });
+      if (!['pick', 'drop', 'wait', 'unwait'].includes(a)) return json(res, 400, { error: 'action is pick, drop, wait or unwait' });
+      const picks = picksOf(me), has = picks.includes(x.id);
+      if (a === 'pick') {
+        if (has) return json(res, 200, { ok: true, mentor: mentorCard(x, me), me: mentorsMeOut(me) });
+        if (picks.length >= MENTORS_MAX) return json(res, 409, { error: 'You have ' + MENTORS_MAX + ' mentors. Drop one before picking another.' });
+        if (pickersOf(x).length >= slotsOf(x)) return json(res, 409, { error: '@' + x.handle + ' is full. Join their waitlist and you’ll hear when a slot opens.', full: true });
+        if (!me.share.mentor) { if (body.letIn !== true) return json(res, 409, { error: 'Your mentor sees your days (never your wallet). Let mentors in to pick one.', needsLetIn: true });
+          me.share = sanitizeShare({ mentor: true }, me.share); }
+        if (limited(req, 'mpick:' + me.id, 20, 86400000, true)) return json(res, 429, { error: 'Too many changes today.' });
+        me.myMentors = [...picks, x.id];
+        if (me.mentorWait) delete me.mentorWait[x.id];
+        notify(x, 'mentor', '@' + me.handle + ' picked you as their mentor. Their days and the trades they send are open to you now.', { title: 'A new mentee', url: '/daruma#mentee/' + me.handle });
+        save(me, x);
+      } else if (a === 'drop') { if (has) { dropPick(me, x); save(me); } }
+      else if (a === 'wait') {
+        if (has) return json(res, 409, { error: '@' + x.handle + ' is already your mentor.' });
+        if (pickersOf(x).length < slotsOf(x)) return json(res, 409, { error: '@' + x.handle + ' has room. Pick them instead.' });
+        me.mentorWait = Object.assign({}, me.mentorWait, { [x.id]: now() }); save(me);
+      } else { if (me.mentorWait) { me.mentorWait = Object.assign({}, me.mentorWait); delete me.mentorWait[x.id]; } save(me); }
+      return json(res, 200, { ok: true, mentor: mentorCard(x, me), me: mentorsMeOut(me), share: me.share });
     }
     // ask a particular mentor to look at your trading: it lets mentors in (they see your days, never your
     // wallet) when the member says so, tells that mentor, and puts you first on their list
     if (head === 'people' && parts[1] && parts[2] === 'mentor' && M === 'POST') {
       const o = byHandle(arg); if (!o || o.banned || !o.mentor || o.id === me.id) return json(res, 404, { error: 'No mentor by that name.' });
+      if (picksOf(me).length && !picksOf(me).includes(o.id)) return json(res, 409, { error: 'You picked your mentors already. Pick @' + o.handle + ' in the mentor directory to work with them.' });
       if (!me.share.mentor) { if (body.letIn !== true) return json(res, 409, { error: 'Let mentors see your days first (Profile & privacy).', needsLetIn: true });
         me.share = sanitizeShare({ mentor: true }, me.share); }
       const last = me.mentorAsks && me.mentorAsks[o.id];
@@ -2990,9 +3135,9 @@ function createSocial(opts) {
     if (head === 'notes' && parts[1] === 'read' && M === 'POST') { for (const c of commentsFor(me.id)) c.read = true; save('comments'); return json(res, 200, { ok: true }); }
     if (head === 'mentor') {
       if (!me.mentor) return json(res, 403, { error: 'Only mentors the owner appointed can see this.' });
-      if (!parts[1] && M === 'GET') return json(res, 200, { mentees: menteesOf(me).map(o => Object.assign(menteeSummary(o), { asked: !!(o.mentorAsks && o.mentorAsks[me.id]) }))
+      if (!parts[1] && M === 'GET') return json(res, 200, { mentees: menteesOf(me).map(o => Object.assign(menteeSummary(o), { asked: !!(o.mentorAsks && o.mentorAsks[me.id]), picked: picksOf(o).includes(me.id) }))
         .sort((a, b) => (b.asked - a.asked) || ((b.seen || 0) - (a.seen || 0))) });
-      const o = byHandle(arg); if (!o || o.id === me.id || o.banned || !o.share.mentor) return json(res, 404, { error: 'That member hasn’t let mentors in.' });
+      const o = byHandle(arg); if (!o || !mentorSees(me, o)) return json(res, 404, { error: 'That member hasn’t let you in: they keep mentors off, or picked other mentors.' });
       if (!parts[2] && M === 'GET') { const st = o.stats || {};
         return json(res, 200, { mentee: Object.assign(menteeSummary(o), { best: st.best || 0, habits: o.share.habits ? st.habits || [] : [], challenge: st.lastChallenge || '',
           days: (st.days || []).slice(-30).reverse().map(d => ({ k: d.k, s: d.s, f: d.f || [], l: d.l || '', r: !!d.r, j: !!d.j })),
@@ -3012,51 +3157,78 @@ function createSocial(opts) {
     }
     // ---- trade reviews: send a trade to your mentors; they comment and mark it reviewed ----
     if (head === 'reviews' && !parts[1] && M === 'GET') {
-      const ids = me.mentor ? members().filter(o => o.id !== me.id && !o.banned && o.share.mentor).map(o => o.id) : [];
+      holdSweep();
+      const ids = me.mentor ? menteesOf(me).map(o => o.id) : [];
       return json(res, 200, { mine: q('SELECT * FROM reviews WHERE member = ? ORDER BY last DESC LIMIT 100').all(me.id).map(r => reviewOut(r, me)),
-        toReview: me.mentor ? q('SELECT * FROM reviews WHERE member IN (SELECT value FROM json_each(?)) ORDER BY last DESC LIMIT 200').all(JSON.stringify(ids)).map(r => reviewOut(r, me)) : null,
-        mentorsOn: !!me.share.mentor, mentors: mentorsOf(me).length }); }
+        toReview: me.mentor ? q('SELECT * FROM reviews WHERE member IN (SELECT value FROM json_each(?)) AND (mentor IS NULL OR mentor = ?) ORDER BY last DESC LIMIT 200').all(JSON.stringify(ids), me.id).map(r => reviewOut(r, me)) : null,
+        mentorsOn: !!me.share.mentor, mentors: mentorsOf(me).length,
+        // where a new trade can go: the mentors you picked, with what a review costs you now
+        to: picksOf(me).map(id => { const x = S.members[id]; return { handle: x.handle, av: avUrl(x), rate: rateOf(x), firstFree: firstFree(me, x), sameOwner: sameOwner(me, x) }; }),
+        wallet: walletOut(me), rates: ratesOut() }); }
     if (head === 'reviews' && !parts[1] && M === 'POST') {
       if (!me.share.mentor) return json(res, 403, { error: 'Switch on “Let mentors see my days” under What you share first.' });
       const to = mentorsOf(me); if (!to.length) return json(res, 409, { error: 'There are no mentors on this server yet.' });
       const key = typeof body.key === 'string' && /^[a-z0-9]{6,32}$/.test(body.key) ? body.key : null, tr = sanitizeReviewTrade(body.trade, { usd: !!me.share.usd });
       if (!key || !tr) return json(res, 400, { error: 'That trade can’t be sent: it needs its market, side and open time.' });
       const text = cleanPost(body.text, 1000), ex = q('SELECT * FROM reviews WHERE member = ? AND trade = ?').get(me.id, key);
+      // a member with picked mentors sends each trade to one of them (body.to), at that mentor's rate; without picks it goes to every mentor, free
+      const picks = picksOf(me).map(id => S.members[id]); let target = null, fee = 0, feeState = null;
+      if (!ex && picks.length) { const h = cleanText(body.to, 21).replace(/^@/, '').toLowerCase();
+        target = h ? picks.find(x => x.handle.toLowerCase() === h) || null : picks.length === 1 ? picks[0] : null;
+        if (!target) return json(res, 400, { error: h ? 'Send it to one of your mentors.' : 'Pick which of your mentors this trade goes to.', mentors: picks.map(x => x.handle) });
+        const rate = rateOf(target);
+        if (rate && !sameOwner(me, target)) {
+          if (firstFree(me, target)) feeState = 'free';
+          else { const w = walletOut(me);
+            if (body.fee != null && rate > (+body.fee || 0)) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade now. Check and send again.', rate });
+            if (w.balance < rate) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade and you have ' + w.balance + ' XP to spend' + (w.held ? ' (' + w.held + ' more is held for trades waiting on a review)' : '') + '.', rate, wallet: w });
+            fee = rate; feeState = 'held'; } } }
       if (text && limited(req, 'rcomment:' + me.id, 60, 3600000, true)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
       if (!ex && dayLimit(me, 'reviewLog', REVIEWS_PER_DAY)) return json(res, 429, { error: REVIEWS_PER_DAY + ' trades a day can go to review.' });
       const id = ex ? ex.id : crypto.randomBytes(6).toString('hex');
       tx(() => { if (ex) q('UPDATE reviews SET data = ?, last = ? WHERE id = ?').run(JSON.stringify(tr), now(), id); // sent again: the summary is brought up to date
-        else { q('INSERT INTO reviews (id, member, trade, at, last, data) VALUES (?, ?, ?, ?, ?, ?)').run(id, me.id, key, now(), now(), JSON.stringify(tr));
+        else { q('INSERT INTO reviews (id, member, trade, at, last, data, mentor, fee, fee_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, me.id, key, now(), now(), JSON.stringify(tr), target ? target.id : null, fee, feeState);
           for (const o of q('SELECT id FROM reviews WHERE member = ? ORDER BY last DESC LIMIT -1 OFFSET ?').all(me.id, REVIEWS_KEEP)) dropReview(o.id); } // the oldest go
         if (text) addReviewComment(id, me, text); });
-      if (!ex) for (const o of to) notify(o, 'mentor', '@' + me.handle + ' sent a trade for review: ' + tradeName(tr), { title: 'A trade to review', url: '/daruma#tr/' + id });
-      save(me, ...(ex ? [] : to)); return json(res, 200, threadOut(reviewById(id), me, 'mentee'));
+      if (feeState === 'free') me.mentorFirst = Object.assign({}, me.mentorFirst, { [target.id]: id });
+      if (target) recCache.delete(target.id);
+      const sentTo = target ? [target] : to;
+      if (!ex) for (const o of sentTo) notify(o, 'mentor', '@' + me.handle + ' sent a trade for review: ' + tradeName(tr) + (fee ? ' (' + fee + ' XP when you mark it reviewed)' : ''), { title: 'A trade to review', url: '/daruma#tr/' + id });
+      save(me, ...(ex ? [] : sentTo)); return json(res, 200, threadOut(reviewById(id), me, 'mentee'));
     }
     if (head === 'reviews' && parts[1]) {
       const r = reviewById(arg), role = r && reviewRole(r, me);
       if (!role) return json(res, 404, { error: 'That trade review isn’t here.' });
       const o = S.members[r.member], what = tradeName(reviewTrade(r));
       if (!parts[2] && M === 'GET') return json(res, 200, threadOut(r, me, role));
-      if (!parts[2] && M === 'DELETE') { if (role !== 'mentee') return json(res, 403, { error: 'Only the member who sent it can take it back.' }); dropReview(r.id); return json(res, 200, { ok: true }); }
+      if (!parts[2] && M === 'DELETE') { if (role !== 'mentee') return json(res, 403, { error: 'Only the member who sent it can take it back.' });
+        // a free first trade taken back before the mentor said anything doesn't use the free one up; held XP goes back with the row
+        if (r.fee_state === 'free' && r.mentor && me.mentorFirst && me.mentorFirst[r.mentor] === r.id && !q('SELECT 1 FROM review_comments WHERE review = ? AND member = ? LIMIT 1').get(r.id, r.mentor)) {
+          me.mentorFirst = Object.assign({}, me.mentorFirst); delete me.mentorFirst[r.mentor]; save(me); }
+        dropReview(r.id); return json(res, 200, { ok: true }); }
       if (parts[2] === 'comments' && M === 'POST') {
         const text = cleanPost(body.text, 1000); if (!text) return json(res, 400, { error: 'Write the comment first.' });
         if (r.comments >= REVIEW_COMMENTS_MAX) return json(res, 409, { error: 'This thread is full (' + REVIEW_COMMENTS_MAX + ' comments).' });
         if (limited(req, 'rcomment:' + me.id, 60, 3600000, true)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
-        addReviewComment(r.id, me, text);
+        addReviewComment(r.id, me, text); if (role === 'mentor') recCache.delete(me.id);
         // a mentor's comment goes to the member; a reply goes to the mentors in the thread (every mentor, before one of them answered)
         const inT = new Set(q('SELECT DISTINCT member FROM review_comments WHERE review = ? AND member != ?').all(r.id, r.member).map(x => x.member));
-        const all = role === 'mentor' ? [o] : mentorsOf(o), inThread = all.filter(x => inT.has(x.id)), to = role === 'mentor' || !inThread.length ? all : inThread;
+        const all = role === 'mentor' ? [o] : r.mentor ? [S.members[r.mentor]].filter(x => x && mentorSees(x, o)) : mentorsOf(o), inThread = all.filter(x => inT.has(x.id)), to = role === 'mentor' || !inThread.length ? all : inThread;
         for (const x of to) notify(x, 'mentor', '@' + me.handle + (role === 'mentor' ? ' on your ' + what + ': ' : ' replied on their ' + what + ': ') + text, { title: role === 'mentor' ? 'Your mentor on a trade' : 'A reply on a trade', url: '/daruma#tr/' + r.id });
         if (to.length) save(...to); return json(res, 200, threadOut(reviewById(r.id), me, role)); }
       if (parts[2] === 'reviewed' && M === 'POST') {
         if (role !== 'mentor') return json(res, 403, { error: 'Only a mentor marks a trade reviewed.' });
         const on = body.done !== false; q('UPDATE reviews SET reviewed = ?, reviewer = ? WHERE id = ?').run(on ? now() : null, on ? me.id : null, r.id);
-        let xp = 0;
-        if (on && !r.reviewed) { notify(o, 'mentor', '@' + me.handle + ' reviewed your ' + what + ' ✓', { title: 'Trade reviewed', url: '/daruma#tr/' + r.id });
+        let xp = 0, fee = 0; const said = !!q('SELECT 1 FROM review_comments WHERE review = ? AND member = ? LIMIT 1').get(r.id, me.id);
+        recCache.delete(me.id);
+        if (on && !r.reviewed) { mentorWorked(me, o);
           // a review pays once, and only with something said in it
-          mentorWorked(me, o); if (q('SELECT 1 FROM review_comments WHERE review = ? AND member = ? LIMIT 1').get(r.id, me.id)) xp = mentorPay(me, o, 'review', 'r:' + r.id);
-          save(o, me); }
-        return json(res, 200, Object.assign(threadOut(reviewById(r.id), me, role), { xp })); }
+          if (said) xp = mentorPay(me, o, 'review', 'r:' + r.id); }
+        // the mentee's held XP is paid the first time the mentor marks it reviewed with a comment of theirs in it
+        if (on && said) fee = payHold(r, me, o);
+        if (on && !r.reviewed) notify(o, 'mentor', '@' + me.handle + ' reviewed your ' + what + ' ✓' + (fee || r.fee_state === 'paid' ? ' (' + r.fee + ' XP paid)' : ''), { title: 'Trade reviewed', url: '/daruma#tr/' + r.id });
+        if (on && (!r.reviewed || fee)) save(o, me);
+        return json(res, 200, Object.assign(threadOut(reviewById(r.id), me, role), { xp, fee })); }
       return json(res, 404, { error: 'not found' });
     }
     if (head === 'me' && M === 'PUT') {
@@ -3072,6 +3244,11 @@ function createSocial(opts) {
       if (body.share) { me.share = sanitizeShare(body.share, me.share); if (me.share.bench === false && me.bench) { me.bench = null; benchDirty = true; } } // off: their summary is gone from the next build
       if (me.share.bench === false && own(S.benchHist, 'm:' + me.id)) { delete S.benchHist['m:' + me.id]; touch('benchHist'); } // and their weekly history at once
       if (typeof body.coachDetail === 'boolean') me.coachDetail = body.coachDetail;
+      // a mentor's own rate (kept inside the owner's range when it's read) and how many mentees they take
+      if (me.mentor && body.mentorRate !== undefined) { const v = clampNum(body.mentorRate, 0, 1000); if (v == null) return json(res, 400, { error: 'A rate is a number of XP.' }); me.mentorRate = Math.round(v); recCache.delete(me.id); }
+      if (me.mentor && body.mentorSlots !== undefined) { const v = clampNum(body.mentorSlots, 1, SLOTS_MAX); if (v == null) return json(res, 400, { error: 'Slots are 1 to ' + SLOTS_MAX + '.' }); me.mentorSlots = Math.round(v); slotOpened(me); }
+      // letting mentors out closes every thread at once: picks are dropped and held XP comes back
+      if (!me.share.mentor && picksOf(me).length) for (const id of picksOf(me)) dropPick(me, S.members[id]);
       if (body.bio !== undefined) me.bio = cleanText(body.bio, 160);
       // a new picture replaces the old one (whose file goes); null takes it off
       if (body.avatar !== undefined) {
