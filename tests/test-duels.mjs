@@ -24,11 +24,13 @@ t('terms: a real type the league allows; conditions only where they apply', () =
   const cfg = Duels.sanitizeDuelCfg({ types: { ret: true } });
   eq(Duels.sanitizeTerms({ type: 'ret' }, cfg).ddCap, 0.08, 'a drawdown cap always comes with % return');
 });
-t('dates: the next whole week or month, starting today only when today is the Monday or the 1st', () => {
+t('dates: the next whole week or month, always starting after the day it’s accepted (no head start)', () => {
   eq(Duels.windowFor('week', Date.parse('2026-10-07T15:00:00Z')), { start: '2026-10-12', end: '2026-10-18' }); // a Wednesday
-  eq(Duels.windowFor('week', Date.parse('2026-10-12T08:00:00Z')), { start: '2026-10-12', end: '2026-10-18' }); // that Monday
+  // accepted on a Monday, part of it is already played and reported: the duel starts the Monday after (audit D4)
+  eq(Duels.windowFor('week', Date.parse('2026-10-12T08:00:00Z')), { start: '2026-10-19', end: '2026-10-25' });
+  eq(Duels.windowFor('week', Date.parse('2026-10-18T23:59:00Z')), { start: '2026-10-19', end: '2026-10-25' }); // a Sunday night
   eq(Duels.windowFor('month', Date.parse('2026-10-07T15:00:00Z')), { start: '2026-11-01', end: '2026-11-30' });
-  eq(Duels.windowFor('month', Date.parse('2026-12-01T00:30:00Z')), { start: '2026-12-01', end: '2026-12-31' });
+  eq(Duels.windowFor('month', Date.parse('2026-12-01T00:30:00Z')), { start: '2027-01-01', end: '2027-01-31' }); // the 1st: the next month
 });
 const dd = (type, extra) => Object.assign({ type, start: '2026-10-12', end: '2026-10-18', verified: false, minDays: 3, ddCap: 0.08 }, extra);
 const mem = (id, scores, extra) => Object.assign({ id, share: {}, stats: { days: scores.map(([k, s, j, r]) => ({ k: '2026-10-' + k, s, j: !!j, r: !!r })), xpDays: {} } }, extra);
@@ -97,7 +99,7 @@ try {
   await t('duels unlock at level 3 by default', async () => {
     eq((await call('/config')).d.modules.duels, 3);
     const r = await send(ann, 'bob'); eq(r.status, 403); ok(/level 3/.test(r.d.error));
-    await call('/admin/config', { method: 'PUT', owner: true, body: { modules: { duels: 1 }, standing: { on: false } } }); // the rest of this file plays at level 1 (standing has its own tests: test-trader-age-server)
+    await call('/admin/config', { method: 'PUT', owner: true, body: { modules: { duels: 1 }, standing: { on: false }, requireClaim: false } }); // the rest of this file plays at level 1 (standing has its own tests: test-trader-age-server)
   });
   let id;
   await t('a challenge reaches the other side; verified duels need verification switched on', async () => {
@@ -167,13 +169,25 @@ try {
     const d = await mine(ann); ok(d.people.some(p => p.handle === 'cat' && p.rel === 'following'), JSON.stringify(d.people));
     ok(!d.people.some(p => p.handle === 'ann'), 'never yourself');
   });
+  const idOf = async h => (await call('/admin/members', { owner: true })).d.members.find(m => m.handle === h).id;
+  const grant = async (h, xp) => call('/admin/members/' + await idOf(h), { method: 'POST', owner: true, body: { action: 'grant', xp } });
+  const until = async (f, ms = 3000) => { const end = Date.now() + ms; for (;;) { const v = await f(); if (v || Date.now() > end) return v; await new Promise(r => setTimeout(r, 30)); } };
+  await t('XP stakes need a verified wallet, and are paid from the server’s balance, never the XP an app reports', async () => {
+    await call('/stats', { method: 'POST', key: ann, body: Object.assign(days([]), { xp: 100000000 }) });
+    eq((await mine(ann)).room, 0, 'no verified wallet: nothing to stake, whatever the app says');
+    ok(/verified wallet/.test((await send(ann, 'dee', { type: 'xp', stake: 50 })).d.error));
+    for (const [k, a] of [[ann, '0x' + '1'.repeat(40)], [dee, '0x' + '4'.repeat(40)]]) await call('/me', { method: 'PUT', key: k, body: { address: a, share: { verify: true } } });
+    await until(async () => (await call('/admin/members', { owner: true })).d.members.filter(m => ['ann', 'dee'].includes(m.handle) && m.verified).length === 2);
+    eq((await mine(ann)).room, 0, 'verified, but the app’s 100,000,000 XP is no balance');
+  });
   await t('XP stakes: both put up the same, the winner takes the other’s, within what each can cover', async () => {
+    await grant('ann', 1000); await grant('dee', 100); // the balance: the owner's grants here (verified Discipline XP in a real league)
     await call('/stats', { method: 'POST', key: ann, body: Object.assign(days([]), { xp: 1000 }) });
     await call('/stats', { method: 'POST', key: dee, body: Object.assign(days([]), { xp: 100 }) });
     eq((await mine(ann)).room, 250, '25% of 1000');
     ok(/at most 250 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 300 })).d.error));
     ok(/@dee can’t cover/.test((await send(ann, 'dee', { type: 'xp', stake: 100 })).d.error));
-    await call('/stats', { method: 'POST', key: dee, body: Object.assign(days([]), { xp: 1000 }) });
+    await grant('dee', 900); await call('/stats', { method: 'POST', key: dee, body: Object.assign(days([]), { xp: 1000 }) });
     ok(/apps report themselves, at most 100 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 200 })).d.error), 'process XP is reported by the app: 100 XP at most by default');
     await call('/admin/config', { method: 'PUT', owner: true, body: { pots: { selfMax: 1000 } } });
     const r = await send(ann, 'dee', { type: 'xp', stake: 200 }); eq([r.status, r.d.duel.stake], [200, 200], JSON.stringify(r.d));
@@ -229,7 +243,8 @@ try {
     const row = db.prepare('SELECT id, data FROM members').all().map(r => ({ id: r.id, m: JSON.parse(r.data) })).find(r => r.m.handle === 'cat');
     row.m.grants = [{ id: 'g1', xp: 100, why: 'Won a Discipline duel', at: clock, duel: 'dx' }, { id: 'g2', xp: 150, why: 'Won 150 XP staked by @ann', at: clock, duel: 'dx' },
       { id: 'g3', xp: -50, why: 'Lost a Clean days duel to @dee', at: clock, duel: 'dy' }, { id: 'g4', xp: 40, why: 'Bonus from the league owner', at: clock }];
-    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240 }); // what the app last posted: earned XP with these grants in it
+    row.m.grants[1].at = clock + DAY; // won after the app last posted: its total doesn't count it yet (audit X11)
+    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240 }); row.m.statsAt = clock; // what the app last posted: earned XP with the other grants in it
     db.prepare('UPDATE members SET data = ? WHERE id = ?').run(JSON.stringify(row.m), row.id);
     const kv = k => JSON.parse(db.prepare('SELECT v FROM kv WHERE k = ?').get(k).v);
     const mg = kv('migrations'); ok(mg.stakeSplit, 'recorded'); delete mg.stakeSplit;
@@ -237,7 +252,8 @@ try {
     app = mk(); B = await listen();
     const me = (await call('/me', { key: cat })).d.me;
     eq([me.grants.map(g => g.id), me.stakes.map(g => g.id), me.stakeNet], [['g1', 'g4'], ['g2', 'g3'], 100]);
-    eq(me.balance, 1240, 'the posted total loses the moved stakes until the app syncs, so they aren’t counted twice');
+    eq(me.xp, 1290, 'the posted total loses only the moved stakes it had counted (the −50), so nothing is taken off twice');
+    eq(me.balance, 240, 'the balance is the server’s own: the grants left (100 + 40) and the stakes (+100)');
     await new Promise(r => app.close(r)); app = mk(); B = await listen();
     eq((await call('/me', { key: cat })).d.me.stakeNet, 100, 'once: a restart doesn’t move it again');
   });

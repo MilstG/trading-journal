@@ -20,8 +20,15 @@ const FILLS = [];
 for (let i = 19; i >= 0; i--) { const d = clock - i * DAY - 6 * 3600e3;
   FILLS.push({ coin: 'ETH', side: 'B', sz: '1', px: '100', startPosition: '0', closedPnl: '0', fee: '0', crossed: true, time: d, tid: 2 * i + 1, oid: 2 * i + 1 },
     { coin: 'ETH', side: 'A', sz: '1', px: '110', startPosition: '1', closedPnl: '10', fee: '0', crossed: true, time: d + 3600e3, tid: 2 * i + 2, oid: 2 * i + 2 }); }
+// a second wallet: every day one revenge entry in four trades (Discipline 75, the same every day)
+const ADDR2 = '0x' + 'c'.repeat(40), F2 = [];
+const wobblyDay = (ms, n) => { const f = (side, px, sp, pnl, t, i) => ({ coin: 'ETH', side, sz: '1', px: String(px), startPosition: String(sp), closedPnl: String(pnl), fee: '0', crossed: true, time: t, tid: i, oid: i }), h = 3600e3;
+  F2.push(f('B', 100, 0, 0, ms, n), f('A', 110, 1, 10, ms + h, n + 1), f('B', 100, 0, 0, ms + 2 * h, n + 2), f('A', 90, 1, -10, ms + 2 * h + 600e3, n + 3),
+    f('B', 100, 0, 0, ms + 2 * h + 900e3, n + 4), f('A', 110, 1, 10, ms + 3 * h, n + 5), f('B', 100, 0, 0, ms + 4 * h, n + 6), f('A', 110, 1, 10, ms + 5 * h, n + 7)); };
+for (let i = 19; i >= 0; i--) wobblyDay(Date.parse(key(clock - i * DAY) + 'T08:00:00Z'), 1000 + 10 * i);
 const starts = [];
 const fetchImpl = async (url, o) => { const b = JSON.parse(o.body);
+  if (b.type === 'userFillsByTime' && String(b.user).toLowerCase() === ADDR2) return { ok: true, status: 200, json: async () => F2.filter(f => f.time >= (b.startTime || 0)) };
   if (b.type === 'userFillsByTime' && String(b.user).toLowerCase() === ADDR) { starts.push(b.startTime); return { ok: true, status: 200, json: async () => FILLS.filter(f => f.time >= (b.startTime || 0)) }; }
   return { ok: true, status: 200, json: async () => (b.type === 'portfolio' ? [] : []) }; };
 const dataDir = mkdtempSync(join(tmpdir(), 'ledger-ta-srv-'));
@@ -94,7 +101,8 @@ try {
     eq((await call('/config')).d.standing, { on: true, bar: 60, grace: 14, years: 2 });
     await call('/me', { method: 'PUT', key: K, body: { share: { verify: true } } });
     const st = await until(async () => { const m = await me(K); return m.ta && m.ta.recentN === 20 && m.standing.state === 'good' ? m.standing : null; });
-    ok(st, 'good'); eq([st.locked, st.exempt, st.since], [false, false, null]); near(st.recent, 94.5, 0.05);
+    // standing reads Trader Age from fills alone: Discipline 100 and steady is 100, whatever the app says about prep
+    ok(st, 'good'); eq([st.locked, st.exempt, st.since], [false, false, null]); near(st.recent, 100, 0.05);
   });
   await t('without a verified wallet: 14 days of grace, with a heads-up in the inbox', async () => {
     k2 = (await call('/join', { method: 'POST', body: { handle: 'dodger' } })).d.key;
@@ -103,14 +111,23 @@ try {
     watcherId = (await call('/admin/members', { owner: true })).d.members.find(m => m.handle === 'dodger').id;
     eq((await call('/admin/members', { owner: true })).d.members.find(m => m.handle === 'dodger').standing, 'unverified');
   });
+  let W;
   await t('under the bar: slipping, with the deadline; past it without trading since, the clock waits', async () => {
-    // the owner raises the bar to 90; no prep or journaling brings the 20-day rating to 87
+    // the owner raises the bar to 90. What the app says about prep and journaling no longer moves standing
+    // (audit X12): a member whose fills are clean stays good with none of it...
     await call('/admin/config', { method: 'PUT', owner: true, body: { standing: { bar: 90 } } });
     const noLog = stats(); for (const d of noLog.days) { d.p = 0; d.pl = 0; d.jn = 0; }
     await call('/stats', { method: 'POST', key: K, body: noLog });
-    let st = (await me(K)).standing; eq(st.state, 'slipping'); near(st.recent, 87, 0.05); eq(st.deadline, clock + 14 * DAY);
+    eq((await me(K)).standing.state, 'good');
+    // ...and one whose fills show a revenge entry a day can't post their way back up: 75 Discipline, steady: 79.7
+    W = (await call('/join', { method: 'POST', body: { handle: 'wobbly', address: ADDR2, share: { verify: true } } })).d.key;
+    const perfect = stats(); for (const d of perfect.days) { d.p = 1; d.pl = 1; d.jn = 1; d.lm = 1; }
+    await call('/stats', { method: 'POST', key: W, body: perfect });
+    let st = await until(async () => { const m = await me(W); return m.ta && m.ta.recentN === 20 ? m.standing : null; });
+    eq(st.state, 'slipping'); near(st.recent, 79.7, 0.05); eq(st.deadline, clock + 14 * DAY);
+    ok((await me(W)).ta.raw > st.recent, 'the Trader Age shown still counts the app’s parts');
     clock += 15 * DAY;
-    st = (await me(K)).standing; eq([st.state, st.locked], ['slipping', false], 'no trading day since it began');
+    st = (await me(W)).standing; eq([st.state, st.locked], ['slipping', false], 'no trading day since it began');
   });
   await t('lapsed (unverified): duels, competitions and the leaderboards lock, the coach drops to 1 a day', async () => {
     const st = (await me(k2)).standing; eq([st.state, st.why, st.locked], ['lapsed', 'unverified', true]);
@@ -130,18 +147,17 @@ try {
   });
   await t('lapsed (rating): a trading day after the deadline locks it; back at the bar opens it again', async () => {
     // a new trading day comes in from the wallet
-    const d = clock - 2 * 3600e3; FILLS.push({ coin: 'ETH', side: 'B', sz: '1', px: '100', startPosition: '0', closedPnl: '0', fee: '0', crossed: true, time: d, tid: 900, oid: 900 },
-      { coin: 'ETH', side: 'A', sz: '1', px: '110', startPosition: '1', closedPnl: '10', fee: '0', crossed: true, time: d + 600e3, tid: 901, oid: 901 });
+    wobblyDay(Date.parse(key(clock) + 'T08:00:00Z') - 2 * DAY, 5000); clock = Date.parse(key(clock) + 'T20:00:00Z');
     clock += 31 * 60000; // the wallet is read again at most every 30 minutes; the stats the app sends bring it in
-    await call('/stats', { method: 'POST', key: K, body: Object.assign(stats(), { days: [] }) });
-    const st = await until(async () => { const m = await me(K); return m.standing.state === 'lapsed' ? m.standing : null; });
+    await call('/stats', { method: 'POST', key: W, body: Object.assign(stats(), { days: [] }) });
+    const st = await until(async () => { const m = await me(W); return m.standing.state === 'lapsed' ? m.standing : null; });
     ok(st, 'lapsed'); eq([st.why, st.locked], ['rating', true]);
-    const dl = await call('/duels', { method: 'POST', key: K, body: { to: 'dodger', type: 'disc', period: 'week', verified: false } });
+    const dl = await call('/duels', { method: 'POST', key: W, body: { to: 'dodger', type: 'disc', period: 'week', verified: false } });
     ok(dl.status === 403 && /standing is lapsed/.test(dl.d.error), dl.d.error);
-    eq((await call('/leaderboard?scope=global&board=level', { key: K })).d.offBoards, true);
+    eq((await call('/leaderboard?scope=global&board=level', { key: W })).d.offBoards, true);
     await call('/admin/config', { method: 'PUT', owner: true, body: { standing: { bar: 60 } } });
-    eq((await me(K)).standing.state, 'good');
-    ok((await call('/inbox', { key: K })).d.items.some(x => x.kind === 'standing' && /back/.test(x.text)), 'told it’s back');
+    eq((await me(W)).standing.state, 'good');
+    ok((await call('/inbox', { key: W })).d.items.some(x => x.kind === 'standing' && /back/.test(x.text)), 'told it’s back');
   });
   await t('fully unlocked members are never locked; the owner can switch standing off', async () => {
     await call('/admin/members/' + watcherId, { method: 'POST', owner: true, body: { action: 'unlock' } });

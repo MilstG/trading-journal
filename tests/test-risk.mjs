@@ -62,11 +62,16 @@ t('the penalty rule docks Discipline points instead', () => {
   eq(Duels.standing(Object.assign(dd('clean'), d2, { type: 'clean' }), A, B, '2026-10-20').a.out, true, 'clean days can’t be docked: out');
 });
 t('% return with a minimum of trading days: sitting flat doesn’t win', () => {
-  const quiet = mem('b', [['12', 90]]);
+  // trading days are the verified ones only, read from the wallet (audit D3)
+  const vd = ks => ({ share: { verify: true }, vdays: ks.map(k => ({ k: '2026-10-' + k, s: 90 })) });
+  const traded = mem('a', [], vd(['12', '13', '14'])), quiet = mem('b', [], vd(['12']));
   const d = dd('ret', { ddCap: 0.15, minDays: 3, money: { a: { ret: 0.02, dd: 0.03 }, b: { ret: 0.05, dd: 0.001 } } });
-  const s = Duels.standing(d, A, quiet, '2026-10-20');
+  const s = Duels.standing(d, traded, quiet, '2026-10-20');
   eq([s.lead, s.b.n], ['a', 1]); ok(/fewer than 3 days/.test(s.why), s.why);
-  eq(Duels.standing(Object.assign({}, d, { minDays: null }), A, quiet, '2026-10-20').lead, 'b', 'a duel from before the minimum: return decides');
+  eq(Duels.standing(Object.assign({}, d, { minDays: null }), traded, quiet, '2026-10-20').lead, 'b', 'a duel from before the minimum: return decides');
+  // days an app reports (some in the future) never make up the minimum: the flat side with five of them still loses
+  const made = mem('b', [['12', 100], ['13', 100], ['14', 100], ['15', 100], ['16', 100]]);
+  const f = Duels.standing(d, traded, made, '2026-10-20'); eq([f.lead, f.b.n], ['a', 0]);
 });
 
 console.log('\nGroup duels');
@@ -82,13 +87,24 @@ const comp = extra => Object.assign({ start: '2026-10-01', end: '2026-10-31', en
 const people = [
   { id: '1', handle: 'calm', share: { verify: true, ret: true }, vdays: [vd('02', 90), vd('03', 90), vd('06', 90)], stats: { days: [] } },
   { id: '2', handle: 'wild', share: { verify: true, ret: true }, vdays: [vd('02', 95), vd('03', 95), vd('06', 95)], stats: { days: [] } },
-  { id: '3', handle: 'nowallet', share: { verify: true, ret: false }, vdays: [vd('02', 70), vd('03', 70), vd('06', 70)], stats: { days: [] } }];
+  { id: '3', handle: 'nowallet', share: { verify: true, ret: true }, vdays: [vd('02', 70), vd('03', 70), vd('06', 70)], stats: { days: [] } }];
 t('a Discipline competition with a cap: the one past it is out and placed last', () => {
   const c = comp({ type: 'discipline', minDays: 3, ddCap: 0.15, ddMode: 'out', money: { 1: { ret: 0.01, dd: 0.05 }, 2: { ret: 0.4, dd: 0.3 } } });
   const rows = S.compStandings(c, people, '2026-10-10');
   eq(rows.map(r => [r.handle, r.out]), [['calm', false], ['nowallet', false], ['wild', true]]);
   ok(/Out: drawdown 30.0%/.test(rows[2].note), rows[2].note);
   ok(/drawdown: waiting/.test(rows[1].note), 'a member whose drawdown isn’t read yet is told so: ' + rows[1].note);
+});
+t('a capped competition: no drawdown reading is never “not over” (audit D1)', () => {
+  const c = comp({ type: 'discipline', minDays: 3, ddCap: 0.15, ddMode: 'out', money: { 1: { ret: 0.01, dd: 0.05 } } });
+  // stopped sharing % return after the start: out at once, whatever the measure says
+  const hid = people.map(p => p.id === '2' ? Object.assign({}, p, { share: { verify: true, ret: false } }) : p);
+  const r1 = S.compStandings(c, hid, '2026-10-10'); const w = r1.find(r => r.handle === 'wild');
+  eq([w.out, w.note], [true, 'Out: stopped sharing returns']);
+  // still no reading when the results are frozen: out, not paid
+  const fin = S.compStandings(c, people, '2026-11-02', false, null, true);
+  eq(fin.map(r => [r.handle, r.out]), [['calm', false], ['nowallet', true], ['wild', true]]);
+  ok(/no drawdown reading/.test(fin.find(r => r.handle === 'wild').note));
 });
 t('a return competition: docked past the cap under the penalty rule; trading days only when it was made with them', () => {
   const c = comp({ type: 'return', minDays: 3, ddCap: 0.1, ddMode: 'penalty', penalty: 2, money: { 1: { ret: 0.08, dd: 0.04 }, 2: { ret: 0.2, dd: 0.17 } } });

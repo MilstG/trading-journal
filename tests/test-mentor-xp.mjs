@@ -20,7 +20,10 @@ const NED = '0x' + 'e'.repeat(40), MIA = '0x' + 'a'.repeat(40);
 const d = (k, s, f) => Object.assign({ k, s, n: 3 }, f ? { f } : {});
 const wk = (mon, s, f, n = 3) => Array.from({ length: n }, (_, i) => d(key(Date.parse(mon + 'T12:00:00Z') + i * DAY), s, f));
 let NED_DAYS = [...wk('2026-09-21', 75, ['revenge']), ...wk('2026-09-28', 75, ['revenge']), ...wk('2026-10-05', 100), ...wk('2026-10-12', 100)];
-const behaviorFor = async addr => addr === NED ? NED_DAYS : [];
+// the other mentees' wallets: each read as having traded on the days listed (a mentee counts as active only
+// when the server read a trading day in the last 14 from a verified wallet: audit X13)
+const W = h => '0x' + h.repeat(40), ACT = { [W('1')]: [d(key(clock), 80)], [W('2')]: [d(key(clock), 80)], [W('3')]: [d(key(clock), 80)], [W('4')]: [d(key(clock - 20 * DAY), 80)] };
+const behaviorFor = async addr => addr === NED ? NED_DAYS : ACT[addr] || [];
 
 const dataDir = mkdtempSync(join(tmpdir(), 'ledger-mxp-'));
 const app = server.createApp({ dataDir, auth: 'owner-token', htmlPath, now: () => clock, push: false, pushTick: false, offsiteTimer: false, behaviorFor, trustProxy: true,
@@ -41,7 +44,9 @@ let M, N, O, P, Q, Z;
 try {
   await call('/admin/config', { method: 'PUT', admin: true, body: { requireClaim: false, unlocksOn: false, standing: { on: false } } });
   M = await join_('mia', { address: MIA }); N = await join_('ned', { address: NED, share: { verify: true } });
-  O = await join_('olu'); P = await join_('pam'); Q = await join_('quin'); Z = await join_('zed');
+  O = await join_('olu', { address: W('1'), share: { verify: true } }); P = await join_('pam', { address: W('2'), share: { verify: true } });
+  Q = await join_('quin', { address: W('3'), share: { verify: true } }); Z = await join_('zed', { address: W('4'), share: { verify: true } });
+  for (const k of [O, P, Q, Z]) await until(async () => (await me(k)).ta);
   await call('/admin/members/' + await idOf('mia'), { method: 'POST', admin: true, body: { action: 'mentor' } });
   for (const k of [N, O, P, Q, Z]) await call('/me', { method: 'PUT', key: k, body: { share: { mentor: true } } });
   for (const k of [O, P, Q]) await traded(k);
@@ -59,6 +64,10 @@ try {
     eq((await note(M, 'zed')).d.xp, 0, 'zed hasn’t traded in 14 days');
     const mx = (await me(M)).mentorXp; eq([mx.total, mx.today, mx.days[key(clock)].n], [15, 15, 3]);
   });
+  await t('a mentee without a verified wallet pays nothing, whatever days their app reports', async () => {
+    const S2 = await join_('sock'); await call('/me', { method: 'PUT', key: S2, body: { share: { mentor: true } } }); await traded(S2);
+    eq((await note(M, 'sock')).d.xp, 0, 'no wallet the server reads: could be the mentor’s own second profile');
+  });
   await t('a trade review pays once, and only with a comment from the mentor in it', async () => {
     const rid = (await call('/reviews', { method: 'POST', key: O, body: { key: 'tradeolu01', trade: TR } })).d.review.id;
     eq((await call('/reviews/' + rid + '/reviewed', { method: 'POST', key: M, body: { done: true } })).d.xp, 0, 'nothing said');
@@ -68,6 +77,17 @@ try {
     await call('/reviews/' + rid + '/reviewed', { method: 'POST', key: M, body: { done: false } });
     eq((await call('/reviews/' + rid + '/reviewed', { method: 'POST', key: M, body: { done: true } })).d.xp, 0, 'already paid');
     eq((await me(M)).mentorXp.days[key(clock)].r, 1);
+    // taking the trade back and sending it again makes a new review: it doesn't pay again (keyed on the trade)
+    await call('/reviews/' + rid, { method: 'DELETE', key: O });
+    const again = (await call('/reviews', { method: 'POST', key: O, body: { key: 'tradeolu01', trade: TR } })).d.review.id; ok(again !== rid);
+    await call('/reviews/' + again + '/comments', { method: 'POST', key: M, body: { text: 'Same trade, same lesson.' } });
+    eq((await call('/reviews/' + again + '/reviewed', { method: 'POST', key: M, body: { done: true } })).d.xp, 0, 'the same trade');
+  });
+  await t('the mentor’s day is the UTC day: hopping time zones doesn’t open another day’s cap', async () => {
+    const before = (await me(M)).mentorXp;
+    await call('/stats', { method: 'POST', key: M, body: { xp: 10, level: 1, tz: 'Etc/GMT-14' } }); // already tomorrow there
+    eq((await note(M, 'quin')).d.xp, 0, 'three paid notes today already, whatever the clock says');
+    eq(Object.keys((await me(M)).mentorXp.days), Object.keys(before.days), 'no new day bucket');
   });
   await t('reviews and notes stop at the daily cap; a new day starts it again', async () => {
     await call('/admin/config', { method: 'PUT', admin: true, body: { mentorXp: { cap: 40 } } });

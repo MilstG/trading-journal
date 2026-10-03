@@ -29,6 +29,9 @@ const stats = (key, xp, coachSpent) => call('/api/social/stats', { method: 'POST
 const cfg = packs => call('/api/social/admin/config', { method: 'PUT', owner: true, body: { coach: { packs } } });
 const join_ = async (handle, address) => { const k = (await call('/api/social/join', { method: 'POST', body: { handle, address } })).d.key;
   return { k, id: (await call('/api/social/me', { key: k })).d.me.id }; };
+// XP to spend is the server's ledger (audit X1), never the total the app reports: an owner's grant funds it
+const fund = (id, xp) => call('/api/social/admin/members/' + id, { method: 'POST', owner: true, body: { action: 'grant', xp } });
+const coachGrants = async key => (await call('/api/social/me', { key })).d.me.grants.filter(g => g.coach);
 const useUp = async (key, n) => { for (let i = 0; i < n; i++) eq((await ask(key)).status, 200, 'message ' + (i + 1)); };
 const W = '0x' + '5d'.repeat(20);
 
@@ -44,18 +47,19 @@ let A, A2;
 try {
   // default levels: level 4 starts at 2,400 XP, level 5 at 4,000
   await t('nothing to buy while messages are left; once they’re used the offer comes with the 429', async () => {
-    A = await join_('pia', W); await stats(A.k, 3000, 0);
+    A = await join_('pia', W); await stats(A.k, 3000, 0); await fund(A.id, 3000);
     eq((await status(A.k)).packs, null);
     await useUp(A.k, 3);
     const r = await ask(A.k); eq(r.status, 429);
-    eq(r.d.packs, { price: 150, msgs: 3, bought: 0, max: 2, xp: 3000, after: 2850, level: 4, levelAfter: 4, blocked: null });
+    eq(r.d.packs, { price: 150, msgs: 3, bought: 0, max: 2, xp: 3000, after: 2850, level: 4, levelAfter: 4, spend: 3000, blocked: null });
   });
   await t('a purchase at a stale price is refused; at the shown price it adds 3 messages and a coach grant', async () => {
     const bad = await buy(A.k, 99); eq(bad.status, 409); ok(/price is now 150 XP/.test(bad.d.error), bad.d.error);
     const r = await buy(A.k, 150); eq(r.status, 200);
     eq([r.d.allowed, r.d.limit, r.d.remaining, r.d.packs], [true, 6, 3, null]); eq(r.d.bought, { price: 150, msgs: 3 });
-    const g = (await call('/api/social/me', { key: A.k })).d.me.grants;
+    const g = await coachGrants(A.k);
     eq(g.length, 1); eq([g[0].xp, g[0].why, g[0].coach], [-150, 'Coach: 3 extra messages', true]);
+    eq((await call('/api/social/me', { key: A.k })).d.me.balance, 2850, 'paid from the balance at once');
     eq((await buy(A.k, 150)).status, 409, 'messages left: nothing to buy');
   });
   await t('XP the app hasn’t counted yet is held back from the next price check', async () => {
@@ -67,7 +71,7 @@ try {
   });
   await t('a second pack the same day adds to the day’s one grant', async () => {
     eq((await buy(A.k, 150)).status, 200);
-    const g = (await call('/api/social/me', { key: A.k })).d.me.grants;
+    const g = await coachGrants(A.k);
     eq(g.length, 1); eq([g[0].xp, g[0].why], [-300, 'Coach: 6 extra messages']);
   });
   await t('a profile on the same wallet shares the extras and the cap', async () => {
@@ -90,8 +94,15 @@ try {
   });
   await t('not enough XP', async () => {
     await useUp(A.k, 3);
+    await stats(A.k, 1000, 900); await fund(A.id, -1100); // 3,000 granted, 900 spent, a 1,100 correction: 1,000 to spend
+    const o = (await status(A.k)).packs; eq([o.price, o.xp, o.spend], [1200, 1000, 1000]); eq(o.blocked, 'You need 1,200 XP to spend and have 1,000.');
+  });
+  await t('a total the app reports never pays for a pack (audit X1)', async () => {
+    await stats(A.k, 100000000, 900);
+    const o = (await status(A.k)).packs; eq(o.spend, 1000); eq(o.blocked, 'You need 1,200 XP to spend and have 1,000.');
+    ok(o.xp > 1000 && o.xp < 1e7, 'the total shown is capped at what a perfect player could have earned (since 2015 here): ' + o.xp);
+    eq((await buy(A.k, 1200)).status, 409);
     await stats(A.k, 1000, 900);
-    const o = (await status(A.k)).packs; eq([o.price, o.xp], [1200, 1000]); eq(o.blocked, 'You need 1,200 XP and have 1,000.');
   });
   await t('the owner sees today’s packs and their XP; switching packs off leaves “More tomorrow”', async () => {
     const ov = (await call('/api/social/admin/overview', { owner: true })).d;
@@ -106,7 +117,7 @@ try {
   await t('an admin reset clears the packs too; the XP stays spent', async () => {
     await call('/api/social/admin/members/' + A.id, { method: 'POST', owner: true, body: { action: 'coachreset' } });
     const st = await status(A.k); eq([st.limit, st.remaining], [3, 3]);
-    eq((await call('/api/social/me', { key: A.k })).d.me.grants[0].xp, -900);
+    eq((await coachGrants(A.k))[0].xp, -900);
   });
   await t('admins have no limit, so no offer; only members can buy', async () => {
     const r = await call('/api/social/admin/members', { method: 'POST', owner: true, body: { handle: 'ada', admin: true } });
@@ -127,8 +138,10 @@ try {
   });
   await t('what was lost on duel stakes limits what can be spent; a purchase lowers the stake balance at once', async () => {
     const m = app._social.state().members[A.id];
-    m.stakeNet = -900; // earned 1,000, balance 100
-    eq((await status(A.k)).packs.blocked, 'You can spend 100 XP right now: that’s your balance after duel stakes.');
+    m.stakeNet = -900; // 1,000 in the ledger, 900 lost on stakes: 100 to spend
+    eq((await status(A.k)).packs.blocked, 'You need 150 XP to spend and have 100.');
+    m.stakeNet = -1500; eq((await call('/api/social/me', { key: A.k })).d.me.balance, -500, 'a debt shows as one, not as 0');
+    eq((await status(A.k)).packs.blocked, 'You need 150 XP to spend and have 0.');
     m.stakeNet = 0;
     eq((await buy(A.k, 150)).status, 200);
     eq((await call('/api/social/me', { key: A.k })).d.me.balance, 850, 'before the app reports it');

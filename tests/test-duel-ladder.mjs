@@ -97,6 +97,7 @@ try {
     const L = (await mine('ann')).ladder; eq([L.on, L.me.r, L.me.n, L.k, L.min], [true, 1000, 0, 32, 3], 'everyone starts at 1000');
     clock = Date.parse('2026-09-08T12:00:00Z');
     const f = await act('cat', ac, 'forfeit'); eq([f.d.duel.result.outcome, f.d.duel.result.rating], ['lost', -16], 'a forfeit counts');
+    clock = Date.parse('2026-09-09T20:00:00Z'); // a day is posted once it's played: one after the member's today is dropped
     await run('ann', '2026-09-07', [90, 90, 90]); await run('bob', '2026-09-07', [60, 60, 60]); await run('dee', '2026-09-07', [90, 90, 90]);
     clock = Date.parse('2026-09-15T09:00:00Z');
     const a = await mine('ann'), won = a.duels.find(x => x.id === ab), drew = a.duels.find(x => x.id === ad);
