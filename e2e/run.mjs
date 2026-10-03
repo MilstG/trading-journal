@@ -157,7 +157,14 @@ try {
     ok(!(await cp.evaluate(() => document.body.classList.contains('ts9'))), 'and carries to Daruma');
     await cp.evaluate(() => setColorway('ts9')); await cp.waitForFunction(() => document.body.classList.contains('ts9'));
     eq(await cp.evaluate(() => getComputedStyle(document.getElementById('pz')).getPropertyValue('--pz-acc').trim()), '#7dff4f', 'Daruma takes the TS9 accent');
+    // the last pick lands on the server before this page goes, and the shared page catches up with the
+    // server's revision: otherwise its next unsynced edit (the Light test's) loses to the server's copy
+    synced = false;
+    for (let i = 0; i < 40 && !synced; i++) { await new Promise(r => setTimeout(r, 250));
+      const d = await (await fetch(BASE + '/api/data', { headers: { Authorization: 'Bearer ' + TOKEN } })).json(); synced = !!(d.snapshot && d.snapshot.settings && d.snapshot.settings.colorway === 'ts9'); }
+    ok(synced, 'the pick is back on the server');
     eq(ce, [], 'no uncaught errors'); await cp.close();
+    await page.reload(); await page.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0 && settings.colorway === 'ts9', null, { timeout: 10000 });
   });
   await t('Light appearance applies everywhere, survives a reload, and is there before first paint', async () => {
     await page.evaluate(() => setAppearance('light'));
