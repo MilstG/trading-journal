@@ -33,13 +33,16 @@ const send = (k, body) => call('/reviews', { method: 'POST', key: k, body: Objec
 const comment = (k, id, text = 'Your stop moved twice. Leave it.') => call('/reviews/' + id + '/comments', { method: 'POST', key: k, body: { text } });
 const done = (k, id) => call('/reviews/' + id + '/reviewed', { method: 'POST', key: k, body: { done: true } });
 const inbox = async k => (await call('/inbox', { key: k })).d.items;
+const grant = async (h, xp) => call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action: 'grant', xp } });
 
 let MIA, KAI, LEO, NED, OLU, PAM;
 try {
   await call('/admin/config', { method: 'PUT', admin: true, body: { requireClaim: false, unlocksOn: false, standing: { on: false } } });
   MIA = await join_('mia'); KAI = await join_('kai'); LEO = await join_('leo'); NED = await join_('ned'); OLU = await join_('olu'); PAM = await join_('pam');
   for (const h of ['mia', 'kai', 'leo']) await call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action: 'mentor' } });
-  for (const [k, xp] of [[MIA, 500], [KAI, 300], [LEO, 100], [NED, 120], [OLU, 30], [PAM, 400]]) await stats(k, xp);
+  // XP to spend is the server's ledger, never the total an app reports: each starts with an owner's grant
+  for (const [h, k, xp] of [['mia', MIA, 500], ['kai', KAI, 300], ['leo', LEO, 100], ['ned', NED, 120], ['olu', OLU, 30], ['pam', PAM, 400]]) {
+    await stats(k, xp); await call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action: 'grant', xp, why: 'Starting balance' } }); }
 
   await t('the owner’s range: 0 to 100 XP a trade, no pool share and 72 hours to review by default; a minimum above the maximum moves it', async () => {
     const c = (await call('/config')).d.mentorXp; eq([c.rates, c.rateMin, c.rateMax, c.poolPct, c.holdHours], [true, 0, 100, 0, 72]);
@@ -108,17 +111,20 @@ try {
     ok((await call('/reviews', { key: MIA })).d.toReview.some(x => x.id === held.id));
   });
   await t('not enough XP to spend: the trade doesn’t go', async () => {
-    await stats(NED, 70); // a lost duel stake took some
+    // what the app reports never pays a mentor (audit X1): only the server's ledger does
+    await stats(NED, 1000000); eq((await me(NED)).wallet.balance, 80, 'a posted total of a million changes nothing');
+    await grant('ned', -50); // a correction from the owner
     const r = await send(NED, { to: 'mia' }); eq(r.status, 409); ok(/you have 30 XP to spend \(40 more is held/.test(r.d.error), r.d.error);
-    await stats(NED, 120);
+    await grant('ned', 50); await stats(NED, 120);
   });
   await t('marked reviewed without a word pays nothing; with a comment the hold is paid, less the pool’s 10%', async () => {
     eq((await done(MIA, held.id)).d.fee, 0);
+    const lvl0 = (await me(NED)).level; // the league's level for the XP the app reports (120: level 1)
     clock += 2 * HOUR; await comment(MIA, held.id);
     const r = await done(MIA, held.id); eq([r.d.fee, r.d.review.fee.state], [36, 'paid']);
     eq((await done(MIA, held.id)).d.fee, 0, 'once');
     eq((await me(NED)).wallet, { balance: 80, held: 0, spent: 40 });
-    eq((await me(NED)).level, 3, 'paying never lowers a level');
+    eq((await me(NED)).level, lvl0, 'paying never lowers a level');
     const mx = (await me(MIA)).mentorXp; eq([mx.days[key(clock)].fee, mx.days[key(clock)].paid], [36, 1]);
     const pool = (await call('/admin/pool', { admin: true })).d; eq([pool.xp, pool.total, pool.log[0].fee, pool.log[0].xp, pool.log[0].from, pool.log[0].to], [4, 4, 40, 4, 'ned', 'mia']);
     eq((await call('/admin/pool', { key: NED })).status, 401);
@@ -136,7 +142,7 @@ try {
     eq((await done(KAI, h.id)).d.fee, 0, 'a late review is free');
   });
   await t('taking a trade back returns held XP, and an untouched free first trade stays free', async () => {
-    await stats(OLU, 300);
+    await grant('olu', 270);
     const f = (await send(OLU, {})).d.review; eq([f.to, f.fee.state], ['mia', 'free']);
     eq((await call('/reviews/' + f.id, { method: 'DELETE', key: OLU })).status, 200);
     const f2 = (await send(OLU, {})).d.review; eq(f2.fee.state, 'free', 'mia said nothing on the first one');

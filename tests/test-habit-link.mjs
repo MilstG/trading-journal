@@ -5,10 +5,10 @@ import { readAppSource } from '../app-source.js';
 
 const html = readAppSource(new URL('../ledger.html', import.meta.url).pathname);
 const { evalModule } = makeExtractor(html);
-const pre = html.match(/const RV_BLIND=\[[^\]]*\];/)[0] + '\n' + html.slice(html.indexOf('const RV_HABITS=['), html.indexOf('];', html.indexOf('const RV_HABITS=[')) + 2)
+const pre = html.match(/const RV_BLIND=\[[^\]]*\];/)[0] + '\n' + html.match(/const RV_CHANCE=\[[^\]]*\];/)[0] + '\n' + html.slice(html.indexOf('const RV_HABITS=['), html.indexOf('];', html.indexOf('const RV_HABITS=[')) + 2)
   + '\n' + html.match(/const HL_MIN=\{[^}]*\};/)[0] + '\n' + html.match(/const HL_BANDS=\[.*\];/)[0];
 const pre2 = pre + '\n' + html.match(/const HL_SURE=\{.*\};/)[0];
-const { habitLink, hlLinkWords, hlSummary } = await evalModule(['habitLink', 'hlLinkWords', 'hlSummary', '_spearmanWith', '_seededRnd'], null, pre2);
+const { habitLink, hlLinkWords, hlSummary } = await evalModule(['habitLink', 'hlLinkWords', 'hlSummary', '_spearmanWith', '_seededRnd', 'rvRoutineOf', 'rvChanceSplit'], null, pre2);
 
 // n days; each day's habits decided by keep(i) → {plan, checkin, review, revenge}; result by res(i, kept)
 function history(n, keep, res) {
@@ -18,7 +18,9 @@ function history(n, keep, res) {
     const trades = [{ id: key + 'a', net: res(i, k) / 2, r: res(i, k) / 200, pct: res(i, k) / 100 }, { id: key + 'b', net: res(i, k) / 2, r: res(i, k) / 200, pct: res(i, k) / 100 }];
     byDay[key] = trades;
     days.push({ key, score: k.revenge ? 50 : 100, n: 2, net: res(i, k),
-      behavior: { n: 2, clean: k.revenge ? 1 : 2, flags: { revenge: k.revenge ? 1 : 0 }, slips: k.revenge ? [{ id: key + 'b', f: ['revenge'] }] : [] },
+      // trade b came right after a loss (a chance at revenge and at sizing up); the day had a usual trade count to keep
+      behavior: { n: 2, clean: k.revenge ? 1 : 2, flags: { revenge: k.revenge ? 1 : 0 }, slips: k.revenge ? [{ id: key + 'b', f: ['revenge'] }] : [],
+        chances: { revenge: 1, sizeUp: 1, overtrade: 1 }, kept: { revenge: k.revenge ? 0 : 1, sizeUp: 1, overtrade: 1 }, tests: { revenge: [key + 'b'], sizeUp: [key + 'b'] } },
       parts: { plan: k.plan == null ? null : k.plan ? 1 : 0 } });
     entries[key] = { checkin: !!k.checkin, review: !!k.review };
   }
@@ -31,12 +33,13 @@ t('every trading day is a point: its habit score against the day’s total resul
   const L = habitLink(H.days, H.byDay, H.opts);
   eq(L.points.length, 5); eq(L.unit, '$');
   eq(L.points.map(p => p.v), [100, 200, 300, 400, 500], 'the day’s dollars, summed');
-  // in play: plan (kept on some days), check-in (kept), and the four fill checks; review was never done, so it isn’t held against anyone
+  // in play: plan (kept on some days), check-in (kept), and the fill checks; review was never done, so it isn’t held against anyone
   eq(L.tracked.includes('End-of-day review written'), false);
   ok(L.tracked.includes('Morning prep done') && L.tracked.includes('Plan written before the first trade'));
   const p0 = L.points[0], p1 = L.points[1], p4 = L.points[4];
-  eq([p0.kept.length, p0.missed.length, p0.score], [6, 0, 100], 'plan + morning prep + four clean fill checks');
-  eq([p1.missed, p1.score], [['Plan written before the first trade'], 83]);
+  // a fill check counts only once it was ever tested (adding to a loser never was: no adds in this history)
+  eq([p0.kept.length, p0.missed.length, p0.score], [5, 0, 100], 'plan + morning prep + three clean fill checks');
+  eq([p1.missed, p1.score], [['Plan written before the first trade'], 80]);
   ok(p4.missed.includes('No revenge entries'), 'a revenge entry is a missed habit');
 });
 t('habits that can only fail on a losing day stay out of the score', () => {

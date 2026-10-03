@@ -7,8 +7,8 @@ import { readAppSource } from '../app-source.js';
 
 const html = readAppSource(new URL('../ledger.html', import.meta.url).pathname);
 const { grabFn, evalModule } = makeExtractor(html);
-const pre = html.match(/const RV_BLIND=\[[^\]]*\];/)[0] + '\n' + html.slice(html.indexOf('const RV_HABITS=['), html.indexOf('];', html.indexOf('const RV_HABITS=[')) + 2);
-const { routineVsResults } = await evalModule(['routineVsResults', '_spearmanWith'], null, pre);
+const pre = html.match(/const RV_BLIND=\[[^\]]*\];/)[0] + '\n' + html.match(/const RV_CHANCE=\[[^\]]*\];/)[0] + '\n' + html.slice(html.indexOf('const RV_HABITS=['), html.indexOf('];', html.indexOf('const RV_HABITS=[')) + 2);
+const { routineVsResults } = await evalModule(['routineVsResults', '_spearmanWith', 'rvRoutineOf', 'rvChanceSplit'], null, pre);
 
 // a history of N weeks x 4 trading days x 3 trades; `effect` links the day's discipline to its results
 function history(N, effect, opts = {}) {
@@ -23,7 +23,9 @@ function history(N, effect, opts = {}) {
       if (bad) slips.push({ id, f: ['revenge'] });
       if (opts.mechanical && r < -0.5) slips.push({ id, f: ['heldLoser'] }); }
     byDay[key] = trades;
-    days.push({ key, week: 'W' + String(w).padStart(3, '0'), behavior: { n: 3, slips, flags: { revenge: sloppy ? 1 : 0 } },
+    // trade 0 is an entry right after a loss (a chance at "no revenge entry"); on a sloppy day it slipped
+    days.push({ key, week: 'W' + String(w).padStart(3, '0'), behavior: { n: 3, slips, flags: { revenge: sloppy ? 1 : 0 },
+      chances: { revenge: 1 }, kept: { revenge: sloppy ? 0 : 1 }, tests: { revenge: [key + ':0'], sizeUp: [] } },
       parts: { plan: opts.planPays ? (sloppy ? 0 : 1) : (rnd() < 0.5 ? 1 : 0), limit: trades.some(x => x.r < -1) ? 0 : 1 } });
   }
   return { days, byDay, opts: { rOf: x => x.r, pctOf: x => x.r, weekOf: k => days.find(d => d.key === k).week, seed: 7 } };
@@ -70,7 +72,9 @@ t('seeded: the same history gives the same numbers', () => {
   eq(JSON.stringify(routineVsResults(H.days, H.byDay, H.opts)), JSON.stringify(routineVsResults(H.days, H.byDay, H.opts)));
 });
 t('wired into Review (with charts) and Pulse’s “Does discipline pay?”', () => {
-  ok(grabFn('renderReviewInner').includes('routineSectionHtml()') && grabFn('renderReviewInner').includes('drawRoutineCharts()'));
+  ok(grabFn('renderReviewInner').includes('routineSectionLazyHtml(closed.length)') && grabFn('renderReviewInner').includes('drawRoutineCharts()'));
+  // big accounts get it when it nears the viewport: the same section, built later
+  ok(grabFn('routineSectionLazyHtml').includes('return routineSectionHtml();') && grabFn('wireRoutineLazy').includes('ph.outerHTML=routineSectionHtml()'));
   ok(grabFn('pzTrendsHtml').includes('pzLongViewHtml()'));
   ok(grabFn('rvModel').includes('rOf:rFor,pctOf:retPct'), 'R, else % return: both size-neutral');
 });

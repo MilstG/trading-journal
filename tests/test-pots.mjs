@@ -73,8 +73,10 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
     body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
   return { status: r.status, d: await r.json().catch(() => ({})) }; };
 const K = {};
-const join_ = async h => (K[h] = (await call('/join', { method: 'POST', ip: '10.0.4.' + (++ipN), body: { handle: h } })).d.key);
-// earned XP 2,000 for everyone; days: [key, score, journaled]
+// buy-ins are against other members: each has a verified wallet of their own (audit X1)
+const join_ = async h => (K[h] = (await call('/join', { method: 'POST', ip: '10.0.4.' + (++ipN), body: { handle: h, address: '0x' + String(ipN).repeat(40), share: { verify: true } } })).d.key);
+const until = async (f, ms = 3000) => { const end = Date.now() + ms; for (;;) { const v = await f(); if (v || Date.now() > end) return v; await new Promise(r => setTimeout(r, 30)); } };
+// earned XP 2,000 for everyone (what the app reports, and a balance of 2,000 from the owner); days: [key, score, journaled]
 const post = (h, days) => call('/stats', { method: 'POST', key: K[h], body: { xp: 2000, level: 4, days: days.map(([k, s, j]) => ({ k, s, j: !!j, r: !!j })), xpDays: {} } });
 const me = async h => (await call('/me', { key: K[h] })).d.me;
 const bal = async h => (await me(h)).balance;
@@ -85,8 +87,11 @@ const inbox = async h => (await call('/inbox', { key: K[h] })).d.items.map(x => 
 const dk = (from, i) => new Date(Date.parse(from) + i * DAY).toISOString().slice(0, 10);
 
 try {
+  await call('/admin/config', { method: 'PUT', owner: true, body: { unlocksOn: false, standing: { on: false }, requireClaim: false } });
   for (const h of ['ann', 'bob', 'cat', 'dee', 'eve']) { await join_(h); await post(h, []); }
-  await call('/admin/config', { method: 'PUT', owner: true, body: { unlocksOn: false, standing: { on: false } } });
+  const roster = async () => (await call('/admin/members', { owner: true })).d.members;
+  ok(await until(async () => (await roster()).filter(m => m.verified).length === 5), 'every wallet read');
+  for (const m of await roster()) await call('/admin/members/' + m.id, { method: 'POST', owner: true, body: { action: 'grant', xp: 2000 } });
   let pod;
   await t('a group duel with a buy-in: the creator’s leaves the balance now, each invitee’s when they accept', async () => {
     ok(/apps report themselves, a buy-in can be at most 100 XP/.test((await podNew('ann', ['bob', 'cat'], { buyIn: 150 })).d.error), 'clean days from the app: 100 at most');
@@ -143,6 +148,7 @@ try {
   });
   await t('results final: the pot (buy-ins and overlay, less the burn) goes to the top three', async () => {
     const wk = n => Array.from({ length: n }, (_, i) => [dk('2026-09-21', i), 80, true]);
+    clock = Date.parse('2026-09-27T20:00:00Z'); // days are posted once they're played: a day after today is dropped
     await post('ann', wk(5)); await post('bob', wk(3)); await post('cat', [[dk('2026-09-21', 0), 80, false]]);
     const before = { ann: await bal('ann'), bob: await bal('bob'), cat: await bal('cat') };
     clock = Date.parse('2026-09-30T12:00:00Z');

@@ -201,7 +201,8 @@ try {
     eq(lb.d.optedIn, false, 'bravo is told they are not on the board');
   });
   await t('stats posts feed the league, the boards and the feed', async () => {
-    const st = (xp, level, streak) => ({ xp, level, week: '2026-W40', weekXp: xp / 10, streak, best: streak,
+    // weekly XP is the server's sum of XP by day (the week and weekXp the app sends are ignored)
+    const st = (xp, level, streak) => ({ xp, level, week: '2026-W40', weekXp: 99999, xpDays: { '2026-09-30': xp / 10 }, streak, best: streak,
       days: [{ k: '2026-09-28', s: 90 }, { k: '2026-09-29', s: 80 }, { k: '2026-09-30', s: 70 }] });
     eq((await call('/stats', { method: 'POST', key: A, body: st(1000, 2, 6) })).status, 200);
     await call('/stats', { method: 'POST', key: A, body: st(1300, 3, 7) });
@@ -265,7 +266,7 @@ try {
     await call('/admin/config', { method: 'PUT', admin: true, body: { open: true } });
     const keys = [];
     for (const h of ['carl1', 'carl2', 'carl3']) keys.push((await call('/join', { method: 'POST', body: { handle: h } })).d.key);
-    for (let i = 0; i < 3; i++) await call('/stats', { method: 'POST', key: keys[i], body: { xp: 10, level: 1, week: '2026-W40', weekXp: i * 10 } });
+    for (let i = 0; i < 3; i++) await call('/stats', { method: 'POST', key: keys[i], body: { xp: 50, level: 1, xpDays: { '2026-09-29': i * 10 } } });
     clock = Date.parse('2026-10-06T12:00:00Z'); // Tuesday of W41
     await call('/config');
     const me = await call('/me', { key: A });

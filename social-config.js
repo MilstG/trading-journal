@@ -65,6 +65,11 @@ function levelStart(cfg, level) {
   return cfg.base * level * (level - 1);
 }
 function levelOf(cfg, xp) { let n = 1; while (n < 1000 && levelStart(cfg, n + 1) <= xp) n++; return n; }
+// The most XP one day can pay under these weights, before the multiplier: a perfect Discipline score, every
+// logging bonus, a focus-habit day, the week's challenge and room for several achievements or badges landing
+// the same day. What the server accepts for a day from a member's app: an honest perfect day stays under it.
+function dayXpCap(x) { x = Object.assign({}, DEFAULTS.xp, x || {});
+  return Math.round(100 * x.discipline) + x.checkin + x.plan + x.journal + x.stops + x.limit + x.review + x.focus + x.challenge + 10 * x.achievement; }
 function sanitizeXp(b, prev) {
   const out = Object.assign({}, DEFAULTS.xp, prev || {});
   if (!b || typeof b !== 'object') return out;
@@ -136,4 +141,4 @@ function sanitizeLeague(b, prev) {
 }
 
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,
-  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf };
+  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap };

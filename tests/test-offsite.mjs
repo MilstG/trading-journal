@@ -96,6 +96,36 @@ t('a bundle naming a path outside the target is refused', () => {
   ok(err && /outside the target/.test(err.message));
 });
 
+await t('pulse.db ships as one consistent SQLite copy: rows still in the WAL survive a checkpoint mid-bundle, and no -wal/-shm ships', async () => {
+  // the audit's repro: 50 members only in the WAL; while the bundle is being read, the server
+  // checkpoints and writes again (restarting the WAL). Reading pulse.db and its -wal separately
+  // shipped the old file with a fresh WAL: 0 members, integrity_check "ok".
+  const Db = require(join(here, '..', 'db.js'));
+  const fs = require('node:fs');
+  for (const pack of ['packBundleAsync', 'packBundle']) {
+    const d = mkdtempSync(join(tmpdir(), 'ledger-wal-'));
+    const s = Db.open(d); s.db.exec('PRAGMA wal_autocheckpoint = 0');
+    writeFileSync(join(d, 'ledger-data.json'), '{"rev":1}');
+    for (let i = 0; i < 50; i++) s.q('INSERT INTO members (id, data) VALUES (?, ?)').run('m' + i, '{"id":"m' + i + '"}');
+    ok(existsSync(join(d, 'pulse.db-wal')), 'the rows are in the WAL');
+    // between any two reads of the bundle: a checkpoint, then the next write restarts the WAL
+    const meddle = () => { s.db.exec('PRAGMA wal_checkpoint(PASSIVE)'); s.q('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)').run('later', String(Math.random())); };
+    const origA = fs.promises.readFile, origS = fs.readFileSync;
+    fs.promises.readFile = async (p, ...a) => { const b = await origA(p, ...a); meddle(); return b; };
+    fs.readFileSync = (p, ...a) => { const b = origS(p, ...a); if (String(p).startsWith(d)) meddle(); return b; };
+    let b; try { b = await O[pack](d); } finally { fs.promises.readFile = origA; fs.readFileSync = origS; }
+    const files = O.unpackBundle(b.buf).map(f => f.p).sort();
+    eq(files, ['ledger-data.json', 'pulse.db'], pack + ': the database alone, never its -wal/-shm');
+    ok(!fs.readdirSync(d).some(f => f.endsWith('.tmp')), pack + ': the temporary copy is cleaned up');
+    const out = mkdtempSync(join(tmpdir(), 'ledger-wal-restored-'));
+    O.restoreBundle(b.buf, out);
+    const r = Db.open(out);
+    eq(r.q('SELECT count(*) n FROM members').get().n, 50, pack + ': every committed member is in the restored copy');
+    eq(r.db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+    r.close(); s.close();
+  }
+});
+
 console.log('\nServer wiring (fake S3 that verifies signatures)');
 const CREDS = { accessKeyId: 'AKTEST', secretAccessKey: 'shh' };
 function fakeS3() {

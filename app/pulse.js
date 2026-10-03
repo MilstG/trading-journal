@@ -41,11 +41,13 @@ function pzScoreOf(parts){
 // How much of today's risk budget is used: trades opened today vs the cap, realized loss vs the
 // limit (today's check-in numbers beat the standing rules). used = the larger share (0–1, can
 // pass 1); null when neither a cap nor a limit is set. sizeX = median size of today's entries
-// vs the median of the 60 entries before today.
+// vs the median of the 60 entries before today. net is today's realized result fill by fill
+// (realizedByDay), as the tripwire reads it: a partial close of a position still open counts today,
+// and a trade closing today doesn't bring yesterday's partial losses with it. closed: trades closed today.
 function pzRisk(trades, dayE, rules, todayK, dayOf){
   const opened=trades.filter(t=>t.openTime&&dayOf(t.openTime)===todayK);
   const closedT=trades.filter(t=>!t.isOpen&&t.closeTime&&dayOf(t.closeTime)===todayK);
-  const net=closedT.reduce((s,t)=>s+t.net,0), loss=Math.max(0,-net);
+  const net=(realizedByDay(trades,dayOf,todayK)[todayK]||[]).reduce((s,x)=>s+x[1],0), loss=Math.max(0,-net);
   const cap=dayE&&dayE.maxTrades>0?+dayE.maxTrades:(+rules.maxPerDay||0);
   const limit=dayE&&dayE.maxLoss>0?+dayE.maxLoss:(+rules.dailyLossLimit||0);
   const shares=[]; if(cap>0)shares.push(opened.length/cap); if(limit>0)shares.push(loss/limit);
@@ -757,7 +759,7 @@ function pzLongViewHtml(){
 let _pzHL={key:null,v:null};
 function pzHabitModel(g, ctx, fromKey){
   const days=g.days.filter(d=>d.key>=fromKey&&(byd=>byd.some(pzInMk))(ctx.byDay[d.key]||[]));
-  const key=[fromKey,pzMk(),days.length,_coachMemo.key,_jrev].join('|');
+  const key=[fromKey,pzMk(),days.length,_coachMemoAll.key,_jrev].join('|');
   if(_pzHL.key===key)return _pzHL.v;
   const byDay={}; for(const d of days)byDay[d.key]=(ctx.byDay[d.key]||[]).filter(pzInMk);
   const entryOf=k=>{ const e=journal['day:'+k]; return {checkin:typeof pzReadinessManual==='function'&&pzReadinessManual(e)!=null, review:!!(e&&e.eod&&e.eod.at)}; };
@@ -777,7 +779,9 @@ function pzHabitLinkHtml(g, ctx, fromKey){
     :(Math.abs(S.d)<1?'So far your habit days and your other days end up about the same.':`So far your habit days did a bit ${S.d>0?'better':'worse'} (${esc(abs(S.d))} a day), but it’s not clear yet; it could be luck.`)+' Keep going; it gets clearer with more days.';
   const tile=(cls,lbl,x,tip)=>`<div class="pz-tile ${cls}" data-pz-tip="${esc(tip)}" tabindex="0"><span class="pz-t">${lbl}</span><span class="pz-n" style="color:${pzSignCol(x.avg)}">${esc(pzHlFmt(x.avg,'$'))}</span><span class="pz-t">average day · ${x.green} of ${dd(x.n)} green</span></div>`;
   const tiles=gd.n>=2&&rs.n>=2&&n>=L.need.days?`<div class="pz-grid2">${tile('good','Habit days',gd,'Habit days: '+dd(gd.n)+'\nAverage day '+pzHlFmt(gd.avg,'$',true)+', '+gd.green+' of them green.\n'+PZ_HL_DAY)}${tile('cool','Other days',rs,'Other days: '+dd(rs.n)+'\nAverage day '+pzHlFmt(rs.avg,'$',true)+', '+rs.green+' of them green.\nDays you kept fewer than 7 in 10 of your habits.')}</div>`:'';
-  const protect=S.top?`<div class="pz-hlprot" data-pz-tip="${esc(S.top.label+'\nDays you kept it: '+pzHlFmt(S.top.kept.avg,'$',true)+' on average ('+dd(S.top.kept.n)+').\nDays you didn’t: '+pzHlFmt(S.top.missed.avg,'$',true)+' ('+dd(S.top.missed.n)+').')}" tabindex="0"><span class="pz-hlk">1</span><span>Protect this one: <b>${esc(S.top.label)}</b><span class="pz-sub" style="display:block;font-size:12px">worth about ${esc(abs(S.top.diff))} a day for you</span></span></div>`:'';
+  // revenge and sizing up are measured per entry after a loss (habitLink per:'trade'), the rest per day
+  const pt=h=>h.per==='trade', tt=k=>k+' trade'+(k===1?'':'s')+' after a loss', nd=(h,k)=>pt(h)?tt(k):dd(k), per=h=>pt(h)?'trade':'day';
+  const protect=S.top?`<div class="pz-hlprot" data-pz-tip="${esc(S.top.label+'\n'+(pt(S.top)?'Trades after a loss where you kept it: ':'Days you kept it: ')+pzHlFmt(S.top.kept.avg,'$',true)+' on average ('+nd(S.top,S.top.kept.n)+').\n'+(pt(S.top)?'Where you didn’t: ':'Days you didn’t: ')+pzHlFmt(S.top.missed.avg,'$',true)+' ('+nd(S.top,S.top.missed.n)+').')}" tabindex="0"><span class="pz-hlk">1</span><span>Protect this one: <b>${esc(S.top.label)}</b><span class="pz-sub" style="display:block;font-size:12px">worth about ${esc(abs(S.top.diff))} a ${per(S.top)} for you</span></span></div>`:'';
   const meter=`<div class="pz-hlmeter" data-pz-tip="${esc('How sure we are\nIt gets surer as you log more days and the pattern keeps holding. Until then, treat it as a hint, not a fact.')}" tabindex="0"><i aria-hidden="true">${[1,2,3].map(k=>`<s class="${S.sure>=k?'on':''}"></s>`).join('')}</i>${esc(S.sureText)} · ${dd(n)}</div>`;
   // the breakdown: three steps and the habits, in dollars a day
   let more='';
@@ -788,7 +792,7 @@ function pzHabitLinkHtml(g, ctx, fromKey){
     more=`<div class="pz-hlmore-body">
       <b style="font-size:14px">The more habits you keep…</b>${pzDivBars(steps,90)}
       <p class="pz-fine" style="margin:-4px 0 0">Your average day when you kept few, some or most of your habits.</p>
-      ${hab.length?`<b style="font-size:14px;margin-top:6px">Your habits, by what they’re worth</b>${hab.map((h,i)=>`<div class="pz-hlhab" data-pz-tip="${esc(h.label+'\nKept on '+dd(h.kept.n)+', skipped on '+dd(h.missed.n)+'.\nDays you kept it were '+pzHlFmt(h.diff,'$',true)+' a day compared with days you didn’t.')}" tabindex="0"><span class="pz-hlk${i===0&&h.diff>0&&S.verdict==='pays'?' top':''}">${i+1}</span><span>${esc(h.label)}<span class="pz-sub" style="display:block;font-size:12px">kept ${h.kept.n} of ${h.kept.n+h.missed.n} days</span></span><b style="color:${pzSignCol(h.diff)}">${esc(pzHlFmt(h.diff,'$'))}<small> /day</small></b></div>`).join('')}
+      ${hab.length?`<b style="font-size:14px;margin-top:6px">Your habits, by what they’re worth</b>${hab.map((h,i)=>`<div class="pz-hlhab" data-pz-tip="${esc(h.label+'\nKept on '+nd(h,h.kept.n)+', skipped on '+nd(h,h.missed.n)+'.\n'+(pt(h)?'Those you kept it on were ':'Days you kept it were ')+pzHlFmt(h.diff,'$',true)+' a '+per(h)+' compared with '+(pt(h)?'those you didn’t.':'days you didn’t.'))}" tabindex="0"><span class="pz-hlk${i===0&&h.diff>0&&S.verdict==='pays'?' top':''}">${i+1}</span><span>${esc(h.label)}<span class="pz-sub" style="display:block;font-size:12px">kept ${h.kept.n} of ${h.kept.n+h.missed.n} ${pt(h)?'trades after a loss':'days'}</span></span><b style="color:${pzSignCol(h.diff)}">${esc(pzHlFmt(h.diff,'$'))}<small> /${per(h)}</small></b></div>`).join('')}
         <p class="pz-fine" style="margin:0">Habits overlap, so these don’t add up. Treat them as a ranking.</p>`:''}
       <p class="pz-fine" style="margin:0">Every day as a dot, and the statistics behind this, are in the <a href="${esc(pzFullHref())}">full journal</a> under Review.</p></div>`;
   }
@@ -889,7 +893,7 @@ function pzTrendsHtml(D){
 let _pzRF={key:null,v:null};
 function pzRangeFindings(ctx, fromMs){
   if(!fromMs&&pzMk()==='all')return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
-  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), key=fromMs+'|'+pzMk()+'|'+closed.length+'|'+_coachMemo.key+'|'+_jrev;
+  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), key=fromMs+'|'+pzMk()+'|'+closed.length+'|'+_coachMemoAll.key+'|'+_jrev;
   if(_pzRF.key===key)return _pzRF.v;
   let v;
   if(closed.length<10)v={findings:[],n:closed.length,few:true};
@@ -1125,7 +1129,7 @@ function pzHowHtml(){
     ${sec('Market conditions · from BTC',`<p>Each UTC day, from BTC’s daily candle: <b>volatile</b> when its high–low range is 1.4× the median of the 30 days before, <b>quiet</b> at 0.7× or less. <b>Trending</b> when the 7-day net move is at least half the sum of the daily moves, <b>choppy</b> at a quarter or less.</p>`)}
     </div><div class="pz-col">
     ${sec('Readiness · from your prep',`<p>Your 1–5 answers: sleep counts 40%, calm 20%, focus 40%. All 5s = 100. It never changes your Discipline score; Stats shows whether your discipline is better on high-readiness days.</p>`)}
-    ${sec('XP and levels',`<p>Each trading day earns its Discipline score in XP (up to 100), plus optional bonus XP: morning prep 10, a plan before your first trade 15 (half if written after), today’s trades journaled 15, stops written while trades were open 10, respecting your loss limit (nothing new opened after hitting it) 10. Plus 50 per achievement, 150 per weekly challenge kept, 25 per focus-habit day. Logging only ever adds.</p>
+    ${sec('XP and levels',`<p>Each trading day earns its Discipline score in XP (up to 100), plus optional bonus XP: morning prep 10, a plan before your first trade 15 (half if written after it that day), today’s trades journaled 15, stops written while trades were open 10, respecting a loss limit set before your first trade (nothing new opened after hitting it) 10. Plus 50 per achievement, 150 per weekly challenge kept, 25 per focus-habit day. Logging only ever adds — and only on its own day: prep, a plan or a limit typed onto a past day is kept in your journal but earns no XP. Every trade counts, whichever markets you’re viewing.</p>
       <p>Level n starts at 200 × n × (n − 1) XP: level 2 at 400, 3 at 1,200, 4 at 2,400, 5 at 4,000.</p>`)}
     ${sec('Streak and shields',`<p>Consecutive trading days scoring 70+. Days you don’t trade never break it. A finished perfect week (every trading day 70+, at least three) earns a shield, two at most; a shield absorbs one off day.</p>`)}
     ${sec('Plan vs execution',`<p>Checked against the numbers you wrote, not judged by AI: a day plan’s time against your first entry; your loss limit against the day’s realized P&L (opening anything after hitting it counts as breaking it); each trade’s stop and target against its actual exit, and, where candles were measured, whether price traded through the stop while you held.</p>
@@ -1185,7 +1189,7 @@ async function pzSaveCheckin(){
   const e={...prev, sleep:ck.sleep||null, stress:ck.calm?6-ck.calm:null, focus:ck.focus||null,
     plan:String(ck.plan||'').trim(), maxLoss:loss>0?loss:null, maxTrades:ck.maxTrades>0?ck.maxTrades:null,
     rules:Object.keys(rules).length?rules:null, am:Object.keys(am).length?am:null};
-  delete e.updatedAt; delete e.plannedAt;
+  delete e.updatedAt; delete e.plannedAt; delete e.limitAt; delete e.checkinAt; // nextDayEntry restamps them from prev
   const nx=nextDayEntry(prev,e,Date.now());
   if(!nx)delete journal[k]; else journal[k]=nx;
   markJEdit(k); await Store.set(J_KEY,journal);
@@ -1458,7 +1462,7 @@ function wirePulse(){
       case 'pzInstallCard':
       case 'pzInstall': if(_deferredInstall){ _deferredInstall.prompt(); try{ await _deferredInstall.userChoice; }catch(e){} _deferredInstall=null; pzRender(); } return;
       case 'pzReport': return showReportCard();
-      case 'pzSwap': { const g=gameContext(); const c=challengeCandidates(g.ctx.findings); const cur=weekChallenge(); if(!c.length)return;
+      case 'pzSwap': { const g=gameContext(); const c=challengeCandidates(g.ctx.findings); const cur=weekChallenge(); if(!c.length||pzChallengeLocked(g.current))return;
         const curKey=cur&&specKey(cur.spec); let i=(Math.max(0,c.findIndex(x=>specKey(x)===curKey))+1)%c.length;
         for(let n=0;n<c.length&&specKey(c[i])===curKey;n++)i=(i+1)%c.length;
         await setWeekChallenge(c[i],i); pzRender(); return; }

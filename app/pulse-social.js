@@ -75,7 +75,7 @@ function pzSocialStats(g, habits, J, withLessons){
       const f=Object.keys(fl).filter(k=>fl[k]>0); if(f.length)o.f=f;
       const e=J&&J['day:'+d.key], v=e&&e.eod; if(v&&v.at)o.r=true; if(withLessons&&v&&v.lesson)o.l=String(v.lesson).slice(0,200);
       // the parts of Trader Age the server can't read from the wallet: prep, journaling, the loss limit
-      if(e&&(e.sleep||e.stress||e.focus))o.p=1; const P=d.parts||{}; if(P.journal>0)o.jn=Math.round(P.journal*100)/100; if(P.limit===0||P.limit===1)o.lm=P.limit; if(P.plan===1||P.plan===0.5)o.pl=P.plan;
+      if(d.checkin)o.p=1; /* a check-in done on or before the day (processDays' credit), not one typed in later */ const P=d.parts||{}; if(P.journal>0)o.jn=Math.round(P.journal*100)/100; if(P.limit===0||P.limit===1)o.lm=P.limit; if(P.plan===1||P.plan===0.5)o.pl=P.plan;
       return o; }),
     firstAt:(()=>{ let a=0; for(const t of (typeof allTrades!=='undefined'?allTrades:[])){ const x=+t.openTime||0; if(x>0&&(!a||x<a))a=x; } return a||null; })(),
     xpDays:Object.fromEntries(Object.entries(((g.xpBase||g.xp)&&(g.xpBase||g.xp).byDay)||{}).filter(([k,v])=>v>0).sort().slice(-100))};
@@ -739,9 +739,11 @@ function duelScoreTxt(v,side){ if(!side)return '—';
   if(side.out&&v.ddCap)return 'Out';
   if(side.score==null)return '—';
   return String(side.score)+(v.type==='xp'?'':''); }
-// what the winner takes: the league's bonus (for a duel played to the end) and the other side's stake
-function duelPrize(v){ const bonus=(SOC.cache.duels&&SOC.cache.duels.d&&SOC.cache.duels.d.xp)||0;
-  return v.stake?'You each put up '+v.stake+' XP: the winner takes the other’s'+(bonus?', plus +'+bonus+' XP from the league':'')+'. A draw gives both back.'
+// what the winner takes: the league's bonus (for a duel played to the end) and the other side's stake, up to
+// what's left of the league's monthly limit on XP moving between two members (settlement trims to it)
+function duelPrize(v){ const D=SOC.cache.duels&&SOC.cache.duels.d, bonus=(D&&D.xp)||0, cap=D&&D.pots?D.pots.pairCapMonth:undefined;
+  const lim=cap===0?'':cap>0?' (up to what’s left of the '+cap+' XP that can move between you two in a month)':' (up to what’s left of the league’s monthly limit between you two)';
+  return v.stake?'You each put up '+v.stake+' XP: the winner takes the other’s'+lim+(bonus?', plus +'+bonus+' XP from the league':'')+'. A draw gives both back.'
     :bonus?'Winner gets +'+bonus+' XP.':'The win goes on your record.'; }
 function duelTerms(v){ const c=[]; if(v.stake)c.push(v.stake+' XP each at stake');
   if(v.minDays)c.push(v.minDays+'+ trading days each'); if(v.verified)c.push('verified from fills'); if(v.ddCap)c.push(duelDdTxt(v));
@@ -864,13 +866,15 @@ function socDuelNewHtml(D, handle){
   const T=d.types.find(t=>t.type===st.type)||{}, verifiable=['disc','clean','survive'].includes(st.type), counter=pzS.duelCounter&&pzS.duelCounter.h===o.handle?pzS.duelCounter.id:null;
   // when answering with new terms, their room still holds the stake they proposed; it's freed by this answer
   const held=counter?((d.duels.find(v=>v.id===counter)||{}).stake||0):0, theirRoom=x.room==null?null:x.room+held;
-  const stakeMax=!d.stakes?0:Math.min(d.maxStake,(x.me&&x.me.room)||0,theirRoom==null?Infinity:theirRoom);
+  // on a measure the apps report themselves (not verified from fills, not % return) the server takes at most selfMax, as on the group duel screen
+  const selfRep=!((verifiable&&st.verified)||st.type==='ret'), selfMax=selfRep?((d.pots&&d.pots.selfMax!=null)?d.pots.selfMax:100):Infinity;
+  const stakeMax=!d.stakes?0:Math.min(d.maxStake,(x.me&&x.me.room)||0,theirRoom==null?Infinity:theirRoom,selfMax);
   const why=!x.accepting?'@'+o.handle+' isn’t taking challenges.':x.busy&&!counter?'You already have a duel with @'+o.handle+'.'
     :verifiable&&st.verified&&!x.me.verified?'Switch on “Verify my discipline” under Profile & privacy, or turn verification off for this duel.'
     :verifiable&&st.verified&&!o.verified?'@'+o.handle+' hasn’t switched on “Verify my discipline”. Turn verification off for this duel, or pick another kind.'
     :st.type==='ret'&&!(x.me.ret&&o.ret)?'Both of you need “Show % return” switched on for a % return duel.'
     :st.ddCap&&!(x.me.ret&&o.ret)?'Both of you need “Show % return” switched on (with a wallet) for a drawdown rule. Turn the rule off, or pick someone who shares returns.'
-    :st.stake&&st.stake>stakeMax?'You can put up at most '+stakeMax+' XP'+(theirRoom!=null&&theirRoom<x.me.room?' (what @'+o.handle+' can cover)':'')+'.':'';
+    :st.stake&&st.stake>stakeMax?'You can put up at most '+stakeMax+' XP'+(stakeMax===selfMax?' on a measure the apps report themselves. Verify it from fills, or stake less':theirRoom!=null&&theirRoom<x.me.room?' (what @'+o.handle+' can cover)':'')+'.':'';
   const pv=st.period==='month'?d.monthPreview:d.weekPreview, h2=x.h2h;
   return `${back}${pzHead(counter?'Suggest different terms':'One on one','Challenge @'+esc(o.handle))}
   <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:14px">

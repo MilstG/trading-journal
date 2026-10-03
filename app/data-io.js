@@ -353,12 +353,26 @@ function parseFillsCsv(text){
 // Coin names become part of trade ids, which land in HTML attributes and selectors — pasted
 // or imported data is untrusted, so anything outside exchange-style symbols is refused.
 function safeCoin(c){ return typeof c==='string'&&/^[A-Za-z0-9@:\/._+-]{1,48}$/.test(c); }
+// Pasted JSON fills without startPosition (another tool's export, a hand-made file): the engine reads
+// every open and close from it, so a missing one built nonsense — buy 1 then sell 1 came out as one
+// open Short of size 2. For each coin with a fill lacking it, position (and closedPnl where absent)
+// is derived by average cost, as the CSV import does; a coin whose fills all carry it is untouched.
+// Sorts those fills by time (a newest-first file keeps same-millisecond fills in its own order).
+// Returns how many coins were derived.
+function pasteDeriveFills(fills){
+  const need=new Set(fills.filter(f=>f.startPosition==null||f.startPosition==='').map(f=>f.coin)); if(!need.size)return 0;
+  const sub=fills.map((f,i)=>[f,i]).filter(([f])=>need.has(f.coin)), desc=sub.length>1&&+sub[0][0].time>+sub[sub.length-1][0].time;
+  sub.sort((a,b)=>(+a[0].time||0)-(+b[0].time||0)||(desc?b[1]-a[1]:a[1]-b[1]));
+  for(const [f] of sub){ if(f.startPosition==='')delete f.startPosition; if(f.closedPnl==='')delete f.closedPnl; }
+  deriveFillPositions(sub.map(([f])=>f)); return need.size;
+}
 let _pastedFills=null; // the last pasted (or sample) fills: tax exports need the raw legs, which have no wallet cache
 async function loadFromPaste(fills,opts){
   opts=opts||{};
   const nIn=fills.length; fills=fills.filter(f=>f&&safeCoin(f.coin)); _pastedFills=fills;
   const dropped=nIn-fills.length;
   if(!fills.length){ setErr(dropped?`No usable fills: ${dropped} had coin names with characters a market symbol can't contain.`:'No fills found in that data.'); return; }
+  const nDerived=pasteDeriveFills(fills);
   // resolve @N spot indices to real token names — the paste path used to skip this,
   // leaving pasted spot trades labeled "@210" forever (sample data has no @N coins: skip the fetch)
   if(!opts.offline&&!Object.keys(spotMaps.nameByCoin).length){
@@ -371,8 +385,12 @@ async function loadFromPaste(fills,opts){
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null};
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[];
+  // a big history: let the browser breathe between taking in the worker's trades and the first full
+  // render (two tasks of a few hundred ms instead of one long one at 30k trades)
+  if(allTrades.length>=5000)await new Promise(r=>setTimeout(r,0));
   $('empty').classList.add('hide'); $('app').classList.remove('hide'); render();
-  setStatus(`Loaded ${fills.length} pasted fills → ${perpTr.length} perp + ${spotTr.length} spot trades.`+(dropped?` Skipped ${dropped} with invalid coin names.`:''));
+  setStatus(`Loaded ${fills.length} pasted fills → ${perpTr.length} perp + ${spotTr.length} spot trades.`+(dropped?` Skipped ${dropped} with invalid coin names.`:'')
+    +(nDerived?` Position derived by average cost for ${nDerived} coin${nDerived===1?'':'s'} (no startPosition) — exact only when the paste holds each coin’s full history.`:''));
 }
 
 /* ============================ events ============================ */
@@ -678,7 +696,7 @@ $('modalLoad').onclick=async()=>{
     if(data.journal||data.wallets||data.settings){ // full backup
       // applySnapshot is the one restore path that knows the whole backup shape — including
       // the v9 fill caches and saved MAE/MFE rows that pasting used to silently drop.
-      const before=journal, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
+      const before=journal, bw=settings.wallets, incoming=data.journal&&typeof data.journal==='object'?data.journal:null;
       const nIn=incoming?Object.keys(incoming).length:0, nOnlyHere=Object.keys(before).filter(k=>!incoming||!(k in incoming)).length;
       if(!confirm('Restore this backup ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')?\n\nWallets and settings come from the backup. Your journal is merged: entries only in the backup are added, and your own notes are kept'
         +(nOnlyHere?' (including '+nOnlyHere+' the backup doesn’t have)':'')+' unless the backup’s copy is newer.'))return;
@@ -688,11 +706,15 @@ $('modalLoad').onclick=async()=>{
         if(kept){ _jrev++; await rawSet(J_KEY,journal); } }
       resetDerivedState(); // restored wallet set replaces the loaded world — derived state goes with it
       vaultMarkAll(before); // a member's encrypted sync: the restore wins the next merge instead of being undone
+      srvRestored(before,bw); // the owner's server sync: the same, so a 409 from another device's save can't undo it
       schedulePersist(); // applySnapshot writes via rawSet (no sync triggers) — push the restored state explicitly
       view=settings.view||view; dexView=settings.dexView||dexView; if(settings.riskDefault)$('riskDefault').value=settings.riskDefault;
       document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
       renderWallets(); if(allTrades.length||openPositions.length||spotHoldings.length)render();
       const nc=data.fillCaches?Object.keys(data.fillCaches).length:0;
+      // "restored" only once the server holds it (when it syncs): a 409 merge can change the counts too
+      if(await srvSaveNow()===false){ setErr(srvNotSaved('Backup restored')); return; }
+      renderWallets();
       setStatus('Backup restored: '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(nc?', fill cache for '+nc+' wallet'+(nc===1?'':'s'):'')+'. Hit Load all to refresh trades.'); return;
     }
     // a journal export is {"<trade id | day:… | week:…>": {…}} — anything else (an API response,
@@ -703,7 +725,8 @@ $('modalLoad').onclick=async()=>{
     const have=Object.keys(journal).length;
     if(have&&!confirm(`Replace your journal (${have} entries) with the pasted one (${ents.length} entries)? Use a full backup to merge devices instead.`)){
       setStatus('Journal paste cancelled \u2014 nothing was changed.'); return; }
-    const before=journal; journal=data; _jrev++; vaultMarkAll(before,true); await Store.set(J_KEY,journal); if(allTrades.length)render();
+    const before=journal; journal=data; _jrev++; vaultMarkAll(before,true); srvRestored(before); await Store.set(J_KEY,journal); if(allTrades.length)render();
+    if(await srvSaveNow()===false){ setErr(srvNotSaved('Journal restored')); return; }
     setStatus('Journal restored ('+Object.keys(journal).length+' entries).'); return;
   }
   const fills=Array.isArray(data)?data:(data.fills||[]);

@@ -593,7 +593,10 @@ function walkForward(closed, opts){
   if(!points.length) return null;
   const fullIS=_avg(tr.map(t=>t.net));
   const wfExp=oos.length?_avg(oos):null;
-  const wfCI=oos.length>=8?bootstrapMeanCI(oos,800):null;
+  // opts.ci===false skips the 800-pass bootstrap (the only RNG draw here): the Diagnostic gets the
+  // CI from its Monte Carlo batch instead (diagMCCompute, in the worker for big accounts), which
+  // runs this same function seeded the same way, so the numbers are identical.
+  const wfCI=opts.ci!==false&&oos.length>=8?bootstrapMeanCI(oos,800):null;
   const optimism=_avg(points.map(p=>p.isExp-p.osExp)); // mean(in-sample − realized); >0 = IS overstates
   return { train, step, blocks:points.length, oosN:oos.length, points, fullIS, wfExp, wfCI, optimism,
     retention:(fullIS>0 && wfExp!=null)?wfExp/fullIS:null, holds:(wfExp!=null && wfExp>0) };
@@ -1188,6 +1191,22 @@ function viewFilter(t){ return !t.orphan && (view==='combined' ? true : t.market
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
 function inRange(t){ if(customRange.from!=null&&t.closeTime<customRange.from)return false; if(customRange.to!=null&&t.closeTime>customRange.to)return false; return true; }
+// A tiny identity + version memo (two slots per name) for heavy pure functions of a trade list that
+// several views run on the same trades. A hit needs the very same trade objects in the same order —
+// pointer-compared, O(n), since results can hold trade references — and the same `ver` (everything
+// else the function reads, plus content sums that catch a trade changed in place), so it can only
+// ever return what a recompute would.
+function _sameTrades(a,b){ if(a===b)return true; if(!a||!b||a.length!==b.length)return false;
+  for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false; return true; }
+function _tradesMemo(name,closed,ver,fn,allv){ const m=_tradesMemo[name]||(_tradesMemo[name]=[]);
+  for(const e of m)if(e.ver===ver&&_sameTrades(e.trades,closed)&&_sameTrades(e.all,allv||null))return e.val;
+  const val=fn(); m.unshift({ver,trades:closed.slice(),all:allv?allv.slice():null,val}); if(m.length>2)m.pop(); return val; }
+// computeStats for the dashboard (render) and the Diagnostic, which run it on the same period trades.
+// Besides the trades it reads the break-even band, 1R and per-trade journal risk (R stats) and the
+// tz day buckets.
+function computeStatsMemo(closed,allv){ allv=allv||closed; let a=0,b=0;
+  for(const t of allv){ a+=t.net; b+=(t.closeTime||0)+(t.fees||0)+(t.funding||0)+(t.isOpen?1:0); }
+  return _tradesMemo('stats',closed,[_be,_oneR,_jrev,settings.tz,settings.tzZone,dayKey(Date.now()),a,b].join('|'),()=>computeStats(closed,allv),allv); }
 function periodTrades(){ const closed=allTrades.filter(t=>!t.isOpen && viewFilter(t));
   if(rangeActive())return closed.filter(inRange);
   if(!period)return closed; const cut=Date.now()-period*86400000; return closed.filter(t=>t.closeTime>=cut); }

@@ -18,7 +18,7 @@ const ctx = vm.createContext({ Date: FDate, Math, console, Set, Map, Object, JSO
   S_KEY: 's', J_KEY: 'j', rawSet: async () => {}, allTrades: [], viewFilter: () => true, Store: { async set() {} },
   dayKey: ms => new Date(ms).toISOString().slice(0, 10), isoWeekKey: () => 'week:x', markJEdit() {}, pbNorm: a => a || [] });
 const FNS = ['isoWeekOfKey', 'isoWeekMondayKey', 'pzPlugState', 'pzPlugWeekNote', 'pzPlugs', 'pzPlugStart', 'pzPlugDrop', 'pzLeakMap', 'adoptHabit', 'retireHabit',
-  'habitById', '_syncMerge', 'pzLessonsNorm', 'weekFocus', 'setWeekFocus'];
+  'habitById', '_syncMerge', 'pzLessonsNorm', 'weekFocus', 'setWeekFocus', 'pzSwapStartKey', 'pzPluggedKeys'];
 vm.runInContext(['PZ_BEH', 'PZ_PLUG', 'pzAddDays'].map(grabConst).join('\n') + '\nvar settings={}, journal={}, _pzSlipDays=new Map();\n' + FNS.map(grabFn).join('\n'), ctx);
 const run = c => vm.runInContext(c, ctx);
 // slip days: {day: [[net, ...flags], ...]}
@@ -64,24 +64,34 @@ t('a leak that comes back after it was plugged says so', () => {
 });
 
 console.log('\nPlugging, stopping, plugging again');
-await t('a plug makes one habit; plugging again after it was plugged starts that habit over', async () => {
+await t('a plug makes one habit; plugging again after it was plugged starts a new habit, and the old one keeps its days (audit 4 X9)', async () => {
   run('settings={}');
   days({ '2026-09-01': [], '2026-09-02': [], '2026-09-08': [], '2026-09-09': [], '2026-09-15': [], '2026-09-16': [] });
   ctx.__p = run(`pzPlugStart('revenge')`); await ctx.__p;
   run(`settings.pzPlugs[0].from='2026-09-01'; settings.habits[0].createdAt=Date.UTC(2026,8,1)`);
   await run(`pzPlugStart('revenge')`); // the first one is done: a new plug
   const s = run('settings');
-  eq(s.pzPlugs.length, 2); eq(s.habits.length, 1, 'the same habit, reused');
-  eq(s.habits[0].retired, false); eq(s.habits[0].createdAt, NOW, 'counted from the new plug');
+  eq(s.pzPlugs.length, 2); eq(s.habits.length, 2, 'a new copy: reviving the old one reset its history');
+  eq([s.habits[0].retired, s.habits[0].createdAt, s.habits[0].retiredAt], [true, Date.UTC(2026, 8, 1), NOW], 'the old one keeps its start and says when it stopped');
+  eq([!!s.habits[1].retired, s.habits[1].createdAt], [false, NOW], 'the new one counts from the new plug');
+  eq(s.pzPlugs[1].habitId, s.habits[1].id);
   await run(`pzPlugStart('revenge')`); eq(run('settings.pzPlugs.length'), 2, 'starting twice is a no-op');
+  eq(run('settings.habits.length'), 2, 'and adopting a habit you keep is a no-op');
 });
 await t('the badge counts done plugs once each, and never a stopped one', async () => {
   days({ '2026-09-01': [], '2026-09-02': [], '2026-09-08': [], '2026-09-09': [], '2026-09-15': [], '2026-09-16': [] });
   run(`settings={pzPlugs:[{slip:'revenge',from:'2026-09-01',dropped:true},{slip:'revenge',from:'2026-09-01'},{slip:'revenge',from:'2026-09-01'},{slip:'sizeUp',from:'2026-09-01'}]}`);
-  const src = grabFn('pzBadgeCatalog');
-  ok(/p\.done&&!p\.dropped/.test(src) && src.includes("seen.add(p.slip+'|'+p.done)"), 'filter in pzBadgeCatalog');
+  ok(grabFn('pzBadgeCatalog').includes("add('plugged',pzPluggedKeys(pzPlugs()))"), 'pzBadgeCatalog counts with pzPluggedKeys');
   const f = run(`pzPlugs().filter(p=>p.done&&!p.dropped)`); eq(f.length, 3);
-  const seen = new Set(); eq(f.filter(p => !seen.has(p.slip + '|' + p.done) && seen.add(p.slip + '|' + p.done)).length, 2);
+  eq(run('pzPluggedKeys(pzPlugs())').sort(), ['2026-09-20', '2026-09-20']);
+});
+t('re-plugging the same leak later doesn’t count again: one leak counts once (audit 4 X8)', () => {
+  days({ '2026-09-01': [], '2026-09-02': [], '2026-09-08': [], '2026-09-09': [], '2026-09-15': [], '2026-09-16': [], '2026-09-22': [] });
+  // plugged, came back, plugged again from a later start: two done plugs of one leak (keyed slip|done they were two)
+  run(`settings={pzPlugs:[{slip:'revenge',from:'2026-09-01'},{slip:'revenge',from:'2026-09-07'},{slip:'sizeUp',from:'2026-09-07',dropped:true}]}`);
+  const done = run(`pzPlugs().filter(p=>p.done&&!p.dropped).map(p=>p.done)`); eq(done, ['2026-09-20', '2026-09-27']);
+  eq(run('pzPluggedKeys(pzPlugs())'), ['2026-09-20'], 'the first time it was plugged');
+  eq(ctx.pzPluggedKeys([{ slip: 'revenge', done: '2026-09-27' }, { slip: 'revenge', done: '2026-09-20' }, { slip: 'afterTwo', done: '2026-09-27' }]), ['2026-09-20', '2026-09-27']);
 });
 
 console.log('\nTwo devices');

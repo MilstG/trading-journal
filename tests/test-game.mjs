@@ -137,7 +137,7 @@ t('each recent surface is gated by coachOn()', () => {
   ok(html.includes("fz.ck||(settings.coachMode!==false&&withCk>=10)"), 'check-in miner family');
   ok(html.includes("_minerCache={key:null,res:null,deep:null}; // the check-in conditions come and go with coach mode"), 'miner cache reset on toggle');
   ok(html.includes('syncDexTog(); syncCoachMode();'), 'switch UI follows synced settings');
-  ok(html.includes("to:addDays(from,7)"), 'DST-safe challenge end');
+  ok(html.includes("to:addDays(mon,7)"), 'DST-safe challenge end (Monday + 7 calendar days, also for a mid-week swap)');
   ok(html.includes("if(!auto)markJEdit(k);"), 'auto challenge picks lose to other devices on conflict');
   ok(html.includes("${coachOn()?`        <div class=\"field\"><label data-tip=\"Ten seconds"), 'check-in fields');
   ok(html.includes("if(!el){ e[f]=prevE[f]||null; continue; }"), 'hidden check-in keeps stored values');

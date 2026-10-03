@@ -149,12 +149,18 @@ const avg = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
 // ---- validation of what a member's browser posts ----
 const SLIP_KEYS = ['revenge', 'afterTwo', 'sizeUp', 'addLoser', 'overtrade', 'heldLoser'];
 const PARTNER_MAX = 3, INBOX_MAX = 40, COMMENTS_MAX = 300;
-function sanitizeStats(b) {
-  b = b || {};
+const cleanTz = z => typeof z === 'string' && /^[A-Za-z_+\-/0-9]{1,40}$/.test(z) ? z : 'UTC'; // an IANA zone name's shape
+// opts (the server's, when a member posts): todayOf(tz) -> their calendar day now, keepDays: how far back a
+// day may be, capOf(day) -> the most XP that day can carry. A day after the member's today, or older than the
+// window, is dropped; a day's XP is capped at what the league's weights can pay (social-config dayXpCap).
+function sanitizeStats(b, opts) {
+  b = b || {}; opts = opts || {};
+  const tz = cleanTz(b.tz), today = opts.todayOf ? opts.todayOf(tz) : null, oldest = today && opts.keepDays ? addDaysKey(today, -opts.keepDays) : null;
+  const inRange = k => DAY_RE.test(k) && (!today || k <= today) && (!oldest || k >= oldest);
   // per day: process score, bonus logged, journaled, reviewed, the slips (by key) and the lesson
   // written that night — the lesson is only kept for members who let mentors see their days
   const days = (Array.isArray(b.days) ? b.days : []).slice(-60)
-    .filter(d => d && DAY_RE.test(d.k)).map(d => { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, b: !!d.b, j: !!d.j };
+    .filter(d => d && inRange(d.k)).map(d => { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, b: !!d.b, j: !!d.j };
       if (d.r) o.r = true;
       // for Trader Age: morning prep done, the share of trades journaled, the loss limit kept (1) or broken (0)
       if (d.p) o.p = 1;
@@ -171,14 +177,14 @@ function sanitizeStats(b) {
   const habits = (Array.isArray(b.habits) ? b.habits : []).slice(0, 20).map(h => cleanText(h, 140)).filter(Boolean).slice(0, 5);
   // XP by day, so a season ranks on exactly its own days (weeks straddle month ends)
   const xpDays = {}; if (b.xpDays && typeof b.xpDays === 'object' && !Array.isArray(b.xpDays))
-    for (const k of Object.keys(b.xpDays).filter(k => DAY_RE.test(k)).sort().slice(-100)) { const v = clampNum(b.xpDays[k], 0, 1e5); if (v) xpDays[k] = Math.round(v); }
+    for (const k of Object.keys(b.xpDays).filter(inRange).sort().slice(-100)) { const v = clampNum(b.xpDays[k], 0, opts.capOf ? opts.capOf(k) : 1e5); if (v) xpDays[k] = Math.round(v); }
   return {
     xp: clampNum(b.xp, 0, 1e8) || 0, level: clampNum(b.level, 1, 500) || 1,
     week: WEEK_RE.test(b.week) ? b.week : null, weekXp: clampNum(b.weekXp, 0, 1e6) || 0,
     coachSpent: clampNum(b.coachSpent, 0, 1e8) || 0, // XP spent on coach packs that the reported xp already counts
     streak: clampNum(b.streak, 0, 10000) || 0, best: clampNum(b.best, 0, 10000) || 0, shields: clampNum(b.shields, 0, 2) || 0,
     challengesDone: clampNum(b.challengesDone, 0, 10000) || 0, lastChallenge: cleanText(b.lastChallenge, 140),
-    tz: typeof b.tz === 'string' && /^[A-Za-z_+\-/0-9]{1,40}$/.test(b.tz) ? b.tz : 'UTC',
+    tz,
     badges, badgeN: clampNum(b.badgeN, 0, 10000) || badges.length, badgeTotal: clampNum(b.badgeTotal, 0, 10000) || 0, habits, days, xpDays,
     // the first fill in the app's history, for "trading for" next to Trader Age (2015 onwards, never in the future)
     firstAt: clampNum(b.firstAt, 1420070400000, Date.now() + 864e5) || null,
@@ -350,7 +356,8 @@ function weeksIn(start, end) { const out = []; let k = start;
 function compStatus(c, todayKey) { return todayKey < c.start ? 'upcoming' : todayKey > c.end ? 'finished' : 'live'; }
 // members: an array, or the members object keyed by id (no lookup map to build per call)
 // walletGate (optional): m -> a reason the member's wallet doesn't count yet (owner approval), or null
-function compStandings(c, members, todayKey, requireClaim, walletGate) {
+// final: the results are being frozen — a drawdown that still can't be read is out, never "not over"
+function compStandings(c, members, todayKey, requireClaim, walletGate, final) {
   const byId = Array.isArray(members) ? new Map(members.map(m => [m.id, m])) : { get: id => Object.prototype.hasOwnProperty.call(members, id) ? members[id] : undefined };
   const rows = [];
   for (const id of Object.keys(c.entrants || {})) {
@@ -377,8 +384,8 @@ function compStandings(c, members, todayKey, requireClaim, walletGate) {
       score = best; note = best + ' fully journaled day' + (best === 1 ? '' : 's') + ' in a row' + (best >= (c.minDays || 10) ? ' · done' : '');
     } else if (c.type === 'return') {
       const r = m.share && m.share.ret && c.money && Object.prototype.hasOwnProperty.call(c.money, id) ? c.money[id] : null;
-      // trading days: verified ones when the member shares them, else the days their app synced
-      const td = m.share && m.share.verify && Array.isArray(m.vdays) ? m.vdays.filter(d => d.k >= c.start && d.k <= c.end && d.k <= todayKey).length : days.length;
+      // trading days: verified ones only (days an app reports can be made up, and sitting flat mustn't win)
+      const td = m.share && m.share.verify && Array.isArray(m.vdays) ? m.vdays.filter(d => d.k >= c.start && d.k <= c.end && d.k <= todayKey).length : 0;
       if (!r) note = 'waiting for data';
       else if (c.tradeDays && td < c.tradeDays) note = td + ' of ' + c.tradeDays + ' trading days so far';
       else { score = r.ret; note = (r.ret >= 0 ? '+' : '') + (r.ret * 100).toFixed(1) + '% · DD ' + (r.dd * 100).toFixed(1) + '%'; }
@@ -387,7 +394,10 @@ function compStandings(c, members, todayKey, requireClaim, walletGate) {
     if (c.ddCap && !out) {
       const r = m.share && m.share.ret && c.money && Object.prototype.hasOwnProperty.call(c.money, id) ? c.money[id] : null;
       const k = Duels.ddCheck(r, c.ddCap, c.ddMode || 'out', c.type, c.penalty);
-      if (k.out) { out = true; score = -Infinity; note = 'Out: drawdown ' + (k.dd * 100).toFixed(1) + '%, past the ' + Math.round(c.ddCap * 100) + '% cap'; }
+      // a drawdown that can't be read is out: stopped sharing % return after the start, or no reading at the end
+      const dark = todayKey >= c.start && !(m.share && m.share.ret) ? 'stopped sharing returns' : final && !r ? 'no drawdown reading' : null;
+      if (dark) { out = true; score = -Infinity; note = 'Out: ' + dark; }
+      else if (k.out) { out = true; score = -Infinity; note = 'Out: drawdown ' + (k.dd * 100).toFixed(1) + '%, past the ' + Math.round(c.ddCap * 100) + '% cap'; }
       else if (k.pen && score != null) { score = c.type === 'return' ? score - k.pen : Math.round(score - k.pen); note += ' · −' + (c.type === 'return' ? (k.pen * 100).toFixed(1) + '%' : Math.round(k.pen) + ' pts') + ' past the drawdown cap'; }
       else if (!r && c.type !== 'return') note += ' · drawdown: waiting for data';
     }
@@ -528,7 +538,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -561,6 +571,9 @@ function createSocial(opts) {
   S.config.pots = Pots.sanitizePotCfg(S.config.pots, null);
   // XP moved between two members, by calendar month: {'2026-10': {'idA|idB': what the first id gained}}
   if (!S.pairFlow || typeof S.pairFlow !== 'object' || Array.isArray(S.pairFlow)) S.pairFlow = {};
+  // what deleted profiles owed, by wallet: {'0x…': {id, xp (negative), at}}; a profile whose verified XP comes
+  // from one of those wallets takes the debt on (takeDebt), so deleting and rejoining never wipes it
+  if (!S.debts || typeof S.debts !== 'object' || Array.isArray(S.debts)) S.debts = {};
   if (!S.badges || typeof S.badges !== 'object') S.badges = {};
   // the owner's wallet decisions, by address (so a new profile can't launder a rejected wallet):
   // { '0x…': { s: 'approved' | 'rejected', at, by: 'owner' | 'existing', note } }
@@ -598,9 +611,10 @@ function createSocial(opts) {
       if (!moved.length) continue;
       m.grants = keep; m.stakes = [...(m.stakes || []), ...moved.map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ref: g.duel }))].slice(-100);
       const net = moved.reduce((a, g) => a + g.xp, 0); m.stakeNet = (+m.stakeNet || 0) + net;
-      // the total the app last posted still counts these grants: take them off it, so the balance doesn't count
-      // them twice before the app syncs again (it then posts earned XP without them)
-      if (m.stats && isFinite(+m.stats.xp)) m.stats.xp = Math.max(0, m.stats.xp - net); }
+      // the total the app last posted counts the grants it had seen when it posted: take those (and only those)
+      // off it, so they aren't counted twice before the app syncs again (it then posts earned XP without them)
+      const seen = moved.filter(g => (+g.at || 0) <= (+m.statsAt || 0)).reduce((a, g) => a + g.xp, 0);
+      if (m.stats && isFinite(+m.stats.xp)) m.stats.xp = Math.max(0, m.stats.xp - seen); }
     S.migrations.stakeSplit = Date.now(); }
   if (!S.migrations.duels3) { if (S.config.modules.duels === 1) S.config.modules.duels = 3; S.migrations.duels3 = Date.now(); }
   // October 2026: a new server counts only wallets a member proved are theirs (signed for), so nobody can
@@ -677,7 +691,9 @@ function createSocial(opts) {
   // a member's main wallet changed: what was read from the old one goes, competitions included
   const walletMoved = m => { m.vdays = null; m.ta = null; m.vAt = 0; m.money = null; for (const cc of Object.values(S.comps)) if (cc.money) delete cc.money[m.id]; };
   const dropWalletNumbers = m => { m.vdays = null; m.ta = null; m.money = null; for (const cc of Object.values(S.comps)) if (cc.money) delete cc.money[m.id]; };
-  const recheckWallet = m => { m.vAt = 0; m.vFailAt = 0; m.moneyFailAt = 0; if (!walletFor(m)) dropWalletNumbers(m); };
+  const recheckWallet = m => { m.vAt = 0; m.vFailAt = 0; m.moneyFailAt = 0; if (!walletFor(m)) dropWalletNumbers(m);
+    // verified XP credited from a wallet the owner rejected (not theirs to count) leaves the balance
+    if (m.address && walletStatus(m.address) === 'rejected' && m.vxp && m.vxp.src === m.address) m.vxp.d = {}; };
   const claimedBy = (addr, notId) => addr ? members().find(o => o.id !== notId && o.claimed === addr) || null : null;
   // Wallets the owner or an admin mapped to a member by hand, beside their main one (m.address, the one
   // their on-chain numbers are read from). A mapped wallet belongs to that one member.
@@ -774,15 +790,55 @@ function createSocial(opts) {
     tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null, season: L.season ? seasonInfo(L) : null,
     risk: ['ret', 'riskadj', 'usd'].includes(L.metric) ? (r => ({ cap: r.cap, mode: r.mode }))(leagueRisk(L)) : null });
   // ---- levels, XP grants, reward badges ----
-  // Two numbers: earned XP (the app's total, from process, badges and grants) sets the level, the title and
-  // what's unlocked; stakes never touch it. The balance is what can be staked: earned XP plus everything
-  // won or lost on stakes (m.stakeNet), kept by the server. m.stakes: the moves, newest last, for the record.
+  // Two numbers. Earned XP (the app's total, from process, badges and grants) sets the level, the title and
+  // what's unlocked, and shows as the member's XP; stakes never touch it. But it's what the member's app
+  // reports, so it never backs anything that moves XP: that's the balance, the server's own ledger (ledgerOf).
+  // m.stakes: the stake moves, newest last, for the record.
   const stakeMove = (m, n, why, ref) => { if (!m || !n) return;
     m.stakeNet = (+m.stakeNet || 0) + n;
     m.stakes = [...(m.stakes || []), { id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), ref: ref || null }].slice(-100); };
-  const balanceOf = m => Math.max(0, earnedOf(m) + ((m && +m.stakeNet) || 0));
-  // A grant on the member's list, which keeps its newest 200. Coach purchases are never dropped (that would
-  // hand their XP back): past the latest 60 they fold into one entry at the start of the list.
+  // ---- the XP ledger: what can be staked, put in a pot, paid to a mentor or spent on the coach ----
+  // Only XP the server can vouch for: verified Discipline XP from the member's wallet (each day the server
+  // scored from fills, × the league's Discipline weight × the multiplier that week had: m.vxp), grants (the
+  // owner's, coach purchases, and duel bonuses won on a measure the server reads), the XP of reward badges
+  // awarded on numbers the server holds, mentoring XP, and stake results (m.stakeNet); less what was paid to
+  // mentors (m.xpSpent) and any debt a deleted profile on the same wallet left behind (m.carry). It isn't
+  // floored at 0: a member who owes stakes, buys and pays nothing until they've earned it back.
+  const VXP_KEEP = 400; // days kept one by one (re-read days are re-scored); older ones fold into one sum
+  const vxpCredit = m => {
+    if (!Array.isArray(m.vdays) || !m.vdays.length) return;
+    const L = m.vxp = m.vxp && typeof m.vxp === 'object' ? m.vxp : { d: {}, old: 0 }; if (!L.d || typeof L.d !== 'object') L.d = {};
+    const w = S.config.xp.discipline, H = m.multHist || {}, mult = k => { const v = +H[isoWeekOfKey(k)]; return v > 1 ? v : 1; };
+    for (const d of m.vdays) L.d[d.k] = Math.round(Math.round((+d.s || 0) * w) * mult(d.k));
+    const ks = Object.keys(L.d).sort(); for (const k of ks.slice(0, Math.max(0, ks.length - VXP_KEEP))) { L.old = (+L.old || 0) + L.d[k]; delete L.d[k]; }
+    L.src = walletFor(m); takeDebt(m); };
+  // a deleted profile's debt, picked up by the profile whose verified XP now comes from that wallet
+  const takeDebt = m => { const a = walletFor(m); if (!a || !own(S.debts, a)) return;
+    const gid = S.debts[a].id, xp = +S.debts[a].xp || 0; m.carry = (+m.carry || 0) + xp;
+    for (const k of Object.keys(S.debts)) if (S.debts[k].id === gid) delete S.debts[k];
+    notify(m, 'duel', 'A profile you deleted on this wallet owed ' + Math.abs(xp).toLocaleString('en-US') + ' XP. It’s on your balance now.', { title: 'XP balance' });
+    touch(m, 'debts'); };
+  // reward badges whose XP the ledger counts: awarded by hand, or on a number the server holds itself
+  const SERVER_METRICS = ['ret30', 'usd30', 'members'];
+  const awardVerified = (m, id) => { const b = own(S.badges, id) ? S.badges[id] : null;
+    return !!b && (!b.metric || SERVER_METRICS.includes(b.metric) || !!(m.awardsV && m.awardsV[id])); };
+  const ledgerOf = m => {
+    const L = (m && m.vxp) || {}, sum = (o, f) => Object.values(o || {}).reduce((a, x) => a + (+f(x) || 0), 0);
+    const verified = sum(L.d, x => x) + (+L.old || 0);
+    const granted = (m.grants || []).reduce((a, g) => a + (g.self ? 0 : +g.xp || 0), 0) + (+m.grantsOld || 0);
+    const awards = Object.keys(m.awards || {}).reduce((a, id) => a + (awardVerified(m, id) ? +S.badges[id].xp || 0 : 0), 0);
+    const mentor = sum(m.mentorXp && m.mentorXp.days, d => d.xp), stakes = +m.stakeNet || 0, spent = Math.max(0, +m.xpSpent || 0), carried = +m.carry || 0;
+    return { verified, granted, awards, mentor, stakes, spent, carried, balance: verified + granted + awards + mentor + stakes - spent + carried }; };
+  const balanceOf = m => m ? ledgerOf(m).balance : 0;
+  // free: the balance less XP held for trades waiting on a mentor's review; to spend: less what rides on open duels too
+  const freeOf = m => balanceOf(m) - heldOf(m);
+  const spendOf = m => freeOf(m) - duelRiding(m);
+  // stakes and buy-ins are against other members: they need a wallet the server reads (verified Discipline on)
+  const stakeWallet = m => !!(m && m.share && m.share.verify && walletFor(m) && Array.isArray(m.vdays));
+  const STAKE_WALLET = 'XP at stake needs a verified wallet: switch on “Verify my discipline” with your wallet added.';
+  // A grant on the member's list, which keeps its newest 200 (older ones fold into m.grantsOld, so the balance
+  // keeps them). Coach purchases are never dropped (that would hand their XP back): past the latest 60 they fold
+  // into one entry at the start of the list.
   const addGrant = (m, g) => {
     let a = [...(m.grants || []), g];
     const coach = a.filter(x => x.coach);
@@ -790,7 +846,39 @@ function createSocial(opts) {
       a = [{ id: list[0].id, xp: list.reduce((n, x) => n + x.xp, 0), why: 'Coach: ' + msgs + ' extra messages, earlier', at: list[list.length - 1].at, coach: true, day: 'earlier', msgs },
         ...a.filter(x => !old.has(x))]; }
     let drop = a.filter(x => !x.coach).length - 200;
-    m.grants = drop > 0 ? a.filter(x => x.coach || drop-- <= 0) : a; };
+    m.grants = drop > 0 ? a.filter(x => { if (x.coach || drop <= 0) return true; drop--; if (!x.self) m.grantsOld = (+m.grantsOld || 0) + (+x.xp || 0); return false; }) : a; };
+  // ---- what a member's app reports, checked against itself and against what the server knows ----
+  const STATS_DAYS = 100, STATS_FREEZE = 7; // days back a post may carry; days after which a day's XP is fixed
+  // XP the server itself paid a member, by their calendar day (grants and reward badges: the app counts them
+  // in its XP by day), with the rest it paid (mentoring) in plus, and what came off the total only in minus
+  const serverXpByDay = (m, tz) => { const days = {}; let plus = Math.max(0, +m.grantsOld || 0), minus = Math.max(0, -(+m.grantsOld || 0));
+    const add = (at, x) => { const k = zoneKey(tz, at); days[k] = (days[k] || 0) + x; plus += x; };
+    for (const g of m.grants || []) if (g.xp > 0) add(g.at, g.xp); else minus -= +g.xp || 0;
+    for (const [id, at] of Object.entries(m.awards || {})) if (own(S.badges, id) && S.badges[id].xp > 0) add(at, S.badges[id].xp);
+    plus += Object.values((m.mentorXp && m.mentorXp.days) || {}).reduce((a, d) => a + (+d.xp || 0), 0);
+    return { days, plus, minus }; };
+  const validateStats = (m, next, known, cap) => {
+    const today = zoneKey(next.tz, now()), freeze = addDaysKey(today, -STATS_FREEZE), oldest = addDaysKey(today, -STATS_DAYS);
+    // a day more than a week old keeps the XP it was first reported with, so the past can't be rewritten (a
+    // season in its grace day, a duel already played); a day never reported before still comes in (back from a break)
+    const prev = (m.stats && m.stats.xpDays) || {}, xd = {};
+    for (const [k, x] of Object.entries(prev)) if (k >= oldest && k < freeze) xd[k] = x;
+    for (const [k, x] of Object.entries(next.xpDays)) if (!(k < freeze && own(prev, k))) xd[k] = x;
+    next.xpDays = Object.fromEntries(Object.entries(xd).sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-120));
+    // the total: at most what a perfect player could have earned since their first trade (every day at the cap,
+    // at the multiplier's top tier), plus what the server paid them itself. The level is the league's for it.
+    const since = Math.max(Date.parse('2015-01-01T00:00:00Z'), Math.min(now(), next.firstAt || 0)), span = Math.floor((now() - since) / 86400000) + 2;
+    const top = S.config.mult.on ? Math.max(1, ...S.config.mult.tiers.map(t => t[1])) : 1;
+    next.xp = Math.round(Math.min(next.xp, span * cap * top + known.plus));
+    next.level = SC.levelOf(S.config.levels, next.xp);
+    next.streak = Math.min(next.streak, span); next.best = Math.min(next.best, span); };
+  // weekly XP is the server's own sum of the member's XP by day, never a number the app sends (so late XP, a day
+  // journaled the next week, reaches the week it belongs to). Weeks past what the days cover keep their sum.
+  const weekXpOf = (prevW, next) => { const W = Object.assign({}, prevW), by = {}, edge = isoWeekOfKey(addDaysKey(zoneKey(next.tz, now()), -STATS_DAYS));
+    for (const [k, x] of Object.entries(next.xpDays)) { const w = isoWeekOfKey(k); by[w] = (by[w] || 0) + x; }
+    for (const w of new Set([...Object.keys(by), ...Object.keys(W)])) { if (w > edge) { if (own(by, w)) W[w] = by[w]; else delete W[w]; } else if (!own(W, w) && own(by, w)) W[w] = by[w]; }
+    const keep = Object.keys(W).sort().slice(-16); /* a quarter's season needs 13 */ for (const k of Object.keys(W)) if (!keep.includes(k)) delete W[k];
+    return W; };
   // ---- XP pots: a buy-in leaves the balance when a member joins (ev.potIn[id]), comes back if the event is
   // called off or they back out before the start, stays in the pot if they leave after it (ev.potKept), and
   // the pot is paid out when the event settles (ev.potDone) ----
@@ -870,6 +958,8 @@ function createSocial(opts) {
       if (!b.metric || (m.awards && own(m.awards, b.id)) || (m.revoked && own(m.revoked, b.id))) continue;
       const v = badgeValue(m, b.metric); if (v == null || !isFinite(v)) continue;
       if (b.op === 'lte' ? v <= b.value : v >= b.value) { m.awards = m.awards || {}; m.awards[b.id] = now(); changed = true;
+        // a 30-day Discipline read from fills is the server's own number: its XP joins the balance (awardVerified)
+        if (b.metric === 'discipline30' && m.share.verify && Array.isArray(m.vdays)) m.awardsV = Object.assign({}, m.awardsV, { [b.id]: 1 });
         if (m.share.feed) pushEvent(m, { type: 'badge', text: 'earned the ' + b.name + ' badge ' + b.icon }); }
     }
     return changed; };
@@ -903,22 +993,22 @@ function createSocial(opts) {
     return o; };
   const coachLimitToday = m => { const base = coachLimitFor(m); return base == null ? null : base + coachExtra(m).x; };
   const coachSpentAll = m => (m.grants || []).reduce((a, g) => a + (g.coach && g.xp < 0 ? -g.xp : 0), 0);
-  // earned XP (the level's): what the member's app last reported, less purchases it hadn't counted yet
+  // earned XP (the level's, as shown): what the member's app last reported, less purchases it hadn't counted yet
   const earnedOf = m => { const xp = (m && m.stats && m.stats.xp) || 0; if (!m) return 0;
     return Math.max(0, xp - Math.max(0, coachSpentAll(m) - ((m.stats && m.stats.coachSpent) || 0))); };
   const coachPackPrice = (c, bought) => Math.min(1e6, c.cost * (c.rise ? 2 ** bought : 1));
   // the offer once today's messages are used up: its price and, if it can't be bought, why not
-  // A purchase comes off earned XP, and so off the stake balance too: what rides on open duels stays covered.
+  // A purchase is paid from the balance (the server's ledger) and comes off earned XP too: what rides on open
+  // duels and what's held for mentors' reviews stays covered.
   const coachOffer = (m, ex) => {
     const c = S.config.coach.packs; if (!c.on || (!c.lapsed && standingLapsed(m))) return null;
-    const price = coachPackPrice(c, ex.p), xp = earnedOf(m), riding = duelRiding(m), free = Math.max(0, balanceOf(m) - riding), L = S.config.levels;
+    const price = coachPackPrice(c, ex.p), xp = earnedOf(m), riding = duelRiding(m), free = spendOf(m), L = S.config.levels;
     const level = SC.levelOf(L, xp), after = xp - price, levelAfter = after >= 0 ? SC.levelOf(L, after) : null, f = n => n.toLocaleString('en-US');
     const blocked = c.max && ex.p >= c.max ? 'You’ve bought today’s ' + (c.max === 1 ? 'extra pack' : c.max + ' extra packs') + '. More messages tomorrow.'
-      : after < 0 ? 'You need ' + f(price) + ' XP and have ' + f(xp) + '.'
-      : free < price ? 'You can spend ' + f(free) + ' XP right now: ' + (riding ? 'the rest is riding on open duels.' : 'that’s your balance after duel stakes.')
+      : free < price ? (riding ? 'You can spend ' + f(Math.max(0, free)) + ' XP right now: the rest is riding on open duels.' : 'You need ' + f(price) + ' XP to spend and have ' + f(Math.max(0, free)) + '.')
       : c.keepLevel && levelAfter < level ? 'Spending ' + price.toLocaleString('en-US') + ' XP would drop you below level ' + level + '. Earn ' + (price - (xp - SC.levelStart(L, level))).toLocaleString('en-US') + ' more XP first.'
       : null;
-    return { price, msgs: c.msgs, bought: ex.p, max: c.max || null, xp, after: Math.max(0, after), level, levelAfter, blocked }; };
+    return { price, msgs: c.msgs, bought: ex.p, max: c.max || null, xp, after: Math.max(0, after), level, levelAfter, spend: free, blocked }; };
   const coachStatusFor = m => {
     const c = S.config.coach, lvl = (m.stats && m.stats.level) || 1, need = S.config.unlocksOn && !m.unlocked && S.config.modules.coach > 1 ? S.config.modules.coach : 0;
     const base = coachLimitFor(m), ex = coachExtra(m), limit = base == null ? null : base + ex.x, used = coachUsed(m), extra = ex.x > 0;
@@ -982,6 +1072,10 @@ function createSocial(opts) {
   // a trade sent for review, and its thread
   const dropReview = id => tx(() => { q('DELETE FROM review_comments WHERE review = ?').run(id); return q('DELETE FROM reviews WHERE id = ?').run(id).changes; });
   const dropMember = (id) => { const gone = own(S.members, id) ? S.members[id].address : null;
+    if (own(S.members, id)) leaveDebt(S.members[id]);
+    // a buy-in in a pot that has started stays in it, as a forfeit's does; before the start it goes with them
+    for (const p of Object.values(S.pods)) if (p.potIn && !p.potDone && p.potIn[id]) { if (podStarted(p)) potKeep(p, id); else delete p.potIn[id]; touch('pods'); }
+    for (const c of Object.values(S.comps)) if (c.potIn && !c.potDone && c.potIn[id]) { if (todayKey() >= c.start) potKeep(c, id); else delete c.potIn[id]; touch('comps'); }
     const hadVault = own(S.members, id) && !!S.members[id].vault, goneHandle = own(S.members, id) ? '@' + S.members[id].handle : null;
     // a deleted profile leaves nothing behind: the admin log keeps what was done, not who to
     S.adminLog = S.adminLog.map(x => (x.what.includes(id) || x.by === goneHandle) ? Object.assign({}, x, { what: x.what.split(id).join('(deleted member)'), by: x.by === goneHandle ? '(deleted admin)' : x.by }) : x); touch('adminLog');
@@ -1012,6 +1106,14 @@ function createSocial(opts) {
       q('DELETE FROM members WHERE id = ?').run(id); written.delete('m:' + id);
       if (hadVault) store.afterCommit(() => { try { fs.unlinkSync(vaultFile(id)); } catch (e) {} }); // the journal file goes once the row has
     }); };
+  // what a deleted profile owed stays with its wallets: the part of its balance below the verified XP a new
+  // profile on the same wallet would be credited again (stake losses, purchases, payments, an earlier debt)
+  const leaveDebt = m => { const L = ledgerOf(m), debt = Math.min(0, L.balance - L.verified);
+    const ws = [...new Set([...walletsOf(m), m.claimed].filter(Boolean).map(a => String(a).toLowerCase()))]; if (!ws.length) return;
+    const older = new Map(); for (const a of ws) if (own(S.debts, a)) older.set(S.debts[a].id, +S.debts[a].xp || 0); // not picked up yet: they add up
+    for (const k of Object.keys(S.debts)) if (older.has(S.debts[k].id)) delete S.debts[k];
+    const xp = debt + [...older.values()].reduce((a, x) => a + x, 0); if (xp < 0) { const gid = crypto.randomBytes(4).toString('hex'); for (const a of ws) S.debts[a] = { id: gid, xp, at: now() }; }
+    touch('debts'); };
   // weekly league rollover runs lazily on the first request of a new ISO week
   const ensureWeek = () => {
     const wk = isoWeekOfKey(todayKey());
@@ -1022,7 +1124,8 @@ function createSocial(opts) {
       // a monthly league promotes and relegates once, when the month changes, on the month it closed
       if (L.week && L.period === 'month' && monthOf(L.week) === monthOf(wk)) { L.week = wk; continue; }
       if (L.week && L.tiers) {
-        const entries = members().filter(m => own(L.members, m.id)).map(m => ({ id: m.id, tier: leagueTier(L, m), banned: m.banned, value: leagueValue(m, L, L.week) }));
+        // a member whose standing lapsed is off the boards, and ranks as 0 here too (never promoted)
+        const entries = members().filter(m => own(L.members, m.id)).map(m => ({ id: m.id, tier: leagueTier(L, m), banned: m.banned, value: offBoards(m) ? 0 : leagueValue(m, L, L.week) }));
         for (const mv of leagueRolloverBy(entries)) {
           const m = S.members[mv.id]; if (!m) continue; L.members[mv.id].tier = mv.to;
           if (L.id === 'main') m.tier = mv.to;
@@ -1076,14 +1179,14 @@ function createSocial(opts) {
       for (const d of Object.values(S.duels)) if ((d.type === 'ret' || d.ddCap) && d.status === 'active' && (d.a === m.id || d.b === m.id) && d.start <= todayKey()) {
         const from = Date.parse(d.start + 'T00:00:00Z');
         const s3 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(d.end + 'T23:59:59Z'));
-        if (s3) { d.money = d.money || {}; d.money[m.id] = { ret: s3.ret, dd: s3.dd }; duelsChanged = true; } }
+        if (s3) { d.money = d.money || {}; d.money[m.id] = { ret: s3.ret, dd: s3.dd, at: now() }; duelsChanged = true; } } // at: a reading from after the end settles it
       if (duelsChanged) touch('duels');
       // group duels on % return, or with a drawdown rule: the same, per member
       let podsChanged = false;
       for (const p of Object.values(S.pods)) if ((p.type === 'ret' || p.ddCap) && p.status === 'active' && own(p.mem, m.id) && p.mem[m.id].st === 'in' && p.start <= todayKey()) {
         const from = Date.parse(p.start + 'T00:00:00Z');
         const s5 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(p.end + 'T23:59:59Z'));
-        if (s5) { p.money = p.money || {}; p.money[m.id] = { ret: s5.ret, dd: s5.dd }; podsChanged = true; } }
+        if (s5) { p.money = p.money || {}; p.money[m.id] = { ret: s5.ret, dd: s5.dd, at: now() }; podsChanged = true; } }
       if (podsChanged) touch('pods');
       awardCheck(m); if (compsChanged) save(m, 'comps'); else save(m);
       m.moneyFailAt = 0;
@@ -1109,7 +1212,7 @@ function createSocial(opts) {
       for (const d of days) if (d && DAY_RE.test(d.k)) { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 };
         const f = Array.isArray(d.f) ? d.f.filter(x => SLIP_KEYS.includes(x)) : []; if (f.length) o.f = f; keep.set(d.k, o); }
       live.vdays = [...keep.values()].sort((a, b) => a.k < b.k ? -1 : 1).slice(-200); // Trader Age reads 6 months
-      live.vAt = now(); live.vFailAt = 0; taCompute(live); awardCheck(live); save(live);
+      live.vAt = now(); live.vFailAt = 0; taCompute(live); vxpCredit(live); awardCheck(live); save(live);
     } catch (e) { m.vFailAt = now(); }
     finally { behaviorBusy.delete(m.id); }
   };
@@ -1125,11 +1228,15 @@ function createSocial(opts) {
       const days = m.vdays.map(d => { const l = L[d.k] || {}; if (l.p) J['day:' + d.k] = { sleep: 1 };
         return { key: d.k, score: d.s, n: d.n, parts: { limit: l.lm, journal: l.jn || 0, plan: l.pl }, behavior: { flags: Object.fromEntries((d.f || []).map(k => [k, 1])) } }; });
       const A = opts.traderAge(days, J, { now: now(), dayOf: ms => zoneKey(tz, ms), firstAt: (m.stats && m.stats.firstAt) || 0 });
+      // from fills alone (Discipline and steadiness): what standing and mentors' pay read, since the loss
+      // limit, prep and journal parts above are what the member's app says
+      const F = opts.traderAge(days, {}, { now: now(), dayOf: ms => zoneKey(tz, ms), fillsOnly: true });
       const r1 = x => x == null ? null : Math.round(x * 10) / 10;
       m.ta = { at: now(), n: A.n, building: !!A.building, need: A.need, rating: r1(A.rating), raw: r1(A.raw), sure: A.sure != null ? Math.round(A.sure * 100) / 100 : null, range: A.range ? A.range.map(r1) : null, age: r1(A.age), recent: r1(A.recent), recentN: A.recentN || 0, pace: r1(A.pace), tradingYears: r1(A.tradingYears), drag: A.drag || null,
         parts: A.parts ? Object.fromEntries(Object.entries(A.parts).map(([k, v]) => [k, r1(v)])) : null,
         week: A.week ? { n: A.week.n, age: r1(A.week.age), rating: r1(A.week.rating), slip: A.week.slip || null } : null,
-        weeks: (A.weeks || []).map(w => ({ week: w.week, age: r1(w.age), rating: r1(w.rating), n: w.n })) };
+        weeks: (A.weeks || []).map(w => ({ week: w.week, age: r1(w.age), rating: r1(w.rating), n: w.n })),
+        fills: { building: !!F.building, age: r1(F.age), recent: r1(F.recent), recentN: F.recentN || 0 } };
       try { multCompute(m, days, J, tz); } catch (e) { /* the multiplier waits for the next try; Trader Age stands */ }
       try { mentorOutcomes(m); } catch (e) { console.warn('[ledger] mentor outcomes: ' + (e && e.message)); }
     } catch (e) { m.ta = null; }
@@ -1161,13 +1268,16 @@ function createSocial(opts) {
   // in them, so a break freezes it. Worked out whenever it's asked, since time passes without new
   // stats. The owner's admins and fully unlocked members are never locked.
   const standingOn = () => !!(opts.taStanding && opts.traderAge && S.config.standing.on);
+  // verified Trader Age from fills alone (Discipline and steadiness); a record from before it had one falls back
+  const taFills = m => m && m.ta ? m.ta.fills || m.ta : null;
   const standingCfgOut = () => { const c = S.config.standing; return { on: standingOn(), bar: c.bar, grace: c.grace, years: opts.taStanding ? opts.taStanding.years(c.bar) : null }; };
   const fmtYears = y => !(y > 0) ? '—' : y < 1 ? Math.max(1, Math.round(y * 12)) + ' months' : (y < 10 ? y.toFixed(1) : String(Math.round(y))) + ' years';
   const PERKS = 'duels, competitions, the leaderboards and the coach’s full allowance';
   const standingExempt = m => !!(m.admin || m.unlocked);
   const standingOf = m => {
     if (!m || !standingOn()) return { state: 'off', since: null };
-    const tz = (m.stats && m.stats.tz) || 'UTC', verified = !!(m.share && m.share.verify && walletFor(m) && Array.isArray(m.vdays)), ta = verified ? m.ta : null;
+    // read from fills alone (m.ta.fills): the app-reported parts of Trader Age don't hold standing up
+    const tz = (m.stats && m.stats.tz) || 'UTC', verified = !!(m.share && m.share.verify && walletFor(m) && Array.isArray(m.vdays)), ta = verified ? taFills(m) : null;
     const lastDay = verified && m.vdays.length ? m.vdays[m.vdays.length - 1].k : null, prev = m.standing && typeof m.standing === 'object' ? m.standing : null;
     const st = opts.taStanding.of(prev, { verified, building: !ta || !!ta.building, recent: ta && ta.recent != null ? ta.recent : null, lastDay }, S.config.standing, now(), ms => zoneKey(tz, ms));
     if (!prev || prev.state !== st.state || (prev.since || null) !== (st.since || null) || !!prev.slip !== !!st.slip) {
@@ -1190,25 +1300,29 @@ function createSocial(opts) {
   };
   // locked out of a perk: the reason to show (null when it's open to them)
   const standingLapsed = m => !!m && !standingExempt(m) && standingOf(m).state === 'lapsed';
+  // off the leaderboards: everywhere a board ranks (rollover, season podiums, a league's top five too)
+  const offBoards = m => standingOn() && standingLapsed(m);
   const standingLock = (m, what) => { if (!standingLapsed(m)) return null; const st = standingOf(m);
     return st.why === 'unverified' ? what + ' need a verified wallet: turn on “Verify my discipline” with your wallet added.'
       : what + ' are locked while your standing is lapsed. Get your last 20 trading days back to Trader Age ' + fmtYears(opts.taStanding.years(S.config.standing.bar)) + '.'; };
   const standingOut = m => { const c = standingCfgOut(); if (!c.on) return { on: false };
-    const st = standingOf(m), ta = m.share && m.share.verify ? m.ta : null;
+    const st = standingOf(m), ta = m.share && m.share.verify ? taFills(m) : null;
     return Object.assign({}, c, { state: st.state, why: st.why || null, since: st.since || null, deadline: st.deadline || null, exempt: standingExempt(m),
       locked: st.state === 'lapsed' && !standingExempt(m), recent: ta && ta.recent != null ? ta.recent : null, recentN: ta ? ta.recentN || 0 : 0 }); };
   // ---- XP for mentoring (levels only) ----
-  // Kept on the mentor as XP per day of their own clock (never trimmed: it's part of their total), with
-  // the keys of what already paid (each review, each day's note per mentee, each outcome pays once).
+  // Kept on the mentor as XP per UTC day (never trimmed: it's part of their total and their balance), with
+  // the keys of what already paid (each trade reviewed, each day's note per mentee, each outcome pays once).
+  // UTC, not the mentor's clock: a clock the app reports could hop zones to reach two days' caps at once.
   const MX_SLIP = { revenge: 'revenge-entry', afterTwo: 'trading-after-two-losses', sizeUp: 'sizing-up', addLoser: 'adding-to-losers', overtrade: 'overtrading', heldLoser: 'holding-losers' };
   const MX_AGES = [1, 2, 4, 6, 8, 12];
-  const mxDay = m => zoneKey((m.stats && m.stats.tz) || 'UTC', now());
+  const mxDay = () => utcDayKey(now());
   // two profiles sharing a wallet are one person: mentoring your own second profile earns nothing
   const sameOwner = (a, b) => { const A = new Set([...walletsOf(a), a.claimed].filter(Boolean).map(x => String(x).toLowerCase()));
     return [...walletsOf(b), b.claimed].filter(Boolean).some(x => A.has(String(x).toLowerCase())); };
-  // a mentee who traded in the last 14 days (verified days, or the days their app reports)
-  const menteeActive = o => { const ks = [...(Array.isArray(o.vdays) ? o.vdays : []).map(d => d.k), ...((o.stats && o.stats.days) || []).map(d => d.k)].filter(Boolean).sort();
-    return ks.length > 0 && ks[ks.length - 1] >= zoneKey('UTC', now() - 14 * 86400000); };
+  // a mentee who traded in the last 14 days, as the server read it from their verified wallet (days an app
+  // reports, or a profile with no wallet, could be a mentor's own sock puppet)
+  const menteeActive = o => { if (!(o.share && o.share.verify && walletFor(o) && Array.isArray(o.vdays) && o.vdays.length)) return false;
+    return o.vdays[o.vdays.length - 1].k >= zoneKey('UTC', now() - 14 * 86400000); };
   const mentorWorked = (mentor, mentee) => { const W = mentor.mentoring = mentor.mentoring && typeof mentor.mentoring === 'object' ? mentor.mentoring : {};
     W[mentee.id] = now(); for (const k of Object.keys(W)) if (now() - W[k] > 60 * 86400000) delete W[k]; };
   // pays the mentor (kind 'review' | 'note' | 'outcome'); key makes each thing pay once. Returns the XP paid.
@@ -1234,7 +1348,8 @@ function createSocial(opts) {
   // trading weeks before, then none for 3). The first look at a member only notes where they are.
   const mentorOutcomes = o => {
     const out = [], vd = Array.isArray(o.vdays) ? o.vdays : [], curWk = isoWeekOfKey(zoneKey((o.stats && o.stats.tz) || 'UTC', now()));
-    if (o.ta) { const hit = o.ta.building ? 0 : MX_AGES.filter(y => o.ta.age >= y).pop() || 0; // still building counts as none reached
+    const F = taFills(o); // from fills alone: a mentee's app-reported parts don't pay their mentors
+    if (F) { const hit = F.building ? 0 : MX_AGES.filter(y => F.age >= y).pop() || 0; // still building counts as none reached
       if (o.mxAge == null) o.mxAge = hit; else if (hit > o.mxAge) { o.mxAge = hit; out.push(['age:' + o.id + ':' + hit, 'reached a verified Trader Age of ' + hit + ' year' + (hit === 1 ? '' : 's')]); } }
     const W = new Map(); for (const d of vd) { const w = isoWeekOfKey(d.k); if (w >= curWk) continue; if (!W.has(w)) W.set(w, []); W.get(w).push(d); }
     const weeks = [...W.keys()].sort(), lastW = weeks[weeks.length - 1] || null;
@@ -1333,9 +1448,13 @@ function createSocial(opts) {
   // XP riding on a member's open duels: the ones running, and the terms they've put to someone
   // (a challenge waiting on them commits nothing until they accept it). `except`: the duel being decided.
   const duelRiding = (m, except) => openDuels(m).filter(d => d !== except && (d.status === 'active' || d.awaiting !== m.id)).reduce((s, d) => s + (d.stake || 0), 0);
-  // the share of a member's XP that can ride at once counts what they've put into pots too
-  const stakeRoomOf = (m, except) => { const e = escrowOf(m); return Duels.stakeRoom(balanceOf(m) + e, duelRiding(m, except) + e, S.config.duels); };
-  const potRoomOf = m => { const e = escrowOf(m); return Duels.stakeRoom(balanceOf(m) + e, duelRiding(m) + e, Object.assign({}, S.config.duels, { maxStake: Infinity })); };
+  // the share of a member's balance that can ride at once counts what they've put into pots too; a balance
+  // below zero (or a profile without a verified wallet) can't put anything up
+  const stakeRoomOf = (m, except) => { if (!stakeWallet(m)) return 0; const e = escrowOf(m); return Duels.stakeRoom(freeOf(m) + e, duelRiding(m, except) + e, S.config.duels); };
+  const potRoomOf = m => { if (!stakeWallet(m)) return 0; const e = escrowOf(m); return Duels.stakeRoom(freeOf(m) + e, duelRiding(m) + e, Object.assign({}, S.config.duels, { maxStake: Infinity })); };
+  // two profiles on one wallet are one person: they can't duel each other (a bonus and rating to farm)
+  const shareWallet = (a, b) => { const A = new Set([...walletsOf(a), a.claimed].filter(Boolean).map(x => String(x).toLowerCase()));
+    return [...walletsOf(b), b.claimed].filter(Boolean).some(x => A.has(String(x).toLowerCase())); };
   // the duel settings with the league's drawdown rules, for reading terms
   const duelCfg = () => Object.assign({}, S.config.duels, { risk: S.config.risk });
   // a capped event keeps the rule it was made under (fmt: 'duel' | 'pod' | 'comp'), whatever the owner changes later
@@ -1351,16 +1470,21 @@ function createSocial(opts) {
     if (!b.share || b.share.duels === false) return '@' + b.handle + ' isn’t taking challenges.';
     if (standingLapsed(b)) return '@' + b.handle + ' isn’t taking challenges right now.';
     if (!cfg.types[t.type]) return 'This league doesn’t run ' + Duels.TYPES[t.type].label + ' duels.';
+    if (shareWallet(a, b)) return 'You and @' + b.handle + ' share a wallet: one person can’t duel themselves.';
     if (!skipOpen) { if (openCount(a) >= cfg.maxOpen) return 'You have ' + cfg.maxOpen + ' duels going already. Finish one first.';
       if (openCount(b) >= cfg.maxOpen) return '@' + b.handle + ' has ' + cfg.maxOpen + ' duels going already.'; }
     for (const [x, who] of [[a, 'You'], [b, '@' + b.handle]]) {
       if (t.verified && !(x.share && x.share.verify && x.address)) return who + (who === 'You' ? ' need' : ' needs') + ' “Verify my discipline” switched on for a verified duel. Turn verification off for this duel, or pick another kind.';
+      // % return counts verified trading days only, so sitting flat with days an app reports can't win
+      if (t.type === 'ret' && t.minDays && !(x.share && x.share.verify && x.address)) return who + (who === 'You' ? ' need' : ' needs') + ' “Verify my discipline” switched on for a % return duel: its trading days are read from the wallet.';
       if (t.type === 'ret' && !canDd(x)) return who + (who === 'You' ? ' need' : ' needs') + ' “Show % return” switched on (with a wallet) for a % return duel.';
       if (t.ddCap && !canDd(x)) return who + (who === 'You' ? ' need' : ' needs') + ' “Show % return” switched on (with a wallet) for a duel with a drawdown rule. Take the rule off, or pick someone who shares returns.';
     }
     if (t.stake) {
       if (!cfg.stakes) return 'This league doesn’t allow XP stakes any more. Suggest terms without one.';
       if (t.stake > cfg.maxStake) return 'The most XP a duel can stake here is ' + cfg.maxStake + '.';
+      if (!stakeWallet(a)) return STAKE_WALLET + ' Or make it a duel without a stake.';
+      if (!stakeWallet(b)) return '@' + b.handle + ' has no verified wallet, so nothing can be at stake. Make it a duel without a stake.';
       const ra = stakeRoomOf(a, self || t); if (t.stake > ra) return ra ? 'You can put up at most ' + ra + ' XP right now.' : 'You don’t have XP to stake right now. Make it a duel without a stake.';
       if (t.stake > stakeRoomOf(b, self || t)) return '@' + b.handle + ' can’t cover a stake that big right now. Try a smaller one.';
       if (selfReported(t) && t.stake > S.config.pots.selfMax) return 'On a measure the apps report themselves, at most ' + S.config.pots.selfMax + ' XP can be at stake. Verify it from fills, or stake less.';
@@ -1370,10 +1494,29 @@ function createSocial(opts) {
   };
   // verified and % return duels are read from the wallets the two sides had when they accepted:
   // switching or clearing yours mid-duel (to shed a bad day or a blown drawdown) loses it
-  const duelStanding = (d, ma, mb, upto) => {
-    let moved = null;
+  // final: settling — a capped side with no drawdown reading is out (missing data is never "not over")
+  const duelStanding = (d, ma, mb, upto, final) => {
+    let moved = null, dark = null;
     if (d.w && (d.verified || d.type === 'ret' || d.ddCap) && d.start <= upto) moved = { a: !!ma && (ma.address || null) !== d.w.a, b: !!mb && (mb.address || null) !== d.w.b };
-    return Duels.standing(moved && (moved.a || moved.b) ? Object.assign({}, d, { moved }) : d, ma, mb, upto); };
+    if (d.ddCap && d.start <= upto) dark = { a: darkSide(d, ma, final), b: darkSide(d, mb, final) };
+    const x = Object.assign({}, d, moved && (moved.a || moved.b) ? { moved } : {}, dark && (dark.a || dark.b) ? { dark } : {});
+    return Duels.standing(x, ma, mb, upto); };
+  // A capped event reads drawdown from each side's wallet. Stopping that after the start (sharing switched off,
+  // or a wallet that stopped counting) is out, like changing wallets; so is still having no reading at the end.
+  // -> why that side is out, or null
+  const darkSide = (ev, m, final) => { if (!m || !ev.ddCap) return null;
+    if (!canDd(m)) return 'stopped sharing % return mid-duel';
+    return final && !(ev.money && own(ev.money, m.id)) ? 'no drawdown reading' : null; };
+  // An event is settled on readings from after its last day: each capped side's drawdown, and each verified
+  // side's Discipline days, read again after the end. Until then the server asks for them (a few at a time);
+  // a week after the end it settles on what it has (and a drawdown still missing is out).
+  const readAfterEnd = (ev, ids) => { const endMs = Date.parse(ev.end + 'T23:59:59Z'); let ok = true;
+    for (const id of ids) { const m = own(S.members, id) ? S.members[id] : null; if (!m || m.banned) continue;
+      const money = !ev.ddCap || !canDd(m) || !!(ev.money && ev.money[id] && ev.money[id].at > endMs);
+      const days = !(ev.verified || ev.type === 'ret') || !(m.share.verify && walletFor(m)) || (m.vAt || 0) > endMs;
+      if (!money || !days) { ok = false; refreshAll(m); } }
+    return ok; };
+  const settleDue = (ev, ids) => { const today = todayKey(); return today > addDaysKey(ev.end, 1) && (readAfterEnd(ev, ids) || today > addDaysKey(ev.end, 7)); };
   const duelView = (d, me) => {
     const mine = d.a === me.id ? 'a' : 'b', o = S.members[mine === 'a' ? d.b : d.a];
     const v = { id: d.id, type: d.type, label: duelName(d), rule: Duels.TYPES[d.type].rule, period: d.period, start: d.start || null, end: d.end || null,
@@ -1396,7 +1539,7 @@ function createSocial(opts) {
     const ma = S.members[d.a], mb = S.members[d.b];
     let winner = null, why = '';
     if (forfeiter) { winner = forfeiter === d.a ? d.b : d.a; why = 'forfeit'; }
-    else { const st = duelStanding(d, ma, mb, d.end); winner = st.lead === 'a' ? d.a : st.lead === 'b' ? d.b : null; why = st.why; d.final = { a: st.a, b: st.b, lead: st.lead, why: st.why }; }
+    else { const st = duelStanding(d, ma, mb, d.end, true); winner = st.lead === 'a' ? d.a : st.lead === 'b' ? d.b : null; why = st.why; d.final = { a: st.a, b: st.b, lead: st.lead, why: st.why }; }
     // the league's bonus is for a duel played to the end: a forfeit can't be farmed between friends
     const xp = winner && S.members[winner] && !forfeiter ? S.config.duels.xp : 0;
     // the stake changes hands only when both sides are still on the books to give and take it
@@ -1408,7 +1551,8 @@ function createSocial(opts) {
     if (stake) pairRecord(loserId, winner, stake);
     d.status = 'done'; d.result = { winner, why, forfeit: forfeiter || null, at: now(), xp, stake };
     ladderRate(d, winner);
-    const grant = (m, n, why) => addGrant(m, { id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), duel: d.id });
+    // a bonus won on a measure the apps report themselves is earned XP but not balance (self: the ledger skips it)
+    const grant = (m, n, why) => addGrant(m, Object.assign({ id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), duel: d.id }, selfReported(d) ? { self: true } : {}));
     for (const [m, o] of [[ma, mb], [mb, ma]]) { if (!m || m.banned) continue;
       const rec = m.duelRec = Object.assign({ w: 0, l: 0, d: 0 }, m.duelRec);
       if (!winner) rec.d++; else if (winner === m.id) rec.w++; else rec.l++;
@@ -1417,7 +1561,7 @@ function createSocial(opts) {
         : winner === m.id ? 'You won your ' + duelName(d) + ' duel against ' + oh + (forfeiter ? ' (they forfeited)' : '') + '.' + (xp + stake ? ' +' + (xp + stake) + ' XP.' : '')
         : (forfeiter === m.id ? 'You forfeited your ' + duelName(d) + ' duel against ' + oh + '.' : oh + ' won your ' + duelName(d) + ' duel.') + (stake ? ' −' + stake + ' XP.' : '') + (forfeiter === m.id ? '' : ' Rematch?'), { title: 'Duel result', url: duelUrl });
       if (stake && m.id === loserId) stakeMove(m, -stake, 'Lost a ' + duelName(d) + ' duel' + (o ? ' to @' + o.handle : ''), d.id);
-      save(m); }
+      touch(m); }
     const w = winner && S.members[winner];
     if (w && !w.banned) {
       if (xp) grant(w, xp, 'Won a ' + duelName(d) + ' duel');
@@ -1425,8 +1569,10 @@ function createSocial(opts) {
       // the loser is named only if they share milestones in the feed too
       const lo = S.members[winner === d.a ? d.b : d.a];
       if (w.share.feed) pushEvent(w, { type: 'duel', text: 'won a ' + duelName(d) + ' duel' + (lo && lo.share && lo.share.feed ? ' against @' + lo.handle : '') });
-      save(w); }
-    touch('duels');
+      touch(w); }
+    // the result, both sides' records and balances, and the month's pair total: one transaction, so a crash
+    // can't leave the duel open with its stake already moved (it would settle, and move it, again)
+    save('duels');
   };
   // expiries, results, forfeits by leaving, and a nudge when the lead changes (once a day at most)
   const duelSweep = () => {
@@ -1440,7 +1586,7 @@ function createSocial(opts) {
         const ma = S.members[d.a], mb = S.members[d.b];
         if (!ma || ma.banned) { duelSettle(d, d.a); changed = true; continue; }
         if (!mb || mb.banned) { duelSettle(d, d.b); changed = true; continue; }
-        if (today > addDaysKey(d.end, 1)) { duelSettle(d); changed = true; continue; } // the day after the last day, once late syncs are in
+        if (settleDue(d, [d.a, d.b])) { duelSettle(d); changed = true; continue; } // the day after the last day (late syncs are in), on readings from after it
         if (d.start <= today && d.leadDay !== today) {
           const st = duelStanding(d, ma, mb, today), lead = st.lead === 'a' ? d.a : st.lead === 'b' ? d.b : null;
           if (lead && d.lead && lead !== d.lead) { const L = S.members[lead], T = S.members[lead === d.a ? d.b : d.a];
@@ -1524,10 +1670,12 @@ function createSocial(opts) {
   const nth = n => n + (n % 100 > 10 && n % 100 < 14 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
   // everyone who plays, scored like one side of a duel, then ranked. A wallet that moved since they
   // accepted (changed or cleared) puts that member out, like a 1v1; so does forfeiting or a suspension.
-  const podStanding = (p, upto) => Duels.podRank(p, podIds(p, 'in', 'out').map(id => {
-    const m = S.members[id], s = Duels.sideScore(p, m, upto); let out = p.mem[id].st === 'out' || !m || m.banned || !!s.out;
+  // final: settling (a capped member with no drawdown reading is out, as in a 1v1)
+  const podStanding = (p, upto, final) => Duels.podRank(p, podIds(p, 'in', 'out').map(id => {
+    const m = S.members[id], s = Duels.sideScore(p, m, upto); let out = p.mem[id].st === 'out' || !m || m.banned || !!s.out, dark;
     if (out && !s.out) s.note = 'out';
     else if (p.start <= upto && p.w && p.w[id] && (m.address || null) !== p.w[id]) { out = true; s.note = 'changed wallet mid-duel'; }
+    else if (p.start <= upto && (dark = darkSide(p, m, final))) { out = true; s.note = 'Out: ' + dark; }
     return { id, s, out }; }));
   // a pot as a member sees it: the buy-in, how it's split, its size so far (or at the end) and what they got
   const potView = (ev, me, field) => { const held = Object.values(ev.potIn || {}).reduce((a, b) => a + b, 0) + (ev.potKept || 0) + (ev.overlay || 0);
@@ -1556,7 +1704,8 @@ function createSocial(opts) {
   const potTidy = p => { if (!p.potIn || p.potDone) return;
     if (['cancelled', 'lapsed', 'expired'].includes(p.status)) return potRefundAll(p, podName(p));
     for (const id of Object.keys(p.potIn)) { const x = p.mem[id], m = S.members[id];
-      if (!m || m.banned || !x || x.st === 'left' || x.st === 'declined' || x.st === 'expired') potRefund(p, id, podName(p));
+      if (!m && podStarted(p)) potKeep(p, id); // a member who deleted their profile after the start: it stays in the pot, like a forfeit
+      else if (!m || m.banned || !x || x.st === 'left' || x.st === 'declined' || x.st === 'expired') potRefund(p, id, podName(p));
       else if (x.st === 'out') potKeep(p, id); } };
   // fewer than 3 still in before the start: back to waiting while invitations are open, else it's off
   const podShort = p => {
@@ -1567,7 +1716,7 @@ function createSocial(opts) {
   };
   const podSettle = p => {
     potTidy(p);
-    const st = podStanding(p, p.end), winner = st.lead, n = st.rows.length;
+    const st = podStanding(p, p.end, true), winner = st.lead, n = st.rows.length;
     // the pot: paid on merit (survivors split pays everyone still in it at the end)
     const pot = p.buyIn && !p.potDone ? potPay(p, st.rows.map(r => ({ id: r.id, place: r.place, q: p.pay === 'surv' ? !!r.alive : !!r.q })), podName(p)) : null;
     // the league's bonus needs a pod played to the end: at least one other member who didn't forfeit
@@ -1582,7 +1731,7 @@ function createSocial(opts) {
         : (winner ? wh + ' won your ' + podName(p) + '.' : 'Your ' + podName(p) + ' ended level at the top.') + ' You placed ' + nth(r.place) + ' of ' + n + '.') + won, { title: 'Group duel result', url: duelUrl }); }
     const w = winner && S.members[winner];
     if (w && !w.banned) {
-      if (xp) addGrant(w, { id: crypto.randomBytes(4).toString('hex'), xp, why: 'Won a ' + podName(p), at: now(), duel: p.id });
+      if (xp) addGrant(w, Object.assign({ id: crypto.randomBytes(4).toString('hex'), xp, why: 'Won a ' + podName(p), at: now(), duel: p.id }, selfReported(p) ? { self: true } : {}));
       if (w.share.feed) pushEvent(w, { type: 'duel', text: 'won a ' + n + '-person ' + podName(p) });
       touch(w); }
     touch('pods');
@@ -1601,7 +1750,7 @@ function createSocial(opts) {
         podTell(podIds(p, 'in'), 'Your ' + podName(p) + ' didn’t start: fewer than 3 people accepted in 48 hours.', 'Group duel lapsed'); continue; }
       if (p.status !== 'active') continue;
       if (!podStarted(p)) { podShort(p); if (p.status !== 'active') changed = true; continue; }
-      if (todayKey() > addDaysKey(p.end, 1)) { podSettle(p); changed = true; continue; } // the day after the last day, once late syncs are in
+      if (settleDue(p, podIds(p, 'in'))) { podSettle(p); changed = true; continue; } // the day after the last day (late syncs are in), on readings from after it
       if (p.leadDay !== today) { const lead = podStanding(p, today).lead;
         if (lead && p.lead && lead !== p.lead && S.members[lead]) { const L = S.members[lead];
           for (const id of podIds(p, 'in')) notify(S.members[id], 'duel', id === lead ? 'You took the lead in your ' + podName(p) + '.' : '@' + L.handle + ' took the lead in your ' + podName(p) + '.', { title: 'Group duel', url: duelUrl });
@@ -1651,7 +1800,7 @@ function createSocial(opts) {
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
       passkeys: (m.passkeys || []).map(k => ({ id: k.id, name: k.name, at: k.at, lastUsed: k.lastUsed || null })),
       unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ...(g.coach ? { coach: true } : {}) })),
-      stakeNet: +m.stakeNet || 0, balance: balanceOf(m), stakes: (m.stakes || []).slice(-30).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
+      stakeNet: +m.stakeNet || 0, balance: balanceOf(m), ledger: ledgerOf(m), stakes: (m.stakes || []).slice(-30).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
       leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })), mentor: !!m.mentor,
       push: { on: !!(m.push && m.push.subs && m.push.subs.length), prefs: sanitizePrefs(null, m.push && m.push.prefs), available: !!push },
       inbox: (m.inbox || []).filter(x => x.at > (m.inboxRead || 0)).length,
@@ -1743,7 +1892,7 @@ function createSocial(opts) {
   // a competition's pot, once its results are final: too few entrants (or nobody qualified) and every buy-in
   // comes back; else it's paid on merit, the overlay added and the burn taken off
   const compPot = c => { if (!c.buyIn || c.potDone) return;
-    for (const id of Object.keys(c.potIn || {})) { const m = S.members[id]; if (!m || m.banned) potRefund(c, id, c.title); }
+    for (const id of Object.keys(c.potIn || {})) { const m = S.members[id]; if (!m) potKeep(c, id); else if (m.banned) potRefund(c, id, c.title); } // a deleted entrant's stays in the pot
     const field = Object.keys(c.potIn || {}).length + Object.keys(c.potKeptBy || {}).length;
     if (field < (c.minEntrants || S.config.pots.minEntrants)) { potRefundAll(c, c.title); c.potResult = { refund: true, short: true, paid: {}, gross: 0, burned: 0, pot: 0 };
       for (const id of Object.keys(c.entrants)) notify(S.members[id], 'season', c.title + ': too few entrants put up the buy-in, so it’s back with you.', { title: 'Competition pot' }); return; }
@@ -1756,14 +1905,16 @@ function createSocial(opts) {
       notify(m, 'season', res.refund ? c.title + ': nobody qualified for the pot, so your buy-in is back.' : res.paid[id] ? c.title + ': +' + res.paid[id] + ' XP from the pot.' : c.title + ': results are final. The pot went to the top places.', { title: 'Competition pot' }); } };
   const compRows = c => {
     if (c.final) return c.final.filter(r => own(S.members, r.id) && !S.members[r.id].banned); // as members stand today
-    const rows = compStandings(c, S.members, todayKey(), !!S.config.requireClaim, m => ({ approval: 'Wallet waiting for approval', rejected: 'Wallet not accepted' })[walletBlock(m)] || null);
     // return and discipline results come from the chain: freeze once every entrant's numbers were
-    // read after the end (or a week late at most, for a wallet that can't be read)
+    // read after the end (or a week late at most, for a wallet that can't be read: a drawdown still
+    // missing then is out)
     const endMs = Date.parse(c.end + 'T23:59:59Z'), fresh = () => Object.keys(c.entrants).every(id => { const m = own(S.members, id) ? S.members[id] : null;
       if (!m || m.banned) return true;
       const moneyOk = !(c.type === 'return' || c.ddCap) || !(m.share.ret && m.address) || (m.money && m.money.at > endMs);
-      return moneyOk && (c.type !== 'discipline' || !(m.share.verify && m.address) || (m.vAt || 0) > endMs); });
-    if (todayKey() > addDaysKey(c.end, 1) && (fresh() || todayKey() > addDaysKey(c.end, 7))) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log;
+      return moneyOk && (!(c.type === 'discipline' || c.type === 'return') || !(m.share.verify && m.address) || (m.vAt || 0) > endMs); });
+    const fin = todayKey() > addDaysKey(c.end, 1) && (fresh() || todayKey() > addDaysKey(c.end, 7));
+    const rows = compStandings(c, S.members, todayKey(), !!S.config.requireClaim, m => ({ approval: 'Wallet waiting for approval', rejected: 'Wallet not accepted' })[walletBlock(m)] || null, fin);
+    if (fin) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log;
       compPot(c); save('comps'); }
     else if (c.type === 'return' || c.type === 'discipline' || c.ddCap) for (const id of Object.keys(c.entrants)) if (own(S.members, id)) refreshAll(S.members[id]); // a few at a time (the refresh caps)
     return rows; };
@@ -1945,11 +2096,11 @@ function createSocial(opts) {
   const SLOTS_DEFAULT = 5, SLOTS_MAX = 50;
   const slotsOf = x => x.mentorSlots == null ? SLOTS_DEFAULT : x.mentorSlots;
   const pickersOf = x => members().filter(o => !o.banned && picksOf(o).includes(x.id));
-  // XP to spend: everything the member has earned (their level's XP, as their app reports it) less what they
-  // paid mentors and what's held for reviews not yet done. Paying never lowers a level.
+  // XP to spend: the member's balance (the server's ledger, ledgerOf: what they paid mentors already comes off
+  // it) less what's held for reviews not yet done and what rides on open duels. Paying never lowers a level.
   const heldOf = m => q("SELECT coalesce(sum(fee), 0) AS n FROM reviews WHERE member = ? AND fee_state = 'held'").get(m.id).n;
   const walletOut = m => { const held = heldOf(m), spent = Math.max(0, m.xpSpent || 0);
-    return { balance: Math.max(0, Math.floor((m.stats && m.stats.xp) || 0) - spent - held), held, spent }; };
+    return { balance: spendOf(m), held, spent }; };
   // the first trade with each paid mentor is free: kept per mentor, and given back if the trade is taken back before they said anything
   const firstFree = (m, x) => rateOf(x) > 0 && !(m.mentorFirst && own(m.mentorFirst, x.id));
   // a slot opened: everyone waiting for this mentor hears it once
@@ -2019,7 +2170,7 @@ function createSocial(opts) {
   // a podium in the league's hall of fame, and a badge for the top three
   const closeSeason = (L, id) => {
     const b = seasonBounds(id), days = Math.round((Date.parse(b.end) - Date.parse(b.start)) / 86400000) + 1;
-    const rows = (boardRows(leagueMembers(L), L.metric, { todayKey: b.end, dayFrom: L.metric === 'xp' ? b.start : undefined, dayTo: b.end, days }) || [])
+    const rows = (boardRows(leagueMembers(L).filter(m => !offBoards(S.members[m.id])), L.metric, { todayKey: b.end, dayFrom: L.metric === 'xp' ? b.start : undefined, dayTo: b.end, days }) || [])
       .filter(r => r.value != null && r.value > 0);
     const podium = rows.slice(0, 3).map(r => ({ id: r.id, handle: r.handle, value: r.value }));
     L.hall = [...(L.hall || []), { season: id, label: seasonLabel(id), start: b.start, end: b.end, n: rows.length, podium, at: now() }].slice(-24);
@@ -2302,7 +2453,8 @@ function createSocial(opts) {
           if (xp > 0 && m.share.feed && body.announce) pushEvent(m, { type: 'grant', text: 'got +' + xp + ' XP: ' + (cleanText(body.why, 80) || 'bonus from the league owner') }); }
         else if (a === 'ungrant') m.grants = (m.grants || []).filter(g => g.id !== body.id);
         else if (a === 'award' || a === 'revoke') { if (!own(S.badges, body.badge)) return json(res, 404, { error: 'no such badge' });
-          m.awards = m.awards || {}; if (a === 'award') { if (!own(m.awards, body.badge)) { m.awards[body.badge] = now();
+          m.awards = m.awards || {}; m.awardsV = Object.assign({}, m.awardsV); if (a === 'award') m.awardsV[body.badge] = 1; else delete m.awardsV[body.badge]; // by hand: the owner's word
+          if (a === 'award') { if (!own(m.awards, body.badge)) { m.awards[body.badge] = now();
             if (m.share.feed) pushEvent(m, { type: 'badge', text: 'earned the ' + S.badges[body.badge].name + ' badge ' + S.badges[body.badge].icon }); } }
           else delete m.awards[body.badge];
           m.revoked = m.revoked || {}; if (a === 'revoke') m.revoked[body.badge] = now(); else delete m.revoked[body.badge]; }
@@ -2832,17 +2984,19 @@ function createSocial(opts) {
       if (!cfg.pods) return json(res, 409, { error: 'Group duels are switched off in this league.' });
       const t = Duels.sanitizePodTerms(body, duelCfg()); if (t.error) return json(res, 400, { error: t.error });
       Object.assign(t, riskTerms('pod', t));
-      const verOk = x => !!(x.share && x.share.verify && x.address), ddNeed = t.type === 'ret' || !!t.ddCap;
+      // % return counts verified trading days only: everyone needs verification on, as for a verified duel
+      const verOk = x => !!(x.share && x.share.verify && x.address), ddNeed = t.type === 'ret' || !!t.ddCap, verNeed = t.verified || (t.type === 'ret' && !!t.minDays);
       if (ddNeed && !canDd(me)) return json(res, 409, { error: 'You need “Show % return” switched on (with a wallet) for ' + (t.type === 'ret' ? 'a % return duel.' : 'a duel with a drawdown rule.') });
       if (openCount(me) >= cfg.maxOpen) return json(res, 409, { error: 'You have ' + cfg.maxOpen + ' duels going already. Finish one first.' });
-      if (t.verified && !verOk(me)) return json(res, 409, { error: 'You need “Verify my discipline” switched on for a verified duel. Turn verification off for this one, or pick another kind.' });
+      if (verNeed && !verOk(me)) return json(res, 409, { error: 'You need “Verify my discipline” switched on for a verified duel. Turn verification off for this one, or pick another kind.' });
       const hs = (Array.isArray(body.to) ? body.to : []).slice(0, 12).map(h => cleanText(h, 30).replace(/^@/, '')).filter(Boolean), os = [];
       for (const h of hs) { const o = byHandle(h);
         if (!o || o.banned) return json(res, 404, { error: 'There’s no member called @' + h + '.' });
         if (o.id === me.id || os.includes(o)) continue;
         if (o.share.duels === false) return json(res, 409, { error: '@' + o.handle + ' isn’t taking challenges.' });
         if (openCount(o) >= cfg.maxOpen) return json(res, 409, { error: '@' + o.handle + ' has ' + cfg.maxOpen + ' duels going already.' });
-        if (t.verified && !verOk(o)) return json(res, 409, { error: '@' + o.handle + ' needs “Verify my discipline” switched on for a verified duel. Turn verification off for this one, or pick another kind.' });
+        if (verNeed && !verOk(o)) return json(res, 409, { error: '@' + o.handle + ' needs “Verify my discipline” switched on for a verified duel. Turn verification off for this one, or pick another kind.' });
+        if (shareWallet(me, o) || os.some(x => shareWallet(x, o))) return json(res, 409, { error: '@' + o.handle + ' shares a wallet with someone in this group duel: one person, one place.' });
         if (ddNeed && !canDd(o)) return json(res, 409, { error: '@' + o.handle + ' doesn’t share % return with a wallet, which ' + (t.type === 'ret' ? 'a % return duel' : 'a drawdown rule') + ' needs.' });
         os.push(o); }
       if (os.length < 2) return json(res, 400, { error: 'Invite at least 2 people.' });
@@ -2850,6 +3004,7 @@ function createSocial(opts) {
       const pt = Pots.sanitizePotTerms(body, S.config.pots, 'pod'); if (pt.error) return json(res, 409, { error: pt.error });
       if (pt.buyIn) {
         if (selfReported(t) && pt.buyIn > S.config.pots.selfMax) return json(res, 409, { error: 'On a measure the apps report themselves, a buy-in can be at most ' + S.config.pots.selfMax + ' XP. Verify it from fills, or put up less.' });
+        if (!stakeWallet(me)) return json(res, 409, { error: STAKE_WALLET + ' Or make it a group duel without a buy-in.' });
         const room = potRoomOf(me); if (pt.buyIn > room) return json(res, 409, { error: room ? 'You can put up at most ' + room + ' XP right now.' : 'You don’t have XP to put up right now. Make it a group duel without a buy-in.' });
         const pb = pairBlock(me, os); if (pb) return json(res, 409, { error: pb });
       }
@@ -2879,9 +3034,11 @@ function createSocial(opts) {
           if (standingLock(me, 'Duels')) return json(res, 403, { error: standingLock(me, 'Duels'), standing: true });
           if (!cfg.on || !cfg.pods) return json(res, 409, { error: 'Group duels are switched off in this league.' });
           if (openCount(me) - 1 >= cfg.maxOpen) return json(res, 409, { error: 'You have ' + cfg.maxOpen + ' duels going already. Finish one first.' });
-          if (p.verified && !(me.share.verify && me.address)) return json(res, 409, { error: 'You need “Verify my discipline” switched on for this verified duel.' });
+          if ((p.verified || (p.type === 'ret' && p.minDays)) && !(me.share.verify && me.address)) return json(res, 409, { error: 'You need “Verify my discipline” switched on for this verified duel.' });
+          if (others.some(o => podHas(p, o.id) && shareWallet(me, o))) return json(res, 409, { error: 'Someone in this group duel shares a wallet with you: one person, one place.' });
           if ((p.type === 'ret' || p.ddCap) && !canDd(me)) return json(res, 409, { error: 'You need “Show % return” switched on (with a wallet) for this duel: it reads drawdown from your wallet.' });
           if (p.buyIn) {
+            if (!stakeWallet(me)) return json(res, 409, { error: STAKE_WALLET });
             const room = potRoomOf(me); if (p.buyIn > room) return json(res, 409, { error: room ? 'The buy-in is ' + p.buyIn + ' XP; you can put up ' + room + ' XP right now.' : 'You don’t have the ' + p.buyIn + ' XP buy-in to put up right now.' });
             const ins = podIds(p, 'in'), pb = pairBlock(me, ins.map(id => S.members[id]).filter(Boolean)); if (pb) return json(res, 409, { error: pb });
             const seat = seatTaken(me, ins); if (seat) return json(res, 409, { error: seat });
@@ -3223,7 +3380,7 @@ function createSocial(opts) {
         recCache.delete(me.id);
         if (on && !r.reviewed) { mentorWorked(me, o);
           // a review pays once, and only with something said in it
-          if (said) xp = mentorPay(me, o, 'review', 'r:' + r.id); }
+          if (said) xp = mentorPay(me, o, 'review', 'r:' + r.member + ':' + r.trade); } // keyed on the trade: sending it again doesn't pay again
         // the mentee's held XP is paid the first time the mentor marks it reviewed with a comment of theirs in it
         if (on && said) fee = payHold(r, me, o);
         if (on && !r.reviewed) notify(o, 'mentor', '@' + me.handle + ' reviewed your ' + what + ' ✓' + (fee || r.fee_state === 'paid' ? ' (' + r.fee + ' XP paid)' : ''), { title: 'Trade reviewed', url: '/daruma#tr/' + r.id });
@@ -3269,7 +3426,14 @@ function createSocial(opts) {
       return json(res, 200, { me: publicMember(me, me), share: me.share });
     }
     if (head === 'me' && M === 'DELETE') {
-      dropMember(me.id); save('follows', 'comps', 'leagues', 'partners', 'comments'); return json(res, 200, { ok: true });
+      // not while XP is riding on something, or owed: settle first (a deleted profile's debt stays with its wallet anyway)
+      const riding = openDuels(me).filter(d => d.status === 'active' && d.stake).length
+        + Object.values(S.pods).filter(p => podOpen(p) && p.buyIn && p.potIn && p.potIn[me.id]).length
+        + Object.values(S.comps).filter(c => c.buyIn && !c.potDone && c.potIn && c.potIn[me.id]).length;
+      if (riding) return json(res, 409, { error: 'You have XP riding on ' + riding + (riding === 1 ? ' duel or pot' : ' duels and pots') + '. Your profile can be deleted once ' + (riding === 1 ? 'it’s' : 'they’re') + ' settled, or after you forfeit or back out.', riding });
+      const bal = balanceOf(me);
+      if (bal < 0) return json(res, 409, { error: 'Your XP balance is ' + bal.toLocaleString('en-US') + ' (stakes lost or XP spent beyond what you’ve earned). Earn it back to zero before deleting your profile.', balance: bal });
+      dropMember(me.id); save('follows', 'comps', 'leagues', 'partners', 'comments', 'pods', 'debts'); return json(res, 200, { ok: true });
     }
     if (head === 'claim' && parts[1] === 'release' && M === 'POST') {
       if (!me.claimed) return json(res, 400, { error: 'You haven’t claimed a wallet.' });
@@ -3321,7 +3485,17 @@ function createSocial(opts) {
       me.vaultRev = vaultRev(me) + 1; me.vault = null; save(me); return json(res, 200, { ok: true, rev: me.vaultRev });
     }
     if (head === 'stats' && M === 'POST') {
-      const next = sanitizeStats(body);
+      // the app sends at most every 15 seconds, and only when something changed
+      if (limited(req, 'stats:' + me.id, 60, 600000, true)) return json(res, 429, { error: 'Too many updates. Try again in a few minutes.' });
+      // Days are the member's own calendar days, up to their today and at most STATS_DAYS back; a day's XP is
+      // capped at what the league's weights can pay in a day, plus what the server itself granted that day.
+      const known = serverXpByDay(me, cleanTz(body.tz)), cap = SC.dayXpCap(S.config.xp);
+      const next = sanitizeStats(body, { todayOf: tz => zoneKey(tz, now()), keepDays: STATS_DAYS, capOf: k => cap + (known.days[k] || 0) });
+      // what the app says about the numbers it reports must add up: XP by day never more than the total
+      // (less purchases and corrections, which come off the total only)
+      const byDay = Object.values(next.xpDays).reduce((a, x) => a + x, 0);
+      if (next.xp + known.minus < byDay) return json(res, 400, { error: 'Your XP by day adds up to more than your total. Update the app and try again.' });
+      validateStats(me, next, known, cap);
       if (!me.share.mentor) for (const d of next.days) delete d.l;
       const posted = new Set(me.postedHabits || []);
       for (const e of eventsFromStats(me.stats, next, me.share, S.config.levels.titles)) {
@@ -3337,8 +3511,7 @@ function createSocial(opts) {
       if (body.bench !== undefined) { const b = me.share.bench !== false ? Bench.sanitizeBench(body.bench) : null;
         if (b) { b.ret = null; b.dd = null; } // returns are read on chain on the server (benchRows), never taken from the app
         if (!!b !== !!me.bench) benchDirty = true; me.bench = b ? Object.assign(b, { at: now() }) : null; }
-      if (next.week) { me.weekXp = me.weekXp || {}; me.weekXp[next.week] = next.weekXp;
-        const keep = Object.keys(me.weekXp).sort().slice(-16); /* a quarter's season needs 13 */ for (const k of Object.keys(me.weekXp)) if (!keep.includes(k)) delete me.weekXp[k]; }
+      me.weekXp = weekXpOf(me.weekXp, next);
       awardCheck(me);
       if (logCompDays(me)) save(me, 'comps'); else save(me); refreshAll(me);
       return json(res, 200, { ok: true, tier: me.tier || 0 });
@@ -3357,7 +3530,7 @@ function createSocial(opts) {
     if (head === 'leagues' && parts[1] && !parts[2] && M === 'GET') {
       const L = own(S.leagues, arg) ? S.leagues[arg] : Object.values(S.leagues).find(x => String(x.num) === arg.replace(/^#/, '')) || null;
       if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
-      const W = leagueWindow(L), top = boardRows(leagueMembers(L), L.metric, { risk: leagueRisk(L), week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
+      const W = leagueWindow(L), top = boardRows(leagueMembers(L).filter(m => !offBoards(S.members[m.id])), L.metric, { risk: leagueRisk(L), week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
       return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt, hall: (L.hall || []).slice().reverse().map(h => ({ season: h.season, label: h.label, n: h.n,
           // as the members stand today: a suspended one isn't named, and returns or dollars only show while still shared
           podium: h.podium.map(r => { const pm = own(S.members, r.id) ? S.members[r.id] : null;
@@ -3521,6 +3694,7 @@ function createSocial(opts) {
       else {
         if (c.buyIn && !c.entrants[me.id]) {
           if (started) return json(res, 409, { error: 'This competition has a buy-in, so it closed to new entrants when it started.' });
+          if (!stakeWallet(me)) return json(res, 409, { error: 'This competition has an XP buy-in. ' + STAKE_WALLET });
           const room = potRoomOf(me); if (c.buyIn > room) return json(res, 409, { error: room ? 'The buy-in is ' + c.buyIn + ' XP; you can put up ' + room + ' XP right now.' : 'You don’t have the ' + c.buyIn + ' XP buy-in to put up right now.' });
           const seat = seatTaken(me, Object.keys(c.potIn || {})); if (seat) return json(res, 409, { error: seat });
           const pb = pairBlock(me, Object.keys(c.potIn || {}).map(id => S.members[id]).filter(Boolean)); if (pb) return json(res, 409, { error: pb.replace('Play this one without XP at stake.', 'This competition has a buy-in, so you can’t join this one.') });
@@ -3529,6 +3703,7 @@ function createSocial(opts) {
         if (need && ((me.stats && me.stats.level) || 1) < need) return json(res, 403, { error: 'Competitions unlock at level ' + need + '.' });
         if (standingLock(me, 'Competitions')) return json(res, 403, { error: standingLock(me, 'Competitions'), standing: true });
         const ddNeed = c.type === 'return' || !!c.ddCap;
+        if (c.type === 'return' && c.tradeDays && !(me.address && me.share.verify)) return json(res, 400, { error: 'Return competitions count verified trading days: switch on “Verify my discipline” with your wallet added.' });
         if (ddNeed && !(me.address && me.share.ret)) return json(res, 400, { error: (c.type === 'return' ? 'Return competitions' : 'Competitions with a drawdown rule') + ' read your wallet on chain: add your address and switch on “Show % return” in What you share.' });
         if (ddNeed && !walletFor(me)) return json(res, 400, { error: walletBlock(me) === 'approval' ? 'Your wallet is waiting for the league owner’s approval. You can join return competitions once it’s approved.'
           : walletBlock(me) === 'rejected' ? 'The league owner hasn’t accepted this wallet, so it can’t enter return competitions.'
@@ -3554,6 +3729,9 @@ function createSocial(opts) {
         coachPrune(); }
       else { const k = utcDayKey(now()); S.ownerCoach = { k, n: Math.max(0, (S.ownerCoach.k === k ? S.ownerCoach.n : 0) + d) }; } save(m ? 'coachUse' : 'ownerCoach'); },
   };
+  // October 2026: the balance became the server's own ledger. Members' wallets already read are credited from
+  // the verified days on file, once, so a balance doesn't wait for the next read.
+  if (!S.migrations.ledger) { for (const m of members()) if (Array.isArray(m.vdays) && m.vdays.length && !m.vxp) vxpCredit(m); S.migrations.ledger = now(); }
   save(); // what loading filled in (defaults, league numbers) is written once, so a restart reads the same
   seedSchedule(); // seed wallets still waiting from before a restart
   return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };

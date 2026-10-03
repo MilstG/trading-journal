@@ -111,17 +111,17 @@ function stakeRoom(xp, riding, cfg) {
 // the member's own calendar day for a moment, as their app files XP under it
 const localKey = (ms, tz) => { try { return new Date(ms).toLocaleDateString('en-CA', { timeZone: tz || 'UTC' }); } catch (e) { return keyOf(ms); } };
 // The duel's dates once accepted: the next whole week (Monday to Sunday) or the next calendar month,
-// in UTC days like the league's weeks — today when today is that Monday or the 1st, so nobody gets
-// a head start and nobody waits more than they must.
+// in UTC days like the league's weeks — always one that starts after today, so nobody gets a head
+// start: accepted on a Monday (or the 1st), part of that day is already played and reported.
 function windowFor(period, nowMs) {
   const d = new Date(keyOf(nowMs) + 'T00:00:00Z');
   if (period === 'month') {
-    const s = d.getUTCDate() === 1 ? d : new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+    const s = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
     const e = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 0));
     return { start: keyOf(s.getTime()), end: keyOf(e.getTime()) };
   }
   const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-  const s = dow === 0 ? d.getTime() : d.getTime() + (7 - dow) * DAY;
+  const s = d.getTime() + (7 - dow) * DAY;
   return { start: keyOf(s), end: keyOf(s + 6 * DAY) };
 }
 // One side's score so far (or final). m: the member; d: the duel; upto: the last day to count.
@@ -148,8 +148,9 @@ function sideScore(d, m, upto) {
     for (const k of Object.keys(xd).sort()) if (inWin(k)) { const v = Math.max(0, Math.round((+xd[k] || 0) - (won[k] || 0))); s += v; mk.push({ k, s: v }); }
     out.score = s; out.marks = mk; out.n = mk.length; out.note = s + ' XP'; }
   else if (d.type === 'ret') { const r = d.money && m && Object.prototype.hasOwnProperty.call(d.money, m.id) ? d.money[m.id] : null;
-    // trading days: the verified ones when the member shares them, else the days their app reports
-    const td = (verifiedDays || appDays).filter(x => inWin(x.k)); out.n = td.length; out.marks = td.map(x => ({ k: x.k, s: Math.round(x.s) }));
+    // trading days: only the verified ones, read from the wallet (days an app reports can be made up, and
+    // sitting flat with made-up days must not win)
+    const td = (verifiedDays || []).filter(x => inWin(x.k)); out.n = td.length; out.marks = td.map(x => ({ k: x.k, s: Math.round(x.s) }));
     if (!r) out.note = 'waiting for on-chain data';
     else { out.ret = r.ret; out.dd = r.dd; out.score = r.ret;
       out.note = (r.ret >= 0 ? '+' : '') + (r.ret * 100).toFixed(1) + '% · drawdown ' + (r.dd * 100).toFixed(1) + '%' + (d.minDays && td.length < d.minDays ? ' · ' + td.length + ' of ' + d.minDays + ' trading days' : ''); } }
@@ -175,6 +176,13 @@ function standing(d, ma, mb, upto) {
     for (const [k, x] of [['a', a], ['b', b]]) if (d.moved[k]) { x.out = true; x.note = 'changed wallet mid-duel'; if (d.type === 'survive') x.fell = d.start; }
     if (d.moved.a && d.moved.b) return { a, b, lead: null, why: 'both changed wallets mid-duel' };
     return { a, b, lead: d.moved.a ? 'b' : 'a', why: 'the other side changed wallet mid-duel' };
+  }
+  // d.dark (set by the server): a capped duel's side whose drawdown can't be read — they stopped sharing
+  // returns after the start, or there's still no reading once it's over. No reading is never "not over".
+  if (d.dark && (d.dark.a || d.dark.b)) {
+    for (const [k, x] of [['a', a], ['b', b]]) if (d.dark[k]) { x.out = true; x.note = 'Out: ' + d.dark[k]; if (d.type === 'survive') x.fell = d.start; }
+    if (d.dark.a && d.dark.b) return { a, b, lead: null, why: 'neither side’s drawdown could be read' };
+    return { a, b, lead: d.dark.a ? 'b' : 'a', why: 'the other side’s drawdown couldn’t be read' };
   }
   // past the drawdown cap (a 'out' rule, or % return's own cap): that side loses, whatever the measure
   if (a.out || b.out) {

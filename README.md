@@ -59,7 +59,8 @@ capital-flow fetches, failing browser storage — for as long as it's true,
 instead of a status message that scrolls away.
 
 No wallet? **Paste data manually** accepts raw fill JSON (e.g. copied from an
-API response) and runs the same reconstruction. It also accepts **CSV** — a
+API response) and runs the same reconstruction (fills without `startPosition`
+get their position derived by average cost, as below). It also accepts **CSV** — a
 header row plus columns for time, symbol, side, price, and size, matched
 against common aliases with exact names beating loose ones — so fills
 exported from another venue or a hand-built spreadsheet feed the exact same
@@ -214,16 +215,41 @@ the notes and in the journal inbox, where a one-line answer saves to the notes.
 **Progress (Review).** A game layer that rewards process, never profit or
 activity:
 
-- **XP and levels** — a trading day earns its process score (0–100) in XP,
-  however many trades it had; +25 for each day the focus habit holds, +150 per
-  completed weekly challenge, +50 per achievement. Levels by default start at
+- **XP and levels** — a trading day earns its **Discipline** score (0–100, read
+  from fills: see Daruma below) in XP, however many trades it had, plus bonus XP
+  for what you logged that day (the same bonus list as Daruma: a plan written
+  after your first entry earns half, 8 instead of 15); +25 for each day the focus
+  habit holds, +150 per completed weekly challenge, +50 per achievement. The
+  process score below stays a grade on the calendar and the report card; it no
+  longer decides XP or the streak. Levels by default start at
   200·n·(n−1) XP, titled Rookie → Legend (the tenth title stays from level 10 on);
   on a server, the owner can change the curve, the titles and every XP amount.
-- **Discipline streak with shields** — consecutive trading days at process 70+;
+  A focus habit picked mid-week earns from the day it's picked (the next day once
+  you've traded that day), not back to Monday; the one it replaced keeps the days
+  it held.
+- **What's earned stays earned** — every achievement, completed challenge and
+  badge goes into an award ledger the first time it's earned (synced with your
+  settings; it only grows, and two devices' ledgers merge). It keeps the day and
+  the XP it was earned with, so retiring a habit, a week graded again, a goal
+  dropping off the list or the owner changing an XP amount never takes one back.
+  Daily XP is not frozen: each day's Discipline score, its logging bonus and
+  focus-habit days are read from your fills and journal every time, so they move
+  when late fills arrive, a day is re-scored, a wallet is removed or the time zone
+  changes. The ledger is written from the whole account only (not a per-market or
+  per-dex view).
+- **Discipline streak with shields** — consecutive trading days at Discipline 70+;
   days without trades never break it. A finished perfect week (every trading
   day 70+, at least three) earns a shield (max two) that absorbs one miss.
+- **Every trade counts, whatever you're looking at.** Discipline, XP, level, the
+  streak and the stats Daruma posts read all your trades (except orphaned
+  positions), not the dashboard's Perps / Spot view or its dex filter — switching
+  a filter never changes your XP, and it matches what the server verifies from
+  your wallet.
 - **Weekly challenge** — one target a week, picked from your biggest leak (or a
-  core habit), graded day by day; "Pick another" swaps it.
+  core habit), graded day by day; "Pick another" swaps it, and the new one counts
+  from the day you swap (the next day once you've traded that day), so a swap late
+  in the week can't complete. A challenge already missed can't be swapped; a new
+  one comes on Monday.
 - **Achievements** — thirteen, for moments that are hard in real trading:
   walked away at the limit, sat out after two losses, ten good losses, twenty
   stops honored in a row, a thirty-day journal, a perfect week, a rule kept for
@@ -270,18 +296,37 @@ your fills — and gets sharper the more you log.
   is the last 7 days when they hold 5+ trades, else your last 5 trades.
 - **Discipline** (0–100): the share of a day's trades with none of six slips, all
   read from fills — re-entering within 15 minutes of a loss, trading on after two
-  losses in a row, sizing up right after a loss, adding to a losing position, more
+  losses in a row, sizing up within 2 hours of a loss, adding to a losing position, more
   trades than your usual day, and holding a loser over 3× your usual winner hold.
+  Every close in the 15-minute / 2-hour window is checked for a loss, so a winner
+  closing in between doesn't hide one.
   A loss here is a fixed "more than $1", so the server can verify the same score.
 - **Load** (50 = your usual day, 100 = twice it): trades opened and size traded
   today against your median day. Set a trade cap or loss limit in Prep and
   Load also tracks them.
 - **Bonus XP** for what you choose to log, never a penalty for skipping it:
-  morning prep +10, plan before your first trade +15, trades journaled +15, stops
-  written +10, loss limit respected +10, end-of-day review +15. A day's XP is its
-  Discipline score plus that bonus, plus achievements, kept challenges and focus
-  habits. The league owner can change every one of these numbers and the level
-  curve (see the admin panel).
+  morning prep +10, plan before your first trade +15 (written later that same day:
+  half, +8), trades journaled +15, stops written +10, loss limit respected +10,
+  end-of-day review +15. A day's XP is its Discipline score plus that bonus, plus
+  achievements, kept challenges and focus habits. The league owner can change
+  every one of these numbers and the level curve (see the admin panel).
+- **Logging counts when it was done in time.** The day entry stamps when the plan
+  (`plannedAt`), the committed max loss (`limitAt`) and the check-in (`checkinAt`)
+  were first set. The plan pays in full when it was there by your first entry of the
+  day (open positions and trades that close on a later day count as entries), half
+  when written later that day, and nothing when written on a later day. The loss
+  limit only pays when it was set before the first entry; a max loss set or raised
+  after it is ignored for the bonus and the process score (your standing daily
+  limit applies instead, if you have one; tightening it keeps its stamp). The
+  check-in pays when done on or before its day. So opening an old day from the
+  calendar still journals it, but no longer earns XP. A plan, limit or check-in
+  saved before these stamps existed keeps the credit it always had, and re-saving
+  that entry never stamps it late; anything newly added to an old day is stamped
+  when it's added.
+- **Respected your loss limit** means no new entry after the day's realized result
+  first went past the limit — the result read fill by fill, as the tripwire does
+  (partial closes of positions still open count), and the entries from all your
+  trades, including ones still open or closing tomorrow.
 
 Five tabs: **Today**, **Stats** (P&L, win rate, average trade, profit factor,
 fees, daily P&L, best and worst markets and hours; deeper insights unlock with
@@ -310,7 +355,8 @@ use one format everywhere (`pzPx`). On a wide screen the tabs become a sidebar.
 **Plan a trade.** The *Plan your next trade* card on Today opens a short form:
 market, long or short, stop (required), target and entry (optional), and one line
 on why. The plan waits in your journal (synced like any note) and attaches itself
-to your next trade on that market and side that opens within 24 hours — the
+to your next trade on that market and side that opens within 24 hours (a long plan
+also takes a spot buy) — the
 trade's stop and target come from it, it counts as a plan written live, and the
 line becomes the trade's setup if it has none. No trade in 24 hours and it
 expires; old plans are cleared after 30 days. A trade that already has a plan
@@ -378,7 +424,7 @@ cost, and whether it's shrinking), a one-tap **plug this leak** loop that turns 
 into a habit checked from your fills: three clean trading weeks in a row plug it
 and earn a badge (only weeks you traded in count: a week traded without that slip
 adds one, a week with the slip starts the count again, and a week with no trading
-is skipped), **per-habit streaks** with
+is skipped; each leak counts once, however often it's plugged again), **per-habit streaks** with
 shields, **good moments** (the times you followed a rule that usually costs you)
 and **saved you** estimates. Today shows **live nudges** when a trigger you
 tend to slip after is happening right now (a fresh loss, a fast re-entry).
@@ -386,7 +432,10 @@ tend to slip after is happening right now (a fresh loss, a fast re-entry).
 **Badges.** About 270 badges in 45 families (discipline, consistency,
 journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
-on a public **badge page** at `/b/<name>` to share.
+on a public **badge page** at `/b/<name>` to share. Habit badges count retired
+habits for the days they were kept (re-adopting one starts a new copy beside the
+old), and **Toolbox** counts different habits: each library habit, leak plug or
+pattern once, and habits you write yourself as one.
 
 **Readiness from a wearable.** Prep can take readiness from **WHOOP** or
 **Oura** (sign in once; the owner registers an app with each and sets its keys, see
@@ -433,17 +482,20 @@ trading week under the bar drops one tier (never back to the start), and weeks w
 neither count nor break it. The server works it out (the app's own `taMultStep`, one finished
 week at a time) and records each week's multiplier, which applies to that week's daily XP
 (Discipline plus logging bonuses; achievements, badges, challenges and grants pay what they
-say). XP already earned never changes. Levels and lifetime XP count the multiplier; weekly
+say). A week's multiplier, once recorded, doesn't change. Levels and lifetime XP count the multiplier
+("where this week's XP came from" shows its share on a row of its own); weekly
 league tables and duels use the XP before it, so a newcomer can still win a week. The owner
 sets the bar and the tiers, or switches it off, in Levels & XP.
 
 **Standing.** Duels, competitions, the leaderboards and the coach's full allowance are kept
 by holding Trader Age: the plain average rating of your last 20 trading days at the bar (60,
-Trader Age 2 years). Under it, or without a verified wallet, Daruma shows a banner and the inbox
+Trader Age 2 years), read from fills alone (Discipline and steadiness, reweighted to 100: the
+loss-limit, prep and journal parts are what the app reports, so they don't hold standing up). Under it, or without a verified wallet, Daruma shows a banner and the inbox
 says so, and there are 14 days of grace to get back. A lapse also needs a trading day after the
 slip began, so a break freezes the clock (an unverified member lapses at the deadline). Once
 lapsed, new duels and duel answers, competition entries and the leaderboards (global and a
-league's other boards) are closed, others can't challenge them, and the coach drops to 1
+league's other boards, its top five, the weekly promotion, where they rank as 0, and season
+podiums) are closed, others can't challenge them, and the coach drops to 1
 message a day; the league's own table, level, XP and badges never change. Back at the bar, or
 verified, it all opens again. Fewer than 15 trading days counts as good. The server works it
 out whenever it's asked (the app's own `taStanding`), admins and fully unlocked members are
@@ -508,7 +560,9 @@ average (70/80/90, at least five trading days), weeks without one slip (2/4/8;
 the clock restarts after one), a share of the month's trades journaled, a
 number of days prepped in the month, or weeks inside your loss limit. Each shows a
 progress ring and on-track / behind; reaching one earns the **Goal getter**
-badge family.
+badge family — one per kind of goal a month, so clearing a reached goal and setting
+it again doesn't count twice, and a goal you've already met can't be set. Reached
+goals stay in the list (only the 40 most recent others are kept).
 
 **Trade charts.** Every card on the quick journal screen carries a candle chart
 of the trade (the same cached candles as the excursion scan) with entry and exit
@@ -560,7 +614,8 @@ link to join *your* league. A server upgraded from an older version imports its
 `social.json` on the first start and keeps the file as `social.json.migrated`.
 
 - **Leagues.** New members join the main league by default: five tiers (Bronze → Diamond). Each ISO
-  week, traders in a tier are ranked by the XP they earned that week; the top quarter
+  week, traders in a tier are ranked by the XP they earned that week (the server's own sum of the
+  XP by day each app reports, so a day journaled late still lands in its week); the top quarter
   (up to 5) move up and the bottom quarter move down, once at least four traders are
   in the tier. The owner can add more leagues, each ranked on its own metric (XP,
   verified discipline, streak, all-time XP, % return, $ P&L or return/drawdown),
@@ -594,8 +649,10 @@ link to join *your* league. A server upgraded from an older version imports its
   cover; shares meant for places nobody qualified for go to those who did). Too
   few entrants (3 by default) or nobody qualifying, and every buy-in goes back;
   so does removing the competition before it pays.
-- **What keeps pots fair** (Admin → Duels → XP pots). A member can have at most
-  25% of their stake balance riding at once, duels and pots together. Two
+- **What keeps pots fair** (Admin → Duels → XP pots). A buy-in needs a verified wallet
+  and comes from the balance (see Duels → *The XP balance*). A member can have at most
+  25% of their balance riding at once, duels and pots together. A member removed after a
+  pot started leaves their buy-in in it. Two
   members can move at most 1,000 XP net between them in a calendar month,
   across duel stakes and pots (a duel's stake is trimmed to what's
   left; past it they can still play, without XP at stake). A measure the apps
@@ -682,9 +739,9 @@ link to join *your* league. A server upgraded from an older version imports its
   the trade is sent and **paid** the first time the mentor marks it reviewed with a comment
   of theirs in it; it goes back if the mentor hasn't within the hold time (default 72
   hours), if the member takes the trade back or drops the mentor, or if the mentor is
-  stood down or suspended. Payments come out of the member's **XP to spend**: their XP
-  (as their level counts it) less what they paid and what's held. Their level never goes
-  down for it. The mentor gets the payment on their mentoring ledger (it counts toward
+  stood down or suspended. Payments come out of the member's **XP to spend**: their balance
+  (the server's XP ledger, see Duels → *The XP balance*) less what's held and what rides on
+  open duels. Their level never goes down for it. The mentor gets the payment on their mentoring ledger (it counts toward
   their level, never leagues or duels), less the **pool share** the owner sets (0% by
   default), which goes to the owner's pool (`GET /admin/pool`: what it holds, everything
   it took in, the latest payments and what's held now). A profile sharing a wallet with
@@ -709,17 +766,19 @@ link to join *your* league. A server upgraded from an older version imports its
   day per mentor): it switches on Let mentors see my days after a yes, tells that mentor,
   and puts the member first on their Mentees screen with an "asked for you" tag.
 - **XP for mentoring.** Mentoring is work, so mentors earn by teaching (the server pays it,
-  per day of the mentor's clock): a trade they mark reviewed with a comment of theirs in it
-  (15, once per trade), a note on a mentee's day (5, one per mentee a day, 3 paid a day), and
+  per UTC day, so a clock that hops zones can't reach two days' caps): a trade they mark reviewed with a comment of theirs in it
+  (15, once per trade: sending it again doesn't pay again), a note on a mentee's day (5, one per mentee a day, 3 paid a day), and
   25 when a mentee they worked with in the last 30 days reaches something verified from
   their wallet: a new Trader Age milestone (1, 2, 4, 6, 8, 12 years), a perfect week (3+
   trading days, all 70+) or a leak plugged (a slip seen in 2+ of the 6 trading weeks before,
-  then none for 3). Only mentees who traded in the last 14 days count; reviews and notes are
+  then none for 3; Trader Age milestones read from fills alone). Only mentees with a verified
+  wallet that traded in the last 14 days count (a profile with no wallet could be the mentor's own); reviews and notes are
   capped at 60 a day (results aren't); each thing pays once; a profile sharing a wallet with
   the mentor never pays; the first look at a mentee only notes where they are. It raises the
   mentor's level (its own row in "where this week's XP came from"), but league tables and
   duels never count it. Two badge families for mentors: **Teacher** (trades reviewed) and
-  **Made a difference** (mentee results). The owner sets the amounts and the cap, or switches
+  **Made a difference** (mentee results); their XP is mentoring XP too, and so is an XP or
+  level badge reached only thanks to mentoring XP. The owner sets the amounts and the cap, or switches
   it off, in Levels & XP.
 - **Trade reviews.** A member who lets mentors in can send one trade to their picked
   mentor (or, without picks, the league's mentors): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
@@ -749,7 +808,11 @@ link to join *your* league. A server upgraded from an older version imports its
   Daruma added to the Home Screen.
 
 **Trust model.** Process numbers are computed by each member's browser and are
-self-reported. Money numbers are never taken from the browser: the server reads
+self-reported. The server checks them against each other and against what it knows (the level
+is the league's own for the XP; weekly XP is its sum of XP by day; a day is never later than
+the member's today, at most 100 days back, fixed once a week old, and capped at what the XP
+weights can pay in a day; the total is capped at what a perfect player could have earned since
+their first trade; at most 60 posts in 10 minutes), but only the XP balance is the server's own. Money numbers are never taken from the browser: the server reads
 them from Hyperliquid's public `portfolio` endpoint for the member's wallet, and only
 when they opted in. Naming an address proves nothing; *claiming* it does (below).
 Addresses stay hidden by default and the owner can remove anyone.
@@ -1097,8 +1160,10 @@ The day journal also carries a **Prep** score — sleep, stress and
 focus, 1–5. Once about ten trades carry one, the pattern miner tests them as
 conditions (`slept badly`, `high stress`, `low focus`, `sharp focus`), so how
 you felt becomes a measured edge or leak. Day entries record `plannedAt`, when
-a plan first existed for the day, so the process score can tell a plan written
-before the first entry from one written afterwards.
+a plan first existed for the day, `limitAt`, when the committed max loss took its
+value, and `checkinAt`, when the check-in was first done, so the process score
+and bonus XP can tell logging done before the first entry from logging done
+afterwards (see Daruma's bonus XP for the rules).
 
 **Monthly goals** (also Review) hold the month to three optional commitments:
 a net target (with straight-line projection and needed daily pace), a max
@@ -1280,8 +1345,10 @@ It also carries the habit loops:
   every trade is journaled (today never breaks it while it's still being traded).
 - **Process** — a 0–100 **process score** per trading day, graded on how you
   traded rather than what the market paid: plan filed before the first entry
-  (20), trades breaking no rule (20), trades with a live plan (15), planned
-  stops honored (15), no entries after the day's loss limit broke (10), trades
+  (20; written later that day 10, on a later day 0), trades breaking no rule (20),
+  trades with a live plan (15), planned stops honored (15; an exit past the stop by
+  up to 10% of the risk carried is normal slippage and still honored, the same band
+  the plan verdict uses), no entries after the day's loss limit broke (10), trades
   journaled (20). Parts that don't apply that day drop out of the weighting,
   and the two planning parts only count from the first day each habit was
   used, so older history isn't graded against habits that didn't exist yet.
@@ -1330,12 +1397,15 @@ which shows from your third trading day:
 - **Average day by habit score.** Days grouped into bands (under 50, 50–69,
   70–89, 90–100), with the average result in each band.
 - **Which habits pay.** For each habit, the average day when you kept it minus
-  the average day when you didn't.
+  the average day when you didn't. No revenge entries and no sizing up are
+  compared trade by trade instead: entries after a loss where you waited (or kept
+  your size) against those where you didn't.
 
 The habit score only counts the habits you actually use. A habit you've never
 kept (say, the end-of-day review) isn't held against every day. Stops honored
 and the loss limit stay out of the score, because they can only fail on a
-losing day.
+losing day. The four fill checks count as the share of the day's chances you
+kept (see the routine score below).
 
 Daruma tells the same story simply, for people getting started, under **Stats →
 Do your habits pay?** (near the top, for the range you pick). It gives a plain
@@ -1349,7 +1419,7 @@ scatter and no statistics in Daruma; those stay in the full journal. It never
 claims a link before 8 days or without a significant one, and it says so when
 sloppier days did better.
 
-Below that, over your whole history in the current view:
+Below that, over your whole history (every trade, like Discipline and XP):
 
 - **Week by week.** Average result per trade as bars, with your routine score
   as a line.
@@ -1361,23 +1431,30 @@ Below that, over your whole history in the current view:
   - Next-week link: does a disciplined week predict the *following* week? That's
     closer to cause and effect, because it can't run backwards.
   - Per-trade result on disciplined days vs the rest, with a bootstrapped 90%
-    range for the difference.
+    range for the difference. Days are only compared with days that had as many
+    entries after a loss (a day with no loss to react to is a better day by
+    construction), and the bootstrap resamples whole days.
   - Whether the link is growing, over a rolling 12-week window.
 - **Which habits pay.** Plan before the first trade, rules kept, stops written,
   check-in, end-of-day review, journaling, and no revenge entries, sizing up,
-  adding to losers or overtrading. Each shows days kept vs missed and the
-  difference per trade, marked *holds up* (it survives a false-discovery check
+  adding to losers or overtrading. Each shows days kept vs missed (d) and the
+  difference per trade — for revenge entries and sizing up, the entries after a
+  loss kept vs slipped (t) — marked *holds up* (it survives a false-discovery check
   across all the habits), *suggestive* or *could be chance*.
 
 Two choices keep it honest:
 
-- **The routine score here is outcome-blind.** It's the share of the day's
-  trades free of revenge entries, sizing up after a loss, adding to a loser and
-  overtrading. The two Discipline checks that can only fail on a losing trade
-  (holding a loser, trading on after two losses) are left out, so a red day
-  can't lower the score by itself and manufacture a link. For the same reason,
-  habits that follow from the result ("stayed under the loss limit", "stops
-  honored") are listed but not tested.
+- **The routine score here is outcome-blind.** For revenge entries, sizing up
+  after a loss, adding to a loser and overtrading, it's the share of your
+  *chances* at each that you kept — an entry within 2 hours of a loss is a chance
+  to wait 15 minutes and to keep your size — averaged over the four. A day with
+  no chance at one takes your own usual rate at it. Counting slips per trade
+  instead lowers the score with every loss (a revenge entry needs a loss first),
+  and on pure coin flips that found a "strong link" (ρ 0.87, p 0.001); now
+  identical behaviour scores the same every day. The two Discipline checks that
+  can only fail on a losing trade (holding a loser, trading on after two losses)
+  are left out. For the same reason, habits that follow from the result ("stayed
+  under the loss limit", "stops honored") are listed but not tested.
 - **Results are in R** (or % return on notional when most trades have no
   planned risk), so trading bigger never counts as trading better.
 
@@ -1406,8 +1483,9 @@ follow and your leagues' members). Money is never staked; XP can be.
   - **Journal streak:** more days with every trade journaled and the day reviewed.
   - **Process XP:** more XP earned from process.
   - **% return with a drawdown cap.** Going past the cap loses outright. Both
-    sides must share % return, and each needs a minimum of trading days (3 for a
-    week, 5 for a month by default) so sitting flat can't win. This type is off
+    sides must share % return and verify their Discipline, and each needs a minimum of
+    trading days (3 for a week, 5 for a month by default), counted from the wallet only, so
+    sitting flat can't win. This type is off
     unless the owner switches it on.
   - **A drawdown rule on any duel.** Any kind (a Discipline duel, say) can carry
     a drawdown cap picked from the owner's presets (10 / 15 / 20 / 25% by
@@ -1416,28 +1494,45 @@ follow and your leagues' members). Money is never staked; XP can be.
     a Discipline score loses points instead (2 per 1% over by default; kinds that
     count days can't be docked, so there it's out). Both sides need "Show %
     return" with a wallet; drawdown is read from the wallet's account value, from
-    the duel's first day to its last.
+    the duel's first day to its last. Switching that off after the start (or a wallet that
+    stops counting) is out, like changing wallets, and so is still having no reading a week
+    after the end: a missing reading never counts as "not over".
   - **Verified scoring.** The first three can be scored "verified from fills",
     which reads the Discipline the server computes from each wallet, instead of
     what the apps report.
 - **How it runs.** The other side has 48 hours to accept, decline or **suggest
   changes**, which sends the challenge back with new terms. An accepted duel runs
-  from the next Monday (or the 1st, for a month), so nobody gets a head start.
+  from the next Monday (or the 1st, for a month) after the day it's accepted (accepted on a
+  Monday, it starts the Monday after), so nobody gets a head start.
   A live card on Today and under Duels shows both scores and each day's mark, and
   a notification comes when the lead changes.
 - **XP stakes.** A challenge can put XP on the line: both sides put up the same
-  amount and the winner takes the other's (a draw gives both back). A duel can
-  stake at most 500 XP, and at most 25% of a member's XP can ride on their open
-  duels at once (the owner sets both). The other side's limit is checked too.
-  XP won in a duel doesn't count toward a Process XP duel.
-- **Earned XP and the stake balance.** Stakes never touch earned XP: the level,
-  the title, the weekly XP leagues and every level unlock count only XP earned
-  from process, badges and grants. What's won or lost on stakes moves a separate
-  balance (earned XP ± stake results, kept by the server), and the 25% limit is
-  a share of that balance. Losing stakes can't lock a feature, and winning them
-  can't buy a level. Progress shows "N XP to stake" once a member has won or lost
-  a stake.
-- **Results.** A duel is settled the day after it ends. The winner gets a feed
+  amount and the winner takes the other's (a draw gives both back). Both need a
+  verified wallet ("Verify my discipline" with a wallet the server reads). A duel can
+  stake at most 500 XP, and at most 25% of a member's balance can ride on their open
+  duels at once (the owner sets both). The other side's limit is checked too, on a measure
+  the apps report themselves the screen offers no more than that limit (100 XP), and two
+  profiles on one wallet can't duel each other. XP won in a duel doesn't count toward a
+  Process XP duel.
+- **The XP balance.** What can be staked, put in a pot, paid to a mentor or spent on
+  coach messages is the **balance**, a ledger the server keeps from what it can vouch for:
+  verified Discipline XP (each day the server scored from the wallet's fills, × the
+  league's Discipline weight × that week's multiplier; credited as the wallet is read and
+  kept when verification is switched off), the owner's grants, duel bonuses won on a
+  measure the server reads, reward badges awarded by hand or on a number the server holds,
+  mentoring XP, and stake and pot results; less mentor fees paid and coach purchases. The
+  XP an app reports (earned XP: the level, the title, the weekly XP leagues and every level
+  unlock) is shown as the member's XP but never backs anything that moves XP. The balance
+  isn't floored at zero: a member who owes stakes, buys and pays nothing until it's earned
+  back. `/me` shows it as `balance` with its parts (`ledger`). Losing stakes can't lock a
+  feature, and winning them can't buy a level.
+- **Leaving.** A profile can't be deleted while XP rides on a duel or a pot, or while its
+  balance is below zero. What it owed beyond its verified XP stays with its wallets: a new
+  profile whose verified XP comes from one of them takes the debt on (and is told).
+- **Results.** A duel is settled the day after it ends, on readings taken after its last
+  day: the server reads each capped side's drawdown and each verified side's Discipline
+  again (a week late at most). The result, both records and the stake are written in one
+  go. The winner gets a feed
   line (naming the loser only if they share milestones too), the stake, and an XP
   bonus the owner sets (default +100, the same for every duel and only for a duel
   played to the end). Before the start date either side can **back out** and
@@ -1771,9 +1866,10 @@ All opt-in via environment variables, still zero dependencies:
   for quick replies). Once the day's messages are used, a member can **buy more with XP**
   (`POST /api/coach/packs` with the price they were shown): by default 150 XP for 3 messages,
   at most 2 packs a day, all set on the Coach tab, with an optional doubling price per pack.
-  A purchase comes off earned XP (the level) and the stake balance, never weekly XP, so
-  leagues, seasons and duels don't move. It's refused if it would drop a level (unless the
-  owner turns that off) or leave XP riding on open duels uncovered. Each day's purchases are
+  A purchase is paid from the balance (the server's XP ledger) and comes off earned XP too,
+  never weekly XP, so leagues, seasons and duels don't move. It's refused if it would drop a
+  level (unless the owner turns that off), or if the balance less what rides on open duels and
+  what's held for mentors doesn't cover it. Each day's purchases are
   one grant on the member's page; packs reset with the count, the XP isn't refunded. Uses the official `@anthropic-ai/sdk`, installed as an *optional*
   dependency: without `COACH_AI` the server never loads it and stays
   dependency-free. Model `COACH_AI_MODEL` (default `claude-opus-5-5`), medium
@@ -1916,6 +2012,18 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 
 ## Limitations, stated honestly
 
+- **XP is still partly self-reported.** Earned XP, the level, the streak, badges, weekly XP and
+  XP by day are computed in each member's browser from their trades and journal, which they
+  control (any public wallet when *Only count claimed wallets* is off; a crafted backup). The
+  server bounds them (see the trust model under Pulse) so no one ranks past what an honest
+  perfect player could earn, but within those bounds weekly and all-time XP boards, league
+  promotion, season podiums, level unlocks and owner badges on those numbers rest on what the
+  app says. Duels and pots on measures the app reports are capped at 100 XP at stake. What
+  moves XP between members (stakes, buy-ins, mentor fees) and what it buys (coach messages)
+  comes only from the server's balance. The XP multiplier still reads the loss-limit, prep and
+  journal parts of Trader Age that the app reports, so verified Discipline XP can be up to the
+  top tier's ×1.5 of what fills alone would give.
+
 - Bybit and Binance only answer from countries they serve, and they decide by the
   IP address of whatever calls them, which here is your server. A server in the US
   is refused by both. The app says so in plain words when it happens, and
@@ -1966,6 +2074,7 @@ listed) and its own test suite. Trader Age (`app/features/trader-age.js`) is the
 ```
 npm test           # or: node tests/run-all.mjs — offline, no dependencies
 npm run test:e2e   # browser smoke tests (needs Playwright, see below)
+npm run test:e2e:heavy  # a ~18k-trade account in the browser, with real time budgets
 ```
 
 About 620 tests across 33 suites cover reconstruction (flips, funding
@@ -1987,7 +2096,9 @@ digest lifecycle, server-held backups, the metrics endpoint). The suites extract
 they test exactly what ships — there is no second copy of the code to drift
 out of sync. `tests/test-budget.mjs` adds size budgets, one per screen, measured as
 the server sends them: the journal (`/`: the page plus its `app/` scripts) and Daruma
-(`/daruma`, which leaves Chart.js out because it never draws one). The fonts are files in
+(`/daruma`, which leaves out Chart.js and the journal-only parts it never shows: the
+Diagnostic view, the excursion and miner panels with the replay chart, and the exports —
+`app/diagnostic-view.js`, `app/excursions-view.js`, `app/exports.js`). The fonts are files in
 `app/fonts/`, versioned and cached for a year like the scripts, and a browser only
 fetches the faces a screen uses, so they have a budget of their own. A test that fails
 names the screen that grew, so growth is a choice rather than a drift.
@@ -2002,7 +2113,11 @@ sideways scroll), open every admin tab, and run admin two-factor at 360 and 1280
 (setting up an app from its QR code and a passkey in Chrome's virtual authenticator,
 the second step on the sign-in screen and as a dialog when a session ends, sign-out,
 `ADMIN_2FA=required` first-time setup), failing on any uncaught page error. Each step also has a time budget (boot 3 s, sample data 4 s, a tab switch
-2.5 s; `E2E_SLOW=2` doubles them for slow machines, and CI uses that). Playwright is
+2.5 s; `E2E_SLOW=2` doubles them for slow machines, and CI uses that). `e2e/heavy.mjs`
+does the same for a heavy account (~18k trades; `HEAVY=10x30` for ~31k): budgets on the
+import, a cold render, each tab and the longest main-thread task while a tab opens, the
+Diagnostic's worker results equal to the synchronous path, and Daruma on the same history
+without the journal-only files. Playwright is
 deliberately not a dependency of the repo: install it with
 `npm i --no-save playwright && npx playwright install chromium`. CI runs these in a
 separate job on every push.

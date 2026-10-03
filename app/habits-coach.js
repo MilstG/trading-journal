@@ -60,6 +60,19 @@ function evaluateRules(closed, rules){
     out.push({rule:'Daily loss limit '+fmtUsd(R.dailyLossLimit), n:days, cost, unit:'days breached, PnL after breach', ids, kind:'dll'}); }
   return out;
 }
+// Realized results by day, fill by fill: [[time, result]] per day key across ALL trades — closed
+// ones, partial closes of positions still open, and fees. A trade without per-fill results (imports,
+// tests, fills older than the engine keeps them for) lands whole on its close day. The process
+// score's loss-limit part and Pulse's risk dial read the day's result from here, as the tripwire does.
+// only: a day key to collect for (others are skipped).
+function realizedByDay(trades, dayOf, only){
+  const by={}, put=(tm,v)=>{ const k=dayOf(tm); if(only&&k!==only)return; (by[k]=by[k]||[]).push([tm,v]); };
+  for(const t of (trades||[])){
+    if(t.rz&&t.rz.length){ for(const [tm,v] of t.rz)put(tm,v); }
+    else if(!t.isOpen&&t.closeTime)put(t.closeTime,t.net); }
+  for(const k in by)by[k].sort((a,b)=>a[0]-b[0]);
+  return by;
+}
 // Today's realized net across ALL closed trades (tz-toggle day) — powers the live tripwire banner.
 // Today's realized result: every fill today (closes, partial closes of open positions, and fees),
 // not whole trades that happened to close today with losses from earlier days in them.
@@ -112,7 +125,7 @@ function nfPlan(j){ const p=j&&j.plan; if(!p)return null;
   if(!(s>0))return null;
   return {entry:e>0?e:null, stop:s, target:isFinite(tg)&&tg>0?tg:null}; }
 // Did you honor the plan you wrote down? Uses avg entry/exit from reconstruction vs planned
-// stop/target. Stop-honored = you did NOT let price close beyond your stop. With excursion
+// stop/target. Stop-honored = you did NOT let price close beyond your stop (past the slippage band). With excursion
 // data (excM) it also catches the quieter break: price traded THROUGH the stop and you held
 // anyway (heldThrough) — an exit back above the stop hides that from avg-exit alone.
 // live = the plan was last written while the trade was still open (plan.at < closeTime);
@@ -124,10 +137,14 @@ function planAdherence(closed, journalObj, excM){
     const p=p0.entry?p0:{...p0,entry:t.avgEntry};
     const short=t.dir==='Short';
     const riskPer=Math.abs(p.entry-p.stop); if(!(riskPer>0))continue;
-    const exitOk = short ? (t.avgExit<=p.stop) : (t.avgExit>=p.stop);
+    // the same slippage band as planVerdict (plans.js): an exit a little past the stop is the stop
+    // working, not a broken one; only beyond 10% of the risk carried does it count as moved
+    const {sg,tol}=planStopBand(t,p);
+    const exitOk = sg*(t.avgExit-p.stop)>=-tol;
     const e=excM&&excM[t.id];
     const stopDistPct=(short?(p.stop-t.avgEntry):(t.avgEntry-p.stop))/t.avgEntry*100;
-    const heldThrough = !!(exitOk&&e&&e.maePct!=null&&!e.coarse&&stopDistPct>0&&e.maePct>stopDistPct*1.001);
+    const worst=e&&e.maePct!=null?t.avgEntry*(1-sg*e.maePct/100):null;
+    const heldThrough = !!(exitOk&&worst!=null&&!e.coarse&&stopDistPct>0&&sg*(p.stop-worst)>tol);
     const stopHonored = exitOk&&!heldThrough;
     const at=+((j.plan&&j.plan.at)||0);
     const live = at>0&&t.closeTime>0 ? at<t.closeTime : null;
@@ -429,6 +446,17 @@ function journalStreak(trades, journalObj, dayOf, todayK){
 // ("rules kept" only counts once you have rules; opts.rulesActive=false drops it) —
 // and the two planning habits only apply from the first day you ever used them, so history
 // from before the habit existed isn't graded against it.
+// opts.trades: every trade, open ones included (default: closed). The day's first entry and the
+// entries after a loss-limit breach come from all of them — a position opened today and still open,
+// or closing tomorrow, is still today's entry — and the day's realized result is read fill by fill.
+// When it was set (X4 in AUDIT-4): a day entry's plan, committed max loss and check-in only count
+// when they were set in time — plannedAt / limitAt / checkinAt, stamped by nextDayEntry. A plan by the
+// first entry is whole, later that same day half, on a later day nothing; a max loss set after the
+// first entry is ignored (the standing daily limit applies, if any); a check-in counts on or before
+// its day. A field saved before the stamps existed (it has no stamp; nextDayEntry stamps everything
+// set since and leaves an unchanged old field unstamped) keeps the benefit of the doubt it always had,
+// so no honest day loses credit it already earned. Anything typed onto an old day now is stamped now:
+// it still journals, but earns nothing. credit.checkin carries the check-in's verdict to pzBonus.
 const PROCESS_W={plan:20,rules:20,planned:15,stops:15,limit:10,journal:20};
 function processDays(closed, journalObj, opts){
   opts=opts||{}; const J=journalObj||{};
@@ -437,6 +465,11 @@ function processDays(closed, journalObj, opts){
   const paBy=new Map(pa.items.map(x=>[x.id,x]));
   const by={};
   for(const t of closed){ if(t.isOpen||!t.closeTime)continue; const k=dayOf(t.closeTime); (by[k]=by[k]||[]).push(t); }
+  // each day's entries across all trades (a spot holding carried on after a partial sale is not one)
+  const all=opts.trades||closed, firstIn={}, lastIn={};
+  for(const t of all){ if(!t.openTime||t.carried)continue; const k=dayOf(t.openTime);
+    if(!(firstIn[k]<=t.openTime))firstIn[k]=t.openTime; if(!(lastIn[k]>=t.openTime))lastIn[k]=t.openTime; }
+  let rz=null; // realized results by day, built on the first day that has a loss limit
   const out=[];
   const hasDayPlan=d=>!!(d&&(d.plan||d.bias||d.maxLoss>0||(r=>!!r&&typeof r==='object'&&Object.values(r).some(v=>Array.isArray(v)?v.length:!!v))(d.rules)));
   const planDays=Object.keys(J).filter(k=>k.startsWith('day:')&&hasDayPlan(J[k])).map(k=>k.slice(4)).sort();
@@ -450,28 +483,32 @@ function processDays(closed, journalObj, opts){
   const inWin=(part,k)=>(opts.planWindows||[]).some(w=>w.part===part&&k>=w.from&&k<w.to);
   for(const k of Object.keys(by).sort()){
     const arr=by[k].sort((a,b)=>a.closeTime-b.closeTime), n=arr.length;
-    const de=J['day:'+k]||null, parts={};
-    const opened=arr.filter(t=>dayOf(t.openTime)===k);
-    if(opened.length&&((firstDayPlan&&k>=firstDayPlan)||inWin('plan',k))){
-      const first=Math.min(...opened.map(t=>t.openTime));
-      const has=hasDayPlan(de);
-      // entries saved before plannedAt existed get the benefit of the doubt; a plan written
-      // after the first entry of the day earns half
-      parts.plan=!has?0:(de.plannedAt?(de.plannedAt<=first?1:0.5):1);
+    const de=J['day:'+k]||null, parts={}, first=firstIn[k]!=null?firstIn[k]:null;
+    // when a logged field was set: its own stamp, else (saved before stamps existed) the benefit of the doubt
+    const setAt=f=>!de?null:de[f]>0?+de[f]:'legacy';
+    const inTime=at=>at==='legacy'||(at!=null&&(first!=null?at<=first:dayOf(at)<=k));
+    if(first!=null&&((firstDayPlan&&k>=firstDayPlan)||inWin('plan',k))){
+      const at=hasDayPlan(de)?setAt('plannedAt'):null;
+      // a plan written after the first entry earns half — that same day; on a later day, nothing
+      parts.plan=at==null?0:inTime(at)?1:dayOf(at)<=k?0.5:0;
     }
     if(opts.rulesActive!==false&&!(opts.rulesFrom&&k<opts.rulesFrom))parts.rules=1-arr.filter(t=>viol.has(t.id)).length/n;
     const pl=arr.map(t=>paBy.get(t.id)).filter(Boolean);
     if((firstTradePlan&&k>=firstTradePlan)||inWin('planned',k))parts.planned=pl.filter(x=>x.live!==false).length/n;
     if(pl.length)parts.stops=pl.filter(x=>x.stopHonored).length/pl.length;
-    const lim=(de&&de.maxLoss>0)?de.maxLoss:(opts.dllLimit||0);
+    // a max loss committed after the first entry (or typed onto an old day) doesn't count
+    const lim=(de&&de.maxLoss>0&&inTime(setAt('limitAt')))?de.maxLoss:(opts.dllLimit||0);
     let breached=false;
     if(lim>0){ let cum=0, breachAt=null;
-      for(const t of arr){ cum+=t.net; if(breachAt==null&&cum<=-lim)breachAt=t.closeTime; }
+      if(!rz)rz=realizedByDay(all,dayOf);
+      for(const [tm,v] of (rz[k]||[])){ cum+=v; if(cum<=-lim){ breachAt=tm; break; } }
       breached=breachAt!=null;
-      parts.limit=(breached&&arr.some(t=>t.openTime>breachAt))?0:1; }
+      parts.limit=(breached&&lastIn[k]>breachAt)?0:1; }
     parts.journal=arr.filter(t=>isJournaled(J[t.id])).length/n;
     let sw=0, sv=0; for(const p in parts){ sw+=PROCESS_W[p]; sv+=PROCESS_W[p]*parts[p]; }
-    out.push({key:k, score:Math.round(100*sv/sw), parts, n, net:arr.reduce((s,t)=>s+t.net,0), breached});
+    const checkin=!!(de&&(de.sleep||de.stress||de.focus)), ckAt=checkin?setAt('checkinAt'):null;
+    out.push({key:k, score:Math.round(100*sv/sw), parts, n, net:arr.reduce((s,t)=>s+t.net,0), breached, first,
+      credit:{checkin:checkin&&(ckAt==='legacy'||(ckAt!=null&&dayOf(ckAt)<=k))}});
   }
   return out;
 }
@@ -491,14 +528,44 @@ function processTrend(days, win){
   return {avg:last.length?_avg(last):null, prevAvg:prev.length?_avg(prev):null, streak, n:s.length};
 }
 /* ---- routine vs results: does your discipline pay, over the long run? ---- */
-// Pure. days: Pulse's day list ({key, behavior:{n, slips:[{id,f:[flags]}]}, parts}); byDay: {key: closed
+// Pure. days: Pulse's day list ({key, behavior: pzBehaviorDays' day, parts}); byDay: {key: closed
 // trades}; opts: {rOf(t)->R|null, pctOf(t)->% return|null, weekOf(key), entryOf(key)->{checkin,review}, seed}.
-// The routine score is OUTCOME-BLIND: the share of the day's trades free of revenge entries, sizing
-// up after a loss, adding to a loser and overtrading. The two checks that can only fail on a losing
-// trade (holding a loser, trading on after two losses) are left out, so a red day can't lower the
-// score by itself and manufacture a correlation. Results are per trade, in R when most trades have
-// a risk, else % return on notional (both size-neutral). Everything is seeded, so it reproduces.
+// The routine score is OUTCOME-BLIND (rvRoutineOf): for revenge entries, sizing up after a loss, adding
+// to a loser and overtrading, the share of the day's CHANCES at each that were kept. The two checks that
+// can only fail on a losing trade (holding a loser, trading on after two losses) are left out. Results
+// are per trade, in R when most trades have a risk, else % return on notional (both size-neutral).
+// Everything is seeded, so it reproduces.
 const RV_BLIND=['revenge','sizeUp','addLoser','overtrade'];
+// Revenge and sizing up can only be tested on an entry that FOLLOWS A LOSS, and that loss sits in the
+// same day's result: a day with more losses has more chances to slip. Scoring the share of trades free
+// of slips, or grading whole days kept / missed, therefore found "discipline pays" on pure coin flips
+// (AUDIT-4 E1: identical behaviour, ±1R coin flips → ρ 0.87, p 0.001). So the score conditions on the
+// opportunity, and these two habits are tested trade by trade: post-loss entries that slipped against
+// post-loss entries that didn't — each entry's own result, never the loss that triggered it.
+const RV_CHANCE=['revenge','sizeUp'];
+// The routine of a day, check by check: kept ÷ chances (pzBehaviorDays). A day with no chance at a
+// check takes your own rate at it over these days, so having had a loss (or not) can't move the score
+// on average; a check never tested in these days is left out. Returns d → {score 0–100 (100: nothing
+// testable), rate, stratum}. The spread still depends on how many chances the day had (none: exactly
+// your usual rate), so comparisons that cut at a line (the dividend) or permute days (habitLink) stay
+// inside a stratum: the day's chances at each post-loss check (RV_CHANCE), 0 / 1 / 2 / 3+ each.
+function rvRoutineOf(days){
+  const tot={}, kep={}, ch=(b,c)=>(b.chances&&b.chances[c])||0, kp=(b,c)=>Math.min(ch(b,c),(b.kept&&b.kept[c])||0);
+  for(const c of RV_BLIND){ tot[c]=0; kep[c]=0; }
+  for(const d of days||[]){ const b=d.behavior||{}; for(const c of RV_BLIND){ tot[c]+=ch(b,c); kep[c]+=kp(b,c); } }
+  return d=>{ const b=d.behavior||{}, rate={}; let s=0, m=0;
+    for(const c of RV_BLIND){ const n=ch(b,c), r=n?kp(b,c)/n:tot[c]?kep[c]/tot[c]:null; rate[c]=r; if(r!=null){ s+=r; m++; } }
+    return {score:m?Math.round(100*s/m):100, rate, stratum:RV_CHANCE.map(c=>Math.min(3,ch(b,c))).join(':')}; };
+}
+// One chance-graded habit (RV_CHANCE), trade by trade: the values of the post-loss entries it was tested
+// on, split into kept (k) and slipped (m). val(t) → number|null.
+function rvChanceSplit(c, days, byDay, val){
+  const k=[], m=[];
+  for(const d of days||[]){ const b=d.behavior||{}, ids=(b.tests&&b.tests[c])||[]; if(!ids.length)continue;
+    const slip=new Set((b.slips||[]).filter(x=>(x.f||[]).includes(c)).map(x=>x.id)), tr=new Map(((byDay&&byDay[d.key])||[]).map(t=>[t.id,t]));
+    for(const id of ids){ const t=tr.get(id), v=t?val(t):null; if(v!=null&&isFinite(v))(slip.has(id)?m:k).push(v); } }
+  return {k,m};
+}
 const RV_HABITS=[ // key, label, how a day is graded (true kept / false missed / null n.a.), mechanical?
   ['plan','Plan written before the first trade',d=>d.parts.plan==null?null:d.parts.plan>=1?true:d.parts.plan===0?false:null,false],
   ['rules','Your rules kept',d=>d.parts.rules==null?null:d.parts.rules>=1,false],
@@ -535,12 +602,13 @@ function routineVsResults(days, byDay, opts){
   const unit=all.length&&withR/all.length>=0.6?'R':'%';
   const res=t=>{ const v=unit==='R'?rOf(t):pctOf(t); return v!=null&&isFinite(v)?v:null; };
   // per day: outcome-blind score, per-trade results, habit grades
-  const D=[];
+  const D=[], RT=rvRoutineOf(days);
   for(const d of days||[]){ const tr=(byDay[d.key]||[]), vals=tr.map(res).filter(v=>v!=null); if(!vals.length)continue;
-    const b=d.behavior||{}, n=b.n||tr.length, bad=new Set((b.slips||[]).filter(s=>(s.f||[]).some(f=>RV_BLIND.includes(f))).map(s=>s.id));
+    const b=d.behavior||{};
     const flags={}; for(const f of RV_BLIND)flags[f]=(b.flags&&b.flags[f])||0;
     const e=entryOf(d.key)||{};
-    D.push({key:d.key,week:weekOf(d.key),score:n?Math.round(100*(n-Math.min(n,bad.size))/n):null,vals,mean:mean(vals),parts:d.parts||{},flags,checkin:!!e.checkin,review:!!e.review}); }
+    const rt=RT(d);
+    D.push({key:d.key,week:weekOf(d.key),score:rt.score,stratum:rt.stratum,vals,mean:mean(vals),parts:d.parts||{},flags,checkin:!!e.checkin,review:!!e.review}); }
   const spearman=_spearmanWith(rnd);
   // weeks: average routine score, average per-trade result
   const wk={}; for(const d of D){ const w=wk[d.week]=wk[d.week]||{week:d.week,days:0,scores:[],vals:[]}; w.days++; if(d.score!=null)w.scores.push(d.score); w.vals.push(...d.vals); }
@@ -550,13 +618,22 @@ function routineVsResults(days, byDay, opts){
   // lead: does THIS week's routine predict NEXT week's results? (consecutive weeks only)
   const pairs=[]; for(let i=0;i+1<weeks.length;i++)pairs.push([weeks[i].score,weeks[i+1].res]);
   const lead=pairs.length>=MINW?spearman(pairs.map(p=>p[0]),pairs.map(p=>p[1])):null;
-  // the discipline dividend: per-trade result on good days (score >= 70) vs the rest, with a bootstrap 90% range
-  const good=[], rest=[]; for(const d of D)(d.score>=70?good:rest).push(...d.vals);
+  // the discipline dividend: per-trade result on good days (score >= 70) vs the rest, with a bootstrap 90% range.
+  // Compared only between days with the same number of post-loss chances (rvRoutineOf's stratum) and pooled
+  // with weights n_good·n_rest/(n_good+n_rest): a day without a loss to react to is a better day by
+  // construction, and the 70 line must not sort those days to one side (AUDIT-4 E1).
+  // The bootstrap resamples whole days within each stratum: inside a stratum a day's trades aren't
+  // independent (one loss among the first three is fixed by it), so trade-level resampling ran wide.
+  const st={}; for(const d of D){ const x=st[d.stratum]=st[d.stratum]||{g:[],r:[]}; (d.score>=70?x.g:x.r).push(d.vals); }
+  const SS=Object.values(st).filter(x=>x.g.length&&x.r.length), good=SS.flatMap(x=>x.g.flat()), rest=SS.flatMap(x=>x.r.flat());
+  const avg=ds=>{ let v=0,n=0; for(const a of ds){ for(const y of a)v+=y; n+=a.length; } return v/n; }, tn=ds=>ds.reduce((s,a)=>s+a.length,0);
+  const pooled=pick=>{ let w=0,a=0,b=0; for(const x of SS){ const ng=tn(x.g), nr=tn(x.r), ws=ng*nr/(ng+nr); w+=ws; a+=ws*pick(x.g); b+=ws*pick(x.r); } return [a/w,b/w]; };
   let dividend=null;
-  if(good.length>=10&&rest.length>=10){ const diffs=[];
-    for(let k=0;k<1000;k++){ let a=0,b=0; for(let i=0;i<good.length;i++)a+=good[Math.floor(rnd()*good.length)]; for(let i=0;i<rest.length;i++)b+=rest[Math.floor(rnd()*rest.length)]; diffs.push(a/good.length-b/rest.length); }
+  if(good.length>=10&&rest.length>=10){ const diffs=[], bs=ds=>{ const o=[]; for(let i=0;i<ds.length;i++)o.push(ds[Math.floor(rnd()*ds.length)]); return avg(o); };
+    for(let k=0;k<1000;k++){ const [a,b]=pooled(bs); diffs.push(a-b); }
     diffs.sort((x,y)=>x-y);
-    dividend={good:{n:good.length,mean:mean(good)},rest:{n:rest.length,mean:mean(rest)},diff:mean(good)-mean(rest),lo:diffs[50],hi:diffs[949]}; }
+    const [gm,rm]=pooled(avg);
+    dividend={good:{n:good.length,mean:gm},rest:{n:rest.length,mean:rm},diff:gm-rm,lo:diffs[50],hi:diffs[949]}; }
   // cumulative results, good days vs the rest, in date order (the "two equity curves")
   const curves={good:[],rest:[]}; let cg=0,cr=0;
   for(const d of D){ const s=d.vals.reduce((x,y)=>x+y,0); if(d.score>=70){ cg+=s; curves.good.push({key:d.key,v:cg}); } else { cr+=s; curves.rest.push({key:d.key,v:cr}); } }
@@ -566,8 +643,12 @@ function routineVsResults(days, byDay, opts){
     // normal approximation to the t tail (fine at these sample sizes; flagged early below)
     const tail=x=>{ const t=1/(1+0.2316419*x), d=0.3989423*Math.exp(-x*x/2); return d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); };
     return Math.min(1,2*tail(z)); };
-  const habits=RV_HABITS.map(([key,label,grade,mech])=>{ const k=[],m=[]; for(const d of D){ const g=grade(d); if(g===true)k.push(d.mean); else if(g===false)m.push(d.mean); }
-    return {key,label,mechanical:mech,kept:{n:k.length,mean:mean(k)},missed:{n:m.length,mean:mean(m)},diff:k.length&&m.length?mean(k)-mean(m):null,p:tP(k,m)}; });
+  // per: 'day' (days kept vs missed, each day's average trade) or 'trade' (RV_CHANCE: post-loss entries)
+  const inD=new Set(D.map(d=>d.key)), dD=(days||[]).filter(d=>inD.has(d.key));
+  const habits=RV_HABITS.map(([key,label,grade,mech])=>{ let k=[],m=[]; const per=RV_CHANCE.includes(key)?'trade':'day';
+    if(per==='trade')({k,m}=rvChanceSplit(key,dD,byDay,res));
+    else for(const d of D){ const g=grade(d); if(g===true)k.push(d.mean); else if(g===false)m.push(d.mean); }
+    return {key,label,mechanical:mech,per,kept:{n:k.length,mean:mean(k)},missed:{n:m.length,mean:mean(m)},diff:k.length&&m.length?mean(k)-mean(m):null,p:tP(k,m)}; });
   const tested=habits.filter(h=>h.p!=null&&!h.mechanical).sort((a,b)=>a.p-b.p);
   tested.forEach((h,i)=>{ h.q=Math.min(1,h.p*tested.length/(i+1)); });
   for(let i=tested.length-2;i>=0;i--)tested[i].q=Math.min(tested[i].q,tested[i+1].q);
@@ -584,7 +665,10 @@ function routineVsResults(days, byDay, opts){
 // return on notional or R. Only habits you actually use count (one you've never kept in this
 // history isn't held against every day), and the two that can only fail on a losing day (stops
 // honored, loss limit) are left out of the score so a red day can't drag its own score down.
-// Also: the average day per score band, and each habit's kept-vs-missed days in the same unit.
+// The four fill checks count as rvRoutineOf's kept ÷ chances (a day without a chance at one takes
+// your usual rate), so a day's losses can't lower its own score through them either (AUDIT-4 E1).
+// Also: the average day per score band, and each habit's kept-vs-missed days in the same unit —
+// for revenge and sizing up, post-loss entries kept vs slipped, per trade (per:'trade'; see RV_CHANCE).
 // Points show from HL_MIN.days days; the correlation is only stated from HL_MIN.corr. Seeded.
 const HL_MIN={days:3,corr:8};
 const HL_BANDS=[[0,49,'Under 50'],[50,69,'50–69'],[70,89,'70–89'],[90,100,'90–100']];
@@ -592,21 +676,24 @@ function habitLink(days, byDay, opts){
   opts=opts||{};
   const rOf=opts.rOf||(()=>null), pctOf=opts.pctOf||(()=>null), entryOf=opts.entryOf||(()=>({}));
   const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, fin=v=>v!=null&&isFinite(v);
-  const pts=[];
+  const pts=[], RT=rvRoutineOf((days||[]).filter(d=>((byDay&&byDay[d.key])||[]).length));
   for(const d of days||[]){ const tr=(byDay&&byDay[d.key])||[]; if(!tr.length)continue;
-    const b=d.behavior||{}, n=b.n||tr.length, blind=(b.slips||[]).filter(s=>(s.f||[]).some(f=>RV_BLIND.includes(f)));
+    const b=d.behavior||{}, blind=(b.slips||[]).filter(s=>(s.f||[]).some(f=>RV_BLIND.includes(f)));
     const flags={}; for(const f of RV_BLIND)flags[f]=0; for(const s2 of blind)for(const f of s2.f)if(f in flags)flags[f]++;
     let usd=0,pct=0,pn=0,r=0,rn=0,w=0,l=0;
     for(const t of tr){ usd+=+t.net||0; const p=pctOf(t); if(fin(p)){ pct+=p; pn++; } const x=rOf(t); if(fin(x)){ r+=x; rn++; } if(t.net>0)w++; else if(t.net<0)l++; }
-    const e=entryOf(d.key)||{};
-    pts.push({key:d.key,routine:Math.round(100*(n-Math.min(n,blind.length))/n),discipline:d.score!=null?d.score:null,n:tr.length,wins:w,losses:l,
+    const e=entryOf(d.key)||{}, rt=RT(d);
+    pts.push({key:d.key,routine:rt.score,rate:rt.rate,discipline:d.score!=null?d.score:null,n:tr.length,wins:w,losses:l,
       usd,pct:pn?pct:null,r:rn&&rn===tr.length?r:null,flags,parts:d.parts||{},checkin:!!e.checkin,review:!!e.review}); }
   // the habits in play: graded on some day and kept at least once (fill checks always count)
   const H=RV_HABITS.filter(h=>!h[3]);
   const inPlay=H.filter(([key,,grade])=>RV_BLIND.includes(key)||pts.some(p=>grade(p)===true));
-  for(const p of pts){ const kept=[], missed=[];
-    for(const [key,label,grade] of inPlay){ const g=grade(p); if(g===true)kept.push(label); else if(g===false)missed.push(label); }
-    p.kept=kept; p.missed=missed; p.score=kept.length+missed.length?Math.round(100*kept.length/(kept.length+missed.length)):null; }
+  // a fill check adds its kept share of the day's chances (listed as missed when it slipped that day)
+  for(const p of pts){ const kept=[], missed=[]; let sum=0, cnt=0;
+    for(const [key,label,grade] of inPlay){
+      if(RV_BLIND.includes(key)){ const v=p.rate[key]; if(v==null)continue; sum+=v; cnt++; (p.flags[key]?missed:kept).push(label); continue; }
+      const g=grade(p); if(g===true){ kept.push(label); sum++; cnt++; } else if(g===false){ missed.push(label); cnt++; } }
+    p.kept=kept; p.missed=missed; p.score=cnt?Math.round(100*sum/cnt):null; }
   const hasR=pts.length>0&&pts.filter(p=>p.r!=null).length/pts.length>=0.6, hasPct=pts.some(p=>p.pct!=null);
   const units=['$'].concat(hasPct?['%']:[],hasR?['R']:[]);
   const unit=units.includes(opts.unit)?opts.unit:'$';
@@ -622,9 +709,11 @@ function habitLink(days, byDay, opts){
   const bands=HL_BANDS.map(([lo,hi,label])=>{ const g=P.filter(p=>p.score>=lo&&p.score<=hi);
     return {label,lo,hi,n:g.length,avg:mean(g.map(p=>p.v)),total:g.reduce((s2,p)=>s2+p.v,0),green:g.filter(p=>p.v>0).length,trades:g.reduce((s2,p)=>s2+p.n,0)}; });
   const split=hi=>{ const g=P.filter(p=>(p.score>=70)===hi); return {n:g.length,avg:mean(g.map(p=>p.v)),green:g.filter(p=>p.v>0).length}; };
-  const habits=RV_HABITS.map(([key,label,grade,mech])=>{ const k=[],m=[];
-    for(const p of P){ const g=grade(p); if(g===true)k.push(p.v); else if(g===false)m.push(p.v); }
-    return {key,label,mechanical:mech,kept:{n:k.length,avg:mean(k)},missed:{n:m.length,avg:mean(m)},diff:k.length&&m.length?mean(k)-mean(m):null}; })
+  const inP=new Set(P.map(p=>p.key)), dP=(days||[]).filter(d=>inP.has(d.key)), tv=t=>unit==='$'?+t.net:unit==='%'?pctOf(t):rOf(t);
+  const habits=RV_HABITS.map(([key,label,grade,mech])=>{ let k=[],m=[]; const per=RV_CHANCE.includes(key)?'trade':'day';
+    if(per==='trade')({k,m}=rvChanceSplit(key,dP,byDay,tv));
+    else for(const p of P){ const g=grade(p); if(g===true)k.push(p.v); else if(g===false)m.push(p.v); }
+    return {key,label,mechanical:mech,per,kept:{n:k.length,avg:mean(k)},missed:{n:m.length,avg:mean(m)},diff:k.length&&m.length?mean(k)-mean(m):null}; })
     .filter(h=>h.kept.n>0&&h.missed.n>0)
     .sort((a,b)=>(a.mechanical-b.mechanical)||(b.diff-a.diff));
   return {unit,units,points:P,spread,fit,corr,bands,good:split(true),rest:split(false),habits,tracked:inPlay.map(h=>h[1]),need:HL_MIN};
@@ -673,7 +762,7 @@ function processContext(trades, rulePreds){
   for(const k in journal){ const c=k.startsWith('week:')&&journal[k]&&journal[k].challenge;
     if(c&&c.spec&&c.spec.kind==='process'&&(c.spec.part==='plan'||c.spec.part==='planned')&&c.from&&c.to)
       planWindows.push({part:c.spec.part,from:dayKey(c.from),to:dayKey(c.to)}); }
-  return {closed, days:processDays(closed,journal,{violIds:viol,dayOf:dayKey,excM:_excM,dllLimit:R.dailyLossLimit,
+  return {closed, days:processDays(closed,journal,{trades,violIds:viol,dayOf:dayKey,excM:_excM,dllLimit:R.dailyLossLimit,
     rulesActive,rulesFrom,planFrom:{plan:since('plan'),planned:since('planned')},planWindows})};
 }
 
@@ -859,9 +948,11 @@ function habitById(id){ return (Array.isArray(settings.habits)?settings.habits:[
 function habitSentence(h){ return 'When '+h.when+', '+h.then+'.'; }
 async function adoptHabit(spec){
   if(!Array.isArray(settings.habits))settings.habits=[];
-  const same=settings.habits.find(h=>h&&((spec.tpl&&h.tpl===spec.tpl)||(spec.pid&&h.pid===spec.pid&&h.kind===spec.kind)
+  // adopting a habit you already keep is a no-op. Adopting one you retired starts a new copy: the retired
+  // one keeps its kept days (they still count for badges), where reviving it reset them to zero.
+  const same=settings.habits.find(h=>h&&!h.retired&&((spec.tpl&&h.tpl===spec.tpl)||(spec.pid&&h.pid===spec.pid&&h.kind===spec.kind)
     ||(!spec.tpl&&!spec.pid&&h.kind===spec.kind&&!h.tpl&&!h.pid&&h.when===String(spec.when||'').slice(0,160)&&h.then===String(spec.then||'').slice(0,160))));
-  if(same){ if(same.retired){ same.retired=false; same.createdAt=Date.now(); } await Store.set(S_KEY,settings); return same; }
+  if(same){ await Store.set(S_KEY,settings); return same; }
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ // same contract as pins and rules: thresholds fixed at adoption, never re-derived
     try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
@@ -876,13 +967,19 @@ async function adoptHabit(spec){
 }
 async function retireHabit(id){ const h=habitById(id); if(!h)return;
   if(weekFocus()===id)await setWeekFocus(null); // before retiring: weekFocus() ignores retired habits
-  h.retired=true;
+  h.retired=true; h.retiredAt=Date.now(); // its days up to here keep counting for badges (pzHabitResAll)
   await Store.set(S_KEY,settings); }
 // This week's single focus habit lives on the current ISO-week journal entry, so it syncs,
 // merges and backs up like the weekly review it sits beside.
 function weekFocus(ms){ const e=journal[isoWeekKey(ms||Date.now())]; return e&&e.focus&&habitById(e.focus)&&!habitById(e.focus).retired?e.focus:null; }
-async function setWeekFocus(id){ const k=isoWeekKey(Date.now());
-  const e={...(journal[k]||{})}; if(id)e.focus=id; else delete e.focus; e.updatedAt=Date.now();
+// A focus picked mid-week earns its +XP days from the pick on (pzSwapStartKey: today, or tomorrow once
+// today's trading has started), never back to Monday; the focus it replaces keeps the days it already
+// earned (focusPast). Without focusFrom (an older entry) the whole week counts, as before.
+async function setWeekFocus(id){ const now=Date.now(), k=isoWeekKey(now);
+  const e={...(journal[k]||{})}; if((id||null)===(e.focus||null))return;
+  const start=pzSwapStartKey(now,allTrades);
+  if(e.focus)e.focusPast=[...(Array.isArray(e.focusPast)?e.focusPast:[]),{id:e.focus,from:e.focusFrom||'',to:start}].slice(-7);
+  if(id){ e.focus=id; e.focusFrom=start; } else { delete e.focus; delete e.focusFrom; } e.updatedAt=now;
   journal[k]=e; markJEdit(k); await Store.set(J_KEY,journal); }
 
 // Per trading day, was the habit kept? Pure given its inputs. days = processDays output
@@ -1085,13 +1182,18 @@ function wireFindingCards(root, findings){
 }
 
 // ---- shared coach context (memoized per data revision) ----
-let _coachMemo={key:null,ctx:null};
-function coachContext(){
-  const trades=allTrades.filter(viewFilter);
+// all=true: the game's context (Discipline, XP, level, streak, the stats Pulse posts) — every trade
+// but orphans, whatever the view (perp / spot) and dex filters show, so XP can't move with a filter
+// or cherry-pick clean dexes, and matches what the server verifies from the wallet. The default
+// follows the view, for the dashboard's own coach card, findings and habits. Memoized separately.
+let _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};
+function coachContext(all){
+  const trades=all?allTrades.filter(t=>!t.orphan):allTrades.filter(viewFilter);
   let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; net+=t.net; } }
-  const key=[view,settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
+  const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
     JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),_be].join('|');
-  if(_coachMemo.key===key)return _coachMemo.ctx;
+  const memo=all?_coachMemoAll:_coachMemo;
+  if(memo.key===key)return memo.ctx;
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
   let rulePreds=[]; try{ rulePreds=customRules().length?customRulePreds(trades,customRules()):[]; }catch(e){}
   const pc=processContext(trades,rulePreds);
@@ -1102,17 +1204,22 @@ function coachContext(){
     avoid.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }
   let findings=[];
   if(closed.length>=5){ try{
-    const s=computeStats(closed,trades);
+    const s=computeStatsMemo(closed,trades); // the dashboard just ran it on the same trades (period "all")
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
-    findings=buildFindings(closed,s,{scan:diagScan(closed),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
+    findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
   const ctx={trades,closed,days:pc.days,byDay,preds,findings,rulePreds};
-  _coachMemo={key,ctx}; return ctx;
+  memo.key=key; memo.ctx=ctx; return ctx;
 }
 function habitProgress(h, ctx, fromMs){
   const fromKey=dayKey(Math.max(h.createdAt||0,fromMs||0));
+  // memoized per coach context: the coach, the game (twice) and the badge passes ask for the same habit
+  // several times a rebuild. A hit needs the same habit (by content), start day, journal revision and
+  // slip days ('slip' habits read _pzSlipDays, which the game sets); callers only read the result.
+  const M=habitProgress._m||(habitProgress._m=new WeakMap()); let C=M.get(ctx); if(!C)M.set(ctx,C=new Map());
+  const k=JSON.stringify(h)+'|'+fromKey+'|'+_jrev, hit=C.get(k); if(hit&&hit.slips===_pzSlipDays&&hit.J===journal)return hit.v;
   const res=habitDayResults(h,ctx.days,ctx.byDay,ctx.preds[h.id],fromKey,journal);
-  return {res,...habitSummary(res)};
+  const v={res,...habitSummary(res)}; C.set(k,{slips:_pzSlipDays,J:journal,v}); return v;
 }
 function dotsHtml(res,max){ const r=res.slice(-(max||7));
   return `<span class="hdots" aria-label="${r.filter(x=>x.kept).length} of ${r.length} days kept">${r.map(x=>`<i class="${x.kept?'k':'m'}" data-tip="${esc(x.key)} · ${x.kept?'kept':'missed'}"></i>`).join('')}</span>`; }
@@ -1218,7 +1325,7 @@ function renderCoach(){
   const cw=coachWins(ctx).filter(w=>!(gw.some(x=>/discipline streak/.test(x))&&/good-process days in a row/.test(w)));
   const wins=[...new Set([...gw,...cw])].slice(0,4);
   const dt=tzParts(Date.now());
-  ensureWeekChallenge(ctx).then(made=>{ if(made){ renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{});
+  ensureWeekChallenge(ctx).then(made=>{ if(made){ if(allTrades.length>=5000&&typeof coachStaged==='function'&&activeTab!=='review')coachStaged(); else renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{}); // big accounts: rebuilt in idle steps (journal.js)
   el.classList.remove('hide');
   el.innerHTML=`<div class="coach-head"><h3>Coach</h3><span class="hint">${DOWN[dt.dow]}, ${MONTHS[dt.mo]} ${dt.day} · from your own trades and journal</span>${g?`<button type="button" class="lvl-chip" id="coachLvl" data-tip="${esc(g.level.into+' / '+g.level.need+' XP to the next level \u00b7 discipline streak '+g.streak.current+' days, '+g.streak.shields+' shield'+(g.streak.shields===1?'':'s')+'. Open Review \u2192 Progress.')}">Lv ${g.level.level} \u00b7 ${esc(g.level.title)} ${shieldsHtml(g.streak.shields)}</button>`:''}<button type="button" class="coach-hide" id="coachHide" data-tip="Turns coach mode off: hides the coach card, habits, wins, process score and trade questions. Switch it back on in the settings panel (⚙ next to the clock toggle).">hide coach</button></div>
     ${rows.map(r=>`<div class="coach-row"><div class="coach-k">${r.k}</div><div class="coach-v">${r.v}</div><div class="coach-a">${r.act||''}</div></div>`).join('')}

@@ -31,3 +31,8 @@ jobs:
       - run: npm run test:e2e
         env:
           E2E_SLOW: '2'
+      # a ~18k-trade account (e2e/heavy.mjs): real budgets on import, render, each tab and the
+      # longest main-thread task, so the heavy-account work can't quietly regress
+      - run: npm run test:e2e:heavy
+        env:
+          E2E_SLOW: '2'
