@@ -37,6 +37,11 @@ t('terms: a cap on any kind when the league allows it; % return always has one, 
   eq(Duels.sanitizeTerms({ type: 'disc', ddCap: 0.15 }, Object.assign(Duels.sanitizeDuelCfg(null), { risk: Duels.sanitizeRiskCfg({ duel: 'off' }) })).ddCap, null, 'switched off: no cap');
   const cfg = Duels.sanitizeDuelCfg({ types: { ret: true } });
   eq([Duels.sanitizeTerms({ type: 'ret' }, cfg).minDays, Duels.sanitizeTerms({ type: 'ret', period: 'month' }, cfg).minDays], [3, 5]);
+  eq([Duels.sanitizeTerms({ type: 'ret', ddCap: null }, cfg).ddCap, Duels.sanitizeTerms({ type: 'ret', ddCap: '' }, cfg).ddCap], [0.08, 0.08], 'an empty cap is the default, not 2%');
+  eq([Duels.sanitizeTerms({ type: 'disc', ddCap: null }).ddCap, Duels.sanitizeTerms({ type: 'disc', ddCap: 0 }).ddCap], [null, null], 'an empty cap on another kind is no cap');
+  const ten = Object.assign({}, cfg, { risk: Duels.sanitizeRiskCfg({ minDays: 10 }) });
+  eq([Duels.sanitizeTerms({ type: 'ret', period: 'month' }, ten).minDays, Duels.sanitizeTerms({ type: 'ret' }, ten).minDays], [10, 5], 'the league’s trading days: all of them a month, three fifths a week (at most 5)');
+  eq([Duels.retMinDays('week', { minDays: 0 }), Duels.retMinDays('month', { minDays: 40 })], [1, 20]);
   eq(Duels.ddModeFor('duel', Duels.sanitizeRiskCfg({ duel: 'penalty' })), 'penalty');
   eq(Duels.ddModeFor('duel', Duels.sanitizeRiskCfg({ duel: 'off' })), 'out', 'what % return plays by when caps are off elsewhere');
 });

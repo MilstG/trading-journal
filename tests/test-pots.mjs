@@ -151,6 +151,23 @@ try {
     eq([await bal('ann') - before.ann, await bal('bob') - before.bob, await bal('cat') - before.cat], [216, 108, 36], '60/30/10 of 360');
     ok((await inbox('ann')).some(x => /Journal pot: \+216 XP from the pot/.test(x)));
   });
+  await t('a tie for first shares first place’s prize; the monthly limit between two members covers competition pots', async () => {
+    clock = Date.parse('2026-09-30T13:00:00Z');
+    const c = (await call('/admin/competitions', { method: 'POST', owner: true, body: { title: 'Tie', type: 'journal', start: '2026-10-05', end: '2026-10-06', buyIn: 50, pay: 'wta' } })).d.id;
+    for (const h of ['ann', 'bob', 'cat']) eq((await call('/competitions/' + c + '/join', { method: 'POST', key: K[h] })).status, 200);
+    await call('/admin/config', { method: 'PUT', owner: true, body: { pots: { pairCapMonth: 50 } } });
+    const c2 = (await call('/admin/competitions', { method: 'POST', owner: true, body: { title: 'Capped', type: 'journal', start: '2026-10-05', end: '2026-10-06', buyIn: 20 } })).d.id;
+    await call('/competitions/' + c2 + '/join', { method: 'POST', key: K.cat });
+    const r = await call('/competitions/' + c2 + '/join', { method: 'POST', key: K.ann }); eq(r.status, 409); ok(/You and @cat have moved 50 XP between you this month/.test(r.d.error), r.d.error);
+    await call('/admin/competitions/' + c2, { method: 'DELETE', owner: true });
+    await call('/admin/config', { method: 'PUT', owner: true, body: { pots: { pairCapMonth: 1000 } } });
+    clock = Date.parse('2026-10-06T12:00:00Z');
+    const two = [[dk('2026-10-05', 0), 80, true], [dk('2026-10-05', 1), 80, true]];
+    await post('ann', two); await post('bob', two); await post('cat', [[dk('2026-10-05', 0), 80, false]]);
+    const b0 = { ann: await bal('ann'), bob: await bal('bob') };
+    clock = Date.parse('2026-10-09T12:00:00Z'); await call('/competitions/' + c, { key: K.ann });
+    eq([await bal('ann') - b0.ann, await bal('bob') - b0.bob], [75, 75], 'winner takes all, two winners: half each');
+  });
   await t('too few entrants when it ends: every buy-in comes back', async () => {
     clock = Date.parse('2026-10-01T12:00:00Z');
     const c = (await call('/admin/competitions', { method: 'POST', owner: true, body: { title: 'Thin', type: 'journal', start: '2026-10-05', end: '2026-10-06', buyIn: 50 } })).d.id;

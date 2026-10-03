@@ -19,6 +19,8 @@ t('a window with one point so far measures from the last point before it', () =>
   near(S.portfolioStats(res, 'month', 5, 9).ret, 0.06, 1e-9, 'from 40 (the point before) to 100, on 1000');
   eq(S.portfolioStats(res, 'month', 7, 9), null, 'nothing in the window: nothing to say');
   near(S.portfolioStats(res, 'month', 2, 9).ret, 0.06, 1e-9, 'two points in the window: unchanged, from the first of them');
+  const all = [['allTime', res[0][1]]];
+  eq(S.portfolioStats(all, 'allTime', 5, 9), null, 'not on the coarse all-time series: its last point can be weeks before the window');
 });
 
 // four traders, daily points from Sep 8: each one's P&L at the end of Sunday Oct 4 and by Wednesday Oct 7

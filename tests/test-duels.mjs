@@ -229,6 +229,7 @@ try {
     const row = db.prepare('SELECT id, data FROM members').all().map(r => ({ id: r.id, m: JSON.parse(r.data) })).find(r => r.m.handle === 'cat');
     row.m.grants = [{ id: 'g1', xp: 100, why: 'Won a Discipline duel', at: clock, duel: 'dx' }, { id: 'g2', xp: 150, why: 'Won 150 XP staked by @ann', at: clock, duel: 'dx' },
       { id: 'g3', xp: -50, why: 'Lost a Clean days duel to @dee', at: clock, duel: 'dy' }, { id: 'g4', xp: 40, why: 'Bonus from the league owner', at: clock }];
+    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240 }); // what the app last posted: earned XP with these grants in it
     db.prepare('UPDATE members SET data = ? WHERE id = ?').run(JSON.stringify(row.m), row.id);
     const kv = k => JSON.parse(db.prepare('SELECT v FROM kv WHERE k = ?').get(k).v);
     const mg = kv('migrations'); ok(mg.stakeSplit, 'recorded'); delete mg.stakeSplit;
@@ -236,6 +237,7 @@ try {
     app = mk(); B = await listen();
     const me = (await call('/me', { key: cat })).d.me;
     eq([me.grants.map(g => g.id), me.stakes.map(g => g.id), me.stakeNet], [['g1', 'g4'], ['g2', 'g3'], 100]);
+    eq(me.balance, 1240, 'the posted total loses the moved stakes until the app syncs, so they aren’t counted twice');
     await new Promise(r => app.close(r)); app = mk(); B = await listen();
     eq((await call('/me', { key: cat })).d.me.stakeNet, 100, 'once: a restart doesn’t move it again');
   });

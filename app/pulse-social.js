@@ -756,6 +756,9 @@ function socDdHtml(st,d,attr,fmt){
   const pen=mode==='penalty'&&['disc','ret'].includes(st.type);
   const desc=(pen?'Past it, '+(R.penalty||2)+(ret?' points of return':' Discipline points')+' come off for every 1% over':'Go past it at any point and you lose outright')+(ret?'':'. Everyone needs “Show % return” on, with a wallet.');
   return `<div class="pz-toggle" style="flex-wrap:wrap"><span style="flex:1;min-width:180px"><b>${ret?'Drawdown cap':'Drawdown rule'}</b><span>${esc(desc)}</span></span><span class="pz-seg" style="flex-wrap:wrap">${opts.map(v=>`<button type="button" ${attr}="${v}" aria-pressed="${(st.ddCap||0)===v}">${v?Math.round(v*100)+'%':'Off'}</button>`).join('')}</span></div>`; }
+// % return: the trading days default to the league's number (a month), three fifths of it (a week)
+function socRetMinSet(st){ if(st.type!=='ret')return; const d=SOC.cache.duels&&SOC.cache.duels.d, n=+(d&&d.risk&&d.risk.minDays)||5;
+  st.minDays=st.period==='month'?Math.min(20,Math.max(1,n)):Math.min(5,Math.max(1,Math.ceil(n*3/5))); }
 // % return starts on the league's second preset (or its first)
 function socDdDefault(st,d){ if(st.type==='ret'&&!st.ddCap){ const c=((d.risk&&d.risk.caps)||[10,15]); st.ddCap=(c[1]||c[0])/100; } }
 // the day-by-day marks, one row per side
@@ -1029,8 +1032,8 @@ async function socAction(t){
       const r=await socFetch('/people/'+encodeURIComponent(h)+'/mentor',{method:'POST',body:JSON.stringify({letIn:true})});
       if(r.share){ SOC.share=r.share; SOC.draft=null; } socPeopleDrop(); done('Asked @'+h+'. They’ve been told, and they can see your days now.'); return true; }
     // duels
-    if(ds.duelType){ if(pzS.duel.type==='ret'&&ds.duelType!=='ret')pzS.duel.ddCap=null; pzS.duel.type=ds.duelType; pzRender(); return true; }
-    if(ds.duelPeriod){ pzS.duel.period=ds.duelPeriod; pzRender(); return true; }
+    if(ds.duelType){ if(pzS.duel.type==='ret'&&ds.duelType!=='ret')pzS.duel.ddCap=null; pzS.duel.type=ds.duelType; socRetMinSet(pzS.duel); pzRender(); return true; }
+    if(ds.duelPeriod){ pzS.duel.period=ds.duelPeriod; socRetMinSet(pzS.duel); pzRender(); return true; }
     if(ds.duelVerified){ pzS.duel.verified=!pzS.duel.verified; pzRender(); return true; }
     if(ds.duelMin){ pzS.duel.minDays=Math.max(1,Math.min(pzS.duel.period==='month'?20:5,(pzS.duel.minDays||3)+(+ds.duelMin))); pzRender(); return true; }
     if(ds.duelDd!=null){ pzS.duel.ddCap=+ds.duelDd||null; pzRender(); return true; }
@@ -1047,11 +1050,11 @@ async function socAction(t){
       location.hash='#duels'; done(counter?'Sent back to @'+st.h+'.':'Challenge sent to @'+st.h+'. They have 48 hours to answer.'); return true; }
     // group duels and the ladder
     if(ds.ladTab){ pzS.ladTab=ds.ladTab; pzRender(); return true; }
-    if(ds.podType&&pzS.pod){ if(pzS.pod.type==='ret'&&ds.podType!=='ret')pzS.pod.ddCap=null; pzS.pod.type=ds.podType; pzRender(); return true; }
+    if(ds.podType&&pzS.pod){ if(pzS.pod.type==='ret'&&ds.podType!=='ret')pzS.pod.ddCap=null; pzS.pod.type=ds.podType; socRetMinSet(pzS.pod); pzRender(); return true; }
     if(ds.podDd!=null&&pzS.pod){ pzS.pod.ddCap=+ds.podDd||null; pzRender(); return true; }
     if(ds.podBuy!=null&&pzS.pod){ pzS.pod.buyIn=+ds.podBuy||0; pzRender(); return true; }
     if(ds.podPay&&pzS.pod){ pzS.pod.pay=ds.podPay; pzRender(); return true; }
-    if(ds.podPeriod&&pzS.pod){ pzS.pod.period=ds.podPeriod; pzS.pod.minDays=Math.min(pzS.pod.minDays,ds.podPeriod==='month'?20:5); pzRender(); return true; }
+    if(ds.podPeriod&&pzS.pod){ pzS.pod.period=ds.podPeriod; pzS.pod.minDays=Math.min(pzS.pod.minDays,ds.podPeriod==='month'?20:5); socRetMinSet(pzS.pod); pzRender(); return true; }
     if(ds.podVerified&&pzS.pod){ pzS.pod.verified=!pzS.pod.verified; pzRender(); return true; }
     if(ds.podMin&&pzS.pod){ pzS.pod.minDays=Math.max(1,Math.min(pzS.pod.period==='month'?20:5,(pzS.pod.minDays||3)+(+ds.podMin))); pzRender(); return true; }
     if((ds.podPick||t.id==='podAdd')&&pzS.pod){ const h=ds.podPick||(($('podWho')||{value:''}).value||'').trim().replace(/^@/,''), L=pzS.pod.pick, i=L.findIndex(x=>x.toLowerCase()===h.toLowerCase());

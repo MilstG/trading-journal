@@ -86,14 +86,20 @@ function sanitizeTerms(b, cfg) {
   const period = b.period === 'month' ? 'month' : 'week';
   const verified = ['disc', 'clean', 'survive'].includes(type) ? b.verified !== false : false;
   // a minimum of trading days: Discipline always had one; % return now too, so sitting flat can't win
-  const minDays = type === 'disc' || type === 'ret' ? Math.round(clamp(b.minDays, 1, period === 'month' ? 20 : 5) || (type === 'ret' && period === 'month' ? 5 : 3)) : null;
-  // % return always has a drawdown cap; any other duel can take one when the league allows it
   const risk = (cfg && cfg.risk) || RISK_DEFAULTS;
-  const ddCap = type === 'ret' ? clamp(b.ddCap, 0.02, 0.5) || 0.08 : risk.duel !== 'off' && b.ddCap ? clamp(b.ddCap, 0.02, 0.5) : null;
+  const minDays = type === 'disc' || type === 'ret' ? Math.round(clamp(b.minDays, 1, period === 'month' ? 20 : 5) || (type === 'ret' ? retMinDays(period, risk) : 3)) : null;
+  // % return always has a drawdown cap; any other duel can take one when the league allows it
+  // (empty, null or 0 is no cap: clamp would read them as 0 and clamp up to 2%)
+  const capIn = b.ddCap == null || b.ddCap === '' || !+b.ddCap ? null : clamp(b.ddCap, 0.02, 0.5);
+  const ddCap = type === 'ret' ? capIn || 0.08 : risk.duel !== 'off' ? capIn : null;
   const msg = String(b.msg == null ? '' : b.msg).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
   const stake = cfg.stakes === false ? 0 : Math.round(clamp(b.stake, 0, cfg.maxStake == null ? DEFAULTS.maxStake : cfg.maxStake) || 0);
   return { type, period, verified, minDays, ddCap, msg, stake };
 }
+// trading days a % return duel needs by default: the league's number for a month, three fifths of it for a week
+// (5 → 3 a week, 5 a month), at least 1, at most the days there are (5 a week, 20 a month)
+function retMinDays(period, risk) { const n = +((risk || RISK_DEFAULTS).minDays) || 0;
+  return period === 'month' ? Math.min(20, Math.max(1, n)) : Math.min(5, Math.max(1, Math.ceil(n * 3 / 5))); }
 // the rule a capped event plays by, fixed when it's made: the league's setting for that format
 const ddModeFor = (fmt, risk) => { const m = (risk || RISK_DEFAULTS)[fmt]; return m === 'penalty' ? 'penalty' : 'out'; };
 // The most XP a member can still put up: a share of their XP, less what's already riding on their
@@ -246,5 +252,5 @@ function podRank(p, sides) {
   return { rows, lead, why };
 }
 
-module.exports = { RISK_DEFAULTS, RISK_MODES, LEAGUE_RISK_MODES, sanitizeRiskCfg, ddCheck, ddModeFor, TYPES, DEFAULTS, sanitizeDuelCfg, sanitizeTerms, stakeRoom, windowFor, sideScore, standing, keyOf,
+module.exports = { RISK_DEFAULTS, RISK_MODES, LEAGUE_RISK_MODES, sanitizeRiskCfg, ddCheck, ddModeFor, retMinDays, TYPES, DEFAULTS, sanitizeDuelCfg, sanitizeTerms, stakeRoom, windowFor, sideScore, standing, keyOf,
   RATING0, RESET, elo, softReset, POD_TYPES, POD_RULES, sanitizePodTerms, podRank };

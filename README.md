@@ -597,7 +597,7 @@ link to join *your* league. A server upgraded from an older version imports its
 - **What keeps pots fair** (Admin → Duels → XP pots). A member can have at most
   25% of their stake balance riding at once, duels and pots together. Two
   members can move at most 1,000 XP net between them in a calendar month,
-  across duel stakes and group-duel pots (a duel's stake is trimmed to what's
+  across duel stakes and pots (a duel's stake is trimmed to what's
   left; past it they can still play, without XP at stake). A measure the apps
   report themselves (unverified Discipline, clean days or last one standing,
   journaling, process XP, survivor) can carry at most 100 XP. A wallet takes

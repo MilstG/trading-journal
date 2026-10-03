@@ -221,7 +221,9 @@ function portfolioStats(res, label, fromMs, toMs) {
   const inWin = p => (fromMs == null || p[0] >= fromMs) && (toMs == null || p[0] <= toMs);
   let P = pn.filter(inWin);
   // a window with a single point so far (early on its first day) measures from the last point before it
-  if (P.length === 1 && fromMs != null) { const before = pn.filter(p => p[0] < fromMs).pop(); if (before) P = [before, ...P]; }
+  // (on the 30-day series only: the all-time one is coarse, and a point from long before the window would
+  // count gains from before it)
+  if (P.length === 1 && fromMs != null && label === 'month') { const before = pn.filter(p => p[0] < fromMs).pop(); if (before) P = [before, ...P]; }
   if (P.length < 2) return null;
   const startAv = (av.filter(p => p[0] <= P[0][0]).pop() || av.find(inWin) || [0, 0])[1];
   if (!(startAv > 0)) return null;
@@ -395,7 +397,8 @@ function sanitizeComp(b) {
   return { type, title, rule, start: b.start, end: b.end, league: typeof b.league === 'string' && /^[a-z0-9-]{1,30}$/.test(b.league) ? b.league : null,
     minDays: clampNum(b.minDays, 1, 90) || (type === 'journal' ? 10 : 3),
     // % return always has a drawdown cap; any other kind can take one. ddMode: 'out' or 'penalty' (unset: the league's default)
-    ddCap: type === 'return' ? (clampNum(b.ddCap, 0.01, 0.9) || 0.08) : clampNum(b.ddCap, 0.01, 0.9) || null,
+    // (empty, null or 0 is no cap: clampNum would read them as 0 and clamp up to 1%)
+    ddCap: (cap => type === 'return' ? cap || 0.08 : cap)(b.ddCap == null || b.ddCap === '' || !+b.ddCap ? null : clampNum(b.ddCap, 0.01, 0.9)),
     ddMode: ['out', 'penalty'].includes(b.ddMode) ? b.ddMode : null,
     // % return: the trading days an entrant needs to be ranked (unset: the league's default; 0: none)
     tradeDays: type === 'return' && b.tradeDays !== undefined && b.tradeDays !== '' && b.tradeDays !== null ? Math.round(clampNum(b.tradeDays, 0, 90) || 0) : null };
@@ -582,7 +585,10 @@ function createSocial(opts) {
       for (const g of m.grants || []) (g.duel && (g.xp < 0 || /^Won \d+ XP staked by /.test(g.why || '')) ? moved : keep).push(g);
       if (!moved.length) continue;
       m.grants = keep; m.stakes = [...(m.stakes || []), ...moved.map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ref: g.duel }))].slice(-100);
-      m.stakeNet = (+m.stakeNet || 0) + moved.reduce((a, g) => a + g.xp, 0); }
+      const net = moved.reduce((a, g) => a + g.xp, 0); m.stakeNet = (+m.stakeNet || 0) + net;
+      // the total the app last posted still counts these grants: take them off it, so the balance doesn't count
+      // them twice before the app syncs again (it then posts earned XP without them)
+      if (m.stats && isFinite(+m.stats.xp)) m.stats.xp = Math.max(0, m.stats.xp - net); }
     S.migrations.stakeSplit = Date.now(); }
   if (!S.migrations.duels3) { if (S.config.modules.duels === 1) S.config.modules.duels = 3; S.migrations.duels3 = Date.now(); }
   // October 2026: a new server counts only wallets a member proved are theirs (signed for), so nobody can
@@ -718,7 +724,8 @@ function createSocial(opts) {
     // returns: over the league's own week (or month), never the rolling 30 days
     const w = ['ret', 'usd', 'riskadj'].includes(L.metric) ? leagueMoney(m, L, wk) : null;
     // past the league's drawdown cap: out for that week (last, so in the relegation zone), or docked
-    const k = w ? boardRisk(w, L.metric, leagueRisk(L)) : null; if (k && k.out) return -1e9;
+    const shares = L.metric === 'usd' ? m.share.usd : m.share.ret; // off the board unless shared: 0, as before
+    const k = w ? boardRisk(w, L.metric, leagueRisk(L)) : null; if (k && k.out) return shares ? -1e9 : 0;
     const ret = w ? w.ret - k.pen : 0;
     switch (L.metric) {
       case 'ret': return w && m.share.ret ? ret : 0;
@@ -1257,8 +1264,8 @@ function createSocial(opts) {
   // (a challenge waiting on them commits nothing until they accept it). `except`: the duel being decided.
   const duelRiding = (m, except) => openDuels(m).filter(d => d !== except && (d.status === 'active' || d.awaiting !== m.id)).reduce((s, d) => s + (d.stake || 0), 0);
   // the share of a member's XP that can ride at once counts what they've put into pots too
-  const stakeRoomOf = (m, except) => Duels.stakeRoom(balanceOf(m) + escrowOf(m), duelRiding(m, except) + escrowOf(m), S.config.duels);
-  const potRoomOf = m => Duels.stakeRoom(balanceOf(m) + escrowOf(m), duelRiding(m) + escrowOf(m), Object.assign({}, S.config.duels, { maxStake: Infinity }));
+  const stakeRoomOf = (m, except) => { const e = escrowOf(m); return Duels.stakeRoom(balanceOf(m) + e, duelRiding(m, except) + e, S.config.duels); };
+  const potRoomOf = m => { const e = escrowOf(m); return Duels.stakeRoom(balanceOf(m) + e, duelRiding(m) + e, Object.assign({}, S.config.duels, { maxStake: Infinity })); };
   // the duel settings with the league's drawdown rules, for reading terms
   const duelCfg = () => Object.assign({}, S.config.duels, { risk: S.config.risk });
   // a capped event keeps the rule it was made under (fmt: 'duel' | 'pod' | 'comp'), whatever the owner changes later
@@ -1670,7 +1677,10 @@ function createSocial(opts) {
     if (field < (c.minEntrants || S.config.pots.minEntrants)) { potRefundAll(c, c.title); c.potResult = { refund: true, short: true, paid: {}, gross: 0, burned: 0, pot: 0 };
       for (const id of Object.keys(c.entrants)) notify(S.members[id], 'season', c.title + ': too few entrants put up the buy-in, so it’s back with you.', { title: 'Competition pot' }); return; }
     const ok = r => !r.out && r.score != null && isFinite(r.score);
-    const res = potPay(c, (c.final || []).map(r => ({ id: r.id, place: r.rank, q: ok(r) })), c.title, c.overlay || 0);
+    // the standings break ties by name; for the pot, equal scores share a place (and its prize)
+    const rows = []; (c.final || []).forEach((r, i) => { const p = rows[i - 1], pr = (c.final || [])[i - 1];
+      rows.push({ id: r.id, q: ok(r), place: p && ok(r) && ok(pr) && pr.score === r.score ? p.place : i + 1 }); });
+    const res = potPay(c, rows, c.title, c.overlay || 0);
     for (const id of Object.keys(Object.assign({}, c.entrants, res.paid))) { const m = S.members[id]; if (!m) continue;
       notify(m, 'season', res.refund ? c.title + ': nobody qualified for the pot, so your buy-in is back.' : res.paid[id] ? c.title + ': +' + res.paid[id] + ' XP from the pot.' : c.title + ': results are final. The pot went to the top places.', { title: 'Competition pot' }); } };
   const compRows = c => {
@@ -3110,7 +3120,7 @@ function createSocial(opts) {
     if (head === 'leagues' && parts[1] && !parts[2] && M === 'GET') {
       const L = own(S.leagues, arg) ? S.leagues[arg] : Object.values(S.leagues).find(x => String(x.num) === arg.replace(/^#/, '')) || null;
       if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
-      const W = leagueWindow(L), top = boardRows(leagueMembers(L), L.metric, { week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
+      const W = leagueWindow(L), top = boardRows(leagueMembers(L), L.metric, { risk: leagueRisk(L), week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
       return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt, hall: (L.hall || []).slice().reverse().map(h => ({ season: h.season, label: h.label, n: h.n,
           // as the members stand today: a suspended one isn't named, and returns or dollars only show while still shared
           podium: h.podium.map(r => { const pm = own(S.members, r.id) ? S.members[r.id] : null;
@@ -3276,6 +3286,7 @@ function createSocial(opts) {
           if (started) return json(res, 409, { error: 'This competition has a buy-in, so it closed to new entrants when it started.' });
           const room = potRoomOf(me); if (c.buyIn > room) return json(res, 409, { error: room ? 'The buy-in is ' + c.buyIn + ' XP; you can put up ' + room + ' XP right now.' : 'You don’t have the ' + c.buyIn + ' XP buy-in to put up right now.' });
           const seat = seatTaken(me, Object.keys(c.potIn || {})); if (seat) return json(res, 409, { error: seat });
+          const pb = pairBlock(me, Object.keys(c.potIn || {}).map(id => S.members[id]).filter(Boolean)); if (pb) return json(res, 409, { error: pb.replace('Play this one without XP at stake.', 'This competition has a buy-in, so you can’t join this one.') });
         }
         const need = S.config.unlocksOn && !me.unlocked && S.config.modules.compete > 1 ? S.config.modules.compete : 0;
         if (need && ((me.stats && me.stats.level) || 1) < need) return json(res, 403, { error: 'Competitions unlock at level ' + need + '.' });

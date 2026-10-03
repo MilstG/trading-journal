@@ -55,6 +55,8 @@ t('competitions need a known type, a title and a window of at most 92 days', () 
   const c = S.sanitizeComp({ type: 'return', title: 'Sprint', start: '2026-10-01', end: '2026-10-14' });
   eq(c.ddCap, 0.08); eq(c.minDays, 3);
   eq(S.sanitizeComp({ type: 'journal', title: 'J', start: '2026-10-01', end: '2026-10-30' }).minDays, 10);
+  const cap = (type, ddCap) => S.sanitizeComp({ type, title: 'C', start: '2026-10-01', end: '2026-10-30', ddCap }).ddCap;
+  eq([cap('journal', null), cap('journal', ''), cap('discipline', 0), cap('return', null), cap('return', ''), cap('survivor', 0.15)], [null, null, null, 0.08, 0.08, 0.15], 'an empty cap is no cap (8% for return), never 1%');
 });
 
 console.log('\nFeed events');
@@ -194,6 +196,8 @@ try {
     ok(hlCalls >= 1, 'portfolio fetched for alpha');
     const lb = await call('/leaderboard?board=ret', { key: Bk });
     eq(lb.d.rows.map(r => r.handle), ['alpha_1']); near(lb.d.rows[0].value, 0.12, 1e-9, 'the league’s week: from the last point before Monday (−20) to now (+100), on 1,000');
+    const gl = await call('/leaderboard?board=ret&scope=global', { key: A });
+    eq(gl.d.rows.map(r => r.handle), ['alpha_1']); near(gl.d.rows[0].value, 0.1, 1e-9, '30 days: +100 on 1,000');
     eq(lb.d.optedIn, false, 'bravo is told they are not on the board');
   });
   await t('stats posts feed the league, the boards and the feed', async () => {
