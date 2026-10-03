@@ -4,7 +4,7 @@
 //
 // Scoring reads only what the server already has: the Discipline days it verifies from each
 // member's public fills (m.vdays), the days each member's app syncs (m.stats.days: score, fully
-// journaled, reviewed), XP by day (m.stats.xpDays), and for % return the duel's own on-chain
+// journaled, reviewed), XP by day (m.stats.xpDays, the server's own from its XP ledger), and for % return the duel's own on-chain
 // snapshot (d.money). Nobody marks their own homework. Money is never staked; XP can be: each side
 // puts up the same amount and the winner takes the loser's.
 //

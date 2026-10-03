@@ -41,6 +41,17 @@ export function report(label){
   process.exit(fail ? 1 : 0);
 }
 
+// A member's XP is the server's, from the parts of each day their app reports (POST /stats xpLog). For a
+// suite that needs a member at some total: day parts adding up to `total` under the default XP weights, a
+// full day (850) at a time from `today` ('YYYY-MM-DD') back. Up to 6,800 stays within the last week, so a
+// later post with another total replaces it.
+export function xpLogFor(total, today){
+  const log = {}; let left = Math.max(0, Math.round(total)), ms = Date.parse(today + 'T12:00:00Z');
+  while (left > 0){ const x = Math.min(850, left), e = Math.min(675, x), s = Math.min(100, x - e), b = x - e - s;
+    log[new Date(ms).toISOString().slice(0, 10)] = Object.assign({ e }, s ? { s } : {}, b ? { b } : {}); left -= x; ms -= 864e5; }
+  return log;
+}
+
 // Pulls pure functions straight out of the shipped ledger.html so tests exercise real code.
 // Brace-matched from the declaration; skips the `async ` prefix automatically. Assumes the
 // target functions don't carry `{` in their parameter list (true for everything here).

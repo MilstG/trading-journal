@@ -59,13 +59,19 @@ function socInviteCode(){ try{ return localStorage.getItem(SOC_INVITE_STORE)||''
   if(!c)return; try{ localStorage.setItem(SOC_INVITE_STORE,c); }catch(e){}
   u.searchParams.delete('invite'); history.replaceState(history.state,'',u.pathname+u.search+u.hash); }catch(e){} })();
 
+// Each day's XP as its parts, for the server's XP ledger (the server works out the XP, level and XP by day
+// itself): s the day's Discipline score, b its logging bonus, e the XP this app pays on top (focus-habit days,
+// challenges, achievements, badges) and m badge XP reached only with mentoring XP (levels, never leagues). What
+// the server paid (grants, coach purchases, reward badges, mentoring) it counts itself, so it's left out.
+// Pure given g.
+function pzXpLog(g){ const L={}, at=k=>L[k]||(L[k]={});
+  for(const d of g.days){ const o=at(d.key); o.s=d.score; if(d.bonus&&d.bonus.total>0)o.b=d.bonus.total; }
+  for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp; }
+  return Object.fromEntries(Object.keys(L).sort().slice(-100).map(k=>[k,L[k]])); }
 // The numbers a member shares, from the shared game context. Pure given its inputs.
 function pzSocialStats(g, habits, J, withLessons){
   const done=g.challenges.filter(c=>c.status==='done');
-  // xp and level count the multiplier; weekly XP and XP by day (what leagues and duels rank on) don't
-  return {xp:g.xp.total, level:g.level.level, week:g.nowWeek, weekXp:g.weekXpBase!=null?g.weekXpBase:g.weekXp, tz:pzClockZone(),
-    // XP spent on coach messages that xp already counts, so the server knows which purchases it's still waiting to see
-    coachSpent:(g.bonuses||[]).reduce((a,b)=>a+(b.src==='coach'&&b.xp<0?-b.xp:0),0),
+  return {week:g.nowWeek, tz:pzClockZone(), xpLog:pzXpLog(g),
     streak:g.streak.current, best:g.streak.best, shields:g.streak.shields,
     challengesDone:done.length, lastChallenge:done.length?habitSentence(done[done.length-1].ch.spec):'',
     badges:g.catalog?g.catalog.earned.map(b=>({id:b.id,t:b.t,c:b.c,r:b.r,k:b.k,d:b.desc||''})):g.achievements.filter(a=>a.at).map(a=>({id:a.id,t:a.title})),
@@ -77,8 +83,7 @@ function pzSocialStats(g, habits, J, withLessons){
       // the parts of Trader Age the server can't read from the wallet: prep, journaling, the loss limit
       if(d.checkin)o.p=1; /* a check-in done on or before the day (processDays' credit), not one typed in later */ const P=d.parts||{}; if(P.journal>0)o.jn=Math.round(P.journal*100)/100; if(P.limit===0||P.limit===1)o.lm=P.limit; if(P.plan===1||P.plan===0.5)o.pl=P.plan;
       return o; }),
-    firstAt:(()=>{ let a=0; for(const t of (typeof allTrades!=='undefined'?allTrades:[])){ const x=+t.openTime||0; if(x>0&&(!a||x<a))a=x; } return a||null; })(),
-    xpDays:Object.fromEntries(Object.entries(((g.xpBase||g.xp)&&(g.xpBase||g.xp).byDay)||{}).filter(([k,v])=>v>0).sort().slice(-100))};
+    firstAt:(()=>{ let a=0; for(const t of (typeof allTrades!=='undefined'?allTrades:[])){ const x=+t.openTime||0; if(x>0&&(!a||x<a))a=x; } return a||null; })()};
 }
 // The server only gets a wallet address when a toggle needs it — Verify my discipline (fills),
 // % return or dollar P&L (portfolio), or Show wallet address; otherwise it never leaves the browser.
@@ -201,7 +206,9 @@ function socSync(g){
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
   SOC.timer=setTimeout(()=>{ SOC.lastSentAt=Date.now();
-    socFetch('/stats',{method:'POST',body:p}).then(()=>{ SOC.lastSent=p; socStale(); },()=>{}); },
+    socFetch('/stats',{method:'POST',body:p}).then(r=>{ SOC.lastSent=p; socStale();
+      // the XP and level the server worked out from what was just sent: shown from now on
+      if(r&&SOC.me&&typeof r.xp==='number'&&(r.xp!==SOC.me.xp||r.level!==SOC.me.level)){ SOC.me.xp=r.xp; SOC.me.level=r.level; if(PZ)pzRender(); } },()=>{}); },
     Math.max(1500,15000-(Date.now()-SOC.lastSentAt)));
 }
 

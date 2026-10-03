@@ -172,8 +172,8 @@ try {
     for (const k of [A, Bk, C]) await call('/leagues/' + L.id + '/join', { method: 'POST', key: k, body: {} });
     const wk = S.isoWeekOfKey('2026-10-29');
     // XP by day: a week that straddles the month end only counts its October days
-    await call('/stats', { method: 'POST', key: A, body: { xp: 1300, level: 2, week: wk, weekXp: 300, tz: 'UTC', xpDays: { '2026-09-29': 999, '2026-10-29': 300 } } }); // XP by day never adds up to more than the total
-    await call('/stats', { method: 'POST', key: Bk, body: { xp: 200, level: 2, week: wk, weekXp: 200, tz: 'UTC', xpDays: { '2026-10-28': 200 } } });
+    await call('/stats', { method: 'POST', key: A, body: { week: wk, tz: 'UTC', xpLog: { '2026-09-29': { s: 100, b: 75, e: 675 }, '2026-10-29': { s: 100, e: 200 } } } });
+    await call('/stats', { method: 'POST', key: Bk, body: { week: wk, tz: 'UTC', xpLog: { '2026-10-28': { s: 80, b: 20, e: 100 } } } });
     const info = (await call('/leagues/' + L.id, { key: A })).d.league;
     eq([info.season.label, info.season.daysLeft], ['October 2026', 2]); eq(info.top.map(r => r.handle), ['alice', 'bobby']);
     clock = Date.UTC(2026, 10, 1, 9, 0); // November 1st: October has ended but waits a day for late syncs
