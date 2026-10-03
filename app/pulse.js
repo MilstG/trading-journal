@@ -1277,13 +1277,14 @@ async function pzUnskipJournal(){
 
 // ---- first run, loading, empty ----
 // The first-run screen: the promise and connecting your trades on one side, the daruma (one eye
-// painted: a goal set) on the other, and the daily / weekly / monthly rhythm underneath
+// painted: a goal set) on the other, and the daily / weekly / monthly rhythm underneath.
+// On a phone the daruma moves up beside the headline (.pz-wl-mini) so it's seen without scrolling.
 function pzWelcome(body){
   return `<div class="pz-welcome">
     <header class="pz-wl-top"><div class="pz-wl-brand">${pzMark(30)}<b>Daruma</b></div><a class="pz-wl-full" href="${esc(pzFullHref())}">Full journal →</a></header>
     <div class="pz-wl-main"><section class="pz-wl-hero" aria-labelledby="pzWlT">
       <span class="pz-wl-kick">Graded on process, not profit</span>
-      <h1 id="pzWlT"><span>Good habits</span> <span>compound.</span></h1>
+      <div class="pz-wl-head"><h1 id="pzWlT"><span>Good habits</span> <span>compound.</span></h1><div class="pz-wl-mini">${pzMark(0,true)}</div></div>
       ${body}</section>
       <div class="pz-wl-art">${pzMark(0,true)}</div></div>
     <footer class="pz-wl-foot">

@@ -401,7 +401,8 @@ try {
     eq(await p.textContent('.pz-wl-hero h1'), 'Good habits compound.');
     ok(await p.isVisible('#pzAddr') && await p.isVisible('#pzConnect') && await p.isVisible('#pzDemo'), 'address, Start day one and sample data are all there');
     eq((await p.textContent('#pzConnect')).trim(), 'Start day one');
-    ok(await p.isVisible('.pz-wl-art .pz-mark'), 'the daruma, one eye painted');
+    ok(await p.isVisible('.pz-wl-mini .pz-mark') && !await p.isVisible('.pz-wl-art .pz-mark'), 'the daruma, one eye painted, beside the headline on a phone');
+    ok(await p.evaluate(() => document.querySelector('.pz-wl-mini .pz-mark').getBoundingClientRect().bottom <= innerHeight), 'the daruma is seen without scrolling');
     await p.click('[data-pz-cex="bybit"]'); await p.waitForSelector('#pzCexKey');
     await p.click('[data-pz-cexoff]'); await p.waitForSelector('#pzAddr');
     ok(await p.evaluate(() => document.documentElement.scrollWidth) <= 390, 'no sideways scrolling');
