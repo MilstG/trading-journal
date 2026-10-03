@@ -10,7 +10,7 @@
 // their mentors for review (reviews.js). Returns are read on the server from the
 // chain, never sent from here. Sample data is never posted.
 const SOC_KEY_STORE='pz_social_key';
-const SOC_DEFAULT_SHARE={profile:true,boards:true,global:false,page:false,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false,mentor:false,bench:true,duels:true,seek:false};
+const SOC_DEFAULT_SHARE={profile:true,boards:true,global:true,page:true,feed:true,habits:true,verify:true,ret:true,usd:false,addr:false,mentor:true,bench:true,duels:true,seek:false};
 const SOC_SHARE_ROWS=[
   ['profile','Public profile','Your profile page: streak, discipline, badges. Name, level and league show wherever you appear'],
   ['boards','Process leaderboards','Weekly XP, discipline and streak boards in your leagues'],

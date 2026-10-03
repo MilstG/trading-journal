@@ -109,12 +109,15 @@ function sanitizeMentorXp(b, prev) {
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, approveWallets: false, vaultOn: true, guestCap: 3,
   unlocks: { trends: 2, share: 3, compete: 4 } };
 const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr', 'mentor', 'bench', 'duels', 'seek'];
-// mentor: the league's mentors can see your trading days (scores, slips, the lesson you wrote) and comment on them — opt-in
-// global: appear on the server-wide leaderboards (every member, every league) — opt-in
-// page: a public badge page at /b/<name> that anyone with the link can open — opt-in
+// New members start with everything on except dollar P&L, the wallet address and "looking for a partner";
+// they can switch any of it off before joining or later. Existing members keep what they had.
+// mentor: the league's mentors can see your trading days (scores, slips, the lesson you wrote) and comment on them
+// global: appear on the server-wide leaderboards (every member, every league)
+// page: a public badge page at /b/<name> that anyone with the link can open
+// ret: 30-day % return and drawdown, read on chain from the first wallet
 // duels: other members can challenge you 1 on 1 (you still choose whether to accept)
 // bench: an anonymous summary of your trading counts toward "traders like you" — on unless switched off
-const DEFAULT_SHARE = { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false, mentor: false, bench: true, duels: true, seek: false };
+const DEFAULT_SHARE = { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: true, usd: false, addr: false, mentor: true, bench: true, duels: true, seek: false };
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const clampNum = (v, lo, hi) => { if (v !== null && typeof v === 'object') return null; const n = +v; return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };

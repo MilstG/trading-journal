@@ -28,7 +28,14 @@ t('stats are clamped and filtered: bad days, badges and oversized text never get
 });
 t('sharing defaults keep money and the address private', () => {
   const sh = S.sanitizeShare({ usd: true, profile: 'yes' });
-  eq(sh, { profile: true, boards: true, global: false, page: false, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false, mentor: false, bench: true, duels: true, seek: false }, 'looking for a partner is off until you say so');
+  eq(sh, { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: true, usd: true, addr: false, mentor: true, bench: true, duels: true, seek: false }, 'looking for a partner is off until you say so');
+  const d = S.sanitizeShare({});
+  eq([d.usd, d.addr, d.seek], [false, false, false], 'dollar P&L, the wallet address and partner-seeking start off');
+});
+t('new sharing defaults never switch anything on for existing members', () => {
+  const old = S.sanitizeShare({ global: false, page: false, ret: false, mentor: false });
+  const kept = S.sanitizeShare({ feed: false }, old);
+  eq([kept.global, kept.page, kept.ret, kept.mentor, kept.feed], [false, false, false, false, false]);
 });
 t('“Traders like you” is on for existing members too (an anonymous summary; they can switch it off)', () => {
   const old = { profile: true, boards: true, feed: true, habits: true, ret: false, usd: false, addr: false, verify: true };
@@ -176,7 +183,7 @@ try {
     const a = await call('/join', { method: 'POST', body: { handle: 'alpha_1', address: '0x' + 'a'.repeat(40), share: { ret: true } } });
     eq(a.status, 200); ok(a.d.key && a.d.key.length === 48); A = a.d.key;
     eq((await call('/join', { method: 'POST', body: { handle: 'ALPHA_1' } })).status, 409);
-    const b = await call('/join', { method: 'POST', body: { handle: 'bravo' } }); Bk = b.d.key;
+    const b = await call('/join', { method: 'POST', body: { handle: 'bravo', share: { ret: false } } }); Bk = b.d.key;
     const raw = storedText(dataDir);
     ok(!raw.includes(A) && !raw.includes(Bk), 'keys are never written');
     eq((await call('/me')).status, 401);

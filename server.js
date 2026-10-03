@@ -907,7 +907,7 @@ function createApp(opts) {
   const appDir = path.join(path.dirname(htmlPath), 'app');
   const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash}
   const appFile = (name) => {
-    if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name) && !/^img\/[a-z0-9][a-z0-9.-]*\.png$/.test(name)) return null; // app/, app/features/ and app/img/ only: no other paths, no dotfiles
+    if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name)) return null; // app/ or app/features/ only: no other paths, no dotfiles
     const file = path.join(appDir, name);
     let st; try { st = fs.statSync(file); } catch (e) { return null; }
     if (!st.isFile()) return null;
@@ -2471,7 +2471,7 @@ function createApp(opts) {
       const f = appFile(url.slice(5));
       if (!f) return json(res, 404, { error: 'not found' });
       const etag = '"' + f.hash + '"';
-      const head = { 'Content-Type': url.slice(5).split('?')[0].endsWith('.png') ? 'image/png' : 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
+      const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
         'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
       const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
@@ -2556,19 +2556,11 @@ function createApp(opts) {
       if (m) return fs.readFile(path.join(__dirname, 'icons', m[1] + '-' + m[2] + '.png'), (err, buf) => {
         if (err) return json(res, 404, { error: 'not found' });
         res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=604800' }); res.end(buf); }); }
-    if (req.method === 'GET' && url === '/pulse-icon.svg') {
-      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' });
-      return res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">'
-        + '<rect width="180" height="180" rx="38" fill="#0A0C0F"/>'
-        + '<circle cx="90" cy="90" r="52" fill="none" stroke="#232830" stroke-width="18"/>'
-        + '<path d="M90 38a52 52 0 1 1-49.5 36" fill="none" stroke="#3FE0A0" stroke-width="18" stroke-linecap="round"/></svg>');
-    }
-    if (req.method === 'GET' && url === '/icon.svg') {
-      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' });
-      return res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-        + '<rect width="100" height="100" rx="18" fill="#0c0e14"/>'
-        + '<path d="M20 72 L38 50 L52 60 L80 28" stroke="#8b93ff" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
-        + '<circle cx="80" cy="28" r="6" fill="#2fd08c"/></svg>');
+    // Daruma's logo as an SVG tile (notification icon and badge); icons/build-daruma.mjs writes it
+    if (req.method === 'GET' && (url === '/pulse-icon.svg' || url === '/icon.svg')) {
+      return fs.readFile(path.join(__dirname, 'icons', 'daruma.svg'), (err, buf) => {
+        if (err) return json(res, 404, { error: 'not found' });
+        res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=86400' }); res.end(buf); });
     }
 
     // --- wearables (/api/wear/*): connect, sync, and the Apple Health Shortcut's link ---

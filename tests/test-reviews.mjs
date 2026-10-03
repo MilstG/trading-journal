@@ -61,7 +61,8 @@ const app = server.createApp({ dataDir, auth: 'owner-token', htmlPath, now: () =
 const B = await new Promise(res => app.listen(0, () => res('http://127.0.0.1:' + app.address().port)));
 const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p, { ...o, headers: { 'Content-Type': 'application/json', ...(o.key ? { 'X-Pulse-Key': o.key } : {}), ...(o.admin ? { Authorization: 'Bearer owner-token' } : {}) }, body: o.body ? JSON.stringify(o.body) : undefined });
   return { status: r.status, d: await r.json() }; };
-const join_ = async h => (await call('/join', { method: 'POST', body: { handle: h } })).d.key;
+// members join with mentors kept out, so each test lets them in when it needs to
+const join_ = async h => (await call('/join', { method: 'POST', body: { handle: h, share: { mentor: false } } })).d.key;
 const idOf = async h => (await call('/admin/members', { admin: true })).d.members.find(m => m.handle === h).id;
 const act = async (h, action) => call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action } });
 const inbox = async k => (await call('/inbox', { key: k })).d.items;
