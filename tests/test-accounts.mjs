@@ -182,7 +182,7 @@ try {
   });
   await t('“claimed wallets only”: unproven wallets stop counting on money boards and in return competitions', async () => {
     const c = (await call('/join', { method: 'POST', body: { handle: 'charlie', address: '0x' + 'c'.repeat(40), share: { ret: true, verify: true } } })).d.key;
-    await tick(); await call('/me', { method: 'PUT', key: A, body: { share: { ret: true } } }); await tick();
+    await tick(); await call('/me', { method: 'PUT', key: A, body: { share: { ret: true, verify: true } } }); await tick(); // return competitions count verified trading days
     const ret = async () => (await call('/leaderboard?board=ret', { key: c })).d.rows.map(r => r.handle).sort();
     eq(await ret(), ['alpha', 'charlie']);
     await call('/admin/config', { method: 'PUT', admin: true, body: { requireClaim: true } });

@@ -78,7 +78,8 @@ await t('a survivor competition keeps the days it saw and freezes its result aft
     const A = await key('alpha'), Bk = await key('bravo');
     const c = (await call('/admin/competitions', { method: 'POST', admin: true, body: { type: 'survivor', title: 'Survive', start: '2026-10-01', end: '2026-10-20' } })).id;
     for (const k of [A, Bk]) await call('/competitions/' + c + '/join', { method: 'POST', key: k });
-    // alpha breaks the limit on day 2; bravo doesn't
+    // alpha breaks the limit on day 2; bravo doesn't (posted that evening: a day after the member's today is dropped)
+    clock = Date.UTC(2026, 9, 2, 20);
     await call('/stats', { method: 'POST', key: A, body: { xp: 1, level: 1, tz: 'UTC', days: [{ k: '2026-10-01', s: 80 }, { k: '2026-10-02', s: 40, b: true }] } });
     await call('/stats', { method: 'POST', key: Bk, body: { xp: 1, level: 1, tz: 'UTC', days: [{ k: '2026-10-01', s: 80 }, { k: '2026-10-02', s: 80 }] } });
     // weeks later the app only sends recent days: the break is out of its window

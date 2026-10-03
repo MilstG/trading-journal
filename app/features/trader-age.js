@@ -56,7 +56,9 @@ function traderAge(days, J, opts){
     const parts={discipline:d.score, steadiness:Math.max(0,100-2*sd), limit:P.limit===1?100:P.limit===0?0:70,
       log:50*taPrep(P,e)+50*Math.max(0,Math.min(1,+P.journal||0))};
     if(opts.partsFix)Object.assign(parts,opts.partsFix); // "as if": a part held at a value (taHabits)
-    return {key:d.key, d, parts, r:0.65*parts.discipline+0.15*parts.steadiness+0.10*parts.limit+0.10*parts.log};
+    // fillsOnly: only what the wallet shows (Discipline and steadiness, reweighted to 100) — what the server's
+    // standing and mentors' pay read, since the loss limit, prep and journal parts are the app's word
+    return {key:d.key, d, parts, r:opts.fillsOnly?(0.65*parts.discipline+0.15*parts.steadiness)/0.8:0.65*parts.discipline+0.15*parts.steadiness+0.10*parts.limit+0.10*parts.log};
   });
   const inWin=rated, n=inWin.length;
   if(opts.raw)return {daily:rated.map(x=>({key:x.key,r:x.r}))};
