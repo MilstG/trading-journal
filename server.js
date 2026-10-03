@@ -26,9 +26,9 @@
 // Persistence API (unchanged):
 //   GET  /api/health         -> {ok:true, auth:<bool>, appSyncCapable} (no auth)
 //   GET  /api/data           -> {rev, snapshot|null}                   (AUTH_TOKEN)
-//   PUT  /api/data {rev,snapshot} -> {rev:new}                         (AUTH_TOKEN)
-//        stale rev -> 409 {rev, snapshot}
-//   GET  /api/snapshots , GET /api/snapshots/YYYY-MM-DD               (AUTH_TOKEN)
+//   PUT  /api/data {rev,snapshot,restore?} -> {rev:new}                (AUTH_TOKEN)
+//        stale rev -> 409 {rev, snapshot}; restore:true keeps the state it replaces (snapshots/pre-restore-<time>.json)
+//   GET  /api/snapshots , GET /api/snapshots/<YYYY-MM-DD | pre-restore-<time>>  (AUTH_TOKEN)
 //   GET/PUT/DELETE /api/att/<key>                                     (AUTH_TOKEN)
 //   POST /api/backup , GET /api/backups , GET /api/backups/<name>     (AUTH_TOKEN)
 //        server-held copies of the app's "Backup all" JSON (gzipped, newest 10 kept)
@@ -653,13 +653,44 @@ function createApp(opts) {
       while (days.length > SNAP_KEEP) fs.unlinkSync(path.join(snapDir, days.shift()));
     } catch (e) { console.warn('[ledger] snapshot failed: ' + e.message); }
   };
+  // A day's snapshot is that day's LAST write, so a restore (whose own save, and every save after
+  // it, overwrite today's file) left the state it replaced only in .bak — gone with the next save.
+  // So the state a write replaces is kept as pre-restore-<time>.json when the write is a restore
+  // (the app flags it) or drops many journal entries at once (a wipe from a stale or broken client):
+  // the newest PRE_KEEP of them, listed and restorable like the days.
+  const PRE_KEEP = 5;
+  const PRE_RE = /^(pre-restore-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.json$/;
+  const journalDrop = (cur, next) => {
+    const a = cur && cur.snapshot && cur.snapshot.journal, b = next && next.journal;
+    if (!a || typeof a !== 'object') return 0;
+    let n = 0; for (const k in a) if (!b || typeof b !== 'object' || !(k in b)) n++;
+    const was = Object.keys(a).length;
+    return n >= 10 || (was >= 4 && n * 2 > was) ? n : 0;
+  };
+  const snapshotPreRestore = (cur) => {
+    if (!cur) return null;
+    try {
+      fs.mkdirSync(snapDir, { recursive: true });
+      const id = 'pre-restore-' + new Date().toISOString().replace(/[:.]/g, '-');
+      const tmp = path.join(snapDir, id + '.json.tmp');
+      fs.writeFileSync(tmp, JSON.stringify(cur));
+      fs.renameSync(tmp, path.join(snapDir, id + '.json'));
+      const pre = fs.readdirSync(snapDir).filter(f => PRE_RE.test(f)).sort();
+      while (pre.length > PRE_KEEP) fs.unlinkSync(path.join(snapDir, pre.shift()));
+      return id;
+    } catch (e) { console.warn('[ledger] pre-restore snapshot failed: ' + e.message); return null; }
+  };
   const listSnapshots = () => {
     try {
-      return fs.readdirSync(snapDir).filter(f => SNAP_RE.test(f)).sort().reverse().map(f => {
+      const sortKey = f => f.replace(/^pre-restore-/, ''); // a copy made at 16:34 sorts after that day's date: newest first
+      return fs.readdirSync(snapDir).filter(f => SNAP_RE.test(f) || PRE_RE.test(f)).sort((a, b) => sortKey(b).localeCompare(sortKey(a))).map(f => {
         const st = fs.statSync(path.join(snapDir, f));
         let rev = null;
         try { rev = JSON.parse(fs.readFileSync(path.join(snapDir, f), 'utf8')).rev; } catch (e) {}
-        return { date: f.slice(0, 10), bytes: st.size, rev };
+        const pre = PRE_RE.exec(f);
+        if (!pre) return { id: f.slice(0, 10), date: f.slice(0, 10), bytes: st.size, rev };
+        const t = pre[1].slice(12).replace(/^(.{10}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, '$1:$2:$3.$4Z');
+        return { id: pre[1], kind: 'pre-restore', date: t.slice(0, 10), at: t, bytes: st.size, rev };
       });
     } catch (e) { return []; }
   };
@@ -1531,8 +1562,10 @@ function createApp(opts) {
     try { await deliver(send.map(a => a.text).join('\n')); }
     catch (e) { for (const a of send) _alertSent.delete(a.key); saveAlertState(); console.warn('[ledger] health alert delivery failed: ' + e.message); }
   }
+  // 'skipped' when another refresh (manual, boot, a slow scheduled one) was already running: the
+  // caller then skips the digest too, which would otherwise be built from caches up to an interval old
   async function runScheduledRefresh() {
-    if (_refreshing) return;
+    if (_refreshing) return 'skipped';
     _refreshing = true;
     let watchdog = null; // same 5-minute deadline as the POST route — a hang must not pin the mutex
     try {
@@ -1551,6 +1584,7 @@ function createApp(opts) {
     await maybeAlert();
     await maybeNudge();
     await maybeHealthAlert();
+    return 'ran';
   }
   /* ---------------- weekly digest ---------------- */
   // Once per ISO week (first scheduled run after Monday 00:00 UTC) a digest of the PREVIOUS
@@ -1610,31 +1644,39 @@ function createApp(opts) {
       + (d.best ? ' · best ' + d.best.coin + ' ' + money(d.best.net) : '')
       + (d.worst ? ' · worst ' + d.worst.coin + ' ' + money(d.worst.net) : '');
   }
-  function maybeDigest() {
+  // One at a time, through the post: two overlapping calls (a slow delivery and the next tick) both
+  // read webhookSent: false and both posted the week.
+  let _digestBusy = false;
+  async function maybeDigest() {
     // a digest built while the latest refresh failed would miss the week's last days and, once
     // written, never be redone: wait for a good refresh
-    if (_health.failStreak > 0) return;
+    if (_health.failStreak > 0 || _digestBusy) return;
+    _digestBusy = true;
     try {
       const d = weeklyDigest();
       if (d) {
         if (!d.resend) console.log('[ledger] weekly digest written: ' + d.file);
-        if (hasDelivery()) deliver(d.text)
-          .then(() => { // mark sent so the next run doesn't repeat it
-            try { d.digest.webhookSent = true;
+        if (hasDelivery()) {
+          try {
+            await deliver(d.text);
+            try { d.digest.webhookSent = true; // mark sent so the next run doesn't repeat it
               const tmp = d.file + '.tmp';
               fs.writeFileSync(tmp, JSON.stringify(d.digest, null, 2)); fs.renameSync(tmp, d.file);
             } catch (e) {}
-          })
-          .catch(e => console.warn('[ledger] digest delivery failed (will retry next run): ' + e.message));
+          } catch (e) { console.warn('[ledger] digest delivery failed (will retry next run): ' + e.message); }
+        }
       }
     } catch (e) { console.warn('[ledger] weekly digest failed: ' + ((e && (e.msg || e.message)) || e)); }
+    finally { _digestBusy = false; }
   }
+  // the scheduled tick: a refresh, then the digest — unless the refresh was skipped (see above)
+  const scheduledTick = () => runScheduledRefresh().then(r => r === 'skipped' ? null : maybeDigest());
   if (refreshEveryMin > 0) {
-    const t = setInterval(() => { runScheduledRefresh().then(maybeDigest); }, Math.max(1, refreshEveryMin) * 60000);
+    const t = setInterval(scheduledTick, Math.max(1, refreshEveryMin) * 60000);
     if (t.unref) t.unref(); // never keep the process alive just for the schedule
     // one run shortly after boot: every redeploy resets the interval, so with long
     // intervals the Monday digest and liquidation alerts could slip by a full period
-    const boot = setTimeout(() => { runScheduledRefresh().then(maybeDigest); }, 30000);
+    const boot = setTimeout(scheduledTick, 30000);
     if (boot.unref) boot.unref();
     console.log('[ledger] scheduled refresh every ' + refreshEveryMin + ' min (first run ~30s after boot)'
       + (hasDelivery() ? ' with alert delivery' : ' (no ALERT_WEBHOOK / TELEGRAM_BOT_TOKEN set — refresh only)')
@@ -2633,7 +2675,7 @@ function createApp(opts) {
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
       return json(res, 200, { snapshots: listSnapshots() });
     }
-    const snapM = url.match(/^\/api\/snapshots\/(\d{4}-\d{2}-\d{2})$/);
+    const snapM = url.match(/^\/api\/snapshots\/(\d{4}-\d{2}-\d{2}|pre-restore-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)$/);
     if (snapM) {
       if (!authOk(req)) return json(res, 401, { error: 'unauthorized' });
       if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
@@ -2834,6 +2876,7 @@ function createApp(opts) {
           if (body.rev !== curRev)
             return json(res, 409, { rev: curRev, snapshot: (cur && cur.snapshot) || null });
           const next = { rev: curRev + 1, snapshot: body.snapshot, updatedAt: new Date().toISOString() };
+          if (cur && (body.restore === true || journalDrop(cur, body.snapshot))) snapshotPreRestore(cur);
           try { writeData(next); } catch (e) { return json(res, 500, { error: 'write failed: ' + e.message }); }
           return json(res, 200, { rev: next.rev });
         });
@@ -2897,6 +2940,8 @@ function createApp(opts) {
   server._gatherAlertState = gatherAlertState; // exposed for tests
   server._buildBotState = buildBotState;       // exposed for tests — the loop itself needs a live bot
   server._runScheduledRefresh = runScheduledRefresh; // exposed for tests — the schedule itself is a timer
+  server._scheduledTick = scheduledTick;             // exposed for tests: what each timer tick runs
+  server._maybeDigest = maybeDigest;                 // exposed for tests
   server._offsite = offsite; // exposed for tests
   server._social = social; // tests reach the coach allowance through this
   server.pushTick = () => social.tick(); // the reminder pass, for tests and one-off runs
