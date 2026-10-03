@@ -164,8 +164,10 @@ try {
     let st = (await me(k2)).standing; eq([st.state, st.exempt, st.locked], ['lapsed', true, false]);
     ok((await me(k2)).coach.limit > 1, 'the unlocked allowance');
     await call('/admin/members/' + watcherId, { method: 'POST', owner: true, body: { action: 'lock' } });
-    eq((await call('/admin/config', { method: 'PUT', owner: true, body: { standing: { on: false, grace: 999 } } })).status, 200);
-    eq((await call('/config')).d.standing.grace, 60, 'grace is kept within 3–60 days');
+    const bad = await call('/admin/config', { method: 'PUT', owner: true, body: { standing: { on: false, grace: 999 } } });
+    eq([bad.status, bad.d.error], [400, 'Standing → grace must be from 3 to 60 (not 999).'], 'grace is kept within 3–60 days: refused, nothing changed');
+    eq((await call('/config')).d.standing.on, true);
+    eq((await call('/admin/config', { method: 'PUT', owner: true, body: { standing: { on: false } } })).status, 200);
     eq((await me(k2)).standing, { on: false });
     eq((await me(k2)).coach.limit, 3);
     eq((await call('/leaderboard?scope=global&board=level', { key: k2 })).d.offBoards, false);

@@ -3,7 +3,7 @@
 // so every number below is hand-checkable. The engine itself is the one extracted from
 // ledger.html — these tests therefore also pin that extraction keeps working.
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,6 +180,13 @@ await t('date filters: a bare to= date includes that whole day; seconds epochs w
   eq((await jget('/api/v1/trades?tz=utc&to=' + dayOf(BASE - DAY))).body.total, 0, 'to=before everything');
   const ms = (await jget('/api/v1/trades?from=' + (T0 + 2 * H) + '&status=closed')).body.total;
   eq((await jget('/api/v1/trades?from=' + Math.floor((T0 + 2 * H) / 1000) + '&status=closed')).body.total, ms, 'seconds = milliseconds');
+  // a date that doesn't parse is a 400 naming it, not a filter quietly dropped (an answer for all time)
+  for (const q of ['from=garbage', 'to=yesterday-ish', 'from=2026-13-45', 'to=2026-02-31x']) {
+    const r = await jget('/api/v1/trades?' + q);
+    eq(r.status, 400, q); ok(new RegExp('^' + q.split('=')[0] + ' must be a date').test(r.body.error), r.body.error);
+  }
+  eq((await jget('/api/v1/stats?from=nope')).status, 400, 'every filtered endpoint');
+  eq((await jget('/api/v1/trades?from=&to=')).status, 200, 'empty means no filter');
 });
 await t('pagination + events flag', async () => {
   const p = (await jget('/api/v1/trades?limit=2&offset=2&sort=openTime&order=asc')).body;
@@ -445,7 +452,19 @@ await t('user guide and technical reference served without auth', async () => {
     eq(r.status, 200, p);
     ok((r.headers.get('content-type') || '').startsWith('text/html'), p + ' content type');
     ok((await r.text()).includes(marker), p + ' carries its title');
+    // not frameable by another site (clickjacking), and nothing runs: the guides have no scripts
+    eq(r.headers.get('x-frame-options'), 'DENY', p);
+    const csp = r.headers.get('content-security-policy') || '';
+    ok(/frame-ancestors 'none'/.test(csp) && /default-src 'none'/.test(csp) && !/script-src/.test(csp), p + ': ' + csp);
   }
+  // and the policy fits the pages: no <script>, no external resource they'd need
+  for (const f of ['help.html', 'tech.html']) { const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    ok(!/<script/i.test(src) && !/(src|href)="https?:/i.test(src.replace(/<a [^>]*>/g, '')), f + ' needs nothing the CSP blocks'); }
+  const b = await fetch(base + '/b/some_name');
+  if (b.status === 200) { eq(b.headers.get('x-frame-options'), 'DENY', '/b/<name>'); ok(/frame-ancestors 'none'/.test(b.headers.get('content-security-policy') || ''), '/b/<name> CSP'); }
+  else ok(false, '/b/<name> answered ' + b.status);
+  const a = await fetch(base + '/admin');
+  eq([a.headers.get('x-frame-options'), a.headers.get('content-security-policy')], ['DENY', "frame-ancestors 'none'"], '/admin');
 });
 
 console.log('\nAPI: server-held backups');

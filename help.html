@@ -314,7 +314,7 @@ html{scroll-behavior:smooth}
     <tr><td>Tax export by country…</td><td>Tax files set up for your country (US, UK, Germany, Australia, Canada or FIFO by calendar year), in your currency, with a preview per tax year. Also <b>Koinly CSV</b> and <b>CoinTracker CSV</b> for those tools to import: for all your history, one tax year, or dates you pick. Spot fills are trades; each closed perp’s realised P&amp;L is a margin gain or loss (“realized gain” in Koinly) with its fees, and its funding a row of its own (paid: a margin fee); deposits and withdrawals are transfers. In Koinly or CoinTracker, add a wallet for the exchange and import the file. Import your whole history once so spot buys carry their cost.</td></tr>
     <tr><td>Export journal</td><td>Your journal entries as JSON.</td></tr>
     <tr><td>Backup all</td><td><b>The important one.</b> Everything portable in one JSON — journal, wallets, settings, MAE/MFE measurements, and the fill caches that preserve history beyond the API's pagination cap. Re-import it to restore, including on another device.</td></tr>
-    <tr><td>Backup to server</td><td>(when server sync is connected) The same full backup stored on your server — newest 10 kept.</td></tr>
+    <tr><td>Backup to server</td><td>(when server sync is connected) The same full backup stored on your server — newest 10 kept. Restore one from <b>History</b> in the sync bar.</td></tr>
     <tr><td>Clear candle cache</td><td>Frees the largest thing in browser storage; saved measurements are kept and candles re-fetch on the next run.</td></tr>
   </table></div>
   <div class="note warn"><b>Make a habit of Backup all.</b> Your fill caches are the only copy of history older than the exchange API serves. One JSON in a safe place covers you.</div>
@@ -326,15 +326,15 @@ html{scroll-behavior:smooth}
   <ul>
     <li><b>Browser storage</b> (default) — works out of the box; tied to this browser on this device.</li>
     <li><b>Linked data file</b> — bind the journal to a real JSON file on disk that auto-saves on every change. Put it in a cloud-synced folder to use across devices. Chrome/Edge only.</li>
-    <li><b>Server sync</b> — deploy the companion server (next section) and every edit auto-saves within about a second, follows you across devices, and survives reinstalls. The status bar shows <code>☁ Server sync · rev N · saved</code>. Edits from two devices are merged, not lost: the newer state wins and your unsynced edits are re-applied on top.</li>
+    <li><b>Server sync</b> — deploy the companion server (next section) and every edit auto-saves within about a second, follows you across devices, and survives reinstalls. The status bar shows <code>☁ Server sync · rev N · saved</code>. Edits from two devices are merged, not lost: your unsynced edits are laid over the newer state field by field, so a tag added on one device and a note written on the other both stay. If both devices changed the same note, both texts are kept, the other device's first, under an “also edited on another device” line, and the sync bar flags it so you can tidy up. If the server has no access token set, the sync bar warns you in red: anyone with the address could read and change your journal.</li>
   </ul>
-  <p>With server sync, the server also keeps <b>rotating daily snapshots</b> (last 14 days) — the <b>History</b> button restores any of them if an edit went wrong.</p>
+  <p>With server sync, the server also keeps <b>rotating daily snapshots</b> (last 14 days) — the <b>History</b> button restores any of them if an edit went wrong. It also lists the copies made with <b>Backup to server</b>, and restores those the way opening a backup file does.</p>
 </section>
 
 <section id="server">
   <p class="kicker">13</p>
   <h2>The companion server</h2>
-  <p>Optional, zero-dependency, and small: one <code>server.js</code> that serves the app, persists your journal, and adds automation. The quick version (Railway, but any Node 18+ host works):</p>
+  <p>Optional, zero-dependency, and small: one <code>server.js</code> that serves the app, persists your journal, and adds automation. The quick version (Railway, but any host with Node 22.13 or newer works — it uses Node's built-in SQLite):</p>
   <ol class="steps">
     <li>Deploy the repo (start command <code>node server.js</code>).</li>
     <li>Attach a persistent volume at <code>/data</code> — without one, your journal is wiped on every redeploy.</li>

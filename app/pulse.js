@@ -1282,7 +1282,7 @@ function pzConnectHtml(){
       ${errHtml}`}</div>
     <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>
       <span class="pz-wl-safe" id="pzWlSafe">${pzI('lock',14)}Read-only. ${cex?'A key that can’t trade or withdraw.':'No wallet connection, no signature, no keys.'}</span></div>
-    <p class="pz-fine pz-wl-sync">Your journal ${synced?'syncs to this server.':'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</p>
+    <p class="pz-fine pz-wl-sync">Your journal ${synced?(SRV.needsAuth?'syncs to this server.':'syncs to this server, which has no access token (AUTH_TOKEN): anyone with the link can read and change it.'):'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</p>
     ${(link?'':acctConnectHtml())||tokenAsk?`<div class="pz-wl-more">
       ${link?'':acctConnectHtml()}
       ${tokenAsk?`<details><summary class="pz-fine" style="cursor:pointer">Own this server? Sign in to sync</summary>${pzTokenHtml()}</details>`:''}</div>`:''}`);
@@ -1318,7 +1318,7 @@ function pzSheetHtml(){
   const tokenAsk=SRV.enabled&&SRV.needsAuth&&(!SRV.token||SRV.badAuth);
   const where=!SRV.enabled?'Saved in this browser. Use the full journal’s Backup to move it to another device.'
     :tokenAsk?'Saved in this browser only — this server is protected by an access token.'
-    :'Synced to this server — open Daruma on any device to pick up where you left off.';
+    :'Synced to this server — open Daruma on any device to pick up where you left off.'+(SRV.needsAuth?'':' ⚠ It has no access token (AUTH_TOKEN), so anyone with the link can read and change it.');
   return `<div class="pz-sheet-bg" data-pz-close><div class="pz-sheet" role="dialog" aria-modal="true" aria-labelledby="pzSheetT">
     <div style="display:flex;justify-content:space-between;align-items:center"><b id="pzSheetT" style="font-size:18px">Settings</b><button type="button" class="pz-chip icon" data-pz-close aria-label="Close">${pzI('x',20)}</button></div>
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Wallets</span>

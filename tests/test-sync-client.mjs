@@ -3,7 +3,8 @@
 // a restore survives another device's newer save (the 409 merge used to undo it while the status
 // said "restored"); a save waits for one in flight; wallets merge by address on a 409; a reload
 // never wipes the settings a snapshot doesn't carry; and pasted JSON fills without startPosition
-// get one derived instead of building nonsense trades.
+// get one derived instead of building nonsense trades. One entry edited on two devices merges field by
+// field (both texts kept when the same note changed), and a device notices a newer revision.
 import { createRequire } from 'node:module';
 import { mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -116,6 +117,59 @@ await t('srvSaveNow says when the server didn’t take it (the restore stays her
   eq(A.eval('_dirtyJ.has("x:1")'), true, 'still marked for the next save');
   // no server sync (a visitor without the token): nothing to wait for
   const V = device(new Map()); await V.run('boot()'); eq(await V.run('srvSaveNow()'), null);
+});
+
+console.log('\nOne entry edited on two devices');
+// an edit on a device: change the entry, mark it, store it, save now
+const edit = (D, id, src) => D.run(`(async()=>{ const e=journal['${id}']; ${src}; markJEdit('${id}'); await Store.set(J_KEY,journal); return srvSaveNow(); })()`);
+await t('different fields of one entry: both edits land, and the other device picks the merge up without a reload', async () => {
+  await otherDevice(s => { s.journal['t:1'] = { notes: 'base', tags: ['a'], rating: 2 }; });
+  const A = device(); await A.run('boot()'); const B = device(); await B.run('boot()');
+  eq(await edit(B, 't:1', "e.tags=['a','b']"), true);
+  eq(await edit(A, 't:1', "e.notes='base, more from A'"), true, 'saved after the 409 merge');
+  const e = (await get()).snapshot.journal['t:1'];
+  eq([e.notes, e.tags, e.rating], ['base, more from A', ['a', 'b'], 2], 'the entry used to be replaced whole by A’s copy, dropping B’s tag');
+  eq(A.eval('SRV.conflicts||0'), 0, 'no conflict: different fields');
+  eq(B.eval("journal['t:1'].notes"), 'base', 'B still shows its own copy…');
+  eq(await B.run('srvCheckNewer()'), true, '…until it checks the revision');
+  eq(B.eval("[journal['t:1'].notes,journal['t:1'].tags,SRV.rev]"), ['base, more from A', ['a', 'b'], (await get()).rev]);
+  eq(await B.run('srvCheckNewer()'), false, 'nothing newer: no fetch of the whole copy');
+});
+await t('the same note changed on both: neither text is lost, the other device’s first, and this device says so', async () => {
+  const A = device(); await A.run('boot()'); const B = device(); await B.run('boot()');
+  eq(await edit(B, 't:1', "e.notes='B wrote this'"), true);
+  eq(await edit(A, 't:1', "e.notes='A wrote that'; e.tags=e.tags.filter(x=>x!=='a')"), true);
+  const e = (await get()).snapshot.journal['t:1'];
+  ok(e.notes.startsWith('B wrote this') && e.notes.endsWith('A wrote that') && /also edited on another device/.test(e.notes), JSON.stringify(e.notes));
+  eq(e.tags, ['b'], 'a tag removed here stays removed');
+  eq(A.eval('SRV.conflicts'), 1);
+  ok(A.ctx.errs.some(m => /1 journal note was edited on this device and another/.test(m)), A.ctx.errs.join('|'));
+});
+await t('lists merge item by item; an entry deleted on one device and changed on the other is kept', async () => {
+  await otherDevice(s => { s.journal['t:2'] = { tags: ['x', 'y'] }; s.journal['t:9'] = { notes: 'keep me?' }; });
+  const A = device(); await A.run('boot()'); const B = device(); await B.run('boot()');
+  eq(await B.run(`(async()=>{ journal['t:2'].tags.push('z'); markJEdit('t:2'); journal['t:9'].notes='edited on B'; markJEdit('t:9'); return srvSaveNow(); })()`), true);
+  eq(await A.run(`(async()=>{ journal['t:2'].tags=['y']; markJEdit('t:2'); delete journal['t:9']; markJEdit('t:9'); return srvSaveNow(); })()`), true);
+  const j = (await get()).snapshot.journal;
+  eq(j['t:2'].tags, ['y', 'z']); eq(j['t:9'].notes, 'edited on B');
+});
+await t('an edit made just before a reload merges field by field when another device saved in between', async () => {
+  const store = new Map([['srv_token', TOKEN]]);
+  const A = device(store); await A.run('boot()');
+  // typed, then the tab goes away before the 0.8 s save: the hide stores the server's copy of the entry
+  await A.run(`(async()=>{ journal['t:2'].notes='typed before reload'; markJEdit('t:2'); await Store.set(J_KEY,journal); clearTimeout(_srvTimer); await null; jPendingBaseSave(); })()`);
+  ok(store.has('hl_jpbase_v1') && store.has('hl_jpending_v1'));
+  await otherDevice(s => { s.journal['t:2'].rating = 4; });
+  const A2 = device(store); await A2.run('boot()');
+  eq(A2.eval("[journal['t:2'].notes,journal['t:2'].rating,journal['t:2'].tags]"), ['typed before reload', 4, ['y', 'z']]);
+  eq(await A2.run('srvSaveNow()'), true);
+  const e = (await get()).snapshot.journal['t:2'];
+  eq([e.notes, e.rating], ['typed before reload', 4]);
+  ok(!store.has('hl_jpbase_v1'), 'gone once nothing is pending');
+});
+await t('GET /api/data?only=rev answers the revision alone', async () => {
+  const r = await (await fetch(BASE + '/api/data?only=rev', { headers: H })).json();
+  eq(r, { rev: (await get()).rev });
 });
 
 console.log('\nWallets on an ordinary 409');

@@ -51,9 +51,12 @@ try {
     // Oct 2026: journal beta fixes (autosave for the trade, day and week journals, the trade-plan check, tag
     // de-duplication, the drawer pinned to the screen on phones, calendar labels, tooltip and Escape handling):
     // about 11 KB raw / 3 KB gzipped, a third of it comments: 1906 / 1525 raw, 646 / 513 gzipped.
-    // Both together (measured after the merge): 1918 / 1536 raw, 651 / 518 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1922, 653],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1540, 520],
+    // Oct 2026: sync merges an entry both devices edited field by field, a tab notices another device's
+    // save, and the sync bar warns about a server without AUTH_TOKEN (all in core.js, so both screens):
+    // ~11 KB raw / ~3 KB gzipped, much of it comments: 1906 / 1525 raw, 645 / 512 gzipped.
+    // All three together (measured after the merge): 1930 / 1547 raw, 655 / 521 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1934, 657],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1551, 523],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
