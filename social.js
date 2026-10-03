@@ -535,6 +535,16 @@ function createSocial(opts) {
   if (!S.migrations.coach3) { S.config.coach.daily = 3; S.config.coach.dailyUnlocked = 3; S.migrations.coach3 = Date.now(); }
   // October 2026: duels unlock at level 3 instead of being free. Once, for servers that took the
   // first default (level 1); a level the owner sets afterwards in Features stays.
+  // October 2026: stakes move a balance, not earned XP. Duel stakes already paid out as grants move off the
+  // level (out of m.grants) into the stake ledger, once; the duel's bonus stays a grant.
+  if (!S.migrations.stakeSplit) {
+    for (const m of Object.values(S.members)) {
+      const keep = [], moved = [];
+      for (const g of m.grants || []) (g.duel && (g.xp < 0 || /^Won \d+ XP staked by /.test(g.why || '')) ? moved : keep).push(g);
+      if (!moved.length) continue;
+      m.grants = keep; m.stakes = [...(m.stakes || []), ...moved.map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ref: g.duel }))].slice(-100);
+      m.stakeNet = (+m.stakeNet || 0) + moved.reduce((a, g) => a + g.xp, 0); }
+    S.migrations.stakeSplit = Date.now(); }
   if (!S.migrations.duels3) { if (S.config.modules.duels === 1) S.config.modules.duels = 3; S.migrations.duels3 = Date.now(); }
   // October 2026: a new server counts only wallets a member proved are theirs (signed for), so nobody can
   // put a well-known trader's wallet on their profile and borrow its verified numbers. Decided once: a
@@ -687,6 +697,13 @@ function createSocial(opts) {
     joined: !!viewer && own(L.members, viewer.id), tier: viewer && own(L.members, viewer.id) ? leagueTier(L, viewer) : null,
     tierName: viewer && own(L.members, viewer.id) ? TIERS[leagueTier(L, viewer)] : null, season: L.season ? seasonInfo(L) : null });
   // ---- levels, XP grants, reward badges ----
+  // Two numbers: earned XP (the app's total, from process, badges and grants) sets the level, the title and
+  // what's unlocked; stakes never touch it. The balance is what can be staked: earned XP plus everything
+  // won or lost on stakes (m.stakeNet), kept by the server. m.stakes: the moves, newest last, for the record.
+  const stakeMove = (m, n, why, ref) => { if (!m || !n) return;
+    m.stakeNet = (+m.stakeNet || 0) + n;
+    m.stakes = [...(m.stakes || []), { id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), ref: ref || null }].slice(-100); };
+  const balanceOf = m => Math.max(0, ((m && m.stats && m.stats.xp) || 0) + ((m && +m.stakeNet) || 0));
   const levelTitle = n => { const t = S.config.levels.titles; return t[Math.min(n, t.length) - 1] || ('Level ' + n); };
   // one formatter per time zone, made once: making them is the slow part (the reminder pass runs every minute over every member)
   const fmts = new Map();
@@ -1117,7 +1134,7 @@ function createSocial(opts) {
   // XP riding on a member's open duels: the ones running, and the terms they've put to someone
   // (a challenge waiting on them commits nothing until they accept it). `except`: the duel being decided.
   const duelRiding = (m, except) => openDuels(m).filter(d => d !== except && (d.status === 'active' || d.awaiting !== m.id)).reduce((s, d) => s + (d.stake || 0), 0);
-  const stakeRoomOf = (m, except) => Duels.stakeRoom((m.stats && m.stats.xp) || 0, duelRiding(m, except), S.config.duels);
+  const stakeRoomOf = (m, except) => Duels.stakeRoom(balanceOf(m), duelRiding(m, except), S.config.duels);
   // can `a` put these terms to `b`? -> an error message, or null. self: the duel these terms are for, if it exists already
   const duelProblem = (a, b, t, skipOpen, self) => {
     const cfg = S.config.duels;
@@ -1186,12 +1203,12 @@ function createSocial(opts) {
       notify(m, 'duel', !winner ? 'Your ' + duelName(d) + ' duel with ' + oh + ' ended in a draw.'
         : winner === m.id ? 'You won your ' + duelName(d) + ' duel against ' + oh + (forfeiter ? ' (they forfeited)' : '') + '.' + (xp + stake ? ' +' + (xp + stake) + ' XP.' : '')
         : (forfeiter === m.id ? 'You forfeited your ' + duelName(d) + ' duel against ' + oh + '.' : oh + ' won your ' + duelName(d) + ' duel.') + (stake ? ' −' + stake + ' XP.' : '') + (forfeiter === m.id ? '' : ' Rematch?'), { title: 'Duel result', url: duelUrl });
-      if (stake && m.id === loserId) grant(m, -stake, 'Lost a ' + duelName(d) + ' duel' + (o ? ' to @' + o.handle : ''));
+      if (stake && m.id === loserId) stakeMove(m, -stake, 'Lost a ' + duelName(d) + ' duel' + (o ? ' to @' + o.handle : ''), d.id);
       save(m); }
     const w = winner && S.members[winner];
     if (w && !w.banned) {
       if (xp) grant(w, xp, 'Won a ' + duelName(d) + ' duel');
-      if (stake) { const lo = S.members[loserId]; grant(w, stake, 'Won ' + stake + ' XP staked by @' + (lo ? lo.handle : 'your opponent')); }
+      if (stake) { const lo = S.members[loserId]; stakeMove(w, stake, 'Won ' + stake + ' XP staked by @' + (lo ? lo.handle : 'your opponent'), d.id); }
       // the loser is named only if they share milestones in the feed too
       const lo = S.members[winner === d.a ? d.b : d.a];
       if (w.share.feed) pushEvent(w, { type: 'duel', text: 'won a ' + duelName(d) + ' duel' + (lo && lo.share && lo.share.feed ? ' against @' + lo.handle : '') });
@@ -1398,7 +1415,8 @@ function createSocial(opts) {
       needsClaim: !!(S.config.requireClaim && m.address && m.claimed !== m.address),
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
       passkeys: (m.passkeys || []).map(k => ({ id: k.id, name: k.name, at: k.at, lastUsed: k.lastUsed || null })),
-      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
+      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })),
+      stakeNet: +m.stakeNet || 0, balance: balanceOf(m), stakes: (m.stakes || []).slice(-30).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
       leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })), mentor: !!m.mentor,
       push: { on: !!(m.push && m.push.subs && m.push.subs.length), prefs: sanitizePrefs(null, m.push && m.push.prefs), available: !!push },
       inbox: (m.inbox || []).filter(x => x.at > (m.inboxRead || 0)).length,
@@ -1844,7 +1862,7 @@ function createSocial(opts) {
       }
       if (sub === 'members' && M === 'GET' && !parts[2])
         return json(res, 200, { members: members().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(m => ({ id: m.id, handle: m.handle,
-          tier: m.tier || 0, level: (m.stats && m.stats.level) || 1, xp: (m.stats && m.stats.xp) || 0, streak: (m.stats && m.stats.streak) || 0,
+          tier: m.tier || 0, level: (m.stats && m.stats.level) || 1, xp: (m.stats && m.stats.xp) || 0, balance: balanceOf(m), streak: (m.stats && m.stats.streak) || 0,
           passkeys: (m.passkeys || []).length,
           address: m.address || null, walletStatus: m.address ? walletStatus(m.address) : null, joinedWith: m.joinedWith || (m.adminMade ? 'admin' : null), claimed: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
           vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: !!m.unlocked, coachDaily: m.coachDaily != null ? m.coachDaily : null,
@@ -2533,7 +2551,7 @@ function createSocial(opts) {
       return json(res, 200, { on: cfg.on, xp: cfg.xp, maxOpen: cfg.maxOpen, open: openCount(me), accepting: me.share.duels !== false, record: Object.assign({ w: 0, l: 0, d: 0 }, me.duelRec),
         ladder: cfg.ladder ? ladderOut(me) : { on: false }, podOn: !!cfg.pods, podMax: cfg.podMax, podRec: Object.assign({ w: 0, n: 0 }, me.podRec), pods: pods.map(p => podView(p, me)),
         podTypes: Duels.POD_TYPES.filter(k => cfg.types[k]).map(k => ({ type: k, label: Duels.TYPES[k].label, rule: Duels.POD_RULES[k], verifiedDefault: !!Duels.TYPES[k].verifiedDefault })),
-        stakes: !!cfg.stakes, maxStake: cfg.maxStake, stakePct: cfg.stakePct, room: stakeRoomOf(me), people: [...people.values()],
+        stakes: !!cfg.stakes, maxStake: cfg.maxStake, stakePct: cfg.stakePct, room: stakeRoomOf(me), balance: balanceOf(me), people: [...people.values()],
         types: Object.keys(Duels.TYPES).filter(k => cfg.types[k]).map(k => ({ type: k, label: Duels.TYPES[k].label, rule: Duels.TYPES[k].rule, verifiedDefault: !!Duels.TYPES[k].verifiedDefault })),
         weekPreview: Duels.windowFor('week', now()), monthPreview: Duels.windowFor('month', now()), duels: list.map(d => duelView(d, me)) });
     }

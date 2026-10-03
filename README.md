@@ -1343,6 +1343,13 @@ follow and your leagues' members). Money is never staked; XP can be.
   stake at most 500 XP, and at most 25% of a member's XP can ride on their open
   duels at once (the owner sets both). The other side's limit is checked too.
   XP won in a duel doesn't count toward a Process XP duel.
+- **Earned XP and the stake balance.** Stakes never touch earned XP: the level,
+  the title, the weekly XP leagues and every level unlock count only XP earned
+  from process, badges and grants. What's won or lost on stakes moves a separate
+  balance (earned XP ± stake results, kept by the server), and the 25% limit is
+  a share of that balance. Losing stakes can't lock a feature, and winning them
+  can't buy a level. Progress shows "N XP to stake" once a member has won or lost
+  a stake.
 - **Results.** A duel is settled the day after it ends. The winner gets a feed
   line (naming the loser only if they share milestones too), the stake, and an XP
   bonus the owner sets (default +100, the same for every duel and only for a duel

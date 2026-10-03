@@ -27,6 +27,9 @@ function pzXpSources(g, fromKey){
 function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
 // a challenge as a rule for the week ("No SOL trades this week"), else the habit sentence
 function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); return m?'No '+m[1]+' this week':habitSentence(spec); }
+// XP won or lost on stakes moves a separate balance: the level counts only XP earned
+function pzStakeLine(L){ const n=typeof SOC!=='undefined'&&SOC.me?+SOC.me.stakeNet||0:0; if(!n)return '';
+  return `<p class="pz-sub" style="font-size:12px;margin:0" data-pz-tip="${esc('Stakes move XP between members without touching your level: what you win or lose on duels changes the XP you can stake, never what you’ve earned.')}">${Math.max(0,L.xp+n).toLocaleString()} XP to stake · ${n>0?'+':'−'}${Math.abs(n).toLocaleString()} from stakes</p>`; }
 function pzProgressHtml(D){
   const {g}=D, L=g.level, cat=g.catalog||{earned:[],families:[],total:0}, nowK=D.todayK, wkFrom=dayKey(lastCompletedWeekRange(Date.now()).to);
   const src=pzXpSources(g,wkFrom), srcRows=[['discipline','Discipline scores',PZ_COL.good],['bonus','Prep, plans, journal, reviews',PZ_COL.xp],['badges','Badges',PZ_TIER_COL[2]],
@@ -37,6 +40,7 @@ function pzProgressHtml(D){
     <div class="pz-hero-main"><span class="pz-lbl" style="color:${PZ_COL.xp}">Level ${L.level}</span><h2 class="pz-hero-t">${esc(L.title)}</h2>
       <div class="pz-xpbar" role="progressbar" aria-label="XP to next level" aria-valuemin="0" aria-valuemax="${L.need}" aria-valuenow="${L.into}" data-pz-tip="${esc(L.max?'Top level reached':L.into.toLocaleString()+' of '+L.need.toLocaleString()+' XP into level '+L.level+'\n'+(L.need-L.into).toLocaleString()+' XP to '+pzLevelTitle(L.level+1)+'. XP comes from process, never profit.')}"><i style="width:${L.max?100:Math.round(100*L.into/L.need)}%"></i></div>
       <p class="pz-sub" style="font-size:13px">${L.xp.toLocaleString()} XP · ${L.capped?`level ${L.earned} earned. Without a profile, levels stop at ${L.level}: <a href="#social">create your profile</a> to unlock it.`:L.max?'top level reached':(L.need-L.into).toLocaleString()+' XP to '+esc(pzLevelTitle(L.level+1))}</p>
+      ${pzStakeLine(L)}
     </div></section>`;
   const xpCard=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Where this week’s XP came from</b><span class="pz-sub" style="font-size:12px">${wkTot.toLocaleString()} XP</span></div>
     ${wkTot?srcRows.map(([k,l,c])=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(l)}</span><b>+${src[k].toLocaleString()}</b></div>${pzBar(src[k]/wkTot,c)}</div>`).join('')

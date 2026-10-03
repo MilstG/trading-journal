@@ -168,7 +168,7 @@ async function socMeRefresh(){
   _socMeAt=Date.now();
   let d; try{ d=await socFetch('/me'); }catch(e){ return; }
   if(!d||!d.me)return;
-  const sig=m=>JSON.stringify([m.grants||[],m.awards||[],m.mentorXp?m.mentorXp.total:0,!!m.unlocked,!!m.admin,m.tier||0,m.mentor||false,(m.leagues||[]).map(l=>l.id),m.mult&&m.mult.hist]);
+  const sig=m=>JSON.stringify([m.grants||[],m.awards||[],m.mentorXp?m.mentorXp.total:0,!!m.unlocked,!!m.admin,m.tier||0,m.mentor||false,(m.leagues||[]).map(l=>l.id),m.mult&&m.mult.hist,m.stakeNet||0]);
   const moved=sig(d.me)!==sig(SOC.me);
   SOC.me=d.me; SOC.share=d.share;
   if(!moved)return;
@@ -792,7 +792,7 @@ function socDuelsHtml(D){
         ${L?`<div class="pz-kvrow"><span>${L.me.n>0?`Rating <b style="font-family:var(--pz-num);font-size:20px;color:${PZ_COL.xp}">${L.me.r}</b>`:'<span class="pz-sub" style="font-size:13px">Your rating starts at 1000 after your first duel.</span>'}</span><span class="pz-sub" style="font-size:12px">${L.me.rank?'#'+L.me.rank+' on the ladder':L.me.n<L.min?L.me.n+' of '+L.min+' duels to join the ladder':'not listed'}${L.me.gain?' · '+(L.me.gain>0?'+':'')+L.me.gain+' this season':''}</span></div>`:''}
         <div class="pz-kvrow" style="gap:8px"><input id="duelWho" aria-label="Name to challenge" placeholder="@name to challenge" autocomplete="off" style="flex:1;min-width:0;font-family:inherit"><button type="button" class="pz-cta" id="duelGo" style="width:auto;padding:0 18px">Challenge</button></div>
         ${socDuelPeopleHtml(d)}<a class="pz-link" href="#people/duels" style="min-height:0;align-self:flex-start">Find someone to duel ${pzI('chev',14)}</a>
-        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Daruma from your fills and your app. ${d.stakes?(d.room>0?'You can put XP on it (never money): up to '+d.room+' XP. ':'You can put XP on it (never money) once you’ve earned some. '):'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
+        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Daruma from your fills and your app. ${d.stakes?(d.room>0?'You can put XP on it (never money): up to '+d.room+' XP. Stakes move your stake balance, never your level. ':'You can put XP on it (never money) once you’ve earned some. '):'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
         ${d.podOn?`<a class="pz-ghost" href="#podnew">${pzI('medal',16)} Group duel: 3 to ${d.podMax} people</a>`:''}</section>
       ${grp('Waiting for you',inv)}${grp('Running',act)}${grp('Sent',sent)}</div>
     <div class="pz-col">${L?socLadderHtml(d):''}${grp('Finished',done)}${grp('Didn’t happen',other)}${!d.duels.length&&!P.length?'<section class="pz-card"><p class="pz-sub" style="margin:0">No duels yet. Challenge someone to a week of clean trading.</p></section>':''}</div></div>`;

@@ -573,7 +573,7 @@ details>summary{list-style-position:inside}
     const cc=D.ov.config.coach;
     return `<header class="ph"><div><a class="crumb" href="#members">← All members</a><h1>@${esc(m.handle)}</h1>
       <p>Joined ${esc(new Date(m.createdAt).toISOString().slice(0,10))} · last seen ${esc(ago(m.lastSeen))} · ${m.keys} device${m.keys===1?'':'s'}${m.vault?' · sync '+size(m.vault):''}</p>${pills(m)?`<div class="tags" style="margin-top:8px">${pills(m)}</div>`:''}</div></header>
-    <section class="card mhead"><div class="stat3" style="margin:0"><div><b>${m.level}</b><span>Level</span></div><div><b>${fmt(m.xp)}</b><span>XP${grantSum?' · '+(grantSum>0?'+':'')+fmt(grantSum)+' from you':''}</span></div><div><b>${m.streak}</b><span>Streak</span></div>
+    <section class="card mhead"><div class="stat3" style="margin:0"><div><b>${m.level}</b><span>Level</span></div><div><b>${fmt(m.xp)}</b><span>XP${grantSum?' · '+(grantSum>0?'+':'')+fmt(grantSum)+' from you':''}</span></div><div><b>${m.streak}</b><span>Streak</span></div>${m.balance!=null&&m.balance!==m.xp?`<div><b>${fmt(m.balance)}</b><span>XP to stake</span></div>`:''}
         <div><b>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</b><span>Coach today</span></div><div><b>${m.awards.length}</b><span>Reward badges</span></div></div>
       ${UI.code&&UI.code.id===m.id?codeBox(UI.code):''}
     </section>
