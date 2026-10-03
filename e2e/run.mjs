@@ -180,6 +180,66 @@ try {
   });
   await page.close();
 
+  console.log('\nJournal editing (autosave, plan check, phone width)');
+  const demoPage = async (viewport) => { const o = await openPage(viewport);
+    await o.page.goto(BASE + '/'); await o.page.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0);
+    await o.page.click('#demoBtn'); await o.page.waitForSelector('#tbody tr.trow'); return o; };
+  await t('the trade journal saves as you type: no Save click, the caret stays put, and it survives a reload', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    const id = await p.locator('#tbody tr.trow').nth(2).getAttribute('data-id');
+    await p.click(`#tbody tr.trow[data-id="${id}"]`);
+    await p.click(`[data-j="notes"][data-id="${id}"]`); await p.keyboard.type('autosaved, never clicked Save');
+    await p.waitForFunction(i => journal[i] && journal[i].notes === 'autosaved, never clicked Save', id);
+    eq(await p.evaluate(() => document.activeElement.dataset.j), 'notes', 'still in the note after the autosave');
+    // typed right before a reload, inside the autosave's pause: saved on the way out
+    await p.click(`[data-j="tags"][data-id="${id}"]`); await p.keyboard.type('scalp, , SCALP, scalp ,  fomo');
+    await p.reload();
+    await p.waitForFunction(i => typeof journal !== 'undefined' && journal[i] && (journal[i].tags || []).length, id);
+    eq(await p.evaluate(i => [journal[i].notes, journal[i].tags], id), ['autosaved, never clicked Save', ['scalp', 'fomo']], 'note kept, tags de-duplicated');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('a trade plan with the stop on the wrong side is refused with a reason, not saved', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    const id = await p.evaluate(() => [...document.querySelectorAll('#tbody tr.trow')].map(r => r.dataset.id).find(i => allTrades.find(x => x.id === i).dir === 'Short'));
+    await p.click(`#tbody tr.trow[data-id="${id}"]`);
+    const px = await p.evaluate(i => allTrades.find(x => x.id === i).avgEntry, id);
+    await p.fill(`[data-j="plan_stop"][data-id="${id}"]`, String(+(px * 0.98).toPrecision(6)));
+    await p.press(`[data-j="plan_stop"][data-id="${id}"]`, 'Tab');
+    ok(/For a short, the stop goes above the entry/.test(await p.evaluate(i => document.getElementById('planErr-' + i).textContent, id)), 'says why');
+    eq(await p.evaluate(i => !!(journal[i] && journal[i].plan), id), false, 'no plan saved');
+    await p.fill(`[data-j="plan_stop"][data-id="${id}"]`, String(+(px * 1.02).toPrecision(6)));
+    await p.press(`[data-j="plan_stop"][data-id="${id}"]`, 'Tab');
+    await p.waitForFunction(i => journal[i] && journal[i].plan && journal[i].plan.stop > 0, id);
+    eq(await p.evaluate(i => document.getElementById('planErr-' + i).textContent, id), '', 'the message goes once it’s right');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('the day journal saves its text as you type; the committed max loss only once the field is left', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
+    await p.click('#topnav [data-tab="review"]'); await p.waitForSelector('#djBias');
+    const k = await p.evaluate(() => dayJKey(Date.now()));
+    await p.click('#djBias'); await p.keyboard.type('chop until CPI');
+    await p.waitForFunction(k => journal[k] && journal[k].bias === 'chop until CPI', k);
+    await p.click('#djMaxLoss'); await p.keyboard.type('15');
+    await p.waitForTimeout(1200);
+    eq(await p.evaluate(k => journal[k].maxLoss || null, k), null, 'a half-typed limit isn’t armed');
+    await p.keyboard.type('0'); await p.keyboard.press('Tab');
+    eq(await p.evaluate(k => journal[k].maxLoss, k), 150);
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('on a phone the trade editor fits the screen: every field and Save inside 390 px, even with the table scrolled', async () => {
+    const { page: p, errors: errs } = await demoPage({ width: 390, height: 844 });
+    const id = await p.locator('#tbody tr.trow').first().getAttribute('data-id');
+    await p.locator('#tbody tr.trow').first().click(); await p.waitForSelector('tr.jrow');
+    const offscreen = () => p.evaluate(() => [...document.querySelectorAll('tr.jrow textarea, tr.jrow input, tr.jrow button')]
+      .filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.left < 0 || r.right > innerWidth); }).map(e => e.dataset.j || e.textContent.trim()));
+    eq(await offscreen(), [], 'nothing past the screen edge');
+    ok(await p.locator(`[data-save="${id}"]`).isVisible(), 'Save is there');
+    await p.evaluate(() => { document.querySelector('.tbl-wrap').scrollLeft = 1000; });
+    eq(await offscreen(), [], 'nor with the table scrolled sideways');
+    ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no sideways page scroll');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+
   await t('an edit made right before a reload is kept, not replaced by the server\'s older copy', async () => {
     const { page: p, errors: errs } = await openPage({ width: 1366, height: 900 });
     await p.goto(BASE + '/'); await p.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0);

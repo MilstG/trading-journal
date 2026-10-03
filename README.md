@@ -1076,7 +1076,8 @@ The main dashboard:
 
 Every trade row expands into a journal entry:
 
-- **Tags** — freeform, autocompleted from your existing tags.
+- **Tags** — freeform, autocompleted from your existing tags. Case doesn't make a new tag: "scalp, SCALP"
+  saves one, spelled the first way, and the tag filter lists each name once.
 - **Setup** — what the trade was (breakout, fade, news…). Your playbook names
   are suggested as you type.
 - **Playbook checklist** — when the setup names one of your playbooks, its rules
@@ -1091,7 +1092,9 @@ Every trade row expands into a journal entry:
   last changed after the close **written after close**, and the two are scored
   separately under Plan adherence (hindsight plans flatter stop discipline).
   Perp positions opened in the last 7 days with no written stop get a
-  dashboard nudge. Once the trade closes, a line under the plan shows the
+  dashboard nudge. A plan is checked against the trade's side, as Daruma's
+  plan form does (for a short, the stop goes above the entry; a blank entry
+  is your fill): one that doesn't add up says why and isn't saved. Once the trade closes, a line under the plan shows the
   planned R:R, the achieved R and a verdict (see **Plan vs outcome** below).
 - **Notes** — free text.
 - **Attachments** — paste or drop screenshots; stored in this browser (and on
@@ -1099,6 +1102,11 @@ Every trade row expands into a journal entry:
   lines, boxes, a pen and text labels in four colours, with undo. **Save**
   replaces the screenshot; **Save as a copy** keeps the original and adds the
   marked-up version next to it.
+
+Notes, setup and tags save as you type (and when you leave the field); planned risk and the
+plan's prices save when you leave their field, never half-typed, since the plan's time stamp
+is what "written live" is scored on. **Save journal** saves everything at once and redraws the
+dashboard with it; closing or reloading the tab saves what's still waiting.
 
 **Playbooks** (Review → Playbooks) are your setups with their rules written down:
 a name ("Breakout retest") and one rule per line ("Wait for the retest", "Stop
@@ -1377,6 +1385,9 @@ It also carries the habit loops:
 
 - **Day journal** — pre-market plan (bias, plan, committed max loss) and
   end-of-day review. A committed max loss becomes today's tripwire threshold.
+  The text saves as you type; the max loss once you leave its field (a half-typed
+  "1" of "150" never arms a $1 tripwire or moves `limitAt`). The weekly review's
+  answers save as you type too.
 - **Weekly review wizard** — three questions about the last completed Mon–Sun
   week (best/worst trade prefilled): what worked, what changes, and a one-line
   lesson. Answers are keyed `week:GGGG-Www` on the same journal plumbing as

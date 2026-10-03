@@ -48,8 +48,12 @@ try {
     // Oct 2026: the beta's honest-stats fixes (CSV delimiter / decimal-mark / date-order inference with
     // named errors, the automatic break-even band, the shared edge test) add ~8 KB raw / ~2 KB gzipped
     // to both screens, most of it the CSV importer (data-io.js loads on both): 1908 / 1526 raw, 647 / 514 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1912, 649],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1530, 516],
+    // Oct 2026: journal beta fixes (autosave for the trade, day and week journals, the trade-plan check, tag
+    // de-duplication, the drawer pinned to the screen on phones, calendar labels, tooltip and Escape handling):
+    // about 11 KB raw / 3 KB gzipped, a third of it comments: 1906 / 1525 raw, 646 / 513 gzipped.
+    // Both together (measured after the merge): 1918 / 1536 raw, 651 / 518 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1922, 653],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1540, 520],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

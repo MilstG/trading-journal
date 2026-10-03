@@ -532,7 +532,7 @@ async function hlPost(body){
   while(true){
     let res;
     try{ res=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-    catch(e){ if(attempt++<MAX){ await sleep(backoff(attempt)); continue; } throw new Error('Network error reaching Hyperliquid — check your connection.'); }
+    catch(e){ if(attempt++<MAX&&(typeof navigator==='undefined'||navigator.onLine!==false)){ await sleep(backoff(attempt)); continue; } throw new Error('Network error reaching Hyperliquid — check your connection.'); } // offline: say so now, not after the retries
     if(res.ok) return res.json();
     // 429 (rate limit) and 5xx are transient: honor Retry-After, else exponential backoff
     if((res.status===429||res.status>=500)&&attempt++<MAX){
