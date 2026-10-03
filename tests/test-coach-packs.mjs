@@ -122,6 +122,27 @@ try {
     await useUp(A.k, 3);
     eq((await status(A.k)).packs.bought, 0);
   });
+  await t('a purchase names its price: one without it is refused', async () => {
+    const r = await buy(A.k); eq(r.status, 409); ok(/price is now 150 XP/.test(r.d.error), r.d.error);
+  });
+  await t('what was lost on duel stakes limits what can be spent; a purchase lowers the stake balance at once', async () => {
+    const m = app._social.state().members[A.id];
+    m.stakeNet = -900; // earned 1,000, balance 100
+    eq((await status(A.k)).packs.blocked, 'You can spend 100 XP right now: that’s your balance after duel stakes.');
+    m.stakeNet = 0;
+    eq((await buy(A.k, 150)).status, 200);
+    eq((await call('/api/social/me', { key: A.k })).d.me.balance, 850, 'before the app reports it');
+  });
+  await t('the grant list keeps its newest 200, but never drops a coach purchase (its XP would come back)', async () => {
+    const m = app._social.state().members[A.id], spent = m.grants.reduce((a, g) => a + (g.coach ? g.xp : 0), 0);
+    m.grants = [...m.grants, ...Array.from({ length: 70 }, (_, i) => ({ id: 'c' + i, xp: -10, why: 'Coach: 3 extra messages', at: i, coach: true, day: 'd' + i, msgs: 3 })),
+      ...Array.from({ length: 200 }, (_, i) => ({ id: 'g' + i, xp: 1, why: 'bonus', at: i }))];
+    eq((await call('/api/social/admin/members/' + A.id, { method: 'POST', owner: true, body: { action: 'grant', xp: 5 } })).status, 200);
+    const coach = m.grants.filter(g => g.coach);
+    eq(m.grants.length - coach.length, 200); ok(coach.length <= 60, coach.length + ' coach entries');
+    eq(coach.reduce((a, g) => a + g.xp, 0), spent - 700);
+    ok(/extra messages, earlier$/.test(m.grants[0].why), m.grants[0].why);
+  });
 } finally { await new Promise(r => app.close(r)); }
 
 report('coach packs');

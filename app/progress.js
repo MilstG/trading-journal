@@ -281,7 +281,9 @@ function gameWins(g){
   const W=[], wkFrom=dayKey(lastCompletedWeekRange().to);
   for(const a of g.achievements) if(a.at&&a.at>=wkFrom)W.push(`Achievement unlocked: ${a.title}`);
   for(const p of g.pbs) if(p.isNew)W.push(`New personal best: ${p.label.toLowerCase()}${p.current!=null?' ('+p.current+(p.unit?' '+p.unit:'')+')':''}`);
-  const prev=levelFor(g.xp.total-g.weekXp);
+  // the week's coach purchases are in the total but not in weekXp: put them back for where the week started
+  const spent=(g.bonuses||[]).reduce((a,b)=>a+(b.src==='coach'&&b.key>=wkFrom?b.xp:0),0);
+  const prev=levelFor(g.xp.total-g.weekXp-spent);
   if(g.level.level>prev.level)W.push(`Level up: ${g.level.title} (level ${g.level.level})`);
   return W;
 }

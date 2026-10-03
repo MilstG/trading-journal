@@ -174,6 +174,8 @@ try {
     ok(/at most 250 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 300 })).d.error));
     ok(/@dee can’t cover/.test((await send(ann, 'dee', { type: 'xp', stake: 100 })).d.error));
     await call('/stats', { method: 'POST', key: dee, body: Object.assign(days([]), { xp: 1000 }) });
+    ok(/apps report themselves, at most 100 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 200 })).d.error), 'process XP is reported by the app: 100 XP at most by default');
+    await call('/admin/config', { method: 'PUT', owner: true, body: { pots: { selfMax: 1000 } } });
     const r = await send(ann, 'dee', { type: 'xp', stake: 200 }); eq([r.status, r.d.duel.stake], [200, 200], JSON.stringify(r.d));
     eq((await mine(ann)).room, 50, 'what you proposed is riding');
     eq((await mine(dee)).room, 250, 'a challenge waiting on you commits nothing yet');
@@ -185,9 +187,15 @@ try {
     clock = Date.parse(a.d.duel.end + 'T12:00:00Z') + 2 * DAY;
     const dv = (await mine(dee)).duels.find(x => x.id === r.d.duel.id), av = (await mine(ann)).duels.find(x => x.id === r.d.duel.id);
     eq([dv.result.outcome, dv.result.xp, dv.result.stake, av.result.outcome, av.result.stake], ['won', 100, 200, 'lost', -200]);
-    const ga = (await call('/me', { key: ann })).d.me.grants, gd = (await call('/me', { key: dee })).d.me.grants;
-    ok(ga.some(g => g.xp === -200 && /Lost a Process XP duel to @dee/.test(g.why)), JSON.stringify(ga));
-    ok(gd.some(g => g.xp === 200 && /staked by @ann/.test(g.why)));
+    // stakes move the balance, never earned XP: the bonus is a grant (it counts toward the level), the stake isn't
+    const ma = (await call('/me', { key: ann })).d.me, md = (await call('/me', { key: dee })).d.me;
+    ok(!ma.grants.some(g => g.xp < 0), 'a lost stake costs no earned XP: ' + JSON.stringify(ma.grants));
+    ok(ma.stakes.some(g => g.xp === -200 && /Lost a Process XP duel to @dee/.test(g.why)), JSON.stringify(ma.stakes));
+    ok(md.grants.some(g => g.xp === 100 && /Won a Process XP duel/.test(g.why)), 'the league’s bonus is earned XP');
+    ok(!md.grants.some(g => /staked by/.test(g.why)));
+    ok(md.stakes.some(g => g.xp === 200 && /staked by @ann/.test(g.why)));
+    eq([ma.stakeNet, ma.balance, md.stakeNet, md.balance], [-200, 800, 200, 1200]);
+    eq([(await mine(ann)).room, (await mine(dee)).room], [200, 300], 'what you can stake is 25% of the balance');
     ok((await inbox(ann)).some(x => /−200 XP/.test(x)));
   });
   await t('the server holds the unlock level the owner sets', async () => {
@@ -214,6 +222,24 @@ try {
     eq((await call('/admin/duels', { owner: true })).d.config.maxOpen, 1);
     eq((await mine(ann)).record, { w: 1, l: 1, d: 0 }, 'won the first, lost the staked one');
     const c = (await call('/config')).d; eq([c.modules.duels, c.duels.on], [1, true]);
+  });
+  await t('stakes paid out as grants before the split move off earned XP once; the duel bonus stays', async () => {
+    await new Promise(r => app.close(r));
+    const { DatabaseSync } = await import('node:sqlite'), db = new DatabaseSync(join(dataDir, 'pulse.db'));
+    const row = db.prepare('SELECT id, data FROM members').all().map(r => ({ id: r.id, m: JSON.parse(r.data) })).find(r => r.m.handle === 'cat');
+    row.m.grants = [{ id: 'g1', xp: 100, why: 'Won a Discipline duel', at: clock, duel: 'dx' }, { id: 'g2', xp: 150, why: 'Won 150 XP staked by @ann', at: clock, duel: 'dx' },
+      { id: 'g3', xp: -50, why: 'Lost a Clean days duel to @dee', at: clock, duel: 'dy' }, { id: 'g4', xp: 40, why: 'Bonus from the league owner', at: clock }];
+    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240 }); // what the app last posted: earned XP with these grants in it
+    db.prepare('UPDATE members SET data = ? WHERE id = ?').run(JSON.stringify(row.m), row.id);
+    const kv = k => JSON.parse(db.prepare('SELECT v FROM kv WHERE k = ?').get(k).v);
+    const mg = kv('migrations'); ok(mg.stakeSplit, 'recorded'); delete mg.stakeSplit;
+    db.prepare('UPDATE kv SET v = ? WHERE k = ?').run(JSON.stringify(mg), 'migrations'); db.close();
+    app = mk(); B = await listen();
+    const me = (await call('/me', { key: cat })).d.me;
+    eq([me.grants.map(g => g.id), me.stakes.map(g => g.id), me.stakeNet], [['g1', 'g4'], ['g2', 'g3'], 100]);
+    eq(me.balance, 1240, 'the posted total loses the moved stakes until the app syncs, so they aren’t counted twice');
+    await new Promise(r => app.close(r)); app = mk(); B = await listen();
+    eq((await call('/me', { key: cat })).d.me.stakeNet, 100, 'once: a restart doesn’t move it again');
   });
   await t('a server still on the first default (free duels) moves to level 3 once; a level the owner set stays', async () => {
     await new Promise(r => app.close(r));

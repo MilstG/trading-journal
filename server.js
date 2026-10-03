@@ -2716,13 +2716,15 @@ function createApp(opts) {
       })().catch(e => failed(res, e));
       return;
     }
+    // what the app sees of a coach status (GET /api/coach/chat, and after buying a pack)
+    const coachPublic = (st, enabled) => ({ enabled, allowed: st.allowed, reason: st.reason, limit: st.limit, used: st.used, remaining: st.remaining,
+      detail: st.detail, detailAllowed: st.detailAllowed, who: st.who, packs: st.packs || null });
     // --- AI coach chat: a member (X-Pulse-Key) within today's allowance, or the owner (AUTH_TOKEN) ---
     if (url === '/api/coach/chat') {
       const memberAsk = !!req.headers['x-pulse-key'];
       const st = memberAsk ? social.coach.statusFor(req) : authOk(req) && auth ? social.coach.ownerStatus() : null;
       if (!st) return json(res, 401, { error: memberAsk ? 'not a member' : 'unauthorized' });
-      const pub = { enabled: coachCfg.enabled, allowed: st.allowed, reason: st.reason, limit: st.limit, used: st.used, remaining: st.remaining,
-        detail: st.detail, detailAllowed: st.detailAllowed, who: st.who, packs: st.packs || null };
+      const pub = coachPublic(st, coachCfg.enabled);
       if (req.method === 'GET') return json(res, 200, pub);
       if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
       if (!coachCfg.enabled) return json(res, 404, { error: 'The AI coach isn’t switched on for this server yet. The owner turns it on with COACH_AI=1 and an Anthropic or OpenAI API key.' });
@@ -2757,9 +2759,7 @@ function createApp(opts) {
         const m = social.coach.statusFor(req);
         if (!m) return json(res, 401, { error: 'not a member' });
         const r = social.coach.buy(m.member, body || {});
-        const n = social.coach.statusFor(req) || {};
-        const out = { enabled: true, allowed: n.allowed, reason: n.reason, limit: n.limit, used: n.used, remaining: n.remaining,
-          detail: n.detail, detailAllowed: n.detailAllowed, who: n.who, packs: n.packs || null };
+        const out = coachPublic(social.coach.statusFor(req) || {}, true);
         return json(res, r.error ? r.code : 200, r.error ? Object.assign(out, { error: r.error }) : Object.assign(out, { ok: true, bought: r }));
       })().catch(e => failed(res, e));
       return;

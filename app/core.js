@@ -234,6 +234,13 @@ let _srvGen=0;
 const SRV_MARK='srv_sync';
 function srvMark(dirty){ try{ localStorage.setItem(SRV_MARK,JSON.stringify({rev:SRV.rev,dirty:!!dirty})); }catch(e){} }
 function srvMarkRead(){ try{ const m=JSON.parse(localStorage.getItem(SRV_MARK)||'null'); return m&&typeof m.rev==='number'?m:null; }catch(e){ return null; } }
+// The settings baseline (_lastSyncedS) is kept beside the mark, so a start that finds another device
+// saved in the meantime can still tell which fields this browser changed: those are kept, the rest
+// come from the server (the same field-level merge a 409 does). Without it, the whole server copy won
+// and an edit made just before a reload (Light, a goal, a rule) was silently undone.
+const SRV_BASE='srv_base';
+function srvBaseSave(){ try{ localStorage.setItem(SRV_BASE,JSON.stringify(_lastSyncedS)); }catch(e){} }
+function srvBaseRead(){ try{ const b=JSON.parse(localStorage.getItem(SRV_BASE)||'null'); return b&&typeof b==='object'?b:null; }catch(e){ return null; } }
 function srvFetch(p,o){ o=o||{}; o.headers=Object.assign({},o.headers);
   if(SRV.token)o.headers['Authorization']='Bearer '+SRV.token; return fetch(p,o); }
 async function writeServer(){
@@ -273,7 +280,7 @@ async function writeServer(){
         // applied with merged=false left the OLD baseline in place, and the NEXT conflict
         // misread server-origin values as local edits — pushing them back over the other
         // device's newer state.
-        _lastSyncedS=_snapS();
+        _lastSyncedS=_snapS(); srvBaseSave();
         srvMark(merged);
         if(merged)scheduleServerWrite(); // push the merge at the new revision
       }
@@ -283,7 +290,7 @@ async function writeServer(){
     if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1;
       for(const [id,rev] of sentDirty) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); // only clear what was actually sent unchanged
       jPendingSave();
-      _lastSyncedS=sentS; SRV.err=null; SRV.retryMs=0;
+      _lastSyncedS=sentS; srvBaseSave(); SRV.err=null; SRV.retryMs=0;
       srvMark(_srvGen!==sentGen); // an edit made while this PUT was in flight is still unsent
       renderDatafile('saved'); }
     else { // 413 / 5xx / proxy errors: say so — the indicator used to keep reading "saved"
@@ -312,12 +319,18 @@ async function initServerSync(){
       if(m&&m.dirty&&m.rev===SRV.rev){ // nobody saved since this browser's unsent edits: keep them all (boot sends them)
         SRV.pushLocal=true; const ss=(j.snapshot&&j.snapshot.settings)||{};
         for(const id of jPendingLoad())_dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); // still unsent: a 409 before the push keeps them
-        _lastSyncedS=JSON.parse(JSON.stringify(Object.fromEntries(_SYNC_S_FIELDS.map(k=>[k,ss[k]])))); } // the server's side, for a later 409 merge
-      else { srvMark(false);
+        _lastSyncedS=JSON.parse(JSON.stringify(Object.fromEntries(_SYNC_S_FIELDS.map(k=>[k,ss[k]])))); srvBaseSave(); } // the server's side, for a later 409 merge
+      else { // someone else saved since: take theirs, but keep the settings this browser changed and never sent
+        const base=m&&m.dirty?srvBaseRead():null, localS=base?await Store.get(S_KEY):null;
+        srvMark(false);
         // (no readable local journal: nothing to lay over — a missing copy isn't "every edit was a delete")
         if(j.snapshot){ const pend=jPendingLoad(), localJ=pend.length?await Store.get(J_KEY):null;
           await applySnapshot(j.snapshot); await jPendingOverlay(localJ,pend); }
-        _lastSyncedS=_snapS(); } } // baseline for the field-level 409 settings merge
+        _lastSyncedS=_snapS(); // baseline for the field-level 409 settings merge
+        if(localS&&j.snapshot){ let kept=false;
+          for(const k of _SYNC_S_FIELDS)if(JSON.stringify(localS[k])!==JSON.stringify(base[k])){ settings[k]=_syncMerge(k,localS[k],settings[k]); kept=true; }
+          if(kept){ await rawSet(S_KEY,settings); srvMark(true); SRV.pushLocal=true; } } // boot sends the kept fields
+        srvBaseSave(); } }
     // PWA: only meaningful when served — installable app icon + offline shell
     try{ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
       if(!document.querySelector('link[rel=manifest]')){ const l=document.createElement('link');
