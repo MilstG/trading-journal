@@ -59,6 +59,23 @@ function socInviteCode(){ try{ return localStorage.getItem(SOC_INVITE_STORE)||''
   if(!c)return; try{ localStorage.setItem(SOC_INVITE_STORE,c); }catch(e){}
   u.searchParams.delete('invite'); history.replaceState(history.state,'',u.pathname+u.search+u.hash); }catch(e){} })();
 
+// A referral link (/daruma?ref=CODE: a member's handle or one of their own codes) is kept on this device
+// until they join and sent with it; the visit is counted once (the server counts an address once a day).
+const SOC_REF_STORE='pz_ref';
+function socRefCode(){ try{ return localStorage.getItem(SOC_REF_STORE)||''; }catch(e){ return ''; } }
+(function(){ try{ const u=new URL(location.href), c=(u.searchParams.get('ref')||'').trim().toLowerCase().replace(/^@/,'').slice(0,24);
+  if(!c||!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(c))return; try{ localStorage.setItem(SOC_REF_STORE,c); }catch(e){}
+  u.searchParams.delete('ref'); history.replaceState(history.state,'',u.pathname+u.search+u.hash);
+  if(/^https?:$/.test(location.protocol))fetch('/api/social/ref/'+encodeURIComponent(c)+'/visit',{method:'POST'}).catch(()=>{}); }catch(e){} })();
+// who the link on this device is from, and the welcome on offer, for the "Create your profile" form
+function socRefCardHtml(){
+  const c=socRefCode(); if(!c||!(SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on))return '';
+  const R=socGet('ref:'+c,'/ref/'+encodeURIComponent(c),600000), d=R&&R.d; if(!d)return '';
+  const T=d.terms;
+  return `<section class="pz-card pz-kv" style="border-color:var(--pz-acc)"><b class="pz-kvh">${socAv(d.handle,28)} Invited by @${esc(d.handle)}${T.promo?` <span class="pz-tag win">${esc(T.promo)}</span>`:''}</b>
+    <span class="pz-sub" style="font-size:13px">${T.ex?`<b style="color:var(--pz-xp)">+${T.ex} XP</b> welcome bonus once you’re active: claim your wallet and trade ${T.ad} days in your first ${T.aw}.`:'Join to connect with them.'}</span></section>`;
+}
+
 // Each day's XP as its parts, for the server's XP ledger (the server works out the XP, level and XP by day
 // itself): s the day's Discipline score, b its logging bonus, e the XP this app pays on top (focus-habit days,
 // challenges, achievements, badges) and m badge XP reached only with mentoring XP (levels, never leagues). What
@@ -329,7 +346,7 @@ function peerImpTip(c){
 
 function socHead(){
   return `<header class="pz-head"><div><span class="pz-kick">${SOC.cfg&&SOC.cfg.week?'Week '+esc(SOC.cfg.week.slice(-2)):'Social'}</span><h1 class="pz-h1">Social</h1></div>
-    <div class="pz-chips">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}${SOC.me.mentor?'':`<a class="pz-chip" href="#mentors" style="font-weight:700;font-size:13px;padding:0 14px">Mentors</a>`}${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':`<a class="pz-chip" href="#playbooks/shared" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('book',16)} Playbooks</a>`}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></div></header>`;
+    <div class="pz-chips">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}${SOC.me.mentor?'':`<a class="pz-chip" href="#mentors" style="font-weight:700;font-size:13px;padding:0 14px">Mentors</a>`}${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':`<a class="pz-chip" href="#playbooks/shared" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('book',16)} Playbooks</a>`}${SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on?`<a class="pz-chip" href="#invite" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('plus',16)} Invite</a>`:''}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></div></header>`;
 }
 function socUnavailableHtml(){
   return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Daruma from your server’s <b>/daruma</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
@@ -351,7 +368,7 @@ function socJoinHtml(){
   const autoL=(cfg&&cfg.autoLeagues)||[], skip=SOC.joinSkip||(SOC.joinSkip=[]);
   const rankings=autoL.length?`<div><span class="pz-lbl" style="color:var(--pz-muted)">Also join ${autoL.length===1?'this ranking':'these rankings'}</span>${autoL.map(L=>`<div class="pz-toggle"><span style="flex:1"><b id="socjl_${esc(L.id)}">${esc(L.name)}</b><span>${L.metricLabel?'Ranked by '+esc(L.metricLabel)+' · ':''}you can leave it, or join others, any time</span></span>
       <button type="button" role="switch" class="pz-switch" data-soc-jskip="${esc(L.id)}" aria-checked="${!skip.includes(L.id)}" aria-labelledby="socjl_${esc(L.id)}"><i></i></button></div>`).join('')}</div>`:'';
-  return `<div class="pz-join">${pzHead('Duels · partners · mentors · leagues','Create your profile')}${linkCard}
+  return `<div class="pz-join">${pzHead('Duels · partners · mentors · leagues','Create your profile')}${socRefCardHtml()}${linkCard}
     <section class="pz-card pz-join-card">
       <span class="pz-ico" style="width:48px;height:48px;background:var(--pz-tint-xp);color:var(--pz-xp)">${pzI('progress',24)}</span>
       <div class="pz-big">Trade alongside other people</div>
@@ -1251,11 +1268,11 @@ async function socAction(t){
         const h=($('socHandle')||{value:''}).value.trim(), inv=($('socInvite')||{value:''}).value.trim();
         const share=SOC.draft||SOC_DEFAULT_SHARE;
         SOC.joining=true; t.disabled=true; let r;
-        try{ r=await socFetch('/join',{method:'POST',body:JSON.stringify({handle:h,invite:inv,share,address:socAddressFor(share),skip:SOC.joinSkip||[],visitor:socWasVisitor()})}); }
+        try{ r=await socFetch('/join',{method:'POST',body:JSON.stringify({handle:h,invite:inv,share,address:socAddressFor(share),skip:SOC.joinSkip||[],visitor:socWasVisitor(),ref:socRefCode()})}); }
         finally{ SOC.joining=false; t.disabled=false; }
         vaultForget(); COACH.tried=false; COACH.msgs=null; SOC.key=r.key; try{ localStorage.setItem(SOC_KEY_STORE,r.key); }catch(e){}
         SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.cache={}; SOC.lastSent='';
-        SOC.joinSkip=null; try{ localStorage.removeItem(SOC_INVITE_STORE); }catch(e){}
+        SOC.joinSkip=null; try{ localStorage.removeItem(SOC_INVITE_STORE); localStorage.removeItem(SOC_REF_STORE); }catch(e){}
         done('Welcome, @'+r.me.handle+'.'+(r.walletTaken?' Your wallet is claimed by another profile, so it wasn’t added.':'')); return true; }
       case 'socSaveShare': { const h=($('socHandle2')||{value:''}).value.trim(), share=SOC.draft||SOC.share;
         let r, taken=false;

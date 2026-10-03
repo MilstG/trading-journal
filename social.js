@@ -467,6 +467,31 @@ function sanitizeSharedPlaybook(b) {
   if (!rules.length) return null;
   return { src: b.src, name, about: cleanPost(typeof b.about === 'string' ? b.about : '', 400), rules };
 }
+// referrals: a member's link brings someone in; once they're active (a claimed wallet no member used before,
+// and activeDays trading days within activeWindow days of joining) the referrer earns referrerXp, the new member
+// refereeXp, and the referrer sharePct% of the new member's trading XP for shareWeeks weeks from joining.
+// A promotion (dates, a label, its own amounts) sets the terms for members who join while it runs.
+const REF_CODE_RE = /^[a-z0-9][a-z0-9_-]{2,23}$/;
+const DEFAULT_REF = { on: true, referrerXp: 100, refereeXp: 50, sharePct: 20, shareWeeks: 26, activeDays: 5, activeWindow: 30, monthlyCap: 10, linksMax: 5,
+  promo: { on: false, label: '', from: '', to: '', referrerXp: 200, refereeXp: 100, sharePct: 25 } };
+function sanitizeRefCfg(b, prev) {
+  const o = JSON.parse(JSON.stringify(Object.assign({}, DEFAULT_REF, prev || {}, { promo: Object.assign({}, DEFAULT_REF.promo, prev && prev.promo) })));
+  if (!b || typeof b !== 'object') return o;
+  const num = (v, lo, hi) => { const n = clampNum(v, lo, hi); return n == null ? null : Math.round(n); };
+  if (typeof b.on === 'boolean') o.on = b.on;
+  for (const [k, lo, hi] of [['referrerXp', 0, 5000], ['refereeXp', 0, 5000], ['sharePct', 0, 50], ['shareWeeks', 0, 104], ['activeDays', 1, 30], ['activeWindow', 7, 90], ['monthlyCap', 0, 100], ['linksMax', 0, 20]]) {
+    const n = b[k] == null || b[k] === '' ? null : num(b[k], lo, hi); if (n != null) o[k] = n; }
+  if (o.activeDays > o.activeWindow) o.activeDays = o.activeWindow;
+  const p = b.promo;
+  if (p && typeof p === 'object') {
+    if (typeof p.on === 'boolean') o.promo.on = p.on;
+    if (typeof p.label === 'string') o.promo.label = cleanText(p.label, 40);
+    for (const k of ['from', 'to']) if (typeof p[k] === 'string' && (p[k] === '' || DAY_RE.test(p[k]))) o.promo[k] = p[k];
+    for (const [k, lo, hi] of [['referrerXp', 0, 5000], ['refereeXp', 0, 5000], ['sharePct', 0, 50]]) {
+      const n = p[k] == null || p[k] === '' ? null : num(p[k], lo, hi); if (n != null) o.promo[k] = n; }
+  }
+  return o;
+}
 const POST_KINDS = ['trade', 'plan', 'note'];
 const TRADE_STATUS = ['planned', 'open', 'closed', 'cancelled'];
 const COIN_RE = /^[A-Za-z0-9@/:._-]{1,24}$/;
@@ -575,7 +600,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts', 'refLinks', 'refWallets'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -603,6 +628,7 @@ function createSocial(opts) {
   S.config.profiles = SC.sanitizeProfiles(S.config.profiles, null);
   S.config.posts = sanitizePostCfg(S.config.posts, null);
   S.config.playbooks = sanitizePlaybookCfg(S.config.playbooks, null);
+  S.config.referrals = sanitizeRefCfg(S.config.referrals, null);
   S.config.bench = Bench.sanitizeBenchCfg(S.config.bench, null);
   S.config.duels = Duels.sanitizeDuelCfg(S.config.duels, null);
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
@@ -612,6 +638,9 @@ function createSocial(opts) {
   // what deleted profiles owed, by wallet: {'0x…': {id, xp (negative), at}}; a profile whose verified XP comes
   // from one of those wallets takes the debt on (takeDebt), so deleting and rejoining never wipes it
   if (!S.debts || typeof S.debts !== 'object' || Array.isArray(S.debts)) S.debts = {};
+  // members' own referral codes ({code: {id, label, at, visits}}), and the wallets that already activated a
+  // referral ({address: {at}}): one wallet activates one referral, ever, so deleting and rejoining pays nothing
+  for (const k of ['refLinks', 'refWallets']) if (!S[k] || typeof S[k] !== 'object' || Array.isArray(S[k])) S[k] = {};
   if (!S.badges || typeof S.badges !== 'object') S.badges = {};
   // the owner's wallet decisions, by address (so a new profile can't launder a rejected wallet):
   // { '0x…': { s: 'approved' | 'rejected', at, by: 'owner' | 'existing', note } }
@@ -869,7 +898,8 @@ function createSocial(opts) {
     const granted = (m.grants || []).reduce((a, g) => a + (g.self ? 0 : +g.xp || 0), 0) + (+m.grantsOld || 0);
     const awards = Object.keys(m.awards || {}).reduce((a, id) => a + (awardVerified(m, id) ? +S.badges[id].xp || 0 : 0), 0);
     const mentor = sum(m.mentorXp && m.mentorXp.days, d => d.xp), stakes = +m.stakeNet || 0, spent = Math.max(0, +m.xpSpent || 0), carried = +m.carry || 0;
-    return { verified, granted, awards, mentor, stakes, spent, carried, balance: verified + granted + awards + mentor + stakes - spent + carried }; };
+    const referral = refXpOf(m);
+    return { verified, granted, awards, mentor, referral, stakes, spent, carried, balance: verified + granted + awards + mentor + referral + stakes - spent + carried }; };
   const balanceOf = m => m ? ledgerOf(m).balance : 0;
   // free: the balance less XP held for trades waiting on a mentor's review; to spend: less what rides on open duels too
   const freeOf = m => balanceOf(m) - heldOf(m);
@@ -922,6 +952,7 @@ function createSocial(opts) {
     total += +m.grantsOld || 0;
     for (const [id, at] of Object.entries(m.awards || {})) { const x = own(S.badges, id) ? +S.badges[id].xp || 0 : 0; if (x) { total += x; add(at, x); } }
     total += Object.values((m.mentorXp && m.mentorXp.days) || {}).reduce((a, d) => a + (+(d && d.xp) || 0), 0);
+    total += refXpOf(m); // referral XP: the total (levels) and XP to spend, never the XP by day leagues and duels read
     const ks = Object.keys(days).filter(k => days[k] > 0).sort().slice(-120);
     return { total: Math.max(0, Math.round(total)), days: Object.fromEntries(ks.map(k => [k, Math.round(days[k])])) }; };
   // the numbers everything else reads (stats.xp, stats.level, stats.xpDays, weekXp), from the ledger. Run whenever an
@@ -932,6 +963,89 @@ function createSocial(opts) {
   xpSyncOnSave = xpSync;
   // what every member's XP reads changed (the XP weights, the levels, a reward badge's XP): all of them again
   const xpSyncAll = () => { for (const m of members()) xpSync(m); };
+
+  // ---- referrals ----
+  // The new member carries the referral (m.ref): who brought them, the code they came by, when, the terms on that
+  // day (t: rx the referrer's bonus, ex their welcome bonus, pct the share, wk its weeks, ad/aw the activation
+  // bar), its state (st: pending → active, or expired / void), and the weeks already shared out (paid: {week: xp}).
+  // What a member earned from referrals is their own stream (m.refXp: {pays: [{at, xp, k, from, w}], old}):
+  // it counts toward their total (levels) and XP to spend like mentoring, never toward XP by day, so leagues,
+  // seasons and duels can't be bought with recruiting.
+  function refXpOf(m) { const R = m && m.refXp; if (!R) return 0;
+    return (+R.old || 0) + (Array.isArray(R.pays) ? R.pays.reduce((a, x) => a + (+x.xp || 0), 0) : 0); }
+  const refPay = (m, xp, k, from, w) => { xp = Math.round(xp); if (!m || !(xp > 0)) return 0;
+    const R = m.refXp = m.refXp && typeof m.refXp === 'object' ? m.refXp : { pays: [], old: 0 };
+    R.pays = [...(Array.isArray(R.pays) ? R.pays : []), { at: now(), xp, k, from: from || null, w: w || null }];
+    if (R.pays.length > 300) { const drop = R.pays.splice(0, R.pays.length - 300); R.old = (+R.old || 0) + drop.reduce((a, x) => a + (+x.xp || 0), 0); }
+    xpSync(m); touch(m); return xp; };
+  const refCfg = () => S.config.referrals;
+  const refPromoLive = (day) => { const P = refCfg().promo; day = day || todayKey(); return !!(P.on && (!P.from || P.from <= day) && (!P.to || day <= P.to)); };
+  // the terms someone joining today gets
+  const refTermsNow = () => { const C = refCfg(), P = C.promo, live = refPromoLive();
+    return { rx: live ? P.referrerXp : C.referrerXp, ex: live ? P.refereeXp : C.refereeXp, pct: live ? P.sharePct : C.sharePct,
+      wk: C.shareWeeks, ad: C.activeDays, aw: C.activeWindow, promo: live ? P.label || 'Promotion' : null, until: live ? P.to || null : null }; };
+  // fully validated: a profile with a wallet they proved is theirs by signing, which counts (the owner's approval and review)
+  const refValid = m => !!(m && !m.banned && m.claimed && m.claimed === m.address && walletFor(m) === m.claimed);
+  // a code → the member it brings people to: their own custom codes first, then handles
+  const refResolve = code => { const c = String(code || '').trim().toLowerCase().replace(/^@/, ''); if (!c || c.length > 24) return null;
+    const L = own(S.refLinks, c) ? S.refLinks[c] : null, m = L ? (own(S.members, L.id) ? S.members[L.id] : null) : byHandle(c);
+    return m && !m.banned ? { m, code: c, custom: !!L } : null; };
+  const refJoinKey = r => utcDayKey(r.at);
+  const refDays = (m, r) => { const from = refJoinKey(r), to = addDaysKey(from, r.t.aw - 1);
+    return (Array.isArray(m.vdays) ? m.vdays : []).filter(d => d.n > 0 && d.k >= from && d.k <= to).length; };
+  // why a pending referral isn't active yet (null when it can be)
+  const refBlock = (m, r) => {
+    if (!refValid(m)) return m.claimed ? 'approval' : 'claim';
+    const a = m.claimed, by = own(S.members, r.by) ? S.members[r.by] : null;
+    if (own(S.refWallets, a) || own(S.debts, a) || mappedTo(a, m.id) || (by && (walletsOf(by).includes(a) || by.claimed === a))) return 'wallet';
+    if (!(m.share && m.share.verify)) return 'verify';
+    return refDays(m, r) >= r.t.ad ? null : 'days'; };
+  // the referrer's activations this calendar month, against the owner's monthly cap
+  const refActsThisMonth = by => (by.refActs || []).filter(x => utcDayKey(x).slice(0, 7) === todayKey().slice(0, 7)).length;
+  const refCheck = m => {
+    const r = m && m.ref; if (!r || r.st !== 'pending') return false;
+    const by = own(S.members, r.by) ? S.members[r.by] : null;
+    if (!by) { r.st = 'void'; r.why = 'gone'; touch(m); return true; }
+    const b = refBlock(m, r);
+    if (b === 'wallet') { r.st = 'void'; r.why = 'wallet'; touch(m); return true; } // a wallet that already counted (or the referrer's own) never will
+    if (b) { if (todayKey() > addDaysKey(refJoinKey(r), r.t.aw - 1)) { r.st = 'expired'; r.why = b; touch(m); return true; } return false; }
+    if (m.banned || by.banned) return false;
+    r.st = 'active'; r.act = now(); r.wallet = m.claimed; S.refWallets[m.claimed] = { at: now() }; touch('refWallets');
+    const cap = refCfg().monthlyCap; r.capped = !!(cap && refActsThisMonth(by) >= cap);
+    by.refActs = [...(by.refActs || []), now()].slice(-500);
+    refPay(m, r.t.ex, 'welcome', by.id);
+    const got = r.capped ? 0 : refPay(by, r.t.rx, 'bonus', m.id);
+    notify(m, 'referral', 'You’re active: +' + r.t.ex + ' XP welcome bonus for joining through @' + by.handle + '’s invite.', { title: 'Welcome bonus', url: '/daruma#invite' });
+    notify(by, 'referral', '@' + m.handle + ' is active' + (r.capped ? ' (past this month’s ' + cap + ' paid referrals, so no bonus or share)' : ': +' + got + ' XP, and ' + r.t.pct + '% of their trading XP for their first ' + r.t.wk + ' weeks') + '.', { title: 'Your referral is active', url: '/daruma#invite' });
+    refShare(m); save(m, by); return true; };
+  // a week is shared out once its days can't change any more (an app can rewrite a day for STATS_FREEZE days),
+  // so a week is paid the week after it ends; weeks before activation are paid on activation
+  const refWeekBase = (m, wk, fromKey) => { const L = xplOf(m), since = L.since || '', w = S.config.xp.discipline;
+    let x = 0; for (const [k, r] of Object.entries(L.d)) if (r && k >= since && k >= fromKey && isoWeekOfKey(k) === wk) x += xplDay(r, w, 1)[0];
+    return Math.max(0, x); };
+  const refShare = m => {
+    const r = m && m.ref; if (!r || r.st !== 'active' || r.capped || !(r.t.pct > 0) || !(r.t.wk > 0)) return 0;
+    const by = own(S.members, r.by) ? S.members[r.by] : null; if (!by) return 0;
+    const from = refJoinKey(r), mon0 = isoWeekMonday(isoWeekOfKey(from)); r.paid = r.paid || {}; let got = 0, n = 0;
+    for (let i = 0; i < r.t.wk; i++) {
+      const mon = addDaysKey(mon0, 7 * i), wk = isoWeekOfKey(mon);
+      if (addDaysKey(mon, 6 + STATS_FREEZE) >= todayKey()) break; // not fixed yet
+      if (own(r.paid, wk)) continue;
+      // nothing is paid while either side is suspended: those weeks are forfeited
+      const xp = m.banned || by.banned ? 0 : Math.floor(refWeekBase(m, wk, from) * r.t.pct / 100);
+      r.paid[wk] = xp; n++; if (xp) got += refPay(by, xp, 'share', m.id, wk); }
+    if (n) { touch(m); if (got) { notify(by, 'referral', '+' + got + ' XP: your ' + r.t.pct + '% of @' + m.handle + '’s trading XP' + (n > 1 ? ' (' + n + ' weeks)' : ' last week') + '.', { title: 'Referral share', url: '/daruma#invite' }); save(by); } }
+    return got; };
+  // pending referrals are checked when a wallet's days are read again; this catches the rest (and pays the weeks)
+  let refTickAt = 0;
+  const refTick = () => { if (now() - refTickAt < 10 * 60000) return; refTickAt = now();
+    let ch = false;
+    for (const m of members()) if (m.ref) { if (m.ref.st === 'pending') ch = refCheck(m) || ch; else if (m.ref.st === 'active') ch = refShare(m) > 0 || ch; }
+    if (ch) save('refWallets'); }; // writes every member and section the checks touched
+  const refOut = (m, viewer) => { const r = m.ref, by = own(S.members, r.by) ? S.members[r.by] : null;
+    return { handle: m.handle, av: avUrl(m), at: r.at, code: r.code, st: r.st, why: r.st === 'pending' ? refBlock(m, r) : r.why || null, act: r.act || null,
+      days: refDays(m, r), need: r.t.ad, until: addDaysKey(refJoinKey(r), r.t.aw - 1), capped: !!r.capped, terms: r.t,
+      shared: Object.values(r.paid || {}).reduce((a, x) => a + x, 0), weeksPaid: Object.keys(r.paid || {}).length, by: by ? by.handle : null }; };
   // older days fold into one sum, at what they were worth when they left
   const xplFold = m => { const L = xplOf(m), ks = Object.keys(L.d).sort(), n = ks.length - XPL_KEEP; if (n <= 0) return;
     const w = S.config.xp.discipline, mult = xplMult(m);
@@ -1203,6 +1317,7 @@ function createSocial(opts) {
       dropMedia(q('SELECT id FROM media WHERE member = ?').all(id));
       // the playbooks they shared stop being shared (adopters keep their copies); their adoptions go
       for (const p of q('SELECT id FROM playbooks WHERE member = ?').all(id)) dropPlaybook(p.id);
+      for (const c of Object.keys(S.refLinks)) if (S.refLinks[c].id === id) { delete S.refLinks[c]; touch('refLinks'); }
       q('DELETE FROM playbook_adopts WHERE member = ?').run(id);
       q('DELETE FROM members WHERE id = ?').run(id); written.delete('m:' + id);
       if (hadVault) store.afterCommit(() => { try { fs.unlinkSync(vaultFile(id)); } catch (e) {} }); // the journal file goes once the row has
@@ -1313,7 +1428,7 @@ function createSocial(opts) {
       for (const d of days) if (d && DAY_RE.test(d.k)) { const o = { k: d.k, s: clampNum(d.s, 0, 100) || 0, n: clampNum(d.n, 0, 1e5) || 0 };
         const f = Array.isArray(d.f) ? d.f.filter(x => SLIP_KEYS.includes(x)) : []; if (f.length) o.f = f; keep.set(d.k, o); }
       live.vdays = [...keep.values()].sort((a, b) => a.k < b.k ? -1 : 1).slice(-200); // Trader Age reads 6 months
-      live.vAt = now(); live.vFailAt = 0; taCompute(live); vxpCredit(live); xplStart(live); xplVerified(live); xpSync(live); awardCheck(live); save(live);
+      live.vAt = now(); live.vFailAt = 0; taCompute(live); vxpCredit(live); xplStart(live); xplVerified(live); xpSync(live); awardCheck(live); refCheck(live); save(live);
     } catch (e) { m.vFailAt = now(); }
     finally { behaviorBusy.delete(m.id); }
   };
@@ -1896,6 +2011,7 @@ function createSocial(opts) {
       vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
       ta: m.share && m.share.verify ? m.ta || null : null, // verified Trader Age (null: the app shows its own estimate)
       mult: multOut(m), standing: standingOut(m), mentorXp: mentorXpOut(m),
+      refActs: (m.refActs || []).map(t => utcDayKey(t)), refXp: refXpOf(m),
       wallet: walletOut(m), myMentors: picksOf(m).map(id => S.members[id].handle), mentorRate: m.mentor ? rateOf(m) : null, mentorSlots: m.mentor ? slotsOf(m) : null,
       needsClaim: !!(S.config.requireClaim && m.address && m.claimed !== m.address),
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
@@ -2064,10 +2180,10 @@ function createSocial(opts) {
 
   // ---- inbox and web push: nudges, mentor notes, season results and the daily reminders ----
   const push = opts.push || null; // { publicKey, send(sub, message) -> status }
-  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, on: { morning: true, eod: true } }, prev || {});
+  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, referral: true, on: { morning: true, eod: true } }, prev || {});
     if (p && typeof p === 'object') {
       for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(p[k])) o[k] = p[k];
-      for (const k of ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook']) if (typeof p[k] === 'boolean') o[k] = p[k];
+      for (const k of ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook', 'referral']) if (typeof p[k] === 'boolean') o[k] = p[k];
       if (p.on && typeof p.on === 'object') o.on = { morning: p.on.morning !== false, eod: p.on.eod !== false }; }
     return o; };
   const sendPush = async (m, msg) => {
@@ -2381,7 +2497,7 @@ function createSocial(opts) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { error: 'invalid body' }); }
     let arg = parts[1] || '';
     try { arg = decodeURIComponent(arg); } catch (e) { return json(res, 400, { error: 'bad path' }); }
-    ensureWeek(); ensureSeasons();
+    ensureWeek(); ensureSeasons(); refTick();
 
     // a device using Pulse without a profile today (it asks once a day; one address counts once a day too)
     if (head === 'visit' && !parts[1] && M === 'POST') {
@@ -2419,7 +2535,8 @@ function createSocial(opts) {
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
         bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on },
-        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), playbooks: { on: !!S.config.playbooks.on, who: S.config.playbooks.who }, // ai: visitors (no coach status of their own) know whether to show a Coach tab
+        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), playbooks: { on: !!S.config.playbooks.on, who: S.config.playbooks.who },
+        referrals: refCfg().on ? Object.assign({ on: true, linksMax: refCfg().linksMax }, refTermsNow()) : { on: false }, // ai: visitors (no coach status of their own) know whether to show a Coach tab
         badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),
         leagues: Object.values(S.leagues).filter(L => L.open).length,
         autoLeagues: Object.values(S.leagues).filter(L => L.autoJoin).map(L => ({ id: L.id, name: L.name, metricLabel: SC.LEAGUE_METRICS ? SC.LEAGUE_METRICS[L.metric] || '' : '' })) });
@@ -2467,7 +2584,8 @@ function createSocial(opts) {
         const wk = S.league.week, act = members().filter(m => now() - (m.lastSeen || 0) < 7 * 86400000);
         return json(res, 200, { adminConfigured, members: members().length, banned: members().filter(m => m.banned).length, active7: act.length,
           events: q('SELECT count(*) AS n FROM events').get().n, posts: q("SELECT count(*) AS n FROM events WHERE type = 'post'").get().n,
-          reports: q('SELECT count(*) AS n FROM reports WHERE open = 1').get().n, playbooks: q('SELECT count(*) AS n FROM playbooks').get().n, mediaBytes: q('SELECT sum(size) AS n FROM media').get().n || 0, comps: Object.keys(S.comps).length, week: wk, config: S.config,
+          reports: q('SELECT count(*) AS n FROM reports WHERE open = 1').get().n, playbooks: q('SELECT count(*) AS n FROM playbooks').get().n,
+          referrals: members().filter(m => m.ref).reduce((a, m) => { a[m.ref.st] = (a[m.ref.st] || 0) + 1; return a; }, {}), mediaBytes: q('SELECT sum(size) AS n FROM media').get().n || 0, comps: Object.keys(S.comps).length, week: wk, config: S.config,
           walletsPending: S.config.approveWallets ? new Set(members().filter(m => m.address && walletStatus(m.address) === 'pending').map(m => m.address)).size : 0,
           claimed: members().filter(m => m.claimed).length, unclaimed: members().filter(m => !m.banned && m.address && m.claimed !== m.address).length,
           visitors: visitStats(), vaults: members().filter(m => m.vault).length, vaultBytes: vaultTotal(), claims: !!sig,
@@ -2667,6 +2785,9 @@ function createSocial(opts) {
         if (body.profiles) c.profiles = SC.sanitizeProfiles(body.profiles, c.profiles);
         if (body.posts) c.posts = sanitizePostCfg(body.posts, c.posts);
         if (body.playbooks) c.playbooks = sanitizePlaybookCfg(body.playbooks, c.playbooks);
+        if (body.referrals) { const p = body.referrals.promo, f = p && p.from, t = p && p.to;
+          if (typeof f === 'string' && typeof t === 'string' && f && t && f > t) return json(res, 400, { error: 'Promotion: it ends (' + t + ') before it starts (' + f + ').' });
+          c.referrals = sanitizeRefCfg(body.referrals, c.referrals); }
         if (body.bench) { const was = c.bench; c.bench = Bench.sanitizeBenchCfg(body.bench, c.bench);
           // a new bar or window: left-out wallets get another look (and a new window means re-reading the counted ones too)
           if (was && (was.minTrades !== c.bench.minTrades || was.days !== c.bench.days)) {
@@ -2867,6 +2988,20 @@ function createSocial(opts) {
       }
       // trade reviews, read-only: what members sent their mentors and the threads on them, for moderation
       // the owner's pool: what it holds, everything it has taken in, and the latest payments it took a share of
+      if (sub === 'referrals' && !parts[2] && M === 'GET') {
+        const h = id => own(S.members, id) ? S.members[id].handle : null;
+        return json(res, 200, { terms: refTermsNow(),
+          refs: members().filter(m => m.ref).sort((a, b) => b.ref.at - a.ref.at).slice(0, 1000).map(m => Object.assign(refOut(m, null), { id: m.id })),
+          links: Object.entries(S.refLinks).map(([code, L]) => ({ code, handle: h(L.id), label: L.label || '', at: L.at, visits: L.visits || 0, joins: L.joins || 0 })).sort((a, b) => b.at - a.at),
+          earners: members().filter(m => refXpOf(m) > 0).map(m => ({ handle: m.handle, xp: refXpOf(m) })).sort((a, b) => b.xp - a.xp).slice(0, 50) }); }
+      // stop a referral (it pays nothing more: what was paid stays), or take a code away
+      if (sub === 'referrals' && parts[2] && !parts[3] && M === 'POST') {
+        const m = own(S.members, parts[2]) ? S.members[parts[2]] : null; if (!m || !m.ref) return json(res, 404, { error: 'no such referral' });
+        if (body.action !== 'void') return json(res, 400, { error: 'action is void' });
+        m.ref.st = 'void'; m.ref.why = 'owner'; save(m); return json(res, 200, { ok: true }); }
+      if (sub === 'referrals' && parts[2] === 'links' && parts[3] && M === 'DELETE') {
+        if (!own(S.refLinks, parts[3])) return json(res, 404, { error: 'no such link' });
+        delete S.refLinks[parts[3]]; save('refLinks'); return json(res, 200, { ok: true }); }
       if (sub === 'playbooks' && !parts[2] && M === 'GET') return json(res, 200, { playbooks:
         q('SELECT p.*, (SELECT count(*) FROM playbook_adopts a WHERE a.playbook = p.id) AS adopts FROM playbooks p ORDER BY updated DESC LIMIT 500').all()
           .map(r => Object.assign(pbOut(r, null, true), { handle: own(S.members, r.member) ? S.members[r.member].handle : null })) });
@@ -2882,6 +3017,18 @@ function createSocial(opts) {
     }
 
     // ---------- a member's public badge page (no sign-in; only if they switched it on) ----------
+    // ---- a referral link, before anyone has a profile: who it's from and the welcome on offer; a visit is counted ----
+    if (head === 'ref' && parts[1] && !parts[2] && M === 'GET') {
+      if (limited(req, 'refget', 60, 600000)) return json(res, 429, { error: 'Too many requests from here.' });
+      const rf = refCfg().on ? refResolve(arg) : null; if (!rf) return json(res, 404, { error: 'That invite link isn’t valid.' });
+      return json(res, 200, { handle: rf.m.handle, av: avUrl(rf.m), level: (rf.m.stats && rf.m.stats.level) || 1, terms: refTermsNow() }); }
+    if (head === 'ref' && parts[1] && parts[2] === 'visit' && M === 'POST') {
+      const rf = refCfg().on ? refResolve(arg) : null; if (!rf) return json(res, 404, { error: 'That invite link isn’t valid.' });
+      const k = utcDayKey(now()) + '|' + rf.code + '|' + sha(ipOf(req) || '');
+      if (!visitSeen.has(k) && !limited(req, 'refvisit', 30, 600000)) { visitSeen.add(k);
+        if (rf.custom) { S.refLinks[rf.code].visits = (S.refLinks[rf.code].visits || 0) + 1; touch('refLinks'); save('refLinks'); }
+        else { rf.m.refVisits = (rf.m.refVisits || 0) + 1; save(rf.m); } }
+      return json(res, 200, { ok: true }); }
     if (head === 'public' && parts[1] && M === 'GET') {
       if (limited(req, 'public', 240, 600000)) return json(res, 429, { error: 'Too many requests.' });
       const m = byHandle(arg);
@@ -2926,6 +3073,11 @@ function createSocial(opts) {
       const key = crypto.randomBytes(24).toString('hex'), id = crypto.randomBytes(6).toString('hex');
       const m = { id, handle, keyHash: sha(key), createdAt: now(), lastSeen: now(), tier: 0, share: sanitizeShare(body.share),
         address, stats: null, weekXp: {}, money: null, banned: false, joinedWith: S.config.inviteCode ? 'invite' : 'open' };
+      // came by a member's link: the referral, on the terms of the day they joined
+      const rf = refCfg().on && typeof body.ref === 'string' ? refResolve(body.ref) : null;
+      if (rf) { m.ref = { by: rf.m.id, code: rf.code, at: now(), t: refTermsNow(), st: 'pending', paid: {} };
+        if (rf.custom) { S.refLinks[rf.code].joins = (S.refLinks[rf.code].joins || 0) + 1; touch('refLinks'); }
+        notify(rf.m, 'referral', '@' + handle + ' joined through your invite. It counts once they’re active: a claimed wallet and ' + m.ref.t.ad + ' trading days in their first ' + m.ref.t.aw + '.', { title: 'Someone joined with your link', url: '/daruma#invite' }); save(rf.m); }
       S.members[id] = m; S.follows[id] = []; reindex();
       const skip = new Set(Array.isArray(body.skip) ? body.skip.map(String) : []); // rankings the new member chose not to join
       for (const L of Object.values(S.leagues)) if (L.autoJoin && !skip.has(L.id)) joinLeague(L, m);
@@ -2934,7 +3086,7 @@ function createSocial(opts) {
       if (joinTimes.size > 1000) for (const [k, v] of joinTimes) if (!v.length || now() - v[v.length - 1] > 3600000) joinTimes.delete(k); // addresses an hour quiet
       if (m.share.feed) pushEvent(m, { type: 'join', text: 'joined the league' });
       save(m, 'follows', 'leagues'); refreshMoney(m, true); refreshBehavior(m, true);
-      return json(res, 200, { key, me: publicMember(m, m), share: m.share, walletTaken: !address && !!body.address });
+      return json(res, 200, { key, me: publicMember(m, m), share: m.share, walletTaken: !address && !!body.address, ref: m.ref ? refOut(m) : null });
     }
 
     // ---------- wallet sign-in and claims (Sign-In with Ethereum, EIP-4361) ----------
@@ -3375,6 +3527,37 @@ function createSocial(opts) {
         me.mentorWait = Object.assign({}, me.mentorWait, { [x.id]: now() }); save(me);
       } else { if (me.mentorWait) { me.mentorWait = Object.assign({}, me.mentorWait); delete me.mentorWait[x.id]; } save(me); }
       return json(res, 200, { ok: true, mentor: mentorCard(x, me), me: mentorsMeOut(me), share: me.share });
+    }
+    // ---- referrals: your link and your own codes, who joined through them, and what you earned ----
+    // GET /referrals   POST /referrals/links {code, label}   DELETE /referrals/links/<code>
+    if (head === 'referrals') {
+      if (!refCfg().on) return json(res, 403, { error: 'Referrals are switched off on this server.' });
+      const mineLinks = () => Object.entries(S.refLinks).filter(([, L]) => L.id === me.id).map(([code, L]) => ({ code, label: L.label || '', at: L.at, visits: L.visits || 0, joins: L.joins || 0 }));
+      if (!parts[1] && M === 'GET') { refCheck(me); refShare(me);
+        const refs = members().filter(o => o.ref && o.ref.by === me.id).sort((a, b) => b.ref.at - a.ref.at);
+        const pays = ((me.refXp && me.refXp.pays) || []), sumK = k => pays.filter(x => x.k === k).reduce((a, x) => a + x.xp, 0);
+        const links = mineLinks(), per = c => refs.filter(o => o.ref.code === c);
+        return json(res, 200, { terms: refTermsNow(), linksMax: refCfg().linksMax, monthlyCap: refCfg().monthlyCap, paidThisMonth: refActsThisMonth(me),
+          canCustom: refValid(me), why: refValid(me) ? null : me.claimed ? 'approval' : 'claim',
+          link: { code: me.handle.toLowerCase(), visits: me.refVisits || 0, joins: per(me.handle.toLowerCase()).length, active: per(me.handle.toLowerCase()).filter(o => o.ref.st === 'active').length },
+          links: links.map(L => Object.assign(L, { active: per(L.code).filter(o => o.ref.st === 'active').length })),
+          refs: refs.slice(0, 200).map(o => refOut(o, me)), total: refs.length,
+          earned: { bonus: sumK('bonus'), share: sumK('share'), welcome: sumK('welcome'), all: refXpOf(me) },
+          mine: me.ref ? refOut(me, me) : null }); }
+      if (parts[1] === 'links' && !parts[2] && M === 'POST') {
+        if (!refValid(me)) return json(res, 403, { error: 'Your own links open once your wallet is claimed' + (S.config.approveWallets ? ' and approved' : '') + '.' });
+        const code = cleanText(body.code, 24).toLowerCase(), label = cleanText(body.label, 40);
+        if (!REF_CODE_RE.test(code)) return json(res, 400, { error: 'A code is 3–24 letters, numbers, - or _, starting with a letter or number.' });
+        if (mineLinks().length >= refCfg().linksMax) return json(res, 409, { error: 'You have ' + refCfg().linksMax + ' links. Delete one to make another.' });
+        if (own(S.refLinks, code) || (byHandle(code) && byHandle(code).id !== me.id) || code === me.handle.toLowerCase()) return json(res, 409, { error: 'That code is taken.' });
+        if (limited(req, 'reflink:' + me.id, 20, 86400000, true)) return json(res, 429, { error: 'That’s a lot of links today.' });
+        S.refLinks[code] = { id: me.id, label, at: now(), visits: 0, joins: 0 }; save('refLinks');
+        return json(res, 200, { link: { code, label, at: now(), visits: 0, joins: 0, active: 0 } }); }
+      if (parts[1] === 'links' && parts[2] && !parts[3] && M === 'DELETE') {
+        let c = parts[2]; try { c = decodeURIComponent(c).toLowerCase(); } catch (e) {}
+        if (!own(S.refLinks, c) || S.refLinks[c].id !== me.id) return json(res, 404, { error: 'No such link.' });
+        delete S.refLinks[c]; save('refLinks'); return json(res, 200, { ok: true }); }
+      return json(res, 404, { error: 'not found' });
     }
     // ---- shared playbooks ----
     // GET /playbooks?q=&sort=popular|new|mentors&page=   one page of what members share
