@@ -1,7 +1,9 @@
 # Fourth-pass audit: the XP economy, inner mechanics, and performance — October 3, 2026
 
-> **Status: open.** Nothing below has been fixed yet. Each finding names the change that
-> fixes it; the roadmap at the end orders them.
+> **Status: addressed.** Every finding below is fixed, with a regression test, except X3, which is
+> mitigated (see "Resolution" at the end for what that means and what stays self-reported). The
+> performance work landed with a heavy-account browser test. 83 suites / 1,251 tests and the three
+> browser suites (`e2e/run.mjs`, `e2e/sync.mjs`, `e2e/heavy.mjs`) green at the merged revision.
 
 Scope: the XP game end to end (how XP is earned in the app, what the server accepts and pays
 on, duels, group duels, competitions and XP pots), the mechanics underneath it (the daily
@@ -482,3 +484,59 @@ has not been profiled.
    independent of view/dex filters.
 5. **Performance P1–P3.**
 6. The Lows.
+
+---
+
+## Resolution
+
+Fixed in five parallel change sets, merged together and re-tested as one. The ones with a
+visible effect on members, the owner, or numbers already on screen:
+
+- **XP that moves is now the server's own ledger (X1, X2, X5, D-series).** The balance behind
+  stakes, pot buy-ins, mentor fees and coach packs is verified Discipline XP (from the wallet's
+  fills, × the Discipline weight × that week's multiplier) + owner grants + server-checked badges
+  + mentoring XP ± stake and pot results − fees and purchases (`ledgerOf`, `social.js`). It is not
+  floored at zero; a negative balance blocks stakes and spending until earned back. Staking needs
+  "Verify my discipline". **Members without a verified wallet now have no stakeable balance**, and
+  existing balances drop to what the server can vouch for (a one-time migration credits verified
+  days already on file). The XP the app reports is still shown as the member's XP, but the server
+  derives the level from it, sums weekly XP from the days itself, rejects future days, freezes a
+  day after a week, caps a day at the most the configured weights can pay, and rate-limits
+  `/stats`. A profile can't be deleted with XP riding or a negative balance; debt beyond its
+  verified XP follows its wallets to a new profile.
+- **Duels:** a side that stops sharing returns mid-event, or has no drawdown reading at the end,
+  is out; settlement waits for readings taken after the last day (up to a week); a duel accepted
+  on a Monday or the 1st starts at the next one; settlement is one transaction; alts on one
+  wallet can't duel each other.
+- **Discipline and its XP (E1–E5, X4, X10):** the routine-vs-results test now compares like with
+  like (post-loss entries that slipped vs those that didn't, days with equal chances), so the
+  coin-flip history reads "no link"; stops get the planVerdict slippage band; revenge/size-up see
+  every close in the window; the loss limit reads fills, open entries included. Logging earns XP
+  only when done in time (`plannedAt` / `limitAt` / `checkinAt`); fields saved before the stamps
+  existed keep the benefit of the doubt they always had. XP, level and streak read every trade,
+  whatever the view and dex filters show. Scores shift accordingly — mostly up for stop-outs with
+  slippage, down where an entry after a breach had been missed.
+- **What's earned stays earned (X7–X9, X14):** an append-only award ledger (`settings.pzEarned`,
+  synced and merged across devices) keeps achievements, challenges and badges; swaps grade from
+  the swap day; badges count distinct goals, habits and leaks. Daily XP itself still re-derives
+  when the underlying data changes, and the README now says exactly that.
+- **Sync (S1–S5):** restores survive another device's save and report success only after the
+  server confirms; reloads lay the server snapshot over local settings (tilt alerts, coach detail
+  and the tax preset now sync; auto-refresh and tilt notifications stay per device); the server
+  keeps a pre-restore copy; off-site bundles carry a `VACUUM INTO` snapshot of `pulse.db`.
+
+**What X3 leaves self-reported, by design:** the XP shown, its boards and levels (bounded as above,
+never backing anything that moves XP); the Trader Age multiplier, which still reads app-reported
+logging parts (verified XP can be up to the top tier's factor above fills-only); any public wallet
+feeding verified XP if the owner switches off "only count claimed wallets"; a season's last week
+during its one-day grace. Mentor fees are not counted toward the monthly pair cap. README
+"Limitations" lists these.
+
+**Performance, measured after (31k trades):** Diagnostic 5.3 s → ~0.7 s (no main-thread task over
+~0.5 s), full `render()` 2.2 s → ~0.35 s, Daruma 557 → 509 KB gzipped (the Diagnostic, excursion
+and export code moved to journal-only files). Results are bit-identical to before, pinned by
+`tests/test-perf-paths.mjs` and `e2e/heavy.mjs` (`npm run test:e2e:heavy`, also in CI). Still
+known: the very first render after importing a 30k-trade history is one ~0.6 s task (mostly
+Chart.js on a cold dashboard; the import itself now yields before it); the Diagnostic's no-worker
+fallback is slower than before (~8 s at 31k, it now includes the walk-forward and change point it
+used to redo every render); league boards cost ~20 ms at 2,000 members (linear).

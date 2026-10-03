@@ -385,6 +385,9 @@ async function loadFromPaste(fills,opts){
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null};
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[];
+  // a big history: let the browser breathe between taking in the worker's trades and the first full
+  // render (two tasks of a few hundred ms instead of one long one at 30k trades)
+  if(allTrades.length>=5000)await new Promise(r=>setTimeout(r,0));
   $('empty').classList.add('hide'); $('app').classList.remove('hide'); render();
   setStatus(`Loaded ${fills.length} pasted fills → ${perpTr.length} perp + ${spotTr.length} spot trades.`+(dropped?` Skipped ${dropped} with invalid coin names.`:'')
     +(nDerived?` Position derived by average cost for ${nDerived} coin${nDerived===1?'':'s'} (no startPosition) — exact only when the paste holds each coin’s full history.`:''));
