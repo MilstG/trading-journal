@@ -192,8 +192,8 @@ function challengeStatus(res, ended){
 // ---- everything the progress panel needs, memoized with the coach context ----
 let _gameMemo={key:null,g:null};
 function gameContext(){
-  const ctx=coachContext();
-  const key=_coachMemo.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0);
+  const ctx=coachContext(true); // every trade, independent of the view and dex filters (AUDIT-4 X10)
+  const key=_coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0);
   if(_gameMemo.key===key)return _gameMemo.g;
   const X=pzXpCfg();
   const now=Date.now(), nowWeek=isoWeekOfKey(dayKey(now));
@@ -203,7 +203,7 @@ function gameContext(){
   const pmap=new Map(ctx.days.map(d=>[d.key,d]));
   const days=pzBehaviorDays(ctx.closed,{dayOf:dayKey,isLoss:PZ_LOSS}).map(b=>{ const p=pmap.get(b.key)||null;
     const bonus=pzBonus(p,journal['day:'+b.key],X);
-    return {key:b.key,score:b.score,n:b.n,net:b.net,behavior:b,parts:p?p.parts:{},breached:p?p.breached:false,process:p?p.score:null,bonus}; });
+    return {key:b.key,score:b.score,n:b.n,net:b.net,behavior:b,parts:p?p.parts:{},breached:p?p.breached:false,process:p?p.score:null,bonus,checkin:!!(p&&p.credit&&p.credit.checkin)}; });
   _pzSlipDays=new Map(days.map(d=>[d.key,d.behavior])); // 'slip' habits (plugging a leak) read their days from here
   const streak=disciplineStreak(days,nowWeek);
   const pa=planAdherence(ctx.closed,journal,_excM);
@@ -483,31 +483,42 @@ function pzBehaviorDays(closed, opts){
     const zero=()=>({revenge:0,afterTwo:0,sizeUp:0,addLoser:0,overtrade:0,heldLoser:0});
     // chances: how often the habit was tested (an entry after a loss, a losing trade to cut, a day with two
     // losses in a row…); kept: the chances not slipped; keptClean: kept by a trade with no slip of any kind
-    // (Trader Age reads these to say what each habit earns, not only what the slips cost)
-    const flags=zero(), chances=zero(), kept=zero(), keptClean=zero(), slips=[]; let clean=0, entries=0;
-    const tested=(c,f,x)=>{ chances[c]++; if(!f.includes(c)){ kept[c]++; if(!f.length)keptClean[c]++; } };
+    // (Trader Age reads these to say what each habit earns, not only what the slips cost); tests: the ids of
+    // the trades that were chances at revenge / sizeUp, so routine-vs-results can compare post-loss entries
+    // that slipped with post-loss entries that didn't, instead of whole days (which carry the triggering loss)
+    const flags=zero(), chances=zero(), kept=zero(), keptClean=zero(), slips=[], tests={revenge:[],sizeUp:[]}; let clean=0, entries=0;
+    const tested=(c,f,id)=>{ chances[c]++; if(tests[c])tests[c].push(id); if(!f.includes(c)){ kept[c]++; if(!f.length)keptClean[c]++; } };
     arr.forEach((t)=>{
       // a spot position carried on after a partial sale is not a new entry: only the holding checks apply
       const entry=!t.carried, i=entry?entries++:-1;
       // closes up to and including the entry's millisecond: a stop-and-reverse closes the loser and
       // opens the next trade on the same fill, and that re-entry counts
-      const prev=[]; for(let q=before(t.openTime+1)-1;q>=0&&prev.length<2;q--)if(closes[q]!==t)prev.push(closes[q]);
+      const top=before(t.openTime+1)-1, prev=[]; for(let q=top;q>=0&&prev.length<2;q--)if(closes[q]!==t)prev.push(closes[q]);
       const p1=prev[0]||null, p2=prev[1]||null, f=[];
-      const afterLoss=entry&&p1&&loss(p1.net), sizeTest=afterLoss&&t.openTime-p1.closeTime<=H2&&!!medSize, holdTest=loss(t.net)&&!!winHold, addTest=hasAdd(t);
-      if(afterLoss&&t.openTime-p1.closeTime<=M)f.push('revenge');
+      // EVERY close inside the 15-minute / 2-hour window is scanned for a loss, not just the latest:
+      // a winner closing in between used to hide the loss (evaluateRules' cooldown had the same bug)
+      let lossIn15=false, lossIn2h=false;
+      if(entry)for(let q=top;q>=0&&t.openTime-closes[q].closeTime<=H2;q--){ const c=closes[q]; if(c===t||!loss(c.net))continue; lossIn2h=true; lossIn15=t.openTime-c.closeTime<=M; break; } // newest loss first
+      // the chance at "no revenge entry": your last close was a loss under 2 hours ago (kept: you waited 15
+      // minutes), or a loss closed inside the 15 minutes (a slip whatever closed since). Whether a chance was
+      // kept then turns on your timing alone, not on how the trades in between went; and the next morning
+      // after yesterday's loss was never a test of waiting (counting it as kept made the kept share fall
+      // with the day's own losses, AUDIT-4 E1). Sizing up: any entry within 2 hours of a loss.
+      const afterLoss=entry&&(lossIn15||!!(p1&&loss(p1.net)&&t.openTime-p1.closeTime<=H2)), sizeTest=lossIn2h&&!!medSize, holdTest=loss(t.net)&&!!winHold, addTest=hasAdd(t);
+      if(lossIn15)f.push('revenge');
       if(entry&&p1&&p2&&loss(p1.net)&&loss(p2.net)&&dayOf(p1.closeTime)===dayOf(t.openTime)&&dayOf(p2.closeTime)===dayOf(t.openTime))f.push('afterTwo');
       if(sizeTest&&size(t)>1.5*medSize)f.push('sizeUp');
       if(addTest&&addedToLoser(t))f.push('addLoser');
       if(entry&&cap!=null&&i>=cap)f.push('overtrade');
       if(holdTest&&dur(t)>3*winHold)f.push('heldLoser');
       for(const x of f)flags[x]++; if(!f.length)clean++; else slips.push({id:t.id,net:t.net,f});
-      if(afterLoss)tested('revenge',f); if(sizeTest)tested('sizeUp',f); if(addTest)tested('addLoser',f); if(holdTest)tested('heldLoser',f);
+      if(afterLoss)tested('revenge',f,t.id); if(sizeTest)tested('sizeUp',f,t.id); if(addTest)tested('addLoser',f,t.id); if(holdTest)tested('heldLoser',f,t.id);
     });
     // day-level chances: two losses in a row closed today (a chance to stop), a usual count to stay inside
     const byClose=[...arr].sort((a,b)=>a.closeTime-b.closeTime);
     if(byClose.some((t,j)=>j>0&&loss(t.net)&&loss(byClose[j-1].net))){ chances.afterTwo=1; if(!flags.afterTwo)kept.afterTwo=keptClean.afterTwo=1; }
     if(cap!=null){ chances.overtrade=1; if(!flags.overtrade)kept.overtrade=keptClean.overtrade=1; }
-    out.push({key:k,score:Math.round(100*clean/n),n,clean,flags,chances,kept,keptClean,slips,net:arr.reduce((s,t)=>s+t.net,0)});
+    out.push({key:k,score:Math.round(100*clean/n),n,clean,flags,chances,kept,keptClean,tests,slips,net:arr.reduce((s,t)=>s+t.net,0)});
   });
   return out;
 }
@@ -548,11 +559,15 @@ function peerSummary(closed, o){
   return {ok:true,v:1,n,style,size,exp,act,tw:r1(tw),hold:Math.round(hold/60000),disc:disc==null?null:r1(disc),rev:r1(rev),jour:jour==null?null:r1(jour),
     wr:wr==null?null:r1(wr),pf:pf==null?null:r2(pf),pay:pay==null?null:r2(pay),fees:fees==null?null:r1(fees)};
 }
-// Bonus XP for what you chose to log that day. Nothing here can lower a score.
+// Bonus XP for what you chose to log that day. Nothing here can lower a score. Logging only pays when it
+// was done in time (processDays decides, from the entry's timestamps): the plan part is already whole /
+// half / nothing by when it was written, the limit part only exists for a limit set before the first
+// entry, and the check-in pays when processDays credited it (done on or before the day) — so a plan,
+// limit or check-in typed onto an old day from the calendar journals it but mints no XP.
 function pzBonus(pday, dayE, X){
   X=X||{checkin:10,plan:15,journal:15,stops:10,limit:10,review:15};
   const P=(pday&&pday.parts)||{}, b={};
-  if(dayE&&(dayE.sleep||dayE.stress||dayE.focus)&&X.checkin)b.checkin=X.checkin;
+  if(dayE&&(dayE.sleep||dayE.stress||dayE.focus)&&pday&&pday.credit&&pday.credit.checkin&&X.checkin)b.checkin=X.checkin;
   if(P.plan>0&&X.plan)b.plan=Math.round(X.plan*P.plan);
   if(P.journal>0&&X.journal)b.journal=Math.round(X.journal*P.journal);
   if(P.planned>0&&X.stops)b.stops=Math.round(X.stops*P.planned);

@@ -824,14 +824,15 @@ function wirePlaybooks(){
 }
 
 /* ============================ routine vs results (Review) ============================ */
-// The long view of "does discipline pay": routineVsResults (habits-coach.js) over the whole history
-// in the current view, memoized on the coach context (it runs ~3k seeded permutations/resamples).
+// The long view of "does discipline pay": routineVsResults (habits-coach.js) over the whole history,
+// memoized on the game's context (it runs ~3k seeded permutations/resamples). Like Discipline and XP it
+// reads every trade, whatever the view and dex filters show — the days and their trades must match.
 let _rvMemo={key:null,r:null}, _rvCharts=[];
 function rvModel(){
-  const g=gameContext(), ctx=coachContext(), key=_coachMemo.key+'|'+g.days.length;
+  const g=gameContext(), ctx=g.ctx, key=_coachMemoAll.key+'|'+g.days.length;
   if(_rvMemo.key===key)return _rvMemo.r;
   const entryOf=k=>{ const e=journal['day:'+k]; return {checkin:typeof pzReadinessManual==='function'&&pzReadinessManual(e)!=null, review:!!(e&&e.eod&&e.eod.at)}; };
-  const r=routineVsResults(g.days,ctx.byDay,{rOf:rFor,pctOf:retPct,weekOf:isoWeekOfKey,entryOf,seed:_hashSeed('rv|'+view)});
+  const r=routineVsResults(g.days,ctx.byDay,{rOf:rFor,pctOf:retPct,weekOf:isoWeekOfKey,entryOf,seed:_hashSeed('rv|all')});
   _rvMemo={key,r}; return r;
 }
 // plain words for a rank correlation and its p-value
@@ -845,7 +846,7 @@ function routineSectionHtml(){
   let r; try{ r=rvModel(); }catch(e){ console.warn('routine vs results',e); return ''; }
   const u=r.unit, fmt=v=>v==null?'—':(v>=0?'+':'')+(u==='R'?v.toFixed(2)+'R':v.toFixed(2)+'%');
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
-  const head=`<div class="diag-section"><h2>Routine vs results <span style="font-size:11px;color:var(--faint);font-weight:400">the long view · does your discipline pay? · current view</span></h2>`;
+  const head=`<div class="diag-section"><h2>Routine vs results <span style="font-size:11px;color:var(--faint);font-weight:400">the long view · does your discipline pay? · all your trades</span></h2>`;
   const hl=`<div id="hlSec">${hlSectionInner()}</div>`;
   if(r.weeks.length<r.need.weeks)return head+hl+`<p class="lead" style="margin-top:14px">The week-by-week test below needs at least ${r.need.weeks} weeks with trades to say anything honest — you have ${r.weeks.length}. Keep trading your process; the link (or the lack of one) shows up here once there’s enough history.</p>
     <div class="rvbar" role="progressbar" aria-valuemin="0" aria-valuemax="${r.need.weeks}" aria-valuenow="${r.weeks.length}" data-tip="${r.weeks.length} of ${r.need.weeks} weeks with trades"><i style="width:${Math.round(100*r.weeks.length/r.need.weeks)}%"></i></div></div>`;
@@ -861,35 +862,35 @@ function routineSectionHtml(){
   const roll=r.rolling.length>=2?r.rolling:null;
   return head+hl+`<h3 style="margin:18px 0 6px;font-size:13px">Week by week · the long view</h3><p class="lead">${headline}</p>
     <div class="diag-grid">
-      <div class="diag-card"><h3 data-tip="Bars: average result per trade each week. Line: that week’s routine score (0–100, right axis) — the share of trades with no revenge entry, sizing up after a loss, adding to a loser or overtrading.">Week by week</h3><div class="chart-box" style="height:220px"><canvas id="rvWeeks"></canvas></div></div>
+      <div class="diag-card"><h3 data-tip="Bars: average result per trade each week. Line: that week’s routine score (0–100, right axis) — how often you kept to it when you had the chance: waited after a loss, kept your size after a loss, didn’t add to a loser, stayed inside your usual trade count.">Week by week</h3><div class="chart-box" style="height:220px"><canvas id="rvWeeks"></canvas></div></div>
       <div class="diag-card"><h3 data-tip="Cumulative result of the trades taken on days scoring 70+ versus all other days, in date order. Two separate running totals.">Disciplined days vs the rest</h3><div class="chart-box" style="height:220px"><canvas id="rvCurves"></canvas></div></div>
     </div>
     <div class="diag-grid">
       <div class="diag-card"><h3>The numbers</h3>
         ${mrow('Same week',L?`${esc(L.text)} <span style="color:var(--faint)">ρ ${r.corr.rho.toFixed(2)} · p ${r.corr.p.toFixed(3)} · ${r.corr.n} weeks</span>`:'—','Spearman rank correlation between each week’s routine score and its average result per trade, with a permutation p-value (1,000 shuffles).')}
         ${mrow('Next week',N?`${esc(N.text.replace('more disciplined weeks, ','a disciplined week, then '))} <span style="color:var(--faint)">ρ ${r.lead.rho.toFixed(2)} · p ${r.lead.p.toFixed(3)}</span>`:'—','Does a disciplined week predict the FOLLOWING week’s results? Same-week links can run backwards (a bad day makes you sloppy); a next-week link can’t, so it’s closer to cause and effect.')}
-        ${dv?mrow('Per trade, disciplined days',`${fmt(dv.good.mean)} <span style="color:var(--faint)">${dv.good.n} trades</span>`):''}
+        ${dv?mrow('Per trade, disciplined days',`${fmt(dv.good.mean)} <span style="color:var(--faint)">${dv.good.n} trades</span>`,'Days are only compared with days that had as many entries after a loss (a day without a loss to react to is a better day by construction), and the groups are pooled. Days with no such match are left out.'):''}
         ${dv?mrow('Per trade, other days',`${fmt(dv.rest.mean)} <span style="color:var(--faint)">${dv.rest.n} trades</span>`):''}
         ${roll?mrow('Over time',`ρ ${roll[0].rho.toFixed(2)} → ${roll[roll.length-1].rho.toFixed(2)} <span style="color:var(--faint)">rolling 12 weeks</span>`,'The same-week correlation over a sliding 12-week window, first and latest. Rising means discipline is paying more lately.'):''}
         <p class="mini-note">Results are ${u==='R'?'in R (your planned risk per trade)':'% return on notional (set a planned risk to see R)'}, so bigger size doesn’t count as better trading. Correlation isn’t proof: read the next-week line and the habits below as the stronger evidence.</p></div>
     </div>
     <div class="diag-grid" style="grid-template-columns:1fr">
-      <div class="diag-card"><h3 data-tip="Average result per trade on days you kept each habit versus days you didn’t. 'Holds up' survives a false-discovery check across all habits tested; 'suggestive' doesn’t yet. Habits that can only fail on a losing day are listed but not tested.">Which habits pay</h3>
+      <div class="diag-card"><h3 data-tip="Average result per trade on days you kept each habit versus days you didn’t (d = days). Revenge entries and sizing up are compared trade by trade (t): entries after a loss where you waited or kept your size, against those where you didn’t — never the loss that came before. 'Holds up' survives a false-discovery check across all habits tested; 'suggestive' doesn’t yet. Habits that can only fail on a losing day are listed but not tested.">Which habits pay</h3>
         <div class="tbl-wrap"><table class="rvtbl"><thead><tr><th class="l">Habit</th><th>Kept</th><th>Missed</th><th>Difference</th><th class="l">Evidence</th></tr></thead><tbody>
         ${hRows.length?'':'<tr><td colspan="5" class="l" style="color:var(--faint)">Every habit here was either always kept or never logged in this history — nothing to compare yet.</td></tr>'}
-        ${hRows.map(h=>`<tr${h.mechanical?' class="rvmech"':''}><td class="l">${esc(h.label)}</td><td>${fmt(h.kept.mean)} <span class="rvn">${h.kept.n}d</span></td><td>${fmt(h.missed.mean)} <span class="rvn">${h.missed.n}d</span></td><td class="${h.diff==null?'':cls(h.diff)}">${h.diff==null?'—':fmt(h.diff)}</td><td class="l">${sig(h)}</td></tr>`).join('')}
+        ${hRows.map(h=>`<tr${h.mechanical?' class="rvmech"':''}><td class="l">${esc(h.label)}</td><td>${fmt(h.kept.mean)} <span class="rvn">${h.kept.n}${h.per==='trade'?'t':'d'}</span></td><td>${fmt(h.missed.mean)} <span class="rvn">${h.missed.n}${h.per==='trade'?'t':'d'}</span></td><td class="${h.diff==null?'':cls(h.diff)}">${h.diff==null?'—':fmt(h.diff)}</td><td class="l">${sig(h)}</td></tr>`).join('')}
         </tbody></table></div></div>
     </div></div>`;
 }
 // ---- habits vs results, day by day: the scatter, the score bands and which habits pay ----
 // Shown from three trading days (the week-by-week test above waits for eight weeks). Same model
-// as Pulse → Stats → Habits vs results (habitLink), on this view's whole history.
+// as Pulse → Stats → Habits vs results (habitLink), on the whole history of every trade.
 let _hlUnit='$', _hlMemo={key:null,v:null}, _hlCharts=[];
 function hlModel(){
-  const g=gameContext(), ctx=coachContext(), key=_coachMemo.key+'|'+g.days.length+'|'+_hlUnit+'|'+_jrev;
+  const g=gameContext(), ctx=g.ctx, key=_coachMemoAll.key+'|'+g.days.length+'|'+_hlUnit+'|'+_jrev;
   if(_hlMemo.key===key)return _hlMemo.v;
   const entryOf=k=>{ const e=journal['day:'+k]; return {checkin:typeof pzReadinessManual==='function'&&pzReadinessManual(e)!=null, review:!!(e&&e.eod&&e.eod.at)}; };
-  const v=habitLink(g.days,ctx.byDay,{unit:_hlUnit,rOf:rFor,pctOf:retPct,entryOf,seed:_hashSeed('hl|'+view)});
+  const v=habitLink(g.days,ctx.byDay,{unit:_hlUnit,rOf:rFor,pctOf:retPct,entryOf,seed:_hashSeed('hl|all')});
   _hlMemo={key,v}; return v;
 }
 const hlFmt=(v,u)=>v==null||!isFinite(v)?'—':u==='$'?fmtUsd(v):u==='%'?(v>=0?'+':'')+v.toFixed(2)+'%':(v>=0?'+':'')+v.toFixed(2)+'R';
@@ -946,7 +947,8 @@ function drawHabitCharts(){
       backgroundColor:L.habits.map(x=>x.mechanical?'rgba(120,130,150,.6)':x.diff>=0?pos:neg),borderRadius:4,maxBarThickness:22}]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{
       label:c=>' Kept minus missed: '+hlFmt(c.parsed.x,u),
-      afterLabel:c=>{ const x=L.habits[c.dataIndex]; return [' Kept: '+hlFmt(x.kept.avg,u)+' a day over '+x.kept.n+' day'+(x.kept.n===1?'':'s'),' Missed: '+hlFmt(x.missed.avg,u)+' a day over '+x.missed.n+' day'+(x.missed.n===1?'':'s')].concat(x.mechanical?[' Can only fail on a losing day — follows from the result.']:[]); }}}},
+      afterLabel:c=>{ const x=L.habits[c.dataIndex], w=x.per==='trade'?'trade':'day', nn=k=>k+' '+(x.per==='trade'?'entr'+(k===1?'y':'ies')+' after a loss':'day'+(k===1?'':'s'));
+        return [' Kept: '+hlFmt(x.kept.avg,u)+' a '+w+' over '+nn(x.kept.n),' Missed: '+hlFmt(x.missed.avg,u)+' a '+w+' over '+nn(x.missed.n)].concat(x.mechanical?[' Can only fail on a losing day — follows from the result.']:[]); }}}},
       scales:{x:{grid:{color:GRID},ticks:{callback:yTick}},y:{grid:{display:false},ticks:{autoSkip:false}}}}}),
     'Green bars: habits whose kept days beat their missed days. A link, not proof — but one worth protecting.'));
   const tg=$('hlUnit'); if(tg)tg.querySelectorAll('button').forEach(btn=>btn.onclick=()=>{ _hlUnit=btn.dataset.u; const sec=$('hlSec'); if(sec){ sec.innerHTML=hlSectionInner(); drawHabitCharts(); } });
@@ -1137,17 +1139,23 @@ ${coachOn()?`        <div class="field"><label data-tip="Ten seconds before the 
 }
 // Session check-in scales, stored on the day entry (1 = low … 5 = high).
 const CHECKIN_FIELDS=[['sleep','Sleep'],['stress','Stress'],['focus','Focus']];
-// Merge a day-journal save: keeps `plannedAt` — when a plan (bias / plan / max loss) first
-// existed for the day — so the process score can tell "planned before the first trade"
-// from "wrote it up afterwards". Pure; null = nothing left worth keeping.
+// Merge a day-journal save, stamping when each logged thing was first set, so the process score and
+// bonus XP can tell "before the first trade" from "wrote it up afterwards" (or a month later, from the
+// calendar): `plannedAt` — when a plan (bias / plan / max loss / rules) first existed for the day;
+// `limitAt` — when the committed max loss took its current value (tightening it keeps the old stamp:
+// a stricter limit can't be used to dodge a breach; loosening or setting it restamps); `checkinAt` —
+// when the check-in (sleep / stress / focus) was first filled in. Pure; null = nothing left worth keeping.
 function nextDayEntry(prev,e,now){
   const has=['bias','plan','review','maxLoss','maxTrades','adherence','sleep','stress','focus','rules','am','eod'].some(k=>e[k]);
   // structured rules count as a plan only when at least one is set
-  const rulesOn=(r=>!!r&&typeof r==='object'&&Object.values(r).some(v=>Array.isArray(v)?v.length:!!v))(e.rules);
+  const on=r=>!!r&&typeof r==='object'&&Object.values(r).some(v=>Array.isArray(v)?v.length:!!v), rulesOn=on(e.rules);
   if(!has)return null;
   const planned=!!(e.bias||e.plan||e.maxLoss>0||rulesOn);
-  const out={...e,updatedAt:now};
-  if(planned)out.plannedAt=(prev&&prev.plannedAt)||now;
+  const out={...e,updatedAt:now}; delete out.plannedAt; delete out.limitAt; delete out.checkinAt;
+  // an entry saved before these stamps existed carries its last save (updatedAt) forward: never earlier than the truth
+  if(planned)out.plannedAt=(prev&&(prev.plannedAt||((prev.bias||prev.plan||prev.maxLoss>0||on(prev.rules))&&prev.updatedAt)))||now;
+  if(e.maxLoss>0)out.limitAt=prev&&prev.maxLoss>0&&e.maxLoss<=prev.maxLoss?(prev.limitAt||prev.updatedAt||now):now;
+  if(e.sleep||e.stress||e.focus)out.checkinAt=prev&&(prev.sleep||prev.stress||prev.focus)?(prev.checkinAt||prev.updatedAt||now):now;
   return out;
 }
 function wireDayJournal(){

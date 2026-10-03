@@ -70,8 +70,11 @@ console.log('\nBonus XP');
 t('logging only ever adds: check-in 10, plan 15, journal 15, stops 10, limit 10 — prorated, never negative', () => {
   eq(ctx.pzBonus(null, null), { parts: {}, total: 0 });
   eq(ctx.pzBonus({ parts: { plan: 0, journal: 0, limit: 0 } }, {}).total, 0, 'a missed plan or a blown limit costs nothing');
-  const b = ctx.pzBonus({ parts: { plan: 1, journal: 0.5, planned: 1, limit: 1 } }, { sleep: 3 });
+  const b = ctx.pzBonus({ parts: { plan: 1, journal: 0.5, planned: 1, limit: 1 }, credit: { checkin: true } }, { sleep: 3 });
   eq(b.parts, { checkin: 10, plan: 15, journal: 8, stops: 10, limit: 10 }); eq(b.total, 53);
+  // the check-in pays only when processDays credited it (done on or before the day, AUDIT-4 X4)
+  eq(ctx.pzBonus({ parts: {}, credit: { checkin: false } }, { sleep: 3 }).parts, {}, 'a check-in typed in after the day earns nothing');
+  eq(ctx.pzBonus(null, { sleep: 3 }).parts, {}, 'no process day to vouch for it: nothing');
   eq(ctx.pzBonus({ parts: { plan: 0.5 } }, null).parts.plan, 8, 'a plan written after the first entry earns half');
 });
 

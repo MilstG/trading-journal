@@ -24,7 +24,7 @@ Object.assign(ctx, {
   signedPlain: v => (v < 0 ? '−$' : '+$') + Math.abs(v), PZ_BEH: {},
 });
 vm.createContext(ctx);
-vm.runInContext(grabConst('PROCESS_W') + '\n' + grabConst('pzReadinessManual') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'pzTrendStats',
+vm.runInContext(grabConst('PROCESS_W') + '\n' + grabConst('pzReadinessManual') + '\n' + ['nfMedian', 'pzReadiness', 'pzScoreOf', 'pzRisk', 'realizedByDay', 'pzTrendStats',
   'pzReadinessLink', 'pzBars', 'pzDayTip', 'pzHasPlan', 'pzBonusItems', 'pzPlain', 'pzRulesBroken', 'pzCoachLine'].map(grabFn).join('\n'), ctx);
 
 const DAY = 86400000, T0 = Date.UTC(2026, 8, 30, 12);

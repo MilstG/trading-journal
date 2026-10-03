@@ -192,9 +192,11 @@ t('the scorer: every habit is a chance kept or slipped; a slip of one kind keeps
     T('a', d0, d0 + 30 * m, -10), T('b', d0 + 60 * m, d0 + 90 * m, 5), T('c', d0 + 120 * m, d0 + 150 * m, -10), T('d', d0 + 155 * m, d0 + 180 * m, 2)], { dayOf: key, isLoss: n => n < -1 });
   eq(days.length, 2); const d = days[1];
   eq([d.n, d.clean, d.score, d.flags.revenge], [4, 3, 75, 1]);
-  eq(d.chances, { revenge: 2, afterTwo: 0, sizeUp: 2, addLoser: 0, overtrade: 0, heldLoser: 2 }, 'two entries after a loss, two soon after one, two losers to cut');
-  eq(d.kept, { revenge: 1, afterTwo: 0, sizeUp: 2, addLoser: 0, overtrade: 0, heldLoser: 2 });
-  eq(d.keptClean, { revenge: 1, afterTwo: 0, sizeUp: 1, addLoser: 0, overtrade: 0, heldLoser: 2 }, 'the revenge entry kept its size, but it isn’t a clean trade');
+  // sizing up is tested on every entry within 2 hours of ANY loss, not only when the last close lost
+  // (AUDIT-4 E4): c opens 90 minutes after a's loss with b's win in between, so it's a third chance
+  eq(d.chances, { revenge: 2, afterTwo: 0, sizeUp: 3, addLoser: 0, overtrade: 0, heldLoser: 2 }, 'two entries after a loss, three within 2 hours of one, two losers to cut');
+  eq(d.kept, { revenge: 1, afterTwo: 0, sizeUp: 3, addLoser: 0, overtrade: 0, heldLoser: 2 });
+  eq(d.keptClean, { revenge: 1, afterTwo: 0, sizeUp: 2, addLoser: 0, overtrade: 0, heldLoser: 2 }, 'the revenge entry kept its size, but it isn’t a clean trade');
   eq(days[0].chances, { revenge: 1, afterTwo: 0, sizeUp: 0, addLoser: 0, overtrade: 0, heldLoser: 0 }, 'the first day has no usual size or hold to test against; its winner did wait');
   // two losses in a row closed in the day: a chance to stop, kept when nothing was opened after them
   const two = pzBehaviorDays([T('a', d0, d0 + 30 * m, -10), T('b', d0 + 60 * m, d0 + 90 * m, -10)], { dayOf: key, isLoss: n => n < -1 })[0];

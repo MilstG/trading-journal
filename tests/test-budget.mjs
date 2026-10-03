@@ -32,8 +32,10 @@ try {
     // old lines by a few KB; gzipped sizes barely moved (607 / 539 against 620 / 560), so only raw moves.
     // Oct 2026: the mentor directory, rates and the send-to-a-mentor sheet (about 22 KB raw) fit under
     // these lines: 1836 / 1636 raw, 617 / 549 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 620],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
+    // Oct 2026: outcome-blind routine score, timestamped logging and fill-by-fill loss limits (AUDIT-4 E1–E5,
+    // X4, X10) with their comments: about 4 KB raw / 3 KB gzipped on each screen (1854 / 1654, 623 / 555).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1860, 626],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1660, 560],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

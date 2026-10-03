@@ -18,7 +18,7 @@ const grabConst = (name) => {
   return html.slice(i, html.indexOf(';\n', i) + 1);
 };
 
-const FNS = ['nfMedian', 'nfRules', 'evaluateRules', 'nfPlan', 'planAdherence', 'nextPlan', 'nextDayEntry',
+const FNS = ['nfMedian', 'nfRules', 'evaluateRules', 'nfPlan', 'planAdherence', 'planStopBand', 'realizedByDay', 'nextPlan', 'nextDayEntry',
   'addedToLoser', 'tradeStates', 'checkinPred', 'minerFams', 'resolvePinPred', 'ruleIsLive', 'customRulePreds', 'customRulePredsNow',
   'ruleFollowThrough', 'liveRuleHits', 'isJournaled', 'journalInbox', 'journalStreak', 'processDays',
   'processQuadrants', 'processTrend', 'replayExtremes', '_erf'];
@@ -170,7 +170,8 @@ t('a clean, planned, journaled day scores 100; parts that do not apply drop out'
 t('late plan, broken rule, no journal, trading past the loss limit all cost points', () => {
   const a = mk('q1', 0, -300), b = mk('q2', 0, -100, { openTime: T0 + 3601e3 + 60e3, closeTime: T0 + 3 * 3600e3 });
   const k = ctx.dayKey(a.closeTime);
-  const J = { ['day:' + k]: { plan: 'x', plannedAt: a.openTime + 1, maxLoss: 250 } };
+  // the max loss was committed before the first entry (limitAt): a limit typed in later earns nothing (AUDIT-4 X4)
+  const J = { ['day:' + k]: { plan: 'x', plannedAt: a.openTime + 1, maxLoss: 250, limitAt: a.openTime - 1 } };
   const d = ctx.processDays([a, b], J, { dayOf: ctx.dayKey, violIds: new Set(['q2']) })[0];
   eq(d.parts.plan, 0.5); eq(d.parts.rules, 0.5); eq(d.parts.limit, 0); eq(d.parts.journal, 0);
   eq(d.parts.planned, undefined); // no trade plan ever written yet → not graded

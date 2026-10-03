@@ -54,12 +54,20 @@ function pplanMatches(J, trades, now){
 // costR: what the deviation cost against following the plan — moved/held vs the stop-out the plan
 // called for (−1R); early only when the target printed while you held (else nobody knows: unpriced).
 // cost$ = costR × 1R × the largest size held.
+// The slippage band around a planned stop: 10% of the risk carried (actual entry to stop; the planned
+// distance when the fill already sat past the stop). Shared by planVerdict and the process score's
+// planAdherence, so a stop-out a tick through the level is "followed" and "stop honored" in both —
+// nearly every real stop slips a little. sg: +1 long, −1 short; en: planned entry, else the actual one.
+function planStopBand(t, p){
+  const sg=t.dir==='Short'?-1:1, en=p.entry>0?p.entry:t.avgEntry, carried=sg*(t.avgEntry-p.stop), unit=carried>0?carried:Math.abs(en-p.stop);
+  return {sg, en, unit, tol:0.1*unit};
+}
 function planVerdict(t, p, e){
   if(!t||t.isOpen)return null;
   if(!p||!(p.stop>0))return {v:'none'};
-  const short=t.dir==='Short', sg=short?-1:1, en=p.entry>0?p.entry:t.avgEntry;
+  const en=p.entry>0?p.entry:t.avgEntry;
   if(!(t.avgEntry>0)||!(t.avgExit>0)||!(Math.abs(en-p.stop)>0))return {v:'none'};
-  const carried=sg*(t.avgEntry-p.stop), unit=carried>0?carried:Math.abs(en-p.stop), tol=0.1*unit;
+  const {sg,unit,tol}=planStopBand(t,p);
   const rr=p.target>0?Math.abs(p.target-en)/Math.abs(en-p.stop):null;
   const R=sg*(t.avgExit-t.avgEntry)/unit, R$=unit*(t.maxSize||0);
   const past=(px,lvl)=>sg*(lvl-px)>tol; // px on the losing side of lvl by more than the slippage band
