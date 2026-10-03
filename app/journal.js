@@ -336,7 +336,7 @@ function journalRow(t,j,R){
     </div>
     <div>
       <div class="field"><label>Execution rating</label>
-        <div class="rating" data-id="${esc(t.id)}" role="radiogroup" aria-label="Trade rating">${[1,2,3,4,5].map(n=>`<span class="star ${(j.rating||0)>=n?'on':''}" data-r="${n}" role="radio" tabindex="0" aria-label="${n} star${n>1?'s':''}" aria-checked="${(j.rating||0)===n?'true':'false'}">★</span>`).join('')}</div></div>
+        <div class="rating" data-id="${esc(t.id)}" role="radiogroup" aria-label="Trade rating">${[1,2,3,4,5].map(n=>`<span class="star ${(j.rating||0)>=n?'on':''}" data-r="${n}" role="radio" tabindex="${n===((j.rating||0)||1)?0:-1}" aria-label="${n} star${n>1?'s':''}" aria-checked="${(j.rating||0)===n?'true':'false'}">★</span>`).join('')}</div></div>
       <div class="field"><label>Mistakes / flags</label>
         <div class="mistakes" data-id="${esc(t.id)}">${MISTAKES.map(m=>`<label class="chk ${(j.mistakes||[]).includes(m)?'on':''}"><input type="checkbox" data-m="${esc(m)}" ${(j.mistakes||[]).includes(m)?'checked':''}>${m}</label>`).join('')}</div></div>
       <div class="field"><label>Trade metrics</label>

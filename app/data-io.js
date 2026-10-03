@@ -713,14 +713,15 @@ $('tbody').addEventListener('click',e=>{
 });
 function setStar(star){ const id=star.parentElement.dataset.id, r=+star.dataset.r; ensureJ(id).rating=r;
   markJEdit(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
-  star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); }); }
+  star.parentElement.querySelectorAll('.star').forEach((s,i)=>{ s.classList.toggle('on',i<r); s.setAttribute('aria-checked',(i+1)===r?'true':'false'); s.tabIndex=(i+1)===r?0:-1; }); } // one Tab stop: the chosen star
 // keyboard: expand rows with Enter/Space; set star ratings with Enter/Space/Arrows
 $('tbody').addEventListener('keydown',e=>{
   const star=e.target.closest('.star');
   if(star){ const stars=[...star.parentElement.querySelectorAll('.star')]; const i=stars.indexOf(star);
     if(e.key==='Enter'||e.key===' '){ e.preventDefault(); setStar(star); }
-    else if(e.key==='ArrowRight'||e.key==='ArrowUp'){ e.preventDefault(); (stars[i+1]||stars[i]).focus(); }
-    else if(e.key==='ArrowLeft'||e.key==='ArrowDown'){ e.preventDefault(); (stars[i-1]||stars[i]).focus(); }
+    else if(/^(Arrow(Left|Right|Up|Down)|Home|End)$/.test(e.key)){ e.preventDefault(); // a radiogroup: arrows move and select, wrapping, like Daruma's
+      const k=e.key, b=stars[k==='Home'?0:k==='End'?stars.length-1:(i+(k==='ArrowRight'||k==='ArrowDown'?1:-1)+stars.length)%stars.length];
+      setStar(b); b.focus(); }
     return; }
   if(e.target.closest('textarea,input,.mistakes,.jsave,.attgrid,.attbtn'))return;
   const row=e.target.closest('tr.trow');
