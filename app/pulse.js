@@ -1045,7 +1045,7 @@ function pzDeepHtml(D){
   const risk=pzKv('Risk',[
     ['Max drawdown',X.maxDD<0?pzMoney(X.maxDD):'None',X.maxDD<0?PZ_COL.low:null,'Biggest drop from a running high in cumulative P&L'],
     X.ddFrom?['Drawdown ran',dayLabel(dayKey(X.ddFrom))+' → '+dayLabel(dayKey(X.ddTo))]:null,
-    s.maxDDpct!=null?['Deepest drop as % of the high before it',pzPct(s.maxDDpct),null,'The largest percentage fall from a running high — it can be a different, earlier dip than the biggest dollar drawdown']:null,
+    s.maxDDpct!=null?['Max drawdown, % of best cumulative profit',pzPct(s.maxDDpct),null,'The biggest dollar drop as a share of your best-ever cumulative P&L (its all-time high), not of the high it fell from']:null,
     ['Longest losing run',X.streaks.bestL+' trade'+(X.streaks.bestL===1?'':'s')],['Longest winning run',X.streaks.bestW+' trade'+(X.streaks.bestW===1?'':'s')],
     ['Current run',X.streaks.current>0?X.streaks.current+' win'+(X.streaks.current===1?'':'s'):X.streaks.current<0?(-X.streaks.current)+' loss'+(X.streaks.current===-1?'':'es'):'—'],
     s.sharpe!=null?['Sharpe (yearly)',s.sharpe.toFixed(2)+(s.sharpeLo!=null?' · likely '+s.sharpeLo.toFixed(1)+' to '+s.sharpeHi.toFixed(1):''),null,'Daily net P&L, annualised, with a 95% range — a wide range means too little history to tell']:null,

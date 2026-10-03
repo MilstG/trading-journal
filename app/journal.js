@@ -258,7 +258,7 @@ function renderTable(){
       (j.mistakes&&j.mistakes.length)?`<span class="tagchip" style="color:var(--loss)">⚑${j.mistakes.length}</span>`:'',
       j.notes?`<span class="tagchip">📝</span>`:''].join('');
     const liqBadge=t.liquidated?` <span class="pill short" data-tip="This trade contains at least one liquidation fill — the position was force-closed by the exchange.">⚠ LIQ</span>`:'';
-    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction (or emptied via a transfer/withdrawal). Net shown is realized so far.">OPEN</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL within ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge;
+    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction (or emptied via a transfer/withdrawal). Net shown is realized so far.">OPEN</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge;
     return `<tr class="trow ${expandedId===t.id?'expanded':''}" data-id="${esc(t.id)}" tabindex="0" role="button" aria-expanded="${expandedId===t.id?'true':'false'}" aria-label="${esc(dispMarket(dcoin(t)))} ${t.dir}${t.isOpen?' open':''}, net ${fmtUsd(t.net)}. Activate to ${expandedId===t.id?'collapse':'expand'} journal.">
       <td class="l num">${fmtDate(t.openTime)}</td>
       <td class="l" style="font-weight:600">${esc(dispMarket(dcoin(t)))}${(multi&&t.wallet)||candleVenue(t)?`<div style="margin-top:3px">${candleVenue(t)&&!(t.wallet&&!t.wallet.label&&multi)?`<span class="tagchip">${esc(VENUE_NAMES[t.venue])}</span>`:''}${multi&&t.wallet?`<span class="tagchip">${esc(labelFor(t.wallet))}</span>`:''}</div>`:''}</td><td class="l">${side}</td>
@@ -527,12 +527,22 @@ function restoreDrafts(list){
     if(d.focus){ try{ el.focus({preventScroll:true}); if(d.sel)el.setSelectionRange(d.sel[0],d.sel[1]); }catch(e){} }
   });
 }
+// the break-even band for this render: the user's fixed $ or the automatic one over every closed trade
+// (all markets, so a view switch never moves it). The auto band is a median: cached per trade list.
+let _beAutoM={trades:null,n:-1,v:null};
+function applyBeBand(){ const fx=beFixedOf(settings);
+  if(fx==null&&(_beAutoM.trades!==allTrades||_beAutoM.n!==allTrades.length))_beAutoM={trades:allTrades,n:allTrades.length,v:autoBeBand(allTrades)};
+  _be=fx!=null?fx:_beAutoM.v; syncBeInput(); }
+// Settings: the input holds the fixed $ (empty = auto) and the label says what auto works out to
+function syncBeInput(){ const i=$('beThresh'), a=$('beAuto'); if(!i)return; const fx=beFixedOf(settings);
+  if(document.activeElement!==i)i.value=fx!=null?fx:'';
+  if(a)a.textContent=fx!=null?'Fixed by you ·':'auto ('+fmtUsd(_be)+') ·'; }
 function render(){
   try{ planAttachPending(); }catch(e){ console.warn('pending plans',e); } // a plan written in Pulse finds its trade once the trade has loaded
   if(PZ){ // Pulse draws only its own view; the hidden full dashboard isn't rebuilt
     // spot-only history under the default perps view would show empty dials: widen it (not saved)
     view='combined'; // Pulse reads every market: XP, streaks and Today never depend on the full app's view switch
-    _be=(settings.beThreshold!=null?settings.beThreshold:50); _oneR=computeOneR(periodTrades());
+    applyBeBand(); _oneR=computeOneR(periodTrades());
     try{ renderTripwire(); }catch(e){} // still arms the loss-limit notification
     pzRender(); return; }
   const _drafts=captureDrafts();
@@ -552,7 +562,7 @@ function coachStaged(){
 function renderInner(){
   syncDexTog(); syncCoachMode(); // a sync pull or backup restore can flip coach mode
   const pt=periodTrades(); const ptAll=periodTradesAll();
-  _be=(settings.beThreshold!=null?settings.beThreshold:50);
+  applyBeBand();
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
   renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
@@ -1233,11 +1243,15 @@ function renderProjection(){
   if(_projChart){ _projChart.destroy(); _projChart=null; }
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
   if(closed.length<5){ el.innerHTML='<div class="diag-section"><p class="lead">Need at least 5 closed trades in this view to project forward. Load more history first.</p></div>'+nfSizerHtml(); nfWireSizer(); return; }
-  let base=projBaseline(closed,_proj.look);
-  if((!base||base.trades<5)&&_proj.look>0) base=projBaseline(closed,0); // fall back to all history if the window is too thin
+  let base=projBaseline(closed,_proj.look), look=_proj.look;
+  if((!base||base.trades<5)&&_proj.look>0){ base=projBaseline(closed,0); look=0; } // fall back to all history if the window is too thin
   if(!base){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades inside the selected lookback window.</p></div>'+nfSizerHtml(); nfWireSizer(); return; } // the pre-trade sizer needs no history — keep it available
-  const fc=projectForward(base.daily,_proj.hor,400,null,_proj.block);
   const now=Date.now(), startBal=closed.reduce((s,t)=>s+t.net,0);
+  // the Diagnostic headline's test on the basis trades: until it passes, every number here is "if"
+  const bt=look>0?closed.filter(t=>t.closeTime>=now-look*86400000&&t.closeTime<=now):closed;
+  const proven=bt.length>=5&&_tradesMemo('projEdge',bt,settings.tz+'|'+settings.tzZone,()=>edgeTest(bt)).proven;
+  const ifNote=proven?'':'<p class="mini-note"><b>If your average day holds — not yet a proven edge.</b> Over this basis the Diagnostic\u2019s test (Sharpe or expectancy 95% CI above 0) doesn\u2019t pass, so these paths assume an edge your trades haven\u2019t shown yet.</p>';
+  const fc=projectForward(base.daily,_proj.hor,400,null,_proj.block);
   const medPerDay=fc.end.p50/_proj.hor;
   const horLabel=(PROJ_HORS.find(h=>h[0]===_proj.hor)||[0,_proj.hor+' days'])[1];
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
@@ -1271,14 +1285,15 @@ function renderProjection(){
         ${mrow('Per week',usd(base.perDay*7))}
         ${mrow('Per month',usd(base.perDay*30.44))}
         ${mrow('Per year',usd(base.perDay*365.25))}
-        <p class="mini-note">Straight-line extrapolation of your average day. The chart below adds the uncertainty.</p>
+        <p class="mini-note">Straight-line extrapolation of your average day${proven?'':', which isn\u2019t yet distinguishable from noise'}. The chart below adds the uncertainty.</p>
       </div>
       <div class="diag-card"><h3>${esc(horLabel)} out — simulated</h3>
         ${mrow('Median path',usd(fc.end.p50))}
         ${mrow('Good stretch (75th)',usd(fc.end.p75))}
         ${mrow('Hot streak (95th)',usd(fc.end.p95))}
         ${mrow('Rough stretch (25th)',usd(fc.end.p25))}
-        ${mrow('Odds you finish green',(fc.probPositive*100).toFixed(0)+'%','Share of 400 simulated paths ending above zero.')}
+        ${mrow('Simulated paths ending green',(fc.probPositive*100).toFixed(0)+'%','Share of the 400 replayed paths that end above zero. Not a probability you finish green: every path assumes your past days keep coming.')}
+        ${ifNote}
       </div>
       <div class="diag-card"><h3 data-tip="The honest companion to the fan chart: the worst peak-to-trough dip INSIDE each simulated path over this horizon, not just where paths end. Same ${_proj.block>1?'block-':''}bootstrapped paths as the chart below.">Drawdown reality-check</h3>
         ${mrow('Median max drawdown','<span class="'+cls(-fc.dd.p50)+'">'+fmtUsd(-fc.dd.p50)+'</span>','Half of the simulated futures dip at least this far below a prior peak at some point over the horizon.')}
@@ -1310,7 +1325,7 @@ function renderProjection(){
         })()}
       </div>
       <div class="diag-card"><h3>Milestones <span style="color:var(--faint)">from ${esc(fmtUsd(startBal))} realized</span></h3>
-        ${msRows}
+        ${msRows}${medPerDay>0?ifNote:''}
       </div>
     </div>
    </div>
@@ -1387,5 +1402,5 @@ function renderReconcile(){
   el.classList.remove('hide');
   el.innerHTML=`<span class="rlab">Verified · Hyperliquid all-time</span>`+
     item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot))+
-    `<span class="rnote">Pulled straight from Hyperliquid's account PnL — matches the app exactly. "recon" shows how closely the fill-based reconstruction below agrees. Drawdown lives in Stats / Diagnostic (measured against cumulative PnL, so deposits and withdrawals don't distort it).</span>`;
+    `<span class="rnote">These are Hyperliquid's own account PnL figures, as its app reports them. "recon" is how far the fill-based reconstruction below is from each one; a large recon gap means the per-trade analytics are missing PnL, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic (measured against cumulative PnL, so deposits and withdrawals don't distort it).</span>`;
 }

@@ -100,7 +100,7 @@ const ENGINE_FNS = [
   'spotMapsFrom', 'spotFifoLots',
   // stats
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'retPct',
-  'riskFor', 'rFor', 'avgLossOf', 'computeOneR', 'computeStats',
+  'riskFor', 'rFor', 'avgLossOf', 'computeOneR', 'computeStats', 'autoBeBand', 'beFixedOf',
   // projection / risk / counterfactuals
   '_srand', '_hashSeed', 'bootstrapMeanCI', 'mcMaxDD', 'projBaseline', 'projectForward',
   'projMilestones', 'currentDD', 'underwaterStats', 'fwdMaxDD', 'kellyFromTrades',
@@ -132,9 +132,9 @@ const dayKey=ms=>{ const p=tzParts(ms); return p.y+'-'+String(p.mo+1).padStart(2
 const tzHour=ms=>tzParts(ms).h;
 const tzDow=ms=>tzParts(ms).dow;
 const TA=taConf();
-const isWin =n=>n>_be;
-const isLoss=n=>n<-_be;
-const isBE  =n=>Math.abs(n)<=_be;
+const isWin =n=>n>0&&n>=_be;
+const isLoss=n=>n<0&&-n>=_be;
+const isBE  =n=>Math.abs(n)<_be||n===0;
 `;
 
 function grabBlock(html, header) {
@@ -1047,7 +1047,7 @@ function createApp(opts) {
   }
 
   /* ---------------- request-scoped engine state + filtering ---------------- */
-  const S_DEFAULTS = { beThreshold: 50, rBasis: 'avgloss', riskDefault: null, tz: 'utc' };
+  const S_DEFAULTS = { beThreshold: null, rBasis: 'avgloss', riskDefault: null, tz: 'utc' }; // null band = the app's automatic one
   function setEngineState(query) {
     if (!engine.ok) throw { code: 503, msg: 'analytics engine unavailable — the served ledger.html is missing: ' + engine.missing.join(', ') };
     const snap = currentSnapshot();
@@ -1056,7 +1056,9 @@ function createApp(opts) {
     else if (s.tz !== 'utc' && s.tz !== 'local') s.tz = 'utc';
     E.settings = s;
     E.journal = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
-    E._be = (s.beThreshold != null && isFinite(s.beThreshold)) ? s.beThreshold : 50;
+    // the app's band: the member's fixed $, else the automatic one over every closed trade (as render() does)
+    const fx = E.beFixedOf(s);
+    E._be = fx != null ? fx : E.autoBeBand(ensureTrades().trades);
     return { snap, settings: s };
   }
   function applyFilters(trades, q) {
@@ -1091,9 +1093,10 @@ function createApp(opts) {
       if (to != null && t.closeTime > to) return false;
       if (outcome) {
         if (t.isOpen) return false;
-        if (outcome === 'win' && !(t.net > be)) return false;
-        if (outcome === 'loss' && !(t.net < -be)) return false;
-        if (outcome === 'be' && !(Math.abs(t.net) <= be)) return false;
+        // the app's isWin / isLoss / isBE: a trade exactly at the band is decided, not a scratch
+        if (outcome === 'win' && !(t.net > 0 && t.net >= be)) return false;
+        if (outcome === 'loss' && !(t.net < 0 && -t.net >= be)) return false;
+        if (outcome === 'be' && !(Math.abs(t.net) < be || t.net === 0)) return false;
       }
       if (tag || text) {
         const j = E.journal[t.id] || {};

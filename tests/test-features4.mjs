@@ -17,9 +17,9 @@ const _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
 `;
 
 const { setupScorecards } = await evalModule(['setupScorecards'], ['setupScorecards'], PRELUDE);
-const { csvParseRows, csvNum, parseFillsCsv, reconstructTrades } = await evalModule(
-  ['csvParseRows', 'csvNum', 'parseFillsCsv', 'deriveFillPositions', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
-  ['csvParseRows', 'csvNum', 'parseFillsCsv', 'reconstructTrades'], PRELUDE);
+const { csvDelim, csvParseRows, csvNumKind, csvNum, csvTime, parseFillsCsv, reconstructTrades } = await evalModule(
+  ['csvDelim', 'csvParseRows', 'csvNumKind', 'csvNum', 'csvTime', 'parseFillsCsv', 'deriveFillPositions', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades'],
+  ['csvDelim', 'csvParseRows', 'csvNumKind', 'csvNum', 'csvTime', 'parseFillsCsv', 'reconstructTrades'], PRELUDE);
 
 const DAY = 86400000, T0 = 1700000000000;
 const mk = (setup, net, i) => ({ id: setup + i, net, closeTime: T0 + i * DAY, isOpen: false });
@@ -226,9 +226,16 @@ t('csvNum: locale formats parse, ambiguity is rejected', () => {
   near(csvNum('1,234.50'), 1234.5);    // US thousands
   near(csvNum('1.234,56'), 1234.56);   // EU thousands + decimal comma
   near(csvNum('1234,56'), 1234.56);    // bare decimal comma
-  near(csvNum('1,234'), 1234);         // lone comma + 3 digits = thousands
+  // a lone "1,234" is a thousand with a decimal point and about one with a decimal comma: refused
+  // on its own (README: ambiguous values are rejected), read once the file says which
+  ok(Number.isNaN(csvNum('1,234')), '1,234 alone is ambiguous');
+  ok(Number.isNaN(csvNum('1.234')), '1.234 alone is ambiguous');
+  near(csvNum('1,234', 'dot'), 1234); near(csvNum('1,234', 'comma'), 1.234);
+  near(csvNum('1.234', 'comma'), 1234); near(csvNum('1.234', 'dot'), 1.234);
+  near(csvNum('1,234,567'), 1234567);  // two groups can only be thousands
   near(csvNum('(12.5)'), -12.5);       // accounting negative
-  near(csvNum('$2,000'), 2000);
+  near(csvNum('$2,000', 'dot'), 2000);
+  near(csvNum('€1.234,5'), 1234.5);
   near(csvNum('-1.5e3'), -1500);
   ok(Number.isNaN(csvNum('1,23,456')), 'mixed grouping is refused, not guessed');
   ok(Number.isNaN(csvNum('abc')));
@@ -287,6 +294,87 @@ t('junk rows are skipped and counted, not imported', () => {
     + 'not-a-date,ETH,buy,1000,1\n'
     + '1700000000000,ETH,hold,1000,1\n');
   eq(fills.length, 1); eq(skipped, 2);
+});
+
+console.log('\nCSV import: delimiters, decimal marks, dates');
+const errOf = f => { try { f(); } catch (e) { return e.message; } return ''; };
+t('csvDelim: comma, semicolon, tab from the header row, quotes respected', () => {
+  eq(csvDelim('time;symbol;side;price;size\n1;2'), ';');
+  eq(csvDelim('time\tsymbol\tside\n'), '\t');
+  eq(csvDelim('time,symbol,side\n'), ',');
+  eq(csvDelim('"a;b;c",d,e\n'), ',', 'semicolons inside quotes are not delimiters');
+  eq(csvParseRows('a;"b;c";d\n1;2;3', ';'), [['a', 'b;c', 'd'], ['1', '2', '3']]);
+});
+t('csvNumKind: what a value says about the decimal mark', () => {
+  eq(['1,234.50', '0.25', '1,234,567', '1.5e3', '1.234,56', '0,25', '1.234.567', '1234,5', '1,234', '1.234', '100', '1,23,456']
+    .map(csvNumKind), ['dot', 'dot', 'dot', 'dot', 'comma', 'comma', 'comma', 'comma', null, null, '', null]);
+});
+t('a semicolon CSV (European Excel) imports, with decimal commas', () => {
+  const { fills, note } = parseFillsCsv('time;symbol;side;price;size\n'
+    + '2026-09-03 10:00:00;BTC;buy;61.234,5;0,25\n'
+    + '2026-09-03 11:00:00;BTC;sell;62.000;0,25\n');
+  eq(fills.length, 2);
+  eq([fills[0].px, fills[0].sz, fills[1].px], ['61234.5', '0.25', '62000']);
+  ok(note.includes('";"-separated') && note.includes('decimal comma'), note);
+});
+t('a semicolon CSV with no decimal evidence reads the European convention', () => {
+  const { fills } = parseFillsCsv('time;symbol;side;price;size\n2026-09-03 10:00:00;BTC;buy;1.234;2\n');
+  eq(fills[0].px, '1234');
+});
+t('tab-separated works too', () => {
+  const { fills } = parseFillsCsv('time\tcoin\tside\tpx\tsz\n1700000000000\tETH\tbuy\t1000.5\t1\n');
+  eq(fills[0].px, '1000.5');
+});
+t('"1,234" is read once the column (or the file) shows the convention', () => {
+  const a = parseFillsCsv('time,coin,side,px,sz\n1700000000000,BTC,buy,"1,234",1\n1700000001000,BTC,sell,"1,250.50",1\n');
+  eq(a.fills.map(f => f.px), ['1234', '1250.5']);
+  const b = parseFillsCsv('time,coin,side,px,sz\n1700000000000,BTC,buy,"1,234","0,5"\n'); // the size column says comma
+  eq([b.fills[0].px, b.fills[0].sz], ['1.234', '0.5']);
+  const c = parseFillsCsv('time,coin,side,px,sz\n1700000000000,BTC,buy,"1,234",0.5\n'); // the size column says point
+  eq(c.fills[0].px, '1234');
+});
+t('"1,234" with no evidence anywhere is refused, naming column, value and row', () => {
+  const m = errOf(() => parseFillsCsv('time,coin,side,price,size\n1700000000000,BTC,buy,"1,234",2\n'));
+  ok(m.includes('"price" "1,234" on row 2 is ambiguous') && m.includes('1234 or 1.234'), m);
+});
+t('a column mixing decimal marks is refused', () => {
+  const m = errOf(() => parseFillsCsv('time,coin,side,px,sz\n1700000000000,BTC,buy,"1,5",1\n1700000001000,BTC,sell,1.5,1\n'));
+  ok(m.includes('column "px" mixes decimal marks') && m.includes('row 2') && m.includes('row 3'), m);
+});
+t('dates: day-first inferred from a day above 12, month-first likewise, naive = UTC', () => {
+  const d = parseFillsCsv('time,coin,side,px,sz\n03/09/2026 10:00,BTC,buy,100,1\n13/09/2026 10:00,BTC,sell,110,1\n');
+  eq(d.fills.map(f => f.time), [Date.UTC(2026, 8, 3, 10), Date.UTC(2026, 8, 13, 10)]);
+  ok(d.note.includes('day/month dates'), d.note);
+  const m = parseFillsCsv('time,coin,side,px,sz\n03/09/2026 10:00,BTC,buy,100,1\n09/13/2026 10:00,BTC,sell,110,1\n');
+  eq(m.fills.map(f => f.time), [Date.UTC(2026, 2, 9, 10), Date.UTC(2026, 8, 13, 10)]);
+  const e = parseFillsCsv('time,coin,side,px,sz\n13.09.2026 22:15:30,BTC,buy,100,1\n');
+  eq(e.fills[0].time, Date.UTC(2026, 8, 13, 22, 15, 30));
+});
+t('an all-ambiguous d/m file is refused with a clear message, not read as US', () => {
+  const m = errOf(() => parseFillsCsv('time,coin,side,px,sz\n03/09/2026 10:00,BTC,buy,100,1\n04/09/2026 10:00,BTC,sell,110,1\n'));
+  ok(m.includes('"time" "03/09/2026 10:00" on row 2 is ambiguous') && m.includes('3 Sep or 9 Mar') && m.includes('ISO') && m.includes('UTC'), m);
+});
+t('a file mixing day-first and month-first dates is refused', () => {
+  const m = errOf(() => parseFillsCsv('time,coin,side,px,sz\n13/09/2026,BTC,buy,100,1\n09/14/2026,BTC,sell,110,1\n'));
+  ok(m.includes('mixes day-first') && m.includes('row 2') && m.includes('row 3'), m);
+});
+t('csvTime: ISO with zones, 12-hour clocks, invalid dates', () => {
+  eq(csvTime('2026-09-03 14:00:00'), Date.UTC(2026, 8, 3, 14));
+  eq(csvTime('2026-09-03T14:00:00.250Z'), Date.UTC(2026, 8, 3, 14, 0, 0, 250));
+  eq(csvTime('2026-09-03T14:00:00+02:00'), Date.UTC(2026, 8, 3, 12));
+  eq(csvTime('2026/09/03 2:05 PM'), Date.UTC(2026, 8, 3, 14, 5));
+  eq(csvTime('2026-09-03'), Date.UTC(2026, 8, 3));
+  eq(csvTime('31/02/2026', 'dmy'), null, 'not a date');
+  eq(csvTime('03/09/2026'), null, 'ambiguous without an order');
+  eq(csvTime('03/09/2026', 'mdy'), Date.UTC(2026, 2, 9));
+  eq(csvTime('Sep 3 2026 14:00'), null, 'a zone-less free-form date would be read in the viewer\u2019s zone: refused');
+  eq(csvTime('Thu, 03 Sep 2026 14:00:00 GMT'), Date.UTC(2026, 8, 3, 14));
+});
+t('skipped rows name the first bad column, value and row', () => {
+  const r = parseFillsCsv('time,coin,side,price,size\n1700000000000,ETH,buy,1000,1\n1700000001000,ETH,buy,abc,1\n1700000002000,ETH,hold,1000,1\n');
+  eq(r.skipped, 2); ok(r.note.includes('row 3: "price" "abc"'), r.note);
+  const m = errOf(() => parseFillsCsv('time,coin,side,px,sz\nyesterday,ETH,buy,1000,1\n'));
+  ok(m.includes('no row parsed cleanly (1 skipped; first row 2: "time" "yesterday"'), m);
 });
 
 report('features4');

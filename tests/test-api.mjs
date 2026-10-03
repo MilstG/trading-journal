@@ -212,6 +212,24 @@ await t('stats respects beThreshold via tz/settings plumbing (win becomes scratc
   await fetch(base + '/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...FULL },
     body: JSON.stringify({ rev: cur2.rev, snapshot: cur.snapshot }) });
 });
+await t('the server resolves the break-even band like the app: auto unless the member fixed one', async () => {
+  // trades net +99.5 and −204: the automatic band is 5% of the median |net| = $7.59
+  const put = async (settings) => { const cur = (await jget('/api/data')).body;
+    const snap = JSON.parse(JSON.stringify(cur.snapshot)); snap.settings = Object.assign({}, snap.settings, settings);
+    await fetch(base + '/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...FULL }, body: JSON.stringify({ rev: cur.rev, snapshot: snap }) });
+    return cur.snapshot; };
+  const orig = await put({ beThreshold: null });
+  eq((await jget('/api/v1/stats')).body.beThreshold, 7.59, 'auto');
+  await put({ beThreshold: 50 });
+  eq((await jget('/api/v1/stats')).body.beThreshold, 7.59, 'a stored 50 without beFixed is the old default: auto');
+  await put({ beThreshold: 50, beFixed: true });
+  eq((await jget('/api/v1/stats')).body.beThreshold, 50, 'set on purpose: kept');
+  await put({ beThreshold: 99.5, beFixed: true }); // exactly at the band: a win, not a scratch
+  const s = (await jget('/api/v1/stats')).body.stats; eq([s.wins, s.breakeven], [1, 0]);
+  eq((await jget('/api/v1/trades?outcome=be')).body.total, 0);
+  const cur = (await jget('/api/data')).body;
+  await fetch(base + '/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...FULL }, body: JSON.stringify({ rev: cur.rev, snapshot: orig }) });
+});
 await t('equity: chronological cumulative points + drawdown diagnostics', async () => {
   const { body } = await jget('/api/v1/equity?status=closed');
   eq(body.points.length, 2);

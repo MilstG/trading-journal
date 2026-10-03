@@ -198,7 +198,7 @@ function fundingCarry(closed){
   for(const t of closed){ const f=t.funding||0; total+=f; if(f<0)paid+=-f; else recv+=f;
     const c=dcoin(t); const g=byCoin[c]=byCoin[c]||{coin:c, funding:0, n:0}; g.funding+=f; g.n++;
     const gross=t.pnl-t.fees; // pre-funding
-    if(gross>_be && t.net<=_be) flipped++;             // funding turned a gross winner into a non-winner
+    if(isWin(gross) && !isWin(t.net)) flipped++;      // funding turned a gross winner into a non-winner
     if(Math.abs(f)>Math.abs(gross) && Math.abs(f)>0) dominant++; // funding bigger than the trade result itself
   }
   const coins=Object.values(byCoin).sort((a,b)=>Math.abs(b.funding)-Math.abs(a.funding));
@@ -1232,8 +1232,9 @@ function coachWins(ctx, week){
   const days=toKey?ctx.days.filter(d=>d.key<toKey):ctx.days, today=toKey||dayKey(Date.now());
   const label=cur?'this week':'that week';
   const tr=processTrend(days,20);
-  let sk=tr.streak; if(cur){ try{ sk=gameContext().streak.current; }catch(e){} }
-  if(sk>=3)W.push(`${sk} good-process days in a row`);
+  // this week: the Discipline streak (Progress, Daruma); a past week's letter: the process score's own run
+  let sk=tr.streak, by='process score'; if(cur){ try{ sk=gameContext().streak.current; by='Discipline'; }catch(e){} }
+  if(sk>=3)W.push(`${sk} trading days in a row at ${by} 70+`);
   const js=journalStreak(cur?ctx.trades:ctx.trades.filter(t=>t.closeTime<week.to),journal,dayKey,today);
   if(js.current>=3)W.push(`Every trade journaled ${js.current} trading days running`);
   const wkFrom=dayKey(wFrom);
@@ -1317,12 +1318,14 @@ function renderCoach(){
   if(fh){ const p=habitProgress(fh,ctx,lastCompletedWeekRange().to);
     rows.push({k:'This week',v:`<span class="coach-habit">${esc(habitSentence(fh))}</span> ${p.total?`${dotsHtml(p.res)} <span class="mut">kept ${p.kept} of ${p.total} trading day${p.total===1?'':'s'}</span>`:'<span class="mut">no trading days yet this week</span>'}`}); }
   else rows.push({k:'This week',v:'<span class="mut">No focus habit yet. One habit a week beats ten resolutions.</span>',act:'<button class="btn ghost coach-go" data-go="habits">Pick one →</button>'});
-  if(g&&g.current){ const c=g.current, kept=c.res.filter(r=>r.kept).length;
-    rows.push({k:'Challenge',v:`<span class="coach-habit">${esc(habitSentence(c.ch.spec))}</span> ${c.res.length?`${dotsHtml(c.res)} <span class="mut">${kept} of ${c.res.length} day${c.res.length===1?'':'s'} \u00b7 +150 XP if it holds all week</span>`:'<span class="mut">starts with your next trading day \u00b7 +150 XP</span>'}`}); }
+  if(g&&g.current){ const c=g.current, kept=c.res.filter(r=>r.kept).length, xp=pzXpCfg().challenge;
+    // a missed challenge can't pay any more: say so, as Progress does
+    const tail=c.status==='missed'?'<span class="neg-t">missed once \u2014 a new challenge comes Monday</span>':`+${xp} XP if it holds all week`;
+    rows.push({k:'Challenge',v:`<span class="coach-habit">${esc(habitSentence(c.ch.spec))}</span> ${c.res.length?`${dotsHtml(c.res)} <span class="mut">${kept} of ${c.res.length} day${c.res.length===1?'':'s'} \u00b7 ${tail}</span>`:`<span class="mut">starts with your next trading day \u00b7 +${xp} XP</span>`}`}); }
   const les=coachLesson(fh); if(les)rows.push({k:'Remember',v:`“${esc(les.t)}” <span class="mut">— your lesson, ${esc(les.k.slice(5))}</span>`});
   const gw=g?gameWins(g):[];
   // a new streak personal best already says "N days in a row" — don't say it twice
-  const cw=coachWins(ctx).filter(w=>!(gw.some(x=>/discipline streak/.test(x))&&/good-process days in a row/.test(w)));
+  const cw=coachWins(ctx).filter(w=>!(gw.some(x=>/discipline streak/.test(x))&&/days in a row at Discipline/.test(w)));
   const wins=[...new Set([...gw,...cw])].slice(0,4);
   const dt=tzParts(Date.now());
   ensureWeekChallenge(ctx).then(made=>{ if(made){ if(allTrades.length>=5000&&typeof coachStaged==='function'&&activeTab!=='review')coachStaged(); else renderCoach(); if(activeTab==='review')renderReview(); } }).catch(()=>{}); // big accounts: rebuilt in idle steps (journal.js)

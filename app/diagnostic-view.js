@@ -171,6 +171,18 @@ function syncDistControls(closed,shownBinW,isAuto){
 // Walk-forward per-block chart. Registered in _diagCharts so destroyDiagCharts() tears it down
 // on every re-render like every other chart here -- a leaked Chart instance on a reused canvas id
 // is what makes hover tooltips fire on stale data.
+// The walk-forward card's conclusion. It weighs the out-of-sample CI as the headline weighs the
+// in-sample one: a positive mean whose 95% CI spans 0 is "not yet distinguishable from noise".
+function wfVerdict(wf, pending){
+  if(!wf||wf.wfExp==null)return '';
+  if(!(wf.wfExp>0))return 'Out-of-sample the edge disappears — in-sample expectancy did not carry forward. Treat the headline as descriptive, not predictive, until this turns positive.';
+  const ci=wf.wfCI, decay=wf.retention!=null&&wf.retention<0.6;
+  if(ci&&ci.lo<=0)return `Positive out-of-sample, but not yet distinguishable from noise: the walk-forward 95% CI (${fmtUsd(ci.lo)} to ${fmtUsd(ci.hi)}) includes 0${decay?', and it keeps only '+Math.round(wf.retention*100)+'% of the in-sample size':''}. Treat it as a lead, not a proven edge, until the interval clears zero.`;
+  if(!ci)return (decay?'Out-of-sample expectancy is positive but a fraction of its in-sample size':'Out-of-sample expectancy stays positive and close to in-sample')+(pending?' — its confidence interval is still computing.':' — too few out-of-sample trades to test it against noise yet.');
+  return decay
+    ? 'Edge survives out-of-sample but at a fraction of its in-sample size — real, but decaying or partly overfit. Size to the walk-forward number, not the headline.'
+    : 'Edge holds out-of-sample: walk-forward expectancy stays positive and close to in-sample, and its 95% CI clears zero. This is the version worth trusting.';
+}
 function wireWalkForward(wf){
   const el=$('wfChart'); if(!el||!wf||!wf.points||!wf.points.length)return;
   const P=wf.points;
@@ -525,9 +537,7 @@ function renderDiagnostic(closed, allv){
   try{ findings=buildFindings(closed,s,{boot,esig,mcdd,cdd,uw,skew,acf1,scan:{strong,weak},sig:_sig}); }catch(e){ console.warn('findings failed',e); }
 
   // verdict
-  const edgeSharpe=s.sharpeLo!=null&&s.sharpeLo>0;
-  const edgeTrade=boot&&boot.lo>0;
-  const profitable=s.net>0, edgeProven=edgeSharpe||edgeTrade;
+  const profitable=s.net>0, edgeProven=edgeEstablished(s.sharpeLo,boot);
   const grade = (profitable&&edgeProven&&N>=100)?'Positive edge — statistically supported'
     : (profitable&&edgeProven)?'Positive edge — limited sample'
     : profitable?'Profitable, but not yet distinguishable from noise'
@@ -565,7 +575,8 @@ function renderDiagnostic(closed, allv){
   const wfHtml = (()=>{
     if(!wf) return '';
     const fA=x=>x==null?'—':(x>=0?'+':'')+fmtUsd(x);
-    const wfCls=wf.wfExp>0?'ok':(wf.wfExp<0?'no':'mid');
+    // a positive forward mean whose CI still spans 0 is not a demonstrated forward edge: amber, not green
+    const wfCls=wf.wfExp>0?(wf.wfCI&&wf.wfCI.lo<=0?'mid':'ok'):(wf.wfExp<0?'no':'mid');
     const ciTxt=wf.wfCI?`${fmtUsd(wf.wfCI.lo)} to ${fmtUsd(wf.wfCI.hi)}`:mcPending&&wf.oosN>=8?'computing…':'need ≥8 out-of-sample trades';
     // retention = wfExp / fullIS, so a negative walk-forward expectancy against a positive
     // in-sample one yields a negative ratio. "-62% of in-sample kept" is meaningless; say what
@@ -581,12 +592,7 @@ function renderDiagnostic(closed, allv){
     // what the next block DELIVERED is the whole point, so both are plotted now.
     const spark=`<div style="height:180px;margin-top:12px"><canvas id="wfChart"></canvas></div>
       <p class="mini-note" style="margin-top:6px">Bars are what each out-of-sample block actually delivered; the dashed line is what its trailing training window predicted beforehand. The gap between them, block by block, is your in-sample optimism. The flat line is the walk-forward mean.</p>`;
-    const verdict = wf.wfExp==null ? ''
-      : wf.wfExp>0
-        ? ((wf.retention!=null && wf.retention<0.6)
-            ? 'Edge survives out-of-sample but at a fraction of its in-sample size — real, but decaying or partly overfit. Size to the walk-forward number, not the headline.'
-            : 'Edge holds out-of-sample: walk-forward expectancy stays positive and close to in-sample. This is the version worth trusting.')
-        : 'Out-of-sample the edge disappears — in-sample expectancy did not carry forward. Treat the headline as descriptive, not predictive, until this turns positive.';
+    const verdict = wfVerdict(wf, mcPending);
     return `<div class="diag-section"><div class="diag-card" data-tip="Trains on a trailing window of trades, scores the next block strictly out-of-sample, then slides — the concatenated test blocks tile your history with no look-ahead. Their mean is a genuine walk-forward expectancy; comparing it to the full-sample (in-sample) number shows how much of the edge is real going forward vs fitted to the past.">
       <h3>Walk-forward reality <span style="color:var(--faint)">· ${wf.blocks} out-of-sample blocks · ${wf.train}-trade train / ${wf.step}-trade test · ${wf.oosN} trades scored</span></h3>
       ${mrow('In-sample expectancy',`${fmtUsd(wf.fullIS)}/trade`,'Naive mean net PnL over every closed trade in this view — the number the headline verdict is built on. In-sample: it has seen all the data it is scored against.')}
@@ -607,7 +613,7 @@ function renderDiagnostic(closed, allv){
   })();
   el.innerHTML = `
    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:-6px"><button class="btn ghost" id="exportDiagPdf" data-tip="Print-grade PDF of this Diagnostic — headline stats, every visible chart embedded as an image, and the recommendations — that your accountant or backers can open anywhere. Generated entirely in the browser.">Export PDF</button><button class="btn ghost" id="exportReport" data-tip="Snapshot this entire Diagnostic — stats, charts (as images), miner results and excursions if you've run them — as a single self-contained HTML file for archiving monthly reviews.">Export report</button></div>
-   <div class="verdict" data-tip="Overall grade from three things: are you net profitable, is your Sharpe's lower confidence bound above 0 (edge distinguishable from noise), and do you have ≥100 completed trades.">
+   <div class="verdict" data-tip="Overall grade from three things: are you net profitable, is your Sharpe's or per-trade expectancy's lower 95% confidence bound above 0 (edge distinguishable from noise), and do you have ≥100 completed trades. The Project view and the walk-forward card use the same test.">
      <div class="grade">${grade}</div><p>${verdictText}</p></div>
    ${wfHtml}
    <div class="diag-section">
@@ -629,7 +635,7 @@ function renderDiagnostic(closed, allv){
          <p class="lead" style="margin:8px 0 0">These are descriptive stats on trades you actually took — in-sample, not a walk-forward backtest. The earlier-vs-recent split above is the closest proxy for out-of-sample persistence.</p>
        </div>
        <div class="diag-card"><h3 data-tip="Risk control and execution discipline: drawdown, streaks, position-sizing, mistake cost, self-rating accuracy, and market concentration.">Risk &amp; discipline</h3>
-         ${mrow('Max drawdown',`<span class="${cls(s.maxDD)}">${fmtUsd(s.maxDD)}${s.maxDDpct!=null?' · '+(s.maxDDpct*100).toFixed(1)+'%':''}</span>`,'Largest peak-to-trough drop in cumulative realized PnL, in dollars and as a % of your peak cumulative profit (deposit/withdrawal independent). How deep a hole you have been in — the emotional and capital stress test of your strategy.')}
+         ${mrow('Max drawdown',`<span class="${cls(s.maxDD)}">${fmtUsd(s.maxDD)}${s.maxDDpct!=null?' · '+ddPctOfBest(s.maxDDpct):''}</span>`,'Largest peak-to-trough drop in cumulative realized PnL, in dollars and as a share of your best-ever cumulative profit (the all-time high of the PnL curve, deposit/withdrawal independent — not the peak it fell from). How deep a hole you have been in — the emotional and capital stress test of your strategy.')}
          ${mrow('Longest losing streak',s.longL+' trades','Most consecutive losing trades. Matters for position sizing: a strategy that can string together many losses needs smaller bets to survive.')}
          ${mrow('Oversizing check',oversizing?'<span class="badge no">biggest trades worst</span>':(bigExp!=null&&smallExp!=null?'<span class="badge ok">size looks ok</span>':'<span class="badge mid">n/a</span>'),'Compares expectancy on your largest 25% of trades (by notional) vs your smallest 25%. If your biggest bets underperform, you are sizing up on conviction that is not justified.')}
          ${bigExp!=null&&smallExp!=null?mrow('· Largest 25% vs smallest',`${fmtUsd(bigExp)} vs ${fmtUsd(smallExp)}/trade`,'Average net per trade in your largest-notional quartile vs your smallest. You want the big ones to be at least as good as the small ones.'):''}
