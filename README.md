@@ -439,11 +439,13 @@ sets the bar and the tiers, or switches it off, in Levels & XP.
 
 **Standing.** Duels, competitions, the leaderboards and the coach's full allowance are kept
 by holding Trader Age: the plain average rating of your last 20 trading days at the bar (60,
-Trader Age 2 years). Under it, or without a verified wallet, Daruma shows a banner and the inbox
+Trader Age 2 years), read from fills alone (Discipline and steadiness, reweighted to 100: the
+loss-limit, prep and journal parts are what the app reports, so they don't hold standing up). Under it, or without a verified wallet, Daruma shows a banner and the inbox
 says so, and there are 14 days of grace to get back. A lapse also needs a trading day after the
 slip began, so a break freezes the clock (an unverified member lapses at the deadline). Once
 lapsed, new duels and duel answers, competition entries and the leaderboards (global and a
-league's other boards) are closed, others can't challenge them, and the coach drops to 1
+league's other boards, its top five, the weekly promotion, where they rank as 0, and season
+podiums) are closed, others can't challenge them, and the coach drops to 1
 message a day; the league's own table, level, XP and badges never change. Back at the bar, or
 verified, it all opens again. Fewer than 15 trading days counts as good. The server works it
 out whenever it's asked (the app's own `taStanding`), admins and fully unlocked members are
@@ -560,7 +562,8 @@ link to join *your* league. A server upgraded from an older version imports its
 `social.json` on the first start and keeps the file as `social.json.migrated`.
 
 - **Leagues.** New members join the main league by default: five tiers (Bronze → Diamond). Each ISO
-  week, traders in a tier are ranked by the XP they earned that week; the top quarter
+  week, traders in a tier are ranked by the XP they earned that week (the server's own sum of the
+  XP by day each app reports, so a day journaled late still lands in its week); the top quarter
   (up to 5) move up and the bottom quarter move down, once at least four traders are
   in the tier. The owner can add more leagues, each ranked on its own metric (XP,
   verified discipline, streak, all-time XP, % return, $ P&L or return/drawdown),
@@ -594,8 +597,10 @@ link to join *your* league. A server upgraded from an older version imports its
   cover; shares meant for places nobody qualified for go to those who did). Too
   few entrants (3 by default) or nobody qualifying, and every buy-in goes back;
   so does removing the competition before it pays.
-- **What keeps pots fair** (Admin → Duels → XP pots). A member can have at most
-  25% of their stake balance riding at once, duels and pots together. Two
+- **What keeps pots fair** (Admin → Duels → XP pots). A buy-in needs a verified wallet
+  and comes from the balance (see Duels → *The XP balance*). A member can have at most
+  25% of their balance riding at once, duels and pots together. A member removed after a
+  pot started leaves their buy-in in it. Two
   members can move at most 1,000 XP net between them in a calendar month,
   across duel stakes and pots (a duel's stake is trimmed to what's
   left; past it they can still play, without XP at stake). A measure the apps
@@ -682,9 +687,9 @@ link to join *your* league. A server upgraded from an older version imports its
   the trade is sent and **paid** the first time the mentor marks it reviewed with a comment
   of theirs in it; it goes back if the mentor hasn't within the hold time (default 72
   hours), if the member takes the trade back or drops the mentor, or if the mentor is
-  stood down or suspended. Payments come out of the member's **XP to spend**: their XP
-  (as their level counts it) less what they paid and what's held. Their level never goes
-  down for it. The mentor gets the payment on their mentoring ledger (it counts toward
+  stood down or suspended. Payments come out of the member's **XP to spend**: their balance
+  (the server's XP ledger, see Duels → *The XP balance*) less what's held and what rides on
+  open duels. Their level never goes down for it. The mentor gets the payment on their mentoring ledger (it counts toward
   their level, never leagues or duels), less the **pool share** the owner sets (0% by
   default), which goes to the owner's pool (`GET /admin/pool`: what it holds, everything
   it took in, the latest payments and what's held now). A profile sharing a wallet with
@@ -709,12 +714,13 @@ link to join *your* league. A server upgraded from an older version imports its
   day per mentor): it switches on Let mentors see my days after a yes, tells that mentor,
   and puts the member first on their Mentees screen with an "asked for you" tag.
 - **XP for mentoring.** Mentoring is work, so mentors earn by teaching (the server pays it,
-  per day of the mentor's clock): a trade they mark reviewed with a comment of theirs in it
-  (15, once per trade), a note on a mentee's day (5, one per mentee a day, 3 paid a day), and
+  per UTC day, so a clock that hops zones can't reach two days' caps): a trade they mark reviewed with a comment of theirs in it
+  (15, once per trade: sending it again doesn't pay again), a note on a mentee's day (5, one per mentee a day, 3 paid a day), and
   25 when a mentee they worked with in the last 30 days reaches something verified from
   their wallet: a new Trader Age milestone (1, 2, 4, 6, 8, 12 years), a perfect week (3+
   trading days, all 70+) or a leak plugged (a slip seen in 2+ of the 6 trading weeks before,
-  then none for 3). Only mentees who traded in the last 14 days count; reviews and notes are
+  then none for 3; Trader Age milestones read from fills alone). Only mentees with a verified
+  wallet that traded in the last 14 days count (a profile with no wallet could be the mentor's own); reviews and notes are
   capped at 60 a day (results aren't); each thing pays once; a profile sharing a wallet with
   the mentor never pays; the first look at a mentee only notes where they are. It raises the
   mentor's level (its own row in "where this week's XP came from"), but league tables and
@@ -749,7 +755,11 @@ link to join *your* league. A server upgraded from an older version imports its
   Daruma added to the Home Screen.
 
 **Trust model.** Process numbers are computed by each member's browser and are
-self-reported. Money numbers are never taken from the browser: the server reads
+self-reported. The server checks them against each other and against what it knows (the level
+is the league's own for the XP; weekly XP is its sum of XP by day; a day is never later than
+the member's today, at most 100 days back, fixed once a week old, and capped at what the XP
+weights can pay in a day; the total is capped at what a perfect player could have earned since
+their first trade; at most 60 posts in 10 minutes), but only the XP balance is the server's own. Money numbers are never taken from the browser: the server reads
 them from Hyperliquid's public `portfolio` endpoint for the member's wallet, and only
 when they opted in. Naming an address proves nothing; *claiming* it does (below).
 Addresses stay hidden by default and the owner can remove anyone.
@@ -1406,8 +1416,9 @@ follow and your leagues' members). Money is never staked; XP can be.
   - **Journal streak:** more days with every trade journaled and the day reviewed.
   - **Process XP:** more XP earned from process.
   - **% return with a drawdown cap.** Going past the cap loses outright. Both
-    sides must share % return, and each needs a minimum of trading days (3 for a
-    week, 5 for a month by default) so sitting flat can't win. This type is off
+    sides must share % return and verify their Discipline, and each needs a minimum of
+    trading days (3 for a week, 5 for a month by default), counted from the wallet only, so
+    sitting flat can't win. This type is off
     unless the owner switches it on.
   - **A drawdown rule on any duel.** Any kind (a Discipline duel, say) can carry
     a drawdown cap picked from the owner's presets (10 / 15 / 20 / 25% by
@@ -1416,28 +1427,44 @@ follow and your leagues' members). Money is never staked; XP can be.
     a Discipline score loses points instead (2 per 1% over by default; kinds that
     count days can't be docked, so there it's out). Both sides need "Show %
     return" with a wallet; drawdown is read from the wallet's account value, from
-    the duel's first day to its last.
+    the duel's first day to its last. Switching that off after the start (or a wallet that
+    stops counting) is out, like changing wallets, and so is still having no reading a week
+    after the end: a missing reading never counts as "not over".
   - **Verified scoring.** The first three can be scored "verified from fills",
     which reads the Discipline the server computes from each wallet, instead of
     what the apps report.
 - **How it runs.** The other side has 48 hours to accept, decline or **suggest
   changes**, which sends the challenge back with new terms. An accepted duel runs
-  from the next Monday (or the 1st, for a month), so nobody gets a head start.
+  from the next Monday (or the 1st, for a month) after the day it's accepted (accepted on a
+  Monday, it starts the Monday after), so nobody gets a head start.
   A live card on Today and under Duels shows both scores and each day's mark, and
   a notification comes when the lead changes.
 - **XP stakes.** A challenge can put XP on the line: both sides put up the same
-  amount and the winner takes the other's (a draw gives both back). A duel can
-  stake at most 500 XP, and at most 25% of a member's XP can ride on their open
-  duels at once (the owner sets both). The other side's limit is checked too.
-  XP won in a duel doesn't count toward a Process XP duel.
-- **Earned XP and the stake balance.** Stakes never touch earned XP: the level,
-  the title, the weekly XP leagues and every level unlock count only XP earned
-  from process, badges and grants. What's won or lost on stakes moves a separate
-  balance (earned XP ± stake results, kept by the server), and the 25% limit is
-  a share of that balance. Losing stakes can't lock a feature, and winning them
-  can't buy a level. Progress shows "N XP to stake" once a member has won or lost
-  a stake.
-- **Results.** A duel is settled the day after it ends. The winner gets a feed
+  amount and the winner takes the other's (a draw gives both back). Both need a
+  verified wallet ("Verify my discipline" with a wallet the server reads). A duel can
+  stake at most 500 XP, and at most 25% of a member's balance can ride on their open
+  duels at once (the owner sets both). The other side's limit is checked too, and two
+  profiles on one wallet can't duel each other. XP won in a duel doesn't count toward a
+  Process XP duel.
+- **The XP balance.** What can be staked, put in a pot, paid to a mentor or spent on
+  coach messages is the **balance**, a ledger the server keeps from what it can vouch for:
+  verified Discipline XP (each day the server scored from the wallet's fills, × the
+  league's Discipline weight × that week's multiplier; credited as the wallet is read and
+  kept when verification is switched off), the owner's grants, duel bonuses won on a
+  measure the server reads, reward badges awarded by hand or on a number the server holds,
+  mentoring XP, and stake and pot results; less mentor fees paid and coach purchases. The
+  XP an app reports (earned XP: the level, the title, the weekly XP leagues and every level
+  unlock) is shown as the member's XP but never backs anything that moves XP. The balance
+  isn't floored at zero: a member who owes stakes, buys and pays nothing until it's earned
+  back. `/me` shows it as `balance` with its parts (`ledger`). Losing stakes can't lock a
+  feature, and winning them can't buy a level.
+- **Leaving.** A profile can't be deleted while XP rides on a duel or a pot, or while its
+  balance is below zero. What it owed beyond its verified XP stays with its wallets: a new
+  profile whose verified XP comes from one of them takes the debt on (and is told).
+- **Results.** A duel is settled the day after it ends, on readings taken after its last
+  day: the server reads each capped side's drawdown and each verified side's Discipline
+  again (a week late at most). The result, both records and the stake are written in one
+  go. The winner gets a feed
   line (naming the loser only if they share milestones too), the stake, and an XP
   bonus the owner sets (default +100, the same for every duel and only for a duel
   played to the end). Before the start date either side can **back out** and
@@ -1771,9 +1798,10 @@ All opt-in via environment variables, still zero dependencies:
   for quick replies). Once the day's messages are used, a member can **buy more with XP**
   (`POST /api/coach/packs` with the price they were shown): by default 150 XP for 3 messages,
   at most 2 packs a day, all set on the Coach tab, with an optional doubling price per pack.
-  A purchase comes off earned XP (the level) and the stake balance, never weekly XP, so
-  leagues, seasons and duels don't move. It's refused if it would drop a level (unless the
-  owner turns that off) or leave XP riding on open duels uncovered. Each day's purchases are
+  A purchase is paid from the balance (the server's XP ledger) and comes off earned XP too,
+  never weekly XP, so leagues, seasons and duels don't move. It's refused if it would drop a
+  level (unless the owner turns that off), or if the balance less what rides on open duels and
+  what's held for mentors doesn't cover it. Each day's purchases are
   one grant on the member's page; packs reset with the count, the XP isn't refunded. Uses the official `@anthropic-ai/sdk`, installed as an *optional*
   dependency: without `COACH_AI` the server never loads it and stays
   dependency-free. Model `COACH_AI_MODEL` (default `claude-opus-5-5`), medium
@@ -1915,6 +1943,18 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
   positions cross their liquidation price — first-order, stated as such).
 
 ## Limitations, stated honestly
+
+- **XP is still partly self-reported.** Earned XP, the level, the streak, badges, weekly XP and
+  XP by day are computed in each member's browser from their trades and journal, which they
+  control (any public wallet when *Only count claimed wallets* is off; a crafted backup). The
+  server bounds them (see the trust model under Pulse) so no one ranks past what an honest
+  perfect player could earn, but within those bounds weekly and all-time XP boards, league
+  promotion, season podiums, level unlocks and owner badges on those numbers rest on what the
+  app says. Duels and pots on measures the app reports are capped at 100 XP at stake. What
+  moves XP between members (stakes, buy-ins, mentor fees) and what it buys (coach messages)
+  comes only from the server's balance. The XP multiplier still reads the loss-limit, prep and
+  journal parts of Trader Age that the app reports, so verified Discipline XP can be up to the
+  top tier's ×1.5 of what fills alone would give.
 
 - Bybit and Binance only answer from countries they serve, and they decide by the
   IP address of whatever calls them, which here is your server. A server in the US
