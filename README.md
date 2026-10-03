@@ -484,14 +484,20 @@ setup, rule or name, sorted by most adopted, newest, or mentors first, with one 
 at `#playbooks/<id>`. The feed says "shared a playbook" with a link. **Adopt** copies the
 name and rules into your own playbooks, marked *from @author* (a name you already use gets
 " · @author" added), and from then on it's yours: the checklist, the scorecard and any edits
-stay on your device. The author sees how many adopted it and hears once per adopter. When the
+stay on your device. The author sees how many adopted it and hears once per adopter; deleting
+your copy, in Daruma or in the full journal, takes you off that count. A copy's id is made from
+the shared playbook's (`pbs<id>`), so adopting it on two devices before they sync gives one
+playbook, not two, and adopting it again after deleting it brings back the same one (ticks made
+on it count again). When the
 author changes the name or rules and shares again (**Share your changes**), it gets a new
 version and every adopter hears about it; their copy shows **Update from @author** with what
 changed ("1 rule added, 1 rule gone"), and **Get the update** takes the new rules and keeps
 their own name for it. Rules that didn't change keep their ids, so ticks already made still
 count; taking the update replaces rules the adopter edited themselves, and the card says so.
 A reworded note alone isn't a new version. **Stop sharing** takes it off the list; copies others
-adopted stay theirs, marked "no longer shared". A member shares up to 30 playbooks, each with up
+adopted stay theirs, marked "no longer shared". Deleting your own copy of a playbook you share
+(in Daruma or the full journal) doesn't stop sharing it: Playbooks lists it as **Still shared**,
+with **Stop sharing** and **Bring it back** (your copy returns under its old id, so ticks count again). A member shares up to 30 playbooks, each with up
 to 15 rules. A suspended member's playbooks are hidden; a deleted member's are gone, with their
 adoptions. The owner switches sharing off, or keeps it to mentors (anyone can still adopt), and
 removes a playbook under Admin → Feed & reports → Shared playbooks. Routes:

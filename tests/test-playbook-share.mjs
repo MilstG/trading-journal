@@ -135,7 +135,10 @@ try {
 
 console.log('\nIn the app: copies, updates and the journal’s playbooks');
 const src = readAppSource(htmlPath), { evalModule, grabFn } = makeExtractor(src);
-const P = await evalModule(['pbNorm', 'pbKey', 'pbsAdoptCopy', 'pbsApplyUpdate', 'pbsRuleDiff', 'pbsSharedFrom', 'pbsDiffers']);
+const P = await evalModule(['pbNorm', 'pbKey', 'pbsCopyId', 'pbsAdoptCopy', 'pbsApplyUpdate', 'pbsRuleDiff', 'pbsSharedFrom', 'pbsDiffers', '_syncMerge']);
+// pbUnadopt against a stubbed server call: what it would send, and when it stays quiet
+const U = await evalModule(['pbUnadopt'], ['pbUnadopt', 'env'], `const env = { calls: [], pzS: { demo: false } }; const SOC = { key: 'k' }, pzS = env.pzS, location = { protocol: 'https:' };
+  const socFetch = (p, o) => { env.calls.push([p, o.method, o.body]); return Promise.resolve({ ok: true }); };`);
 const SH = { id: 'abcdef012345', name: 'Breakout retest', version: 3, author: { handle: 'mia' }, rules: [{ id: 'ra', text: 'Wait for the retest' }, { id: 'rb', text: 'Stop under the range' }] };
 let n = 0; const mk = () => 'pbnew' + (++n);
 t('a playbook’s source survives normalizing (so sync and backups keep it); junk sources are dropped', () => {
@@ -145,6 +148,26 @@ t('a playbook’s source survives normalizing (so sync and backups keep it); jun
 t('adopting copies the name and rules with their ids and records where it came from', () => {
   const r = P.pbsAdoptCopy(SH, [], 1000, mk);
   eq(r.pb, { id: 'pbnew1', name: 'Breakout retest', rules: SH.rules, at: 1000, createdAt: 1000, src: { id: SH.id, h: 'mia', v: 3, at: 1000 } }); eq(r.renamed, false);
+});
+t('a copy’s id comes from the shared one, so two devices adopting it before they sync end up with one playbook', () => {
+  const a = P.pbsAdoptCopy(SH, [], 1000).pb, b = P.pbsAdoptCopy(SH, [{ id: 'p1', name: 'Range fade', rules: [] }], 2000).pb;
+  eq([a.id, b.id], ['pbsabcdef012345', 'pbsabcdef012345']);
+  const merged = P._syncMerge('playbooks', [{ id: 'p1', name: 'Range fade', rules: [], at: 10, createdAt: 10 }, b], [a]).filter(p => !p.del);
+  eq(merged.map(p => [p.id, p.at]), [['p1', 10], ['pbsabcdef012345', 2000]], 'one copy (the later), beside the other playbook');
+});
+t('adopting again after deleting the copy brings back the same playbook over its tombstone (old ticks count again)', () => {
+  const r = P.pbsAdoptCopy(SH, [{ id: 'pbsabcdef012345', del: true, at: 1500 }], 3000);
+  eq([r.pb.id, !!r.existing], ['pbsabcdef012345', false]);
+  eq(P._syncMerge('playbooks', [r.pb], [{ id: 'pbsabcdef012345', del: true, at: 1500 }]).map(p => [p.id, !!p.del]), [['pbsabcdef012345', false]]);
+});
+await t('deleting an adopted copy tells the server, wherever it’s deleted; your own playbooks and sample mode don’t', async () => {
+  await U.pbUnadopt({ id: 'pbsabcdef012345', name: 'x', rules: [], src: { id: 'abcdef012345', h: 'mia', v: 1 } });
+  eq(U.env.calls, [['/playbooks/abcdef012345/adopt', 'POST', '{"on":false}']]);
+  eq(U.pbUnadopt({ id: 'p1', name: 'mine', rules: [] }), null);
+  U.env.pzS.demo = true; eq(U.pbUnadopt({ id: 'pbsx', name: 'x', rules: [], src: { id: 'abcdef012345' } }), null); U.env.pzS.demo = false;
+  eq(U.env.calls.length, 1);
+  ok(grabFn('wirePlaybooks').includes('pbUnadopt(p)'), 'the full journal’s Delete');
+  ok(grabFn('pbsClick').includes('pbUnadopt(p)'), 'Daruma’s Delete');
 });
 t('a name you already use gets the author’s handle; a copy you already hold isn’t copied twice', () => {
   const mine = [{ id: 'p1', name: 'breakout  retest', rules: [] }];

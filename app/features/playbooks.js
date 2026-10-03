@@ -10,16 +10,23 @@
    #playbooks/<id>      one shared playbook with every rule
 
    Adopting copies the name and the rules (with their ids) into your own playbooks, marked with where
-   it came from (src: {id, h, v, at}). From then on it's yours: a trade whose setup names it gets the
+   it came from (src: {id, h, v, at}). The copy's id is made from the shared one's ('pbs' + its id), so
+   two devices that adopt the same playbook before they sync make one playbook, not two: sync merges
+   playbooks by id, and ticks made on either device point at it. From then on it's yours: a trade whose setup names it gets the
    checklist (Daruma's journal card, or the full journal), and its scorecard reads only your trades, on
    this device. The author sees how many adopted it, never anyone's trades. When the author shares a new
    version (its name or rules changed), adopters hear of it and can take the update, which keeps the ids
    of unchanged rules, so ticks already made still count.
    ============================================================================ */
-const PBS={q:'',sort:'popular',page:0,edit:null,share:null,confirm:null};
+const PBS={q:'',sort:'popular',page:0,edit:null,share:null,confirm:null,draft:{}};
+// what's typed in the editor or the share note, kept across Daruma's background redraws (like the bio's draft)
+const pbsDraft=(id,v)=>PBS.draft[id]!=null?PBS.draft[id]:v;
 const PBS_SORT=[['popular','Most adopted'],['new','Newest'],['mentors','Mentors first']];
 
 // ---- pure: copies and updates (tests/test-playbook-share.mjs) ----
+// a copy's id, the same on every device (adopting again after deleting it brings back the same playbook,
+// so ticks from before still count)
+function pbsCopyId(id){ return 'pbs'+id; }
 // the playbook in list that is a copy of shared playbook id
 function pbsSharedFrom(list, id){ return (list||[]).find(p=>!p.del&&p.src&&p.src.id===id)||null; }
 // sh: a shared playbook (with every rule); list: your playbooks. -> {pb, renamed} | {existing} | {error}
@@ -30,7 +37,7 @@ function pbsAdoptCopy(sh, list, now, mkId){
   let name=sh.name, renamed=false;
   if(taken(name)){ name=(sh.name+' · @'+h).slice(0,60); renamed=true;
     if(taken(name))return {error:'You already have a playbook called “'+name+'”. Rename yours first.'}; }
-  mkId=mkId||(()=>'pb'+now.toString(36)+Math.random().toString(36).slice(2,5));
+  mkId=mkId||(()=>pbsCopyId(sh.id));
   return {pb:{id:mkId(),name,rules:sh.rules.map(r=>({id:r.id,text:r.text})),at:now,createdAt:now,src:{id:sh.id,h,v:sh.version,at:now}},renamed};
 }
 // the update: the author's rules and version; your name stays (you may have renamed it)
@@ -77,8 +84,8 @@ function pbsScoreHtml(s){
 }
 function pbsEditorHtml(p){
   return `<section class="pz-card pz-kv"><b class="pz-kvh">${p?'Edit '+esc(p.name):'New playbook'}</b>
-    <div class="pz-field"><label for="pbsName">Setup name</label><input type="text" id="pbsName" maxlength="60" value="${esc(p?p.name:'')}" placeholder="e.g. Breakout retest" autocomplete="off"></div>
-    <div class="pz-field"><label for="pbsRules">Rules, one per line</label><textarea id="pbsRules" rows="5" placeholder="Wait for the retest of the range high&#10;Stop under the range low&#10;Risk 1R or less">${esc(p?p.rules.map(r=>r.text).join('\n'):'')}</textarea></div>
+    <div class="pz-field"><label for="pbsName">Setup name</label><input type="text" id="pbsName" maxlength="60" value="${esc(pbsDraft('pbsName',p?p.name:''))}" placeholder="e.g. Breakout retest" autocomplete="off"></div>
+    <div class="pz-field"><label for="pbsRules">Rules, one per line</label><textarea id="pbsRules" rows="5" placeholder="Wait for the retest of the range high&#10;Stop under the range low&#10;Risk 1R or less">${esc(pbsDraft('pbsRules',p?p.rules.map(r=>r.text).join('\n'):''))}</textarea></div>
     <p class="pz-fine" style="margin:0">A trade gets this checklist when its setup says exactly this name. Rewording a rule starts it fresh; unchanged lines keep their history.${p&&p.src?' This is your copy: @'+esc(p.src.h)+'’s stays as they wrote it.':''}</p>
     <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" data-pbs="save" data-id="${esc(p?p.id:'')}" style="flex:1">Save playbook</button><button type="button" class="pz-ghost pz-sm" data-pbs="cancel">Cancel</button></div></section>`;
 }
@@ -91,7 +98,7 @@ function pbsYoursHtml(D){
     const tags=[p.src?`<a class="pz-tag" href="#playbooks/${esc(p.src.id)}" style="text-decoration:none">from @${esc(p.src.h)}</a>`:'',sh?`<span class="pz-tag win">Shared · ${pbsN(sh.adopts,'adopter')}</span>`:'',
       up?`<span class="pz-tag info">Update from @${esc(up.handle)}</span>`:'',gone?'<span class="pz-tag">No longer shared: your copy stays</span>':''].filter(Boolean).join('');
     let share='';
-    if(PBS.share===p.id)share=`<div class="pz-field"><label for="pbsAbout">A note for whoever adopts it (optional)</label><textarea id="pbsAbout" rows="3" maxlength="400" placeholder="When it works, what it's for, what to watch">${esc(sh?sh.about:'')}</textarea></div>
+    if(PBS.share===p.id)share=`<div class="pz-field"><label for="pbsAbout">A note for whoever adopts it (optional)</label><textarea id="pbsAbout" rows="3" maxlength="400" placeholder="When it works, what it's for, what to watch">${esc(pbsDraft('pbsAbout',sh?sh.about:''))}</textarea></div>
       <p class="pz-fine" style="margin:0">Members with a profile see its name, its rules and this note, with your name. Never your trades or how it went for you.</p>
       <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" data-pbs="share" data-id="${esc(p.id)}" style="flex:1">${sh?'Share the changes':'Share it'}</button><button type="button" class="pz-ghost pz-sm" data-pbs="cancel">Cancel</button></div>`;
     else if(md&&!p.src&&!demo){ const ch=sh&&pbsDiffers(p,sh);
@@ -107,13 +114,19 @@ function pbsYoursHtml(D){
       <ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.5">${p.rules.map(r=>`<li>${esc(r.text)}</li>`).join('')||'<li class="pz-sub">No rules yet.</li>'}</ol>
       ${pbsScoreHtml(s)}${upd}${share}
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-linkbtn" data-pbs="edit" data-id="${esc(p.id)}">Edit</button><button type="button" class="pz-linkbtn" data-pbs="del" data-id="${esc(p.id)}">${cf==='del:'+p.id?'Tap again to delete it':'Delete'}</button></div></section>`; };
-  const cards=list.map((p,i)=>card(p,stats[i])).join('');
+  // shared, then deleted here (or in the full journal): still on the league's list until you stop sharing it
+  const orphans=((md&&md.mine)||[]).filter(x=>!list.some(p=>p.id===x.src));
+  const orphan=x=>`<section class="pz-card pz-kv"><b class="pz-kvh">${esc(x.name)}</b><div class="pz-tags"><span class="pz-tag caution">Still shared · ${pbsN(x.adopts,'adopter')}</span></div>
+      <p class="pz-sub" style="font-size:13px;margin:0">You deleted it from your playbooks, but members can still find and adopt it.</p>
+      ${demo?'':`<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-quietbtn warn" data-pbs="unshare" data-sid="${esc(x.id)}">${cf==='unshare:'+x.id?'Tap again: copies others adopted stay theirs':'Stop sharing'}</button>
+        <button type="button" class="pz-ghost pz-sm" data-pbs="restore" data-sid="${esc(x.id)}">Bring it back</button></div>`}</section>`;
+  const cards=list.map((p,i)=>card(p,stats[i])).join('')+orphans.map(orphan).join('');
   const off=!pbsOn();
   return `${back}${pzHead('Your setups’ rules','Playbooks')}${pbsTabs('')}
     <p class="pz-sub" style="margin:0">Write the rules for each setup once. When a trade’s setup names a playbook, its journal card gets the checklist: tick the rules you kept, and each playbook here shows what keeping them is worth, from your own trades.</p>
     ${demo?'<p class="pz-fine">Sample mode: sharing and adopting wait until you leave it, and playbooks you write here go with the sample.</p>':''}
     <div class="pz-jgrid">${cards}${PBS.edit==='new'?pbsEditorHtml(null):''}</div>
-    ${!list.length&&PBS.edit!=='new'?`<section class="pz-card pz-empty"><b>No playbooks yet</b><p class="pz-sub">Write your first, or ${off?'open Daruma from your server to adopt one a member shared':'<a href="#playbooks/shared">adopt one a member shared</a>'}.</p></section>`:''}
+    ${!list.length&&!orphans.length&&PBS.edit!=='new'?`<section class="pz-card pz-empty"><b>No playbooks yet</b><p class="pz-sub">Write your first, or ${off?'open Daruma from your server to adopt one a member shared':'<a href="#playbooks/shared">adopt one a member shared</a>'}.</p></section>`:''}
     ${PBS.edit===null&&list.length<PB_MAX?`<button type="button" class="pz-ghost" data-pbs="new">${pzI('plus',16)} New playbook</button>`:''}
     ${md&&!md.canShare&&md.who==='mentors'?'<p class="pz-fine">On this server, mentors share playbooks; anyone can adopt them.</p>':''}`;
 }
@@ -175,6 +188,7 @@ async function pbsClick(t){
   const id=t.dataset.id, sid=t.dataset.sid, done=(m,k)=>{ if(m)pzNote(m,k); pzRender(); };
   try{
     if(a!=='del'&&a!=='unshare')PBS.confirm=null;
+    if(['new','edit','cancel','shareform'].includes(a))PBS.draft={}; // a fresh form starts from what's saved
     if(a==='new'){ PBS.edit='new'; PBS.share=null; pzRender(); const n=$('pbsName'); if(n)n.focus(); return true; }
     if(a==='edit'){ PBS.edit=id; PBS.share=null; pzRender(); const n=$('pbsName'); if(n)n.focus(); return true; }
     if(a==='cancel'){ PBS.edit=null; PBS.share=null; return done(), true; }
@@ -185,25 +199,30 @@ async function pbsClick(t){
       const all=pbNorm(settings.playbooks,true), prev=all.find(p=>p.id===id&&!p.del);
       if(pbList().some(p=>p.id!==id&&pbKey(p.name)===pbKey(name)))return done('There is already a playbook called “'+name+'”.','err'), true;
       const now=Date.now(), p={id:prev?prev.id:'pb'+now.toString(36)+Math.random().toString(36).slice(2,5),name,rules:pbRulesFromText(($('pbsRules')||{value:''}).value,prev&&prev.rules),at:now,createdAt:prev?prev.createdAt:now,...(prev&&prev.src?{src:prev.src}:{})};
-      PBS.edit=null; await pbsSaveList([...all.filter(x=>x.id!==p.id),p]); return done('Saved.'), true; }
+      PBS.edit=null; PBS.draft={}; await pbsSaveList([...all.filter(x=>x.id!==p.id),p]); return done('Saved.'), true; }
     if(a==='del'){ const p=pbList().find(x=>x.id===id); if(!p)return true;
       if(PBS.confirm!=='del:'+id){ PBS.confirm='del:'+id; return done(), true; } PBS.confirm=null;
       await pbsSaveList([...pbNorm(settings.playbooks,true).filter(x=>x.id!==id),{id,del:true,at:Date.now()}]);
-      if(p.src&&pbsOn()&&!pzS.demo)socFetch('/playbooks/'+p.src.id+'/adopt',{method:'POST',body:JSON.stringify({on:false})}).catch(()=>{}).finally(pbsDrop);
+      const un=pbUnadopt(p); if(un)un.then(pbsDrop);
       return done('Deleted. Trades keep their setup name.'), true; }
     if(pzS.demo)return done('Leave sample mode to share or adopt playbooks.','err'), true;
     if(a==='share'){ const p=pbList().find(x=>x.id===id); if(!p)return true; t.disabled=true;
       const r=await socFetch('/playbooks',{method:'POST',body:JSON.stringify({src:p.id,name:p.name,about:($('pbsAbout')||{value:''}).value,rules:p.rules})});
-      PBS.share=null; pbsDrop(); return done(r.changed?'Shared. Members find it under Social → Playbooks.':'Nothing changed since you shared it.'), true; }
+      PBS.share=null; PBS.draft={}; pbsDrop(); return done(r.changed?'Shared. Members find it under Social → Playbooks.':'Nothing changed since you shared it.'), true; }
     if(a==='unshare'){ if(PBS.confirm!=='unshare:'+sid){ PBS.confirm='unshare:'+sid; return done(), true; } PBS.confirm=null;
       await socFetch('/playbooks/'+sid,{method:'DELETE'}); pbsDrop(); return done('Not shared any more. Yours stays here, and so do copies others adopted.'), true; }
     if(a==='adopt'){ t.disabled=true; const sh=await pbsFull(sid);
       if(pbList().length>=PB_MAX)return done('You have '+PB_MAX+' playbooks. Delete one to adopt another.','err'), true;
       const r=pbsAdoptCopy(sh,pbNorm(settings.playbooks,true),Date.now());
       if(r.error)return done(r.error,'err'), true;
-      if(!r.existing)await pbsSaveList([...pbNorm(settings.playbooks,true),r.pb]);
+      if(!r.existing)await pbsSaveList([...pbNorm(settings.playbooks,true).filter(x=>x.id!==r.pb.id),r.pb]); // over a deleted copy's tombstone
       await socFetch('/playbooks/'+sid+'/adopt',{method:'POST',body:'{}'}); pbsDrop();
       return done(r.existing?'It’s already in your playbooks.':'Added as “'+r.pb.name+'”. Type it as a trade’s setup to get the checklist.'), true; }
+    if(a==='restore'){ const M=pbsMine(), x=((M&&M.d&&M.d.mine)||[]).find(m=>m.id===sid); if(!x)return true;
+      if(pbList().some(p=>pbKey(p.name)===pbKey(x.name)))return done('You have another playbook called “'+x.name+'”. Rename it first.','err'), true;
+      const now=Date.now(); // its old id: what you shared stays linked to it, and ticks made on it count again
+      await pbsSaveList([...pbNorm(settings.playbooks,true).filter(p=>p.id!==x.src),{id:x.src,name:x.name,rules:x.rules,at:now,createdAt:x.at}]);
+      return done('Back in your playbooks.'), true; }
     if(a==='update'){ const p=pbList().find(x=>x.id===id); if(!p||!p.src)return true; t.disabled=true;
       const sh=await pbsFull(p.src.id), next=pbsApplyUpdate(p,sh,Date.now());
       await pbsSaveList([...pbNorm(settings.playbooks,true).filter(x=>x.id!==id),next]); pbsDrop();
@@ -212,6 +231,7 @@ async function pbsClick(t){
   return true;
 }
 function pbsInput(t){
+  if(t.id==='pbsName'||t.id==='pbsRules'||t.id==='pbsAbout'){ PBS.draft[t.id]=t.value; return true; }
   if(t.id!=='pbsQ')return false;
   clearTimeout(PBS.qT); PBS.qT=setTimeout(()=>{ PBS.q=t.value.trim(); PBS.page=0; pzRender(); const el=$('pbsQ'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300);
   return true;

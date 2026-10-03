@@ -802,6 +802,12 @@ function pbNorm(list, keepDeleted){
   return out.slice(-90); // PB_MAX × 3, room for tombstones
 }
 function pbList(){ return pbNorm(settings.playbooks).slice(-PB_MAX); }
+// a deleted copy of a playbook someone shared stops counting as adopted (from Daruma or the full journal);
+// best effort: offline, signed out or in sample mode the server simply isn't told
+function pbUnadopt(p){
+  if(!p||!p.src||typeof socFetch!=='function'||typeof SOC==='undefined'||!SOC.key||(typeof pzS!=='undefined'&&pzS.demo)||!/^https?:$/.test(location.protocol))return null;
+  return socFetch('/playbooks/'+p.src.id+'/adopt',{method:'POST',body:JSON.stringify({on:false})}).catch(()=>null);
+}
 function pbKey(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
 function playbookFor(setup, playbooks){ const k=pbKey(setup); return k?(playbooks||[]).find(p=>!p.del&&pbKey(p.name)===k)||null:null; }
 // rules typed one per line -> rules; a line that didn't change keeps its id, so past ticks still count
@@ -903,7 +909,7 @@ function wirePlaybooks(){
   root.querySelectorAll('[data-pbdel]').forEach(b=>b.onclick=async()=>{
     const p=pbList().find(x=>x.id===b.dataset.pbdel); if(!p||!confirm('Delete the “'+p.name+'” playbook? Trades keep their setup name; their checklist ticks stop counting.'))return;
     settings.playbooks=[...pbNorm(settings.playbooks,true).filter(x=>x.id!==p.id),{id:p.id,del:true,at:Date.now()}];
-    await Store.set(S_KEY,settings); renderReview(); renderTable(); });
+    pbUnadopt(p); await Store.set(S_KEY,settings); renderReview(); renderTable(); });
 }
 
 /* ============================ routine vs results (Review) ============================ */
