@@ -151,7 +151,7 @@ t('re-renders keep typed input and focus in the settings sheet too, and journal 
   ok(grabFn('pzConnect').includes('_loading&&i<240'), 'waits out a background refresh');
 });
 t('a trade cap set in Pulse survives a save from the full app’s day journal', () => {
-  ok(grabFn('wireDayJournal').includes('maxTrades:prevE.maxTrades||null'));
+  ok(grabFn('saveDay').includes('maxTrades:prevE.maxTrades||null')); // the day journal's save (autosave and button)
   ok(grabFn('nextDayEntry').includes("'maxTrades'"));
 });
 

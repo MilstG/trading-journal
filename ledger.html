@@ -124,7 +124,7 @@ body:has(#app.hide) .hdrnav{display:none}
 .brand h1::after{content:"_";color:var(--profit)} body.bb .brand h1::after{color:var(--lbl)}
 .brand .tick{font-family:var(--cond);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line);padding:3px 8px}
 .hdr-right{display:flex;align-items:center;gap:8px;margin-left:auto}
-.hdrsum{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:7px 12px;cursor:pointer;white-space:nowrap}
+.hdrsum{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:7px 12px;cursor:pointer;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .hdrsum b{font-weight:600}
 .hdrsum:hover{border-color:#3D4652} body.bb .hdrsum:hover{border-color:var(--lbl)}
 .btn{background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-family:var(--cond);letter-spacing:.04em;text-transform:uppercase;font-weight:600;font-size:13px;padding:8px 16px}
@@ -273,9 +273,11 @@ body.bb .topnav button.on{color:#FFD79A;background:#0A0A08}
 
 /* calendar heatmap */
 .cal-wrap{overflow-x:auto;padding-bottom:4px}
-.cal{display:flex;gap:3px}
-.cal-col{display:flex;flex-direction:column;gap:3px;flex:1 1 0;min-width:0}
+.cal{display:grid;grid-auto-flow:column;grid-template-rows:auto repeat(7,auto);grid-template-columns:auto;grid-auto-columns:minmax(0,1fr);gap:3px}
+.cal-col{display:contents}
 .cal-cell{aspect-ratio:1;background:var(--panel2)}
+.cal-mo{font-size:10px;line-height:12px;height:12px;color:var(--faint);white-space:nowrap;overflow:visible}.cal-mo.end{direction:rtl}
+.cal-dl{font-size:9.5px;line-height:0;height:0;align-self:center;padding-right:4px;color:var(--faint)} /* zero-height: the label never stretches its row */
 .cal-legend{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:10px;font-size:11.5px;color:var(--faint)}
 .cal-legend .sw{width:11px;height:11px;display:inline-block}
 
@@ -336,6 +338,12 @@ tbody tr:last-child td{border-bottom:none}
 tr.trow.expanded .caret{transform:rotate(90deg);display:inline-block}
 .jrow td{padding:0;background:var(--panel2)}
 .journal{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;padding:18px;text-align:left;border-bottom:1px solid var(--line)}
+/* the editor sits in the scrolling trade table: pinned to its visible width, not the table's (phones) */
+.tbl-wrap{container-type:inline-size}
+.wrap .jrow td{padding:0}
+.jrow .journal{position:sticky;left:0;width:100cqi;white-space:normal}
+.journal>*,.journal [data-j]{min-width:0}
+.jrow .journal .plan-err{font-size:12.5px;margin-top:6px;font-family:var(--prose)}.plan-err:empty{display:none}
 .field{margin-bottom:12px}
 .field label{display:block;font-family:var(--cond);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--lbl);margin-bottom:5px}
 .field textarea{width:100%;min-height:84px;resize:vertical}
@@ -459,7 +467,7 @@ body.bb .modal{border-color:#3A3A32}
 .modal p{color:var(--muted);font-size:13.5px;line-height:1.6;margin-bottom:10px;font-family:var(--prose)}
 .modal textarea{width:100%;min-height:170px}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
-.tip{position:fixed;z-index:120;max-width:320px;background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-size:13px;line-height:1.55;padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .08s;box-shadow:0 14px 34px rgba(0,0,0,.6)}
+.tip{position:fixed;z-index:120;max-width:min(320px,calc(100vw - 16px));visibility:hidden;background:var(--panel2);border:1px solid #2A313A;color:var(--text);font-size:13px;line-height:1.55;padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .08s;box-shadow:0 14px 34px rgba(0,0,0,.6)}
 body.bb .tip{border-color:#3A3A32}
 [data-tip]{cursor:help}
 .foot{border-top:1px solid var(--line);margin-top:22px;padding-top:14px;color:var(--faint);font-size:12.5px;line-height:1.7}
@@ -473,7 +481,7 @@ body.bb .tip{border-color:#3A3A32}
   .stat:nth-child(n+3){border-top:1px solid var(--line2)}
   .charts{grid-template-columns:repeat(2,1fr)}
   .diag-grid{grid-template-columns:1fr}
-  .journal{grid-template-columns:1fr}
+  .journal{grid-template-columns:minmax(0,1fr)}
   .calrow{grid-template-columns:1fr}
 }
 @media(max-width:640px){
@@ -649,7 +657,7 @@ tr.trow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 /* day × hour heatmap */
 .dh-tbl{border-collapse:collapse;font-size:11px;width:100%;table-layout:fixed}
 .dh-tbl th:first-child,.dh-tbl td.dh-lab{width:44px}
-.dh-tbl th{padding:2px 3px;color:var(--faint);font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;border:none;text-align:center;overflow:hidden}
+.dh-tbl th{padding:2px 0;color:var(--faint);font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;border:none;text-align:center;overflow:visible;font-size:10px}
 .dh-tbl td.dh-lab{padding:0 8px 0 2px;color:var(--muted);font-family:var(--cond);letter-spacing:.04em;text-transform:uppercase;font-size:11px;text-align:right;white-space:nowrap}
 .dh-cell{height:17px;padding:0;border:1px solid var(--bg)}
 
@@ -691,6 +699,8 @@ body.bb .topnav button.on{color:#FFD79A;background:#141008;box-shadow:inset 2px 
   body:not(.pz-mode):has(#app:not(.hide)) .topnav button{width:100%;padding:9px 12px}
   body:not(.pz-mode):has(#app:not(.hide)) .hdr-right{margin:auto 0 0;flex-direction:column;align-items:stretch;padding-top:12px;border-top:1px solid var(--line)}
   body:not(.pz-mode):has(#app:not(.hide)) .hdr-right .btn,body:not(.pz-mode):has(#app:not(.hide)) .hdrsum{width:100%;text-align:center;justify-content:center}
+  body:not(.pz-mode):has(#app:not(.hide)) .hdrsum{white-space:normal;line-height:1.45} /* a seven-figure total wraps in the 232px sidebar */
+  .hdrsum b{white-space:nowrap}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links{display:flex;flex-direction:column;gap:2px;padding:10px 0 0;border-top:1px solid var(--line)}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links a{padding:6px 10px;border-radius:8px;color:var(--muted);font-size:13px;font-weight:550;text-decoration:none}
   body:not(.pz-mode):has(#app:not(.hide)) .side-links a:hover{background:var(--hover);color:var(--text)}
@@ -756,7 +766,7 @@ body.light .wrap .viewtog button.on,body.light .wrap .periods button.on{backgrou
 .wrap .card>h3{font-size:14.5px;font-weight:650;color:var(--text);letter-spacing:-.005em;text-transform:none;margin-bottom:14px}
 .wrap .card>h3 .hint{font-family:var(--prose);font-size:12.5px;color:var(--muted)}
 .wrap .charts,.wrap .calrow{gap:16px;margin-top:16px}
-.cal{gap:3px}.cal-col{gap:3px}
+.cal{gap:3px}
 .cal-cell{border-radius:3px}
 .cal-legend .sw{border-radius:3px}
 .dh-cell{border-radius:3px}

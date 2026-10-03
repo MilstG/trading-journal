@@ -197,8 +197,13 @@ function renderCalendar(trades){
   // a year ago used to wash all contrast out of the drawn weeks
   let scale=1;
   { let d0=start; for(let i=0;i<WEEKS*7;i++){ const o=map[dayKey(d0)]; if(o&&Math.abs(o.net)>scale)scale=Math.abs(o.net); d0=addDays(d0,1); } }
-  let cols=[], d=start;
+  // first column: weekday labels (Mon / Wed / Fri, as most calendars do); each week's column is headed by
+  // the month that starts in it
+  let cols=['<div class="cal-col" aria-hidden="true"><div class="cal-mo"></div>'+DOWN.map((n,i)=>`<div class="cal-dl">${i%2?n:''}</div>`).join('')+'</div>'], d=start;
   for(let w=0;w<WEEKS;w++){ let cells=[];
+    { let mo=''; for(let i=0;i<7;i++){ const p=tzParts(addDays(d,i)); if(p.day===1)mo=MONTHS[p.mo]+(p.mo===0?' ’'+String(p.y).slice(2):''); }
+      if(!w&&!mo){ const p=tzParts(d); if(p.day<=10)mo=MONTHS[p.mo]; } // the first column names its month, unless the next label is too close
+      cells.push(`<div class="cal-mo${w>=WEEKS-2?' end':''}" aria-hidden="true">${mo}</div>`); } // the last columns' labels run leftwards, inside the card
     for(let i=0;i<7;i++){ const k=dayKey(d); const o=map[k]; const p=tzParts(d);
       const dateStr=DOWN[p.dow]+', '+MONTHS[p.mo]+' '+p.day+', '+p.y;
       const isFuture=d>today; let bg='var(--panel2)', tip=dateStr+' · no trades';
@@ -235,7 +240,8 @@ function renderDowHour(trades){
     grid[day][hr]=(grid[day][hr]||0)+t.net; const c=cnt[day][hr]; c.n++; if(isWin(t.net))c.w++; else if(isLoss(t.net))c.l++; });
   let mx=1; for(const row of grid)for(const v of row)if(v!=null)mx=Math.max(mx,Math.abs(v));
   const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  let html='<table class="dh-tbl" aria-label="Net PnL by weekday and hour of day"><thead><tr><th></th>'+Array.from({length:24},(_,h)=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>';
+  // every third hour is labeled: two digits don't fit a 24th of a half-width card
+  let html='<table class="dh-tbl" aria-label="Net PnL by weekday and hour of day"><thead><tr><th></th>'+Array.from({length:24},(_,h)=>`<th>${h%3?'':h}</th>`).join('')+'</tr></thead><tbody>';
   for(let d=0;d<7;d++){ html+=`<tr><td class="dh-lab">${DOW[d]}</td>`;
     for(let h=0;h<24;h++){ const v=grid[d][h];
       if(v==null){ html+='<td class="dh-cell" style="background:var(--panel2)" aria-hidden="true"></td>'; continue; }

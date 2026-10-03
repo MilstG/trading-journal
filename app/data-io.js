@@ -163,6 +163,10 @@ async function loadWallet(w,fresh,spotP){
   return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
     accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified};
 }
+// one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
+function loadFailNote(w,err){ err=String(err||'');
+  if(/^Network error reaching Hyperliquid/.test(err))return 'Couldn\u2019t reach Hyperliquid for '+labelFor(w)+' \u2014 check your connection';
+  return 'Couldn\u2019t load '+labelFor(w)+(err?' \u2014 '+err:''); }
 async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!opts.auto;
   if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
@@ -181,8 +185,8 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     const results=await mapLimit(settings.wallets,2,w=>loadWallet(w,fresh,spotP).catch(e=>{ console.warn('wallet load',e); return {failed:true,error:e&&e.message}; }));
     spotMaps=await spotP;
     results.forEach((r,i)=>{ const w=settings.wallets[i];
-      // another venue's reason is worth reading (a key to add on this device, a region the exchange refuses)
-      if(r.failed){ failed.push(labelFor(w)+(r.error&&venueOf(w)!=='hyperliquid'?' — '+r.error:'')); return; }
+      // the reason is worth reading (offline, a key to add on this device, a region the exchange refuses)
+      if(r.failed){ failed.push(loadFailNote(w,r.error)); return; }
       newFills+=r.added; if(r.cached)cachedN++; if(r.truncNote)truncated.push(r.truncNote);
       for(const f of r.flows)flowsAcc.push(f); skippedAcc+=r.skipped; totalFills+=r.nFills;
       trades=trades.concat(r.trades); positions=positions.concat(r.positions);
@@ -194,9 +198,10 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     if(!trades.length && !positions.length && !spotHold.length){
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
       // (offline laptop) must keep the current view instead of blanking the dashboard
-      if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' (failed: '+failed.join(', ')+')':'')+' — keeping the current view.'); return; }
+      if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' ('+failed.join('; ')+')':'')+' — keeping the current view.'); return; }
       allTrades=[]; openPositions=[]; spotHoldings=[];
-      setErr('No activity found'+(failed.length?' · failed: '+failed.join(', '):'')+'.'); return; }
+      // every wallet failing is not "no activity": say why, and only that
+      setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
@@ -213,7 +218,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     saveLastView();
     const perpN=allTrades.filter(t=>!t.isOpen&&t.market==='perp').length, spotN=allTrades.filter(t=>!t.isOpen&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
-    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · could not load: '+failed.join(', '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
+    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${cacheNote}${failed.length?' · '+failed.join(' · '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
   }catch(e){ console.error(e);
     // a background refresh failing (offline laptop, transient outage) is not banner-worthy —
     // it retries in 3 minutes; only a user-initiated load earns the error treatment
@@ -533,7 +538,14 @@ $('settingsPop').addEventListener('click',e=>e.stopPropagation());
 document.addEventListener('click',e=>{ const p=$('settingsPop'); if(p&&!p.classList.contains('hide'))p.classList.add('hide');
   // the tools menu closes on a pick or on any click outside it
   const m=$('toolsMenu'); if(m&&m.open&&(!m.contains(e.target)||e.target.closest('.tmenu-pop button')))m.open=false; });
-document.addEventListener('keydown',e=>{ if(e.key!=='Escape')return; const m=$('toolsMenu'); if(m&&m.open){ m.open=false; m.querySelector('summary').focus(); } });
+// Escape closes the topmost of the paste modal, Settings, the tools menu and the wallets panel, and hands
+// focus back to the button that opened it (the exchange and mark-up dialogs close themselves)
+document.addEventListener('keydown',e=>{ if(e.key!=='Escape'||document.querySelector('.modal-bg.show:not(#modal)'))return;
+  const md=$('modal'), p=$('settingsPop'), m=$('toolsMenu'), sp=$('setupPanel'), back=b=>{ if(b)b.focus(); };
+  if(md&&md.classList.contains('show')){ md.classList.remove('show'); back($('importBtn')); }
+  else if(p&&!p.classList.contains('hide')){ p.classList.add('hide'); back($('gearBtn')); }
+  else if(m&&m.open){ m.open=false; back(m.querySelector('summary')); }
+  else if(sp&&!sp.classList.contains('hide')&&$('app')&&!$('app').classList.contains('hide')){ sp.classList.add('hide'); back($('walletsBtn')); } });
 $('viewtog').addEventListener('click',async e=>{ const b=e.target.closest('button'); if(!b)return;
   view=b.dataset.v; document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x===b));
   settings.view=view; await Store.set(S_KEY,settings);
@@ -571,18 +583,24 @@ $('clearFilters').onclick=()=>{ ['fCoin','fSide','fOut','fTag','fWallet','fFlag'
   $('fRating').value='0'; $('fFrom').value=''; $('fTo').value=''; $('fSearch').value=''; renderTable(); };
 /* tooltips — hover (mouse), tap (touch), and focus (keyboard) */
 (function(){ let tip=$('tip'); if(!tip){ tip=document.createElement('div'); tip.id='tip'; tip.className='tip'; document.body.appendChild(tip); }
-  let cur=null, hideT=null;
-  const hide=()=>{ cur=null; tip.style.opacity='0'; clearTimeout(hideT); };
-  const place=(el,x,y)=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.opacity='1';
+  let cur=null, hideT=null, ptrAt=0;
+  const hide=()=>{ cur=null; tip.style.opacity='0'; tip.style.visibility='hidden'; clearTimeout(hideT); };
+  const show=el=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.visibility='visible'; tip.style.opacity='1'; };
+  const clampY=(t,h)=>Math.max(8,Math.min(t,innerHeight-h-8)); // never off the top or bottom edge
+  const place=(el,x,y)=>{ show(el);
     const r=tip.getBoundingClientRect(); let l=x+14,t=y+16;
     if(l+r.width>innerWidth-8)l=innerWidth-r.width-8; if(l<8)l=8;
-    if(t+r.height>innerHeight-8)t=y-r.height-12; tip.style.left=l+'px'; tip.style.top=t+'px'; };
+    if(t+r.height>innerHeight-8)t=y-r.height-12; tip.style.left=l+'px'; tip.style.top=clampY(t,r.height)+'px'; };
   // anchor to an element's box (used for tap + keyboard focus, where there's no cursor to follow)
-  const placeAnchored=el=>{ tip.textContent=el.getAttribute('data-tip'); tip.style.opacity='1';
+  const placeAnchored=el=>{ show(el);
     const b=el.getBoundingClientRect(), r=tip.getBoundingClientRect();
     let l=b.left+b.width/2-r.width/2, t=b.top-r.height-10;
     if(l+r.width>innerWidth-8)l=innerWidth-r.width-8; if(l<8)l=8;
-    if(t<8)t=b.bottom+10; tip.style.left=l+'px'; tip.style.top=t+'px'; };
+    if(t<8)t=b.bottom+10; tip.style.left=l+'px'; tip.style.top=clampY(t,r.height)+'px'; };
+  // a click is the user acting, not reading: the tip goes (a nav button's used to stay up over the sidebar)
+  // and the focus that click gives doesn't bring it back; Escape dismisses it too
+  document.addEventListener('pointerdown',e=>{ ptrAt=Date.now(); if(cur&&!(e.pointerType==='touch'&&e.target.closest&&e.target.closest('[data-tip]')===cur))hide(); },true);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&cur)hide(); });
   const coarse=matchMedia('(hover: none)').matches;
   if(!coarse){
     document.addEventListener('mouseover',e=>{ const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;place(el,e.clientX,e.clientY);} });
@@ -597,7 +615,7 @@ $('clearFilters').onclick=()=>{ ['fCoin','fSide','fOut','fTag','fWallet','fFlag'
       else hide(); },true);
   }
   // keyboard: reveal the tip when a tipped, focusable element receives focus
-  document.addEventListener('focusin',e=>{ const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;placeAnchored(el);} });
+  document.addEventListener('focusin',e=>{ if(Date.now()-ptrAt<600)return; const el=e.target.closest&&e.target.closest('[data-tip]'); if(el){cur=el;placeAnchored(el);} });
   document.addEventListener('focusout',()=>{ if(cur)hide(); });
   document.addEventListener('scroll',()=>{ if(cur)hide(); },true);
   window.addEventListener('resize',()=>{ if(cur)hide(); });
@@ -623,7 +641,7 @@ $('tbody').addEventListener('click',e=>{
     const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);
       markJEdit(id); Store.set(J_KEY,journal); },0); return; } // persist immediately — a toggle is an edit, not a draft
   if(e.target.closest('textarea,input,.rating,.mistakes,.pbrules,.jsave,.attgrid,.attbtn'))return;
-  const row=e.target.closest('.trow'); if(row){ const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable(); }
+  const row=e.target.closest('.trow'); if(row)toggleRow(row.dataset.id);
 });
 function setStar(star){ const id=star.parentElement.dataset.id, r=+star.dataset.r; ensureJ(id).rating=r;
   markJEdit(id); Store.set(J_KEY,journal); // persist immediately — a rating is an edit, not a draft
@@ -638,11 +656,19 @@ $('tbody').addEventListener('keydown',e=>{
     return; }
   if(e.target.closest('textarea,input,.mistakes,.jsave,.attgrid,.attbtn'))return;
   const row=e.target.closest('tr.trow');
-  if(row&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); const id=row.dataset.id; expandedId=expandedId===id?null:id; renderTable();
+  if(row&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); const id=row.dataset.id; toggleRow(id);
     if(expandedId===id) setTimeout(()=>{ const r=$('tbody').querySelector(`tr.trow[data-id="${CSS.escape(id)}"]`); if(r)r.focus(); },0); }
 });
 $('tbody').addEventListener('change',e=>{ const fi=e.target.closest('input[data-att]');
-  if(fi&&fi.files&&fi.files.length){ addAttachments(fi.dataset.att,[...fi.files]); fi.value=''; } });
+  if(fi&&fi.files&&fi.files.length){ addAttachments(fi.dataset.att,[...fi.files]); fi.value=''; return; }
+  const f=e.target.closest('[data-j]'); if(f){ jCancel('t|'+f.dataset.id); jAutosave(f.dataset.id,f.type==='number'); } }); // left the field: save it now
+// text autosaves after a pause in typing; numbers wait for the change above
+$('tbody').addEventListener('input',e=>{ const f=e.target.closest('[data-j]'); if(f&&f.type!=='number'){ const id=f.dataset.id; jSoon('t|'+id,()=>jAutosave(id,false)); } });
+// closing or hiding the page: what's still waiting is saved (the field being typed in counts as left);
+// only a plan that can't be saved as typed asks before the page goes
+window.addEventListener('beforeunload',e=>{ const a=document.activeElement; if(a&&a.matches&&a.matches('input,textarea'))a.blur(); jFlush();
+  if([..._jPlanBad].some(id=>document.getElementById('planErr-'+id))){ e.preventDefault(); e.returnValue=''; } });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden)jFlush(); });
 // The paste modal does four jobs behind one box (fills JSON, CSV, journal restore, full
 // backup). Naming the detected type BEFORE Load removes the "wrong branch" surprise class.
 function detectPasteType(raw){

@@ -221,7 +221,7 @@ function filteredTrades(){
     if(fw&&(!t.wallet||t.wallet.address!==fw))return false;
     if(fc&&dcoin(t)!==fc)return false; if(fs&&t.dir!==fs)return false;
     if(fo==='win'&&!isWin(t.net))return false; if(fo==='loss'&&!isLoss(t.net))return false;
-    const j=journal[t.id]||{}; if(ft&&!(j.tags||[]).includes(ft))return false;
+    const j=journal[t.id]||{}; if(ft&&!(j.tags||[]).some(x=>String(x).toLowerCase()===ft))return false;
     if(fRating&&!((j.rating||0)>=fRating))return false;
     if(fFlag==='flagged'&&!(j.mistakes&&j.mistakes.length))return false;
     if(fFlag==='clean'&&(j.mistakes&&j.mistakes.length))return false;
@@ -237,6 +237,7 @@ function filteredTrades(){
   return r;
 }
 function renderTable(){
+  jFlush(); // typing still waiting for its autosave is saved before the form is rebuilt
   const rows=filteredTrades(); const multi=settings.wallets.length>1;
   // reset to page 1 whenever the filtered/sorted set changes (but not on row-expand)
   const sig=[sortKey,sortDir,view,period,customRange.from,customRange.to,pageSize,
@@ -330,7 +331,8 @@ function journalRow(t,j,R){
         <div style="display:flex;gap:6px">
           <input type="number" data-j="plan_entry" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.entry)?esc(j.plan.entry):''}" placeholder="entry px" step="any" style="flex:1">
           <input type="number" data-j="plan_stop" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.stop)?esc(j.plan.stop):''}" placeholder="stop px" step="any" style="flex:1">
-          <input type="number" data-j="plan_target" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.target)?esc(j.plan.target):''}" placeholder="target px" step="any" style="flex:1"></div>${planOutcomeLine(t,j)}</div>
+          <input type="number" data-j="plan_target" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.target)?esc(j.plan.target):''}" placeholder="target px" step="any" style="flex:1"></div>
+        <div class="plan-err neg-t" id="planErr-${esc(t.id)}" role="alert">${j.plan?esc(tradePlanCheck(t,+j.plan.entry,+j.plan.stop,+j.plan.target)):''}</div>${planOutcomeLine(t,j)}</div>
     </div>
     <div>
       <div class="field"><label>Execution rating</label>
@@ -350,8 +352,8 @@ function journalRow(t,j,R){
       <button class="btn ghost attbtn" data-replay="${esc(t.id)}" data-tip="Candlestick chart of this trade: real OHLC candles with every entry/add fill (▲) and close fill (▼) marked at its actual time and price, plus avg entry/exit lines. Uses the locally cached candles where possible.">📈 Price chart</button></div>
     <div id="replay-${esc(t.id)}"></div>
     <div class="field mrev" id="mrev-${esc(t.id)}" data-mr-box="${esc(t.id)}"></div>
-    <div class="jsave"><span class="saved-tag" id="saved-${esc(t.id)}">Saved ✓</span>
-      <button class="btn" data-save="${esc(t.id)}">Save journal</button></div>
+    <div class="jsave"><span class="saved-tag" id="saved-${esc(t.id)}" aria-live="polite">Saved ✓</span>
+      <button class="btn" data-save="${esc(t.id)}" data-tip="Notes, setup and tags save as you type; numbers when you leave the field. This saves everything now and refreshes the dashboard.">Save journal</button></div>
   </div></td></tr>`;
 }
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -479,24 +481,75 @@ function nextPlan(prev,e,s,tg,now){
   return p;
 }
 function ensureJ(id){ if(!journal[id])journal[id]={notes:'',tags:[],setup:'',rating:0,mistakes:[],risk:null,plan:null}; return journal[id]; }
-async function saveJournal(id){
-  const j=ensureJ(id); markJEdit(id);
-  const g=s=>document.querySelector(`[data-j="${s}"][data-id="${CSS.escape(id)}"]`);
-  if(g('notes'))j.notes=g('notes').value;
-  if(g('setup'))j.setup=g('setup').value;
-  if(g('tags'))j.tags=g('tags').value.split(',').map(x=>x.trim()).filter(Boolean);
-  if(g('risk')){ const v=parseFloat(g('risk').value); j.risk=v>0?v:null; }
-  { const pe=g('plan_entry'), ps=g('plan_stop'), pt=g('plan_target');
-    if(pe||ps||pt){ const e=parseFloat(pe&&pe.value), s=parseFloat(ps&&ps.value), tg=parseFloat(pt&&pt.value);
-      j.plan=nextPlan(j.plan,e,s,tg,Date.now()); } }
-  await Store.set(J_KEY,journal);
-  const tag=$('saved-'+id); if(tag){tag.classList.add('show');setTimeout(()=>tag.classList.remove('show'),1400);}
-  render();
+// "scalp, , SCALP, scalp ,  fomo" → ["scalp","fomo"]: one tag per spelling-insensitive name, the first spelling kept
+function parseTags(s){ const seen=new Set(), out=[];
+  for(const x of String(s||'').split(',')){ const v=x.trim(), k=v.toLowerCase(); if(v&&!seen.has(k)){ seen.add(k); out.push(v); } }
+  return out; }
+// the tag filter's options: one per name whatever its case (value = lower case, label = first spelling met)
+function tagOptions(J){ const m=new Map();
+  for(const j of Object.values(J||{}))for(const t of (j&&Array.isArray(j.tags)?j.tags:[])){ const k=String(t).toLowerCase(); if(k&&!m.has(k))m.set(k,String(t)); }
+  return [...m].sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0); }
+// A trade plan checked like Daruma's plan form, on the trade's own side; a blank entry is the fill's.
+// Without a stop only the target is checked (against the entry). '' = fine.
+function tradePlanCheck(t,e,s,tg){
+  const long=t.dir!=='Short', en=e>0?e:t.avgEntry;
+  if(s>0)return pplanCheck({coin:t.coin||'?',dir:long?'Long':'Short',entry:en>0?en:null,stop:s,target:tg>0?tg:null});
+  if(tg>0&&en>0&&(long?tg<=en:tg>=en))return 'For a '+(long?'long':'short')+', the target goes '+(long?'above':'below')+' the entry.';
+  return '';
 }
+// The open drawer → its journal entry. Text always; the numbers (planned risk, the plan) only with
+// `nums`: they're saved when the field is left, never half-typed, since a plan's `at` stamp is what
+// "written live" is scored on. A plan on the wrong side of the entry isn't saved; the drawer says why.
+const _jPlanBad=new Set();
+function jReadDrawer(id,nums){
+  const g=s=>document.querySelector(`[data-j="${s}"][data-id="${CSS.escape(id)}"]`);
+  if(!g('notes'))return null; // the drawer isn't open
+  const fresh=!journal[id], j=ensureJ(id), before=JSON.stringify(j);
+  j.notes=g('notes').value;
+  if(g('setup'))j.setup=g('setup').value;
+  if(g('tags'))j.tags=parseTags(g('tags').value);
+  let err='';
+  if(nums){
+    if(g('risk')){ const v=parseFloat(g('risk').value); j.risk=v>0?v:null; }
+    const pe=g('plan_entry'), ps=g('plan_stop'), pt=g('plan_target');
+    let msg='';
+    if(pe||ps||pt){ const e=parseFloat(pe&&pe.value), s=parseFloat(ps&&ps.value), tg=parseFloat(pt&&pt.value), t=allTrades.find(x=>x.id===id), p0=j.plan;
+      msg=t?tradePlanCheck(t,e,s,tg):'';
+      // a plan stored before this check existed is left as it is (and still named), only new numbers are refused
+      const same=!!p0&&String(p0.entry)===String(e>0?e:'')&&String(p0.stop)===String(s>0?s:'')&&String(p0.target)===String(tg>0?tg:'');
+      err=same?'':msg;
+      if(!err)j.plan=nextPlan(j.plan,e,s,tg,Date.now()); }
+    const box=$('planErr-'+id); if(box)box.textContent=err?err+' The plan isn’t saved until it is.':msg;
+    if(err)_jPlanBad.add(id); else _jPlanBad.delete(id);
+  }
+  const changed=JSON.stringify(j)!==before;
+  if(fresh&&!changed)delete journal[id];
+  return {changed,err};
+}
+function jSavedTag(id){ const tag=$('saved-'+id); if(tag){ tag.classList.add('show'); clearTimeout(tag._t); tag._t=setTimeout(()=>tag.classList.remove('show'),1400); } }
+// Autosave: no redraw, so nothing moves under the cursor (and an open price chart stays). The table
+// and stats catch up when the row closes (_jStale) or on the next render; the button redraws now.
+let _jStale=false;
+function jAutosave(id,nums){ const r=jReadDrawer(id,nums); if(!r||!r.changed)return r;
+  markJEdit(id); Store.set(J_KEY,journal); _jStale=true; jSavedTag(id); return r; }
+async function saveJournal(id){
+  jCancel('t|'+id);
+  const r=jReadDrawer(id,true);
+  if(r&&r.changed){ markJEdit(id); await Store.set(J_KEY,journal); }
+  if(!r||!r.err)jSavedTag(id);
+  _jStale=false; render();
+}
+// Pending autosaves by key ('t|<trade id>', 'day', 'week'): a pause in typing fires one; leaving the
+// field, a redraw of the form, hiding the page or closing it fires it at once.
+const _jPend=new Map();
+function jSoon(key,fn,ms){ jCancel(key); _jPend.set(key,{fn,t:setTimeout(()=>jNow(key),ms==null?700:ms)}); }
+function jCancel(key){ const p=_jPend.get(key); if(p){ clearTimeout(p.t); _jPend.delete(key); } }
+function jNow(key){ const p=_jPend.get(key); if(!p)return; jCancel(key); try{ p.fn(); }catch(e){ console.warn('autosave',e); } }
+function jFlush(){ for(const k of [..._jPend.keys()])jNow(k); }
+function toggleRow(id){ expandedId=expandedId===id?null:id; if(_jStale){ _jStale=false; render(); } else renderTable(); }
 function refreshTagFilter(){
-  const tags=new Set(); Object.values(journal).forEach(j=>(j.tags||[]).forEach(t=>tags.add(t)));
   const sel=$('fTag'),cur=sel.value;
-  sel.innerHTML='<option value="">Any tag</option>'+[...tags].sort().map(t=>`<option>${esc(t)}</option>`).join(''); sel.value=cur;
+  sel.innerHTML='<option value="">Any tag</option>'+tagOptions(journal).map(([k,l])=>`<option value="${esc(k)}">${esc(l)}</option>`).join(''); sel.value=cur;
 }
 
 /* ============================ render all ============================ */
@@ -511,7 +564,7 @@ function _draftKey(el){
 function captureDrafts(){
   const out=[], act=document.activeElement;
   document.querySelectorAll('#dashView textarea[data-j],#dashView input[data-j],#reviewView textarea,#reviewView input[type=text],#reviewView input[type=number]').forEach(el=>{
-    if(el.value===el.defaultValue)return;
+    if(el.value===el.defaultValue&&el!==act)return; // the focused field comes back focused even when saved
     const key=_draftKey(el); if(!key)return;
     let sel=null; try{ if(el===act&&el.selectionStart!=null)sel=[el.selectionStart,el.selectionEnd]; }catch(e){}
     out.push({key,value:el.value,focus:el===act,sel});
@@ -578,6 +631,7 @@ function renderHeaderSummary(){
   el.classList.remove('hide');
   el.innerHTML=settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+
     (hlPnl.all!=null?` · verified <b class="${cls(hlPnl.all)}">${fmtUsd(hlPnl.all)}</b> ✓`:'');
+  el.title=el.textContent; // the whole line, when the header has to cut it short
 }
 function renderTape(){
   const el=$('tape'); if(!el)return;
@@ -590,7 +644,9 @@ function renderTape(){
     return ms>=day0 ? String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0')
     : (p.mo+1)+'/'+p.day; };
   const chip=t=>`<span class="tp">${fmtT(t.closeTime)} <b>${esc(dispMarket(dcoin(t)))}</b> <b class="${isBE(t.net)?'':(t.net>=0?'up':'dn')}">${isBE(t.net)?'B/E':(t.net>=0?'+':'−')+'$'+Math.abs(t.net).toFixed(0)}</b></span>`;
-  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} trade${today.length===1?'':'s'}</span>`:`<span class="tp sum">NO TRADES TODAY · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
+  // closed trades only, so say so — and name today's entries still open (the unplanned nudge counts those too)
+  const openN=allTrades.filter(t=>t.isOpen&&t.openTime>=day0).length, openTxt=openN?` · ${openN} OPENED TODAY, STILL OPEN`:'';
+  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} closed trade${today.length===1?'':'s'}${openTxt}</span>`:`<span class="tp sum">NO CLOSED TRADES TODAY${openTxt} · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
   el.classList.remove('hide');
   el.innerHTML=sum+closedAll.slice(0,12).map(chip).join('');
 }
@@ -605,6 +661,7 @@ function renderPulse(){
   el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
 function renderReview(){
+  jFlush(); // a day / week answer still waiting for its autosave is saved before the form is rebuilt
   const _drafts=captureDrafts();
   try{ renderReviewInner(); } finally { restoreDrafts(_drafts); }
 }
@@ -1197,31 +1254,44 @@ function nextDayEntry(prev,e,now){
   return out;
 }
 function wireDayJournal(){
+  const b=$('djSave'); if(!b)return;
+  // Autosave: the text after a pause in typing; the committed max loss only once the field is left (a
+  // half-typed "1" of "150" would arm a $1 tripwire and restamp limitAt); ticks and the check-in at once.
+  // A pause that would empty a filed plan waits for the field to be left too: retyping a plan from
+  // scratch mustn't cost its plannedAt stamp.
+  const card=b.closest('.diag-card');
+  card.addEventListener('input',e=>{ if(e.target.matches('#djBias,#djPlan,#djReview'))jSoon('day',()=>saveDay(true)); });
+  card.addEventListener('change',e=>{ if(e.target.matches('#djBias,#djPlan,#djReview,#djMaxLoss,#djAdh')){ jCancel('day'); saveDay(); } });
   // check-in segments: click to pick, click again to clear
   document.querySelectorAll('.seg[id^="djCk_"]').forEach(g=>g.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     const v=g.dataset.v===b.dataset.n?'':b.dataset.n; g.dataset.v=v;
-    g.querySelectorAll('button').forEach(x=>{ const on=x.dataset.n===v; x.classList.toggle('on',on); x.setAttribute('aria-checked',on?'true':'false'); }); }));
+    g.querySelectorAll('button').forEach(x=>{ const on=x.dataset.n===v; x.classList.toggle('on',on); x.setAttribute('aria-checked',on?'true':'false'); });
+    jCancel('day'); saveDay(); }));
   const tb=$('djToday'); if(tb)tb.onclick=()=>{ _dayJEditKey=null; _dayJEditSetOn=null; renderReview(); };
-  const b=$('djSave'); if(!b)return;
-  b.onclick=()=>{
-    const k=_dayJEditKey||dayJKey(Date.now());
-    const num=parseFloat($('djMaxLoss').value);
-    const prevE=journal[k]||{};
-    const e={bias:$('djBias').value.trim(), plan:$('djPlan').value.trim(),
-      maxLoss:num>0?num:null, review:$('djReview').value.trim(),
-      adherence:$('djAdh').checked||null,
-      maxTrades:prevE.maxTrades||null, // Pulse's trade cap for the day — not edited here, so kept
-      rules:prevE.rules||null, am:prevE.am||null, eod:prevE.eod||null}; // likewise Pulse's plan rules, morning answers and evening review
-    for(const [f] of CHECKIN_FIELDS){ const el=$('djCk_'+f);
-      if(!el){ e[f]=prevE[f]||null; continue; } // check-in hidden (coach mode off): keep what's stored
-      const v=parseInt(el.dataset.v); e[f]=v>=1&&v<=5?v:null; }
-    const nx=nextDayEntry(journal[k],e,Date.now());
+  b.onclick=()=>{ jCancel('day'); saveDay(false,true); };
+}
+function saveDay(typing,btn){
+  if(!$('djSave'))return;
+  const k=_dayJEditKey||dayJKey(Date.now());
+  const prevE=journal[k]||{};
+  const num=typing?(prevE.maxLoss||NaN):parseFloat($('djMaxLoss').value);
+  const e={bias:$('djBias').value.trim(), plan:$('djPlan').value.trim(),
+    maxLoss:num>0?num:null, review:$('djReview').value.trim(),
+    adherence:$('djAdh').checked||null,
+    maxTrades:prevE.maxTrades||null, // Pulse's trade cap for the day — not edited here, so kept
+    rules:prevE.rules||null, am:prevE.am||null, eod:prevE.eod||null}; // likewise Pulse's plan rules, morning answers and evening review
+  for(const [f] of CHECKIN_FIELDS){ const el=$('djCk_'+f);
+    if(!el){ e[f]=prevE[f]||null; continue; } // check-in hidden (coach mode off): keep what's stored
+    const v=parseInt(el.dataset.v); e[f]=v>=1&&v<=5?v:null; }
+  const was=journal[k], planned=x=>!!(x&&(x.bias||x.plan||x.maxLoss>0||x.rules&&Object.values(x.rules).some(v=>Array.isArray(v)?v.length:!!v)));
+  if(typing&&planned(was)&&!planned(e))return;
+  const nx=nextDayEntry(was,e,Date.now()), same=x=>x&&JSON.stringify({...x,updatedAt:0});
+  if(btn||same(nx)!==same(was)){ // an autosave with nothing new writes nothing
     if(!nx) delete journal[k]; else journal[k]=nx;
     markJEdit(k); Store.set(J_KEY,journal);
-    if(e.maxLoss>0)askNotifyPerm(); // committed max loss + save gesture — offer desktop notifications
-    const s=$('djSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
     renderTripwire(); // a committed max loss takes effect immediately
-  };
+    const s=$('djSaved'); if(s){ s.textContent='saved'; clearTimeout(s._t); s._t=setTimeout(()=>{ s.textContent=''; },1400); } }
+  if(!typing&&e.maxLoss>0)askNotifyPerm(); // committed max loss + a gesture — offer desktop notifications
 }
 /* ============================ Project tab ============================ */
 let _proj={look:90,hor:182,block:0}; let _projChart=null;

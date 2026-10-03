@@ -106,17 +106,23 @@ function lastWeekFocusHtml(from){
 function wireWeeklyReview(){
   const kf=$('wrKeepFocus'); if(kf)kf.onclick=async()=>{ await setWeekFocus(kf.dataset.id); renderReview(); renderCoach(); };
   const b=$('wrSave'); if(!b)return;
-  b.onclick=()=>{
+  const save=auto=>{
     const {from}=lastCompletedWeekRange();
     const wkKey=isoWeekKey(from+3.5*86400000);
     const e={repeat:$('wrRepeat').value.trim(), change:$('wrChange').value.trim(), lesson:$('wrLesson').value.trim()};
     const prev=journal[wkKey]||{};
+    if(auto&&e.repeat===(prev.repeat||'')&&e.change===(prev.change||'')&&e.lesson===(prev.lesson||''))return;
     if(!(e.repeat||e.change||e.lesson||prev.focus)) delete journal[wkKey];
     else journal[wkKey]={...prev,...e,updatedAt:Date.now()}; // keeps that week's focus habit
     markJEdit(wkKey); Store.set(J_KEY,journal);
-    const s=$('wrSaved'); if(s){ s.textContent='saved'; setTimeout(()=>{ s.textContent=''; },1400); }
-    renderReview(); // the lessons library updates in place
+    const s=$('wrSaved'); if(s){ s.textContent='saved'; clearTimeout(s._t); s._t=setTimeout(()=>{ s.textContent=''; },1400); }
+    if(!auto)renderReview(); // the lessons library updates in place (an autosave doesn't redraw under the cursor)
   };
+  // the answers autosave after a pause in typing and when a field is left, like the day journal
+  const card=b.closest('.diag-card');
+  card.addEventListener('input',e=>{ if(e.target.matches('#wrRepeat,#wrChange,#wrLesson'))jSoon('week',()=>save(true)); });
+  card.addEventListener('change',e=>{ if(e.target.matches('#wrRepeat,#wrChange,#wrLesson')){ jCancel('week'); save(true); } });
+  b.onclick=()=>{ jCancel('week'); save(false); };
 }
 
 /* ============================ variance expectations ============================ */
