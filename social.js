@@ -215,7 +215,10 @@ function portfolioStats(res, label, fromMs, toMs) {
   const av = (e[1].accountValueHistory || []).map(p => [+p[0], parseFloat(p[1])]).filter(p => isFinite(p[1]));
   const pn = (e[1].pnlHistory || []).map(p => [+p[0], parseFloat(p[1])]).filter(p => isFinite(p[1]));
   const inWin = p => (fromMs == null || p[0] >= fromMs) && (toMs == null || p[0] <= toMs);
-  const P = pn.filter(inWin); if (P.length < 2) return null;
+  let P = pn.filter(inWin);
+  // a window with a single point so far (early on its first day) measures from the last point before it
+  if (P.length === 1 && fromMs != null) { const before = pn.filter(p => p[0] < fromMs).pop(); if (before) P = [before, ...P]; }
+  if (P.length < 2) return null;
   const startAv = (av.filter(p => p[0] <= P[0][0]).pop() || av.find(inWin) || [0, 0])[1];
   if (!(startAv > 0)) return null;
   const base = P[0][1];
@@ -668,19 +671,32 @@ function createSocial(opts) {
   const monthWeeks = wk => weeksBack(wk, 5).filter(w => monthOf(w) === monthOf(wk));
   const weeksBack = (wk, n) => { const mon = isoWeekMonday(wk); const out = []; for (let i = n - 1; i >= 0; i--) out.push(isoWeekOfKey(addDaysKey(mon, -7 * i))); return out; };
   const leagueValue = (m, L, wk) => {
-    const st = m.stats || {}, mo = m.money;
+    const st = m.stats || {};
     switch (L.metric) {
       case 'xp': return (L.period === 'month' ? monthWeeks(wk) : [wk]).reduce((a, w) => a + ((m.weekXp && m.weekXp[w]) || 0), 0);
       case 'discipline': { if (!(m.share.verify && Array.isArray(m.vdays))) return 0; const mon = isoWeekMonday(wk);
         const d = disciplineOver(m.vdays, L.period === 'month' ? isoWeekMonday(monthWeeks(wk)[0]) : mon, addDaysKey(mon, 6), 1); return d.avg || 0; }
       case 'streak': return st.streak || 0;
       case 'level': return st.xp || 0;
-      case 'ret': return mo && mo.ret != null && m.share.ret ? mo.ret : 0;
-      case 'usd': return mo && mo.usd != null && m.share.usd ? mo.usd : 0;
-      case 'riskadj': return mo && mo.ret != null && m.share.ret ? mo.ret / Math.max(mo.dd, 0.005) : 0;
+    }
+    // returns: over the league's own week (or month), never the rolling 30 days
+    const w = ['ret', 'usd', 'riskadj'].includes(L.metric) ? leagueMoney(m, L, wk) : null;
+    switch (L.metric) {
+      case 'ret': return w && m.share.ret ? w.ret : 0;
+      case 'usd': return w && w.usd != null && m.share.usd ? w.usd : 0;
+      case 'riskadj': return w && m.share.ret ? w.ret / Math.max(w.dd, 0.005) : 0;
     } return 0; };
-  // members of a league as boardRows sees them: their tier is the one in that league
-  const leagueMembers = L => members().filter(m => own(L.members, m.id)).map(m => Object.assign({}, m, { tier: L.members[m.id].tier || 0 }));
+  // the days a league's returns are measured over for a week: its season so far (the current week only),
+  // else its month as its weeks count it, else that week — the window its Discipline uses too
+  const leagueMoneyWin = (L, wk) => { const mon = isoWeekMonday(wk), si = L.season && wk === S.league.week ? seasonInfo(L) : null;
+    if (si) return { from: si.start, to: si.end };
+    return { from: L.period === 'month' ? isoWeekMonday(monthWeeks(wk)[0]) : mon, to: addDaysKey(mon, 6) }; };
+  const winKey = w => w.from + '|' + w.to;
+  // a member's return over a league's window (set by refreshMoney), or null until it's been read
+  const leagueMoney = (m, L, wk) => { if (!m.money) return null; /* a wallet changed or dropped: nothing read yet */ const w = m.moneyWin && m.moneyWin[winKey(leagueMoneyWin(L, wk))]; return w && w.ret != null ? w : null; };
+  // members of a league as boardRows sees them: their tier is the one in that league, and their money
+  // numbers are the league's own window, not the rolling 30 days the server-wide boards show
+  const leagueMembers = L => members().filter(m => own(L.members, m.id)).map(m => Object.assign({}, m, { tier: L.members[m.id].tier || 0, money: leagueMoney(m, L, S.league.week) }));
   // the window a league ranks on: its season so far, else its month so far, else this week
   const leagueWindow = L => { const si = L.season ? seasonInfo(L) : null;
     if (si) return { dayFrom: si.start, dayTo: todayKey(), weeks: null, days: Math.round((Date.parse(todayKey()) - Date.parse(si.start)) / 86400000) + 1 };
@@ -869,6 +885,14 @@ function createSocial(opts) {
       if (!own(S.members, m.id) || walletFor(S.members[m.id]) !== addr) return; // wallet changed meanwhile
       const st = portfolioStats(res, 'month');
       m.money = st ? { ret: st.ret, dd: st.dd, usd: st.usd, at: now() } : { ret: null, dd: null, usd: null, at: now() };
+      // each of the member's leagues: this week's window and last week's (what the rollover ranks on)
+      const wins = new Map(), lastWk = isoWeekOfKey(addDaysKey(isoWeekMonday(S.league.week), -7));
+      for (const L of leaguesOf(m)) for (const wk of [S.league.week, lastWk]) { const w = leagueMoneyWin(L, wk); wins.set(winKey(w), w); }
+      const mw = {};
+      for (const [k, w] of wins) { const from = Date.parse(w.from + 'T00:00:00Z');
+        const s4 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(w.to + 'T23:59:59Z'));
+        mw[k] = s4 ? { ret: s4.ret, dd: s4.dd, usd: s4.usd } : null; }
+      m.moneyWin = mw;
       let compsChanged = false;
       // a finished competition keeps the result it had when it ended
       // until a competition's result is frozen (a day or so after the end) its numbers still update

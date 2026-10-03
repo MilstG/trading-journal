@@ -563,7 +563,10 @@ link to join *your* league. A server upgraded from an older version imports its
 - **Leaderboards.** Weekly XP (your league), discipline (7-day average, minimum 3
   trading days, **verified**: the server recomputes each member's Discipline from
   their public fills with the app's own code, so it can't be typed in), streak, all-time XP, and — only for traders who opt in — return /
-  drawdown, % return (dropped over 25% drawdown) and dollar P&L, all over 30 days.
+  drawdown, % return (dropped over 25% drawdown) and dollar P&L. The global boards
+  read these over the last 30 days; a league's boards and its promotion read them
+  over the league's own window (its week, its month as its weeks count it, or its
+  season so far), so a weekly return league promotes on the week that closed.
 - **Competitions** (listed under Social → League), created by the owner: *Discipline* (best average process score),
   *Survivor* (never hit your daily loss limit), *Journal streak*, and *Return under a
   drawdown cap*. Prizes are badges and bragging rights, never money.

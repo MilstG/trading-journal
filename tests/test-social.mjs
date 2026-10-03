@@ -186,7 +186,7 @@ try {
     await tick();
     ok(hlCalls >= 1, 'portfolio fetched for alpha');
     const lb = await call('/leaderboard?board=ret', { key: Bk });
-    eq(lb.d.rows.map(r => r.handle), ['alpha_1']); near(lb.d.rows[0].value, 0.1, 1e-9);
+    eq(lb.d.rows.map(r => r.handle), ['alpha_1']); near(lb.d.rows[0].value, 0.12, 1e-9, 'the league’s week: from the last point before Monday (−20) to now (+100), on 1,000');
     eq(lb.d.optedIn, false, 'bravo is told they are not on the board');
   });
   await t('stats posts feed the league, the boards and the feed', async () => {
