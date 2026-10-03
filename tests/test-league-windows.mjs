@@ -62,6 +62,17 @@ try {
     const month = (await call('/leaderboard?board=ret&scope=global', { key: keys.flat })).d.rows;
     eq(month[0].handle, 'big', 'over 30 days the big month leads');
   });
+  await t('the league’s drawdown rule: past its cap you’re out for the week, listed last; its own cap or the default', async () => {
+    const board = async () => (await call('/leaderboard?board=ret&league=' + LID, { key: keys.flat })).d;
+    let b = await board(); eq([b.risk.cap, b.risk.mode], [0.25, 'week'], 'the league-wide default: 25%, out for the week');
+    eq((await adm('/leagues/' + LID, 'PUT', { ddCap: 3 })).status, 200);
+    b = await board(); eq(b.rows.map(r => [r.handle, r.out]), [['steady', false], ['mid', false], ['flat', false], ['big', true]], JSON.stringify(b.rows));
+    ok(/Out: DD 3\.8%, past the 3% cap/.test(b.rows[3].sub), b.rows[3].sub);
+    await adm('/leagues/' + LID, 'PUT', { ddRule: 'off' }); b = await board(); eq([b.risk.mode, b.rows[3].out], ['off', false]);
+    await adm('/leagues/' + LID, 'PUT', { ddRule: '', ddCap: '' });
+    const L = (await adm('/leagues', 'GET')).d.leagues.find(l => l.id === LID); eq([L.ddCap, L.ddRule], [null, '']);
+    await adm('/config', 'PUT', { risk: { leagueCap: 3 } }); b = await board(); eq([b.risk.cap, b.rows[3].out], [0.03, true], 'the default moved: so does every league on it');
+  });
   await t('promotion reads the week that closed, not the last 30 days', async () => {
     clock = Date.parse('2026-10-12T12:00:00Z'); await call('/config');
     const roster = (await adm('/leagues', 'GET')).d.leagues.find(l => l.id === LID).roster;

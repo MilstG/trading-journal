@@ -266,6 +266,11 @@ try {
     await tick();
     const rc = await call('/admin/competitions', { method: 'POST', admin: true, body: { title: 'Ret', type: 'return', start: '2026-09-10', end: '2026-10-08' } });
     eq((await call('/competitions/' + rc.d.id + '/join', { method: 'POST', key: k })).d.joined, true); await tick();
+    const unranked = (await call('/competitions/' + rc.d.id, { key: A })).d.competition.standings.find(r => r.handle === 'rita');
+    eq([unranked.score, unranked.note], [null, '0 of 5 trading days so far'], 'a new return competition needs the league’s 5 trading days to rank');
+    await call('/admin/competitions/' + rc.d.id, { method: 'DELETE', admin: true });
+    rc.d = (await call('/admin/competitions', { method: 'POST', admin: true, body: { title: 'Ret', type: 'return', start: '2026-09-10', end: '2026-10-08', tradeDays: 0 } })).d;
+    eq((await call('/competitions/' + rc.d.id + '/join', { method: 'POST', key: k })).d.joined, true); await tick();
     const before = (await call('/competitions/' + rc.d.id, { key: A })).d.competition.standings.find(r => r.handle === 'rita');
     ok(/%/.test(before.note), 'visible while opted in: ' + before.note);
     await call('/me', { method: 'PUT', key: k, body: { share: { ret: false } } });

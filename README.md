@@ -569,7 +569,18 @@ link to join *your* league. A server upgraded from an older version imports its
   season so far), so a weekly return league promotes on the week that closed.
 - **Competitions** (listed under Social → League), created by the owner: *Discipline* (best average process score),
   *Survivor* (never hit your daily loss limit), *Journal streak*, and *Return under a
-  drawdown cap*. Prizes are badges and bragging rights, never money.
+  drawdown cap*. Any kind can carry a drawdown cap: past it an entrant is out and
+  placed last, or under the penalty rule their score is docked. A return
+  competition can require a number of trading days before an entrant is ranked.
+  Prizes are badges and bragging rights, never money.
+- **Drawdown rules** (Admin → Duels → Drawdown rules). The owner picks, per
+  format, what happens past a cap: *out*, a *penalty* (points per 1% over), or
+  *off* (only % return carries a cap). League money boards (return, $ P&L,
+  return / drawdown) and their promotion use a league cap (25% by default):
+  past it a member is out for the league's week (scores 0, listed last and
+  crossed out, so they're in the relegation zone), docked, or nothing happens.
+  Each league can set its own cap and rule. The server-wide boards use the
+  default. A running duel or competition keeps the rule it started with.
 - **Following and the feed.** Level-ups, streak milestones, badges, completed
   challenges and adopted habits post to the feed; others can give kudos, follow you,
   and adopt a habit you run with one tap. The feed pages back through everything
@@ -1332,7 +1343,17 @@ follow and your leagues' members). Money is never staked; XP can be.
   - **Journal streak:** more days with every trade journaled and the day reviewed.
   - **Process XP:** more XP earned from process.
   - **% return with a drawdown cap.** Going past the cap loses outright. Both
-    sides must share % return. This type is off unless the owner switches it on.
+    sides must share % return, and each needs a minimum of trading days (3 for a
+    week, 5 for a month by default) so sitting flat can't win. This type is off
+    unless the owner switches it on.
+  - **A drawdown rule on any duel.** Any kind (a Discipline duel, say) can carry
+    a drawdown cap picked from the owner's presets (10 / 15 / 20 / 25% by
+    default). Going more than the cap below your peak at any point during the
+    duel loses outright, whatever the measure; under the owner's **penalty** rule
+    a Discipline score loses points instead (2 per 1% over by default; kinds that
+    count days can't be docked, so there it's out). Both sides need "Show %
+    return" with a wallet; drawdown is read from the wallet's account value, from
+    the duel's first day to its last.
   - **Verified scoring.** The first three can be scored "verified from fills",
     which reads the Discipline the server computes from each wallet, instead of
     what the apps report.
@@ -1401,8 +1422,10 @@ and on the Duels screen.
 
 A member sets up a group duel ("pod") for 3 to 6 people (the owner sets the
 most) from **Social → Duels → Group duel**: Discipline, clean days, last one
-standing, journaling or process XP (no % return, no XP stakes), for a week or a
-month, verified from fills if everyone has verification on. They pick people
+standing, journaling, process XP or % return (when the league runs % return
+duels), for a week or a month, verified from fills if everyone has verification
+on. No XP stakes. It can carry a drawdown rule like a 1v1: past the cap, you're
+out and placed last. They pick people
 with the same quick picks as a 1v1, or by name; anyone who takes challenges can
 be invited.
 

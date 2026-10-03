@@ -23,6 +23,38 @@ const DEFAULTS = { on: true, types: { disc: true, clean: true, survive: true, jo
   stakes: true, maxStake: 500, stakePct: 25, // stakePct: the most of your XP that can be riding on open duels at once
   ladder: true, k: 32, ladderMin: 3, // the ladder: an Elo-style rating from 1v1 results; k: how far one duel moves it; ladderMin: rated duels to be listed
   pods: true, podMax: 6 }; // group duels ("pods"): 3 to podMax members
+// Drawdown rules: what happens when someone goes past an event's drawdown cap, per format. 'out': they lose
+// (a duel) or place last (a group duel, a competition); 'penalty': their score drops `penalty` points per 1%
+// past the cap (Discipline points, or percentage points of return; types that count days can't be docked,
+// so there it's 'out'); 'off': only % return carries a cap (it always has). A league's money boards:
+// 'week' (past the cap, you're out for the league's week: you score 0 and drop to the bottom), 'penalty', or
+// 'off'. caps: the presets members pick from, in %. minDays: trading days a return event needs by default.
+const RISK_DEFAULTS = { caps: [10, 15, 20, 25], duel: 'out', pod: 'out', comp: 'out', league: 'week', leagueCap: 25, penalty: 2, minDays: 5 };
+const RISK_MODES = ['out', 'penalty', 'off'], LEAGUE_RISK_MODES = ['week', 'penalty', 'off'];
+const PENALTY_TYPES = ['disc', 'ret', 'discipline', 'return']; // scores a penalty can come off (duel types and competition types)
+function sanitizeRiskCfg(b, prev) {
+  const out = Object.assign({}, RISK_DEFAULTS, prev || {});
+  out.caps = (prev && Array.isArray(prev.caps) ? prev.caps : RISK_DEFAULTS.caps).slice();
+  if (!b || typeof b !== 'object') return out;
+  for (const k of ['duel', 'pod', 'comp']) if (RISK_MODES.includes(b[k])) out[k] = b[k];
+  if (LEAGUE_RISK_MODES.includes(b.league)) out.league = b.league;
+  if (b.caps !== undefined) { const c = (Array.isArray(b.caps) ? b.caps : String(b.caps).split(/[\s,%]+/)).map(x => Math.round(+x)).filter(x => isFinite(x) && x >= 2 && x <= 50);
+    const u = [...new Set(c)].sort((x, y) => x - y).slice(0, 6); if (u.length) out.caps = u; }
+  if (b.leagueCap !== undefined) { const x = clamp(b.leagueCap, 2, 90); if (x != null) out.leagueCap = Math.round(x); }
+  if (b.penalty !== undefined) { const x = clamp(b.penalty, 0, 20); if (x != null) out.penalty = Math.round(x * 10) / 10; }
+  if (b.minDays !== undefined) { const x = clamp(b.minDays, 0, 30); if (x != null) out.minDays = Math.round(x); }
+  return out;
+}
+// One member's drawdown against an event's cap. r: {ret, dd} read from their wallet for the event's dates (or
+// null while it's being read); cap: a fraction; mode: 'out' | 'penalty'; type: what's scored. ->
+// {dd, over, out, pen} where pen is the penalty in the score's own units (points, or a fraction of return).
+function ddCheck(r, cap, mode, type, penalty) {
+  if (!cap || !r || r.dd == null) return { dd: r && r.dd != null ? r.dd : null, over: false, out: false, pen: 0 };
+  const over = r.dd > cap; if (!over) return { dd: r.dd, over, out: false, pen: 0 };
+  const pts = (r.dd - cap) * 100 * (penalty == null ? RISK_DEFAULTS.penalty : penalty);
+  if (mode === 'penalty' && PENALTY_TYPES.includes(type)) return { dd: r.dd, over, out: false, pen: ['ret', 'return'].includes(type) ? pts / 100 : pts };
+  return { dd: r.dd, over, out: true, pen: 0 };
+}
 const DAY = 86400000;
 const keyOf = ms => new Date(ms).toISOString().slice(0, 10);
 const clamp = (v, lo, hi) => { const n = +v; return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
@@ -53,12 +85,17 @@ function sanitizeTerms(b, cfg) {
   if (!cfg.types[type]) return { error: 'This league doesn’t run ' + TYPES[type].label + ' duels.' };
   const period = b.period === 'month' ? 'month' : 'week';
   const verified = ['disc', 'clean', 'survive'].includes(type) ? b.verified !== false : false;
-  const minDays = type === 'disc' ? Math.round(clamp(b.minDays, 1, period === 'month' ? 20 : 5) || 3) : null;
-  const ddCap = type === 'ret' ? clamp(b.ddCap, 0.02, 0.5) || 0.08 : null;
+  // a minimum of trading days: Discipline always had one; % return now too, so sitting flat can't win
+  const minDays = type === 'disc' || type === 'ret' ? Math.round(clamp(b.minDays, 1, period === 'month' ? 20 : 5) || (type === 'ret' && period === 'month' ? 5 : 3)) : null;
+  // % return always has a drawdown cap; any other duel can take one when the league allows it
+  const risk = (cfg && cfg.risk) || RISK_DEFAULTS;
+  const ddCap = type === 'ret' ? clamp(b.ddCap, 0.02, 0.5) || 0.08 : risk.duel !== 'off' && b.ddCap ? clamp(b.ddCap, 0.02, 0.5) : null;
   const msg = String(b.msg == null ? '' : b.msg).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
   const stake = cfg.stakes === false ? 0 : Math.round(clamp(b.stake, 0, cfg.maxStake == null ? DEFAULTS.maxStake : cfg.maxStake) || 0);
   return { type, period, verified, minDays, ddCap, msg, stake };
 }
+// the rule a capped event plays by, fixed when it's made: the league's setting for that format
+const ddModeFor = (fmt, risk) => { const m = (risk || RISK_DEFAULTS)[fmt]; return m === 'penalty' ? 'penalty' : 'out'; };
 // The most XP a member can still put up: a share of their XP, less what's already riding on their
 // other open duels. xp: their total; riding: the stakes already committed.
 function stakeRoom(xp, riding, cfg) {
@@ -105,9 +142,21 @@ function sideScore(d, m, upto) {
     for (const k of Object.keys(xd).sort()) if (inWin(k)) { const v = Math.max(0, Math.round((+xd[k] || 0) - (won[k] || 0))); s += v; mk.push({ k, s: v }); }
     out.score = s; out.marks = mk; out.n = mk.length; out.note = s + ' XP'; }
   else if (d.type === 'ret') { const r = d.money && m && Object.prototype.hasOwnProperty.call(d.money, m.id) ? d.money[m.id] : null;
+    // trading days: the verified ones when the member shares them, else the days their app reports
+    const td = (verifiedDays || appDays).filter(x => inWin(x.k)); out.n = td.length; out.marks = td.map(x => ({ k: x.k, s: Math.round(x.s) }));
     if (!r) out.note = 'waiting for on-chain data';
-    else { out.ret = r.ret; out.dd = r.dd; out.out = r.dd > d.ddCap; out.score = r.ret;
-      out.note = (r.ret >= 0 ? '+' : '') + (r.ret * 100).toFixed(1) + '% · drawdown ' + (r.dd * 100).toFixed(1) + '%' + (out.out ? ' · over the cap' : ''); } }
+    else { out.ret = r.ret; out.dd = r.dd; out.score = r.ret;
+      out.note = (r.ret >= 0 ? '+' : '') + (r.ret * 100).toFixed(1) + '% · drawdown ' + (r.dd * 100).toFixed(1) + '%' + (d.minDays && td.length < d.minDays ? ' · ' + td.length + ' of ' + d.minDays + ' trading days' : ''); } }
+  // the drawdown rule, on any type: past the cap you're out, or your score is docked
+  if (d.ddCap) {
+    const r = d.money && m && Object.prototype.hasOwnProperty.call(d.money, m.id) ? d.money[m.id] : null;
+    const c = ddCheck(r, d.ddCap, d.ddMode || 'out', d.type, d.penalty);
+    out.dd = c.dd; out.ddOut = c.out; out.pen = c.pen;
+    if (c.out) { out.out = true; out.note = 'Out: drawdown ' + (c.dd * 100).toFixed(1) + '%, past the ' + Math.round(d.ddCap * 100) + '% cap'; }
+    else if (c.pen) { if (out.score != null) out.score = d.type === 'ret' ? out.score - c.pen : Math.round(out.score - c.pen);
+      if (out.avg != null) out.avg -= c.pen; out.note += ' · −' + (d.type === 'ret' ? (c.pen * 100).toFixed(1) + '%' : Math.round(c.pen) + ' pts') + ' past the drawdown cap'; }
+    else if (!r && d.type !== 'ret') out.note += (out.note ? ' · ' : '') + 'drawdown: waiting for on-chain data';
+  }
   return out;
 }
 // Who's ahead (or who won, when upto is past the end): {a, b, lead: 'a' | 'b' | null, why}
@@ -121,6 +170,11 @@ function standing(d, ma, mb, upto) {
     if (d.moved.a && d.moved.b) return { a, b, lead: null, why: 'both changed wallets mid-duel' };
     return { a, b, lead: d.moved.a ? 'b' : 'a', why: 'the other side changed wallet mid-duel' };
   }
+  // past the drawdown cap (a 'out' rule, or % return's own cap): that side loses, whatever the measure
+  if (a.out || b.out) {
+    if (a.out && b.out) return { a, b, lead: null, why: 'both went past the drawdown cap' };
+    return { a, b, lead: a.out ? 'b' : 'a', why: 'the other side went past the ' + Math.round(d.ddCap * 100) + '% drawdown cap' };
+  }
   if (d.type === 'disc') {
     const qa = a.n >= (d.minDays || 3) && a.avg != null, qb = b.n >= (d.minDays || 3) && b.avg != null;
     if (qa && qb) { lead = cmp(a.avg, b.avg); why = lead ? 'higher average Discipline' : 'same average'; }
@@ -133,9 +187,11 @@ function standing(d, ma, mb, upto) {
     else why = 'both still standing';
   } else if (d.type === 'journal' || d.type === 'xp') { lead = cmp(a.score, b.score); why = lead ? (d.type === 'xp' ? 'more process XP' : 'more journaled days') : 'level'; }
   else if (d.type === 'ret') {
-    if (a.out && b.out) why = 'both went past the cap';
-    else if (a.out || b.out) { lead = a.out ? 'b' : 'a'; why = 'the other side went past the ' + Math.round(d.ddCap * 100) + '% drawdown cap'; }
-    else if (a.score != null && b.score != null) { lead = cmp(a.score, b.score); why = lead ? 'higher % return' : 'same return'; }
+    // with a minimum of trading days (duels from before it have none), a side short of it loses to one that has it
+    const min = d.minDays || 0, qa = a.score != null && a.n >= min, qb = b.score != null && b.n >= min;
+    if (qa && qb) { lead = cmp(a.score, b.score); why = lead ? 'higher % return' : 'same return'; }
+    else if (qa !== qb && a.score != null && b.score != null) { lead = qa ? 'a' : 'b'; why = 'the other side traded fewer than ' + min + ' days'; }
+    else if (a.score != null && b.score != null) why = 'neither has ' + min + ' trading days yet';
     else why = 'waiting for on-chain data';
   }
   return { a, b, lead, why };
@@ -153,16 +209,17 @@ function elo(ra, rb, sa, k) {
 const softReset = r => Math.round(RATING0 + (r - RATING0) * (1 - RESET));
 
 // ---- group duels ("pods"): 3 to 6 members, each scored like one side of a duel, then ranked ----
-const POD_TYPES = ['disc', 'clean', 'survive', 'journal', 'xp'];
+const POD_TYPES = ['disc', 'clean', 'survive', 'journal', 'xp', 'ret'];
 const POD_RULES = { disc: 'Highest average daily Discipline wins.', clean: 'Most trading days at 70+ Discipline wins.',
   survive: 'A trading day under 70 Discipline puts you out. The last one standing wins.', journal: 'Most days with every trade journaled and the day reviewed wins.',
-  xp: 'Most XP earned from process wins. Profit earns none.' };
-// The pod's terms -> the stored shape, or {error}. No stakes, no % return.
+  xp: 'Most XP earned from process wins. Profit earns none.', ret: 'Highest % return wins. Past the drawdown cap you’re out.' };
+// The pod's terms -> the stored shape, or {error}. No stakes; a drawdown cap like a 1v1's.
 function sanitizePodTerms(b, cfg) {
   b = b || {};
   if (!POD_TYPES.includes(b.type)) return { error: 'Pick what to compete on.' };
-  const t = sanitizeTerms(Object.assign({}, b, { stake: 0 }), cfg); if (t.error) return t;
-  return { type: t.type, period: t.period, verified: t.verified, minDays: t.minDays, msg: t.msg };
+  cfg = cfg || DEFAULTS; const risk = cfg.risk || RISK_DEFAULTS;
+  const t = sanitizeTerms(Object.assign({}, b, { stake: 0, ddCap: b.type !== 'ret' && risk.pod === 'off' ? null : b.ddCap }), Object.assign({}, cfg, { risk: Object.assign({}, risk, { duel: risk.pod }) })); if (t.error) return t;
+  return { type: t.type, period: t.period, verified: t.verified, minDays: t.minDays, ddCap: t.ddCap, msg: t.msg };
 }
 // sides: [{id, s: sideScore(...), out}] (out: forfeited, or the wallet moved) -> the same, ranked, each with
 // a place (equal results share it), plus the sole leader's id (null when the top is shared) and why
@@ -171,6 +228,7 @@ function podRank(p, sides) {
   const key = x => { const s = x.s || {};
     if (x.out) return [0];
     if (p.type === 'disc') return s.n >= min && s.avg != null ? [2, s.avg] : [1];
+    if (p.type === 'ret') return s.score != null && s.n >= (p.minDays || 0) ? [2, s.score] : [1];
     if (p.type === 'survive') return s.fell ? [1, Date.parse(s.fell)] : [2];
     if (p.type === 'clean') return [1, s.score || 0, s.avg || 0];
     return [1, s.score || 0]; };
@@ -180,10 +238,10 @@ function podRank(p, sides) {
   const top = rows.filter(r => r.place === 1), lead = top.length === 1 && top[0].key[0] > 0 ? top[0].id : null;
   const why = !lead ? (rows.length && rows[0].key[0] === 0 ? 'everyone is out' : 'level at the top')
     : p.type === 'disc' ? 'highest average Discipline' : p.type === 'survive' ? 'last one standing' : p.type === 'clean' ? 'most clean days'
-    : p.type === 'xp' ? 'most process XP' : 'most journaled days';
+    : p.type === 'xp' ? 'most process XP' : p.type === 'ret' ? 'highest % return' : 'most journaled days';
   rows.forEach(r => { delete r.key; });
   return { rows, lead, why };
 }
 
-module.exports = { TYPES, DEFAULTS, sanitizeDuelCfg, sanitizeTerms, stakeRoom, windowFor, sideScore, standing, keyOf,
+module.exports = { RISK_DEFAULTS, RISK_MODES, LEAGUE_RISK_MODES, sanitizeRiskCfg, ddCheck, ddModeFor, TYPES, DEFAULTS, sanitizeDuelCfg, sanitizeTerms, stakeRoom, windowFor, sideScore, standing, keyOf,
   RATING0, RESET, elo, softReset, POD_TYPES, POD_RULES, sanitizePodTerms, podRank };
