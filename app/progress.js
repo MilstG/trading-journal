@@ -61,7 +61,8 @@ function disciplineStreak(days, nowWeek){
 function xpLedger(days, bonuses){
   const byDay={}; let total=0;
   for(const d of days){ byDay[d.key]=(byDay[d.key]||0)+d.score; total+=d.score; }
-  for(const b of (bonuses||[])){ byDay[b.key]=(byDay[b.key]||0)+b.xp; total+=b.xp; }
+  // XP spent on coach messages comes off the lifetime total only: weeks, seasons and duels rank on byDay
+  for(const b of (bonuses||[])){ if(b.src!=='coach')byDay[b.key]=(byDay[b.key]||0)+b.xp; total+=b.xp; }
   return {total, byDay};
 }
 // The n-th time a condition held, in date order: its day key (null if it never got there).
@@ -237,7 +238,7 @@ function gameContext(){
     for(const r of habitProgress(h,ctx).res) if(r.kept&&isoWeekOfKey(r.key)===k.slice(5))bonuses.push({key:r.key,xp:X.focus,why:'focus habit'}); }
   // from the league: XP the owner granted, and their reward badges that carry XP
   const me=typeof SOC!=='undefined'&&SOC.me;
-  if(me){ for(const gr of (me.grants||[]))bonuses.push({key:dayKey(gr.at),xp:gr.xp,why:gr.why||'league bonus',src:'grant'});
+  if(me){ for(const gr of (me.grants||[]))bonuses.push({key:dayKey(gr.at),xp:gr.xp,why:gr.why||'league bonus',src:gr.coach?'coach':'grant'});
     for(const a of (me.awards||[]))if(a.xp)bonuses.push({key:dayKey(a.at),xp:a.xp,why:a.name,src:'award'});
     // mentoring: XP the server paid for reviews, notes and mentees' results, per day (levels only: never leagues or duels)
     for(const [k,d] of Object.entries((me.mentorXp&&me.mentorXp.days)||{}))if(d&&d.xp>0)bonuses.push({key:k,xp:d.xp,why:'mentoring',src:'mentor'}); }
@@ -280,7 +281,9 @@ function gameWins(g){
   const W=[], wkFrom=dayKey(lastCompletedWeekRange().to);
   for(const a of g.achievements) if(a.at&&a.at>=wkFrom)W.push(`Achievement unlocked: ${a.title}`);
   for(const p of g.pbs) if(p.isNew)W.push(`New personal best: ${p.label.toLowerCase()}${p.current!=null?' ('+p.current+(p.unit?' '+p.unit:'')+')':''}`);
-  const prev=levelFor(g.xp.total-g.weekXp);
+  // the week's coach purchases are in the total but not in weekXp: put them back for where the week started
+  const spent=(g.bonuses||[]).reduce((a,b)=>a+(b.src==='coach'&&b.key>=wkFrom?b.xp:0),0);
+  const prev=levelFor(g.xp.total-g.weekXp-spent);
   if(g.level.level>prev.level)W.push(`Level up: ${g.level.title} (level ${g.level.level})`);
   return W;
 }

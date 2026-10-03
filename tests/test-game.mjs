@@ -38,6 +38,10 @@ t('XP is the day’s process score plus bonuses — trade count never enters it'
   const led = ctx.xpLedger([day('2026-06-01', 80, { n: 1 }), day('2026-06-02', 80, { n: 12 })], [{ key: '2026-06-02', xp: 150 }]);
   eq(led.total, 310); eq(led.byDay['2026-06-01'], 80); eq(led.byDay['2026-06-02'], 230);
 });
+t('XP spent on coach messages comes off the lifetime total, never a day (weeks, seasons and duels rank on days)', () => {
+  const led = ctx.xpLedger([day('2026-06-01', 80, { n: 1 })], [{ key: '2026-06-01', xp: 150 }, { key: '2026-06-01', xp: -100, src: 'coach' }]);
+  eq(led.total, 130); eq(led.byDay['2026-06-01'], 230);
+});
 t('ISO weeks from calendar keys', () => {
   eq(ctx.isoWeekOfKey('2026-09-28'), '2026-W40'); eq(ctx.isoWeekOfKey('2026-01-01'), '2026-W01'); eq(ctx.isoWeekOfKey('2027-01-01'), '2026-W53');
 });

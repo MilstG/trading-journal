@@ -655,8 +655,42 @@ link to join *your* league. A server upgraded from an older version imports its
   every mentor, most recently active first: picture, level, bio, trading style, shared
   leagues and what they're open to. Search by name or bio; filter **Open to duels**,
   **Looking for a partner** (members who switch that on under What you share) or
-  **Mentors**. Each card can challenge, ask to partner or ask to mentor. Never trades,
-  P&L or wallets.
+  **Mentors** (which opens the mentor directory). Each card can challenge, ask to partner
+  or open a mentor's page. Never trades, P&L or wallets.
+- **Mentor directory** (Social → Mentors, `#mentors`, and `#mentors/<handle>`). Every
+  mentor with their rate, how many mentee slots are open and a track record the server
+  measured itself over 90 days: trades they marked reviewed with a comment, the median
+  time from a trade being sent to their first comment, and the share of members who
+  sent another trade within 30 days (shown only from 10 reviews; members whose first
+  trade was under 30 days ago count only once they came back). Their mentees' verified
+  milestones (leaks plugged, perfect weeks, Trader Age milestones) and, if they share
+  verified results, their own Trader Age and 90-day Discipline. Never mentees' P&L,
+  never star ratings. Filter by trading style or **Has room**, search, and sort by
+  **Room first** (the default: picked, then open slots, then fastest reply), fastest
+  reply, most come back or lowest rate.
+- **Picking mentors.** A member picks up to two. Picked mentors are the only ones who see
+  their days and the trades they send; a member who picked no one is seen by every mentor,
+  as before. Each mentor sets how many mentees they take (**Mentees at once**, 1 to 50,
+  default 5); a full mentor offers a **waitlist**, and everyone on it hears once when a slot
+  opens. Picking turns on Let mentors see my days (after a yes); switching that off drops
+  every pick. Routes: `GET /mentors?style=&open=1&sort=&q=`, `GET /mentors/<handle>`,
+  `POST /mentors/<handle>` `{action: pick | drop | wait | unwait}`.
+- **Mentor rates and XP to spend.** Each mentor sets a rate in XP per reviewed trade,
+  kept inside the owner's range (Levels & XP → Mentor rates and the pool; default 0 to
+  100, or rates off). A member's first trade with each paid mentor is free (given back if
+  they take it back before the mentor said anything). After that the rate is **held** when
+  the trade is sent and **paid** the first time the mentor marks it reviewed with a comment
+  of theirs in it; it goes back if the mentor hasn't within the hold time (default 72
+  hours), if the member takes the trade back or drops the mentor, or if the mentor is
+  stood down or suspended. Payments come out of the member's **XP to spend**: their XP
+  (as their level counts it) less what they paid and what's held. Their level never goes
+  down for it. The mentor gets the payment on their mentoring ledger (it counts toward
+  their level, never leagues or duels), less the **pool share** the owner sets (0% by
+  default), which goes to the owner's pool (`GET /admin/pool`: what it holds, everything
+  it took in, the latest payments and what's held now). A profile sharing a wallet with
+  the mentor never pays. With two mentors, a trade names the one it goes to
+  (`POST /reviews` `{to, fee}`; `fee` is the most the member agreed to, so a rate raised
+  in between is refused).
 - **Accountability partners.** Up to three per member, by mutual request (Social →
   Feed, or from Find people). Partners see each other's streak, the last 14 days' Discipline scores and
   which slips happened — never trades, P&L or wallets — can send a nudge (one every
@@ -687,8 +721,8 @@ link to join *your* league. A server upgraded from an older version imports its
   duels never count it. Two badge families for mentors: **Teacher** (trades reviewed) and
   **Made a difference** (mentee results). The owner sets the amounts and the cap, or switches
   it off, in Levels & XP.
-- **Trade reviews.** A member who lets mentors in can send one trade to the league's
-  mentors: **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
+- **Trade reviews.** A member who lets mentors in can send one trade to their picked
+  mentor (or, without picks, the league's mentors): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
   trade** under an expanded trade in the full journal. What goes is the shape of a trade
   post (market, side, open and close times, entry, exit, planned stop and target, %
   and R, a size range instead of the size) plus their note and the day's plan; the
@@ -1734,7 +1768,13 @@ All opt-in via environment variables, still zero dependencies:
   key or the owner token; 3 messages a day per profile and per wallet (profiles that share a
   wallet share its 3), set in the admin panel's Coach tab; admins and the owner have no limit,
   and any admin can reset a member's count for the day from their page; low effort
-  for quick replies). Uses the official `@anthropic-ai/sdk`, installed as an *optional*
+  for quick replies). Once the day's messages are used, a member can **buy more with XP**
+  (`POST /api/coach/packs` with the price they were shown): by default 150 XP for 3 messages,
+  at most 2 packs a day, all set on the Coach tab, with an optional doubling price per pack.
+  A purchase comes off earned XP (the level) and the stake balance, never weekly XP, so
+  leagues, seasons and duels don't move. It's refused if it would drop a level (unless the
+  owner turns that off) or leave XP riding on open duels uncovered. Each day's purchases are
+  one grant on the member's page; packs reset with the count, the XP isn't refunded. Uses the official `@anthropic-ai/sdk`, installed as an *optional*
   dependency: without `COACH_AI` the server never loads it and stays
   dependency-free. Model `COACH_AI_MODEL` (default `claude-opus-5-5`), medium
   effort, with the API's default refusal fallback. **OpenAI instead:** set

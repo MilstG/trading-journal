@@ -20,7 +20,7 @@ const pzPctBar=(p,col)=>`<span class="pz-pbar"><i style="width:${Math.round(Math
 function pzXpSources(g, fromKey){
   const X=pzXpCfg(), o={discipline:0,bonus:0,badges:0,challenge:0,habits:0,league:0,mentor:0,achievements:0};
   for(const d of g.days)if(d.key>=fromKey){ o.discipline+=Math.round(d.score*X.discipline); o.bonus+=d.bonus.total; }
-  for(const b of (g.bonuses||[]))if(b.key>=fromKey){ const k=b.src==='badge'?'badges':b.src==='mentor'?'mentor':b.src==='grant'||b.src==='award'?'league':b.why==='challenge'?'challenge':b.why==='focus habit'?'habits':'achievements'; o[k]+=b.xp; }
+  for(const b of (g.bonuses||[]))if(b.key>=fromKey&&b.src!=='coach'){ const k=b.src==='badge'?'badges':b.src==='mentor'?'mentor':b.src==='grant'||b.src==='award'?'league':b.why==='challenge'?'challenge':b.why==='focus habit'?'habits':'achievements'; o[k]+=b.xp; }
   return o;
 }
 // features whose screen lives under a tab (pzFeature tab.nav) show their card on that tab too, linking to it
@@ -432,7 +432,7 @@ async function pzWkAction(a){
 // ---- the AI coach (#coach): a chat about your own trading, within a daily allowance ----
 // The app builds the summary below from your journal and sends it with each message; your trades
 // and notes go along only if you switch that on. The server adds nothing and stores nothing.
-var COACH={status:null,tried:false,msgs:null,busy:false,err:null};
+var COACH={status:null,tried:false,msgs:null,busy:false,err:null,buy:false,draft:''};
 function pzCoachAvailable(){ return !!(COACH.status&&COACH.status.enabled); }
 function pzCoachStoreKey(){ return 'pz_coach:'+(SOC.me?SOC.me.id:'owner'); }
 function pzCoachLoad(){ if(COACH.msgs)return COACH.msgs; try{ COACH.msgs=JSON.parse(localStorage.getItem(pzCoachStoreKey())||'[]'); }catch(e){ COACH.msgs=[]; } if(!Array.isArray(COACH.msgs))COACH.msgs=[]; return COACH.msgs; }
@@ -490,16 +490,47 @@ function pzCoachDetail(D){
 async function pzCoachSend(text){
   text=String(text||'').trim(); if(!text||COACH.busy)return;
   const D=pzData(), msgs=pzCoachLoad();
-  msgs.push({role:'user',content:text.slice(0,4000),at:Date.now()}); COACH.busy=true; COACH.err=null; pzCoachSave(); pzRender();
+  // a message that doesn't go through stays in the box (COACH.draft), across a pack bought in between
+  msgs.push({role:'user',content:text.slice(0,4000),at:Date.now()}); COACH.busy=true; COACH.draft=''; COACH.err=null; pzCoachSave(); pzRender();
   try{
     const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:pzCoachFacts(D)};
     if(SOC.me&&SOC.me.coachDetail||(SRV.token&&!SRV.badAuth&&settings.pzCoachDetail))body.detail=pzCoachDetail(D);
     const r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok){ COACH.err=d.error||('HTTP '+r.status); if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
-    else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.remaining==null||d.remaining>0}); }
-  }catch(e){ COACH.err='Couldn’t reach the coach. Check your connection and try again.'; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
+    if(!r.ok){ COACH.err=d.packs?null:d.error||('HTTP '+r.status); COACH.draft=text; if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error,packs:d.packs||null}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
+    else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.allowed!=null?d.allowed:d.remaining==null||d.remaining>0,reason:d.reason||null,packs:d.packs||null}); }
+  }catch(e){ COACH.err='Couldn’t reach the coach. Check your connection and try again.'; COACH.draft=text; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
   finally{ COACH.busy=false; pzCoachSave(); pzRender(); const l=$('pzChat'); if(l)l.scrollTop=l.scrollHeight; }
+}
+// Today's messages used: more for XP, at the league's price. The server prices the pack and says why it
+// can't be bought (the daily cap, too little XP, or a level it would cost); the purchase is a grant on the profile.
+async function pzCoachBuy(){
+  const o=COACH.status&&COACH.status.packs; if(!o||o.blocked||COACH.busy||!SOC.me)return;
+  COACH.busy=true; COACH.err=null; pzRender();
+  try{
+    const r=await fetch('/api/coach/packs',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify({price:o.price})});
+    const d=await r.json().catch(()=>({})), {error,ok,bought,...st}=d;
+    if(st.who)COACH.status=Object.assign({},COACH.status,st);
+    COACH.buy=false;
+    if(!r.ok)COACH.err=error||('HTTP '+r.status);
+    else { pzNote('Unlocked '+bought.msgs+' more message'+(bought.msgs===1?'':'s')+' · −'+bought.price.toLocaleString()+' XP');
+      try{ const m=await socFetch('/me'); SOC.me=m.me; SOC.share=m.share; PZ_CFG.rev++; }catch(e){} } // the new grant: XP drops here too
+  }catch(e){ COACH.err='Couldn’t reach the server. Check your connection and try again.'; }
+  finally{ COACH.busy=false; pzRender(); const el=$('pzCoachIn'); if(el&&!el.disabled)el.focus(); }
+}
+function pzCoachPackHtml(st){
+  const o=st.packs, f=x=>Number(x||0).toLocaleString(), n=o.msgs, msgsW=n+' more message'+(n===1?'':'s');
+  const used=o.max?`<p class="pz-fine">${o.bought} of ${o.max} extra pack${o.max===1?'':'s'} bought today</p>`:'';
+  const head=`<div class="pz-nudge"><span class="pz-ico">${pzI(o.blocked?'lock':'bolt',20)}</span><div style="min-width:0">
+    <b>You’ve used today’s ${f(st.limit)} message${st.limit===1?'':'s'}</b>
+    ${o.blocked?`<p class="pz-sub pz-err">${esc(o.blocked)}</p>`:'<p class="pz-sub">Spend XP to keep going now, or come back tomorrow.</p>'}</div></div>`;
+  if(o.blocked)return `<section class="pz-card pz-pack off" aria-live="polite">${head}${used}</section>`;
+  if(!COACH.buy)return `<section class="pz-card pz-pack" aria-live="polite">${head}
+    <button type="button" class="pz-cta" id="pzPackGo"${COACH.busy?' disabled':''}>Unlock ${esc(msgsW)} <span class="pz-xpb">${f(o.price)} XP</span></button>${used}</section>`;
+  return `<section class="pz-card pz-pack" aria-live="polite">${head}
+    <div class="pz-packsum"><span>Your XP</span><b>${f(o.xp)}</b><span>${esc(msgsW.replace('more','extra'))}</span><b class="neg">−${f(o.price)}</b><span class="tot">After</span><b class="tot">${f(o.after)}</b></div>
+    <p class="pz-fine">${o.levelAfter!=null&&o.levelAfter<o.level?'This takes you down to level '+o.levelAfter+'.':'You stay at level '+o.level+'.'} The messages last until midnight your time. Spent XP comes off your lifetime total, not this week’s.</p>
+    <div class="pz-packbtns"><button type="button" class="pz-cta" id="pzPackBuy"${COACH.busy?' disabled':''}>${COACH.busy?'<span class="pz-spin"></span>':''}Spend ${f(o.price)} XP</button><button type="button" class="pz-ghost" id="pzPackNo"${COACH.busy?' disabled':''}>Not now</button></div></section>`;
 }
 function pzCoachPrompts(){
   const h=tzParts(Date.now()).h;
@@ -526,8 +557,8 @@ function pzCoachHtml(D){
   return `${back}${pzHead(left||'Your AI coach','Coach')}
   <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?'<div class="pz-msg co"><p><span class="pz-spin"></span>Thinking…</p></div>':''}</div>
     ${COACH.err?`<p class="pz-fine pz-err" role="alert">${esc(COACH.err)}</p>`:''}
-    <div class="pz-chiprow">${pzCoachPrompts().map(p=>`<button type="button" class="pz-chipbtn" data-pz-ask="${esc(p)}"${COACH.busy||st.allowed===false?' disabled':''}>${esc(p)}</button>`).join('')}</div>
-    <div class="pz-chatin"><textarea id="pzCoachIn" rows="2" maxlength="4000" placeholder="${st.allowed===false?esc(st.reason||'No messages left today'):'Ask about your trading…'}"${st.allowed===false?' disabled':''}></textarea><button type="button" class="pz-cta pz-sm" id="pzCoachSend"${COACH.busy||st.allowed===false?' disabled':''} aria-label="Send">${pzI('arrow',20)}</button></div>
+    ${st.allowed===false&&st.packs?pzCoachPackHtml(st):`<div class="pz-chiprow">${pzCoachPrompts().map(p=>`<button type="button" class="pz-chipbtn" data-pz-ask="${esc(p)}"${COACH.busy||st.allowed===false?' disabled':''}>${esc(p)}</button>`).join('')}</div>
+    <div class="pz-chatin"><textarea id="pzCoachIn" rows="2" maxlength="4000" placeholder="${st.allowed===false?esc(st.reason||'No messages left today'):'Ask about your trading…'}"${st.allowed===false?' disabled':''}>${esc(COACH.draft)}</textarea><button type="button" class="pz-cta pz-sm" id="pzCoachSend"${COACH.busy||st.allowed===false?' disabled':''} aria-label="Send">${pzI('arrow',20)}</button></div>`}
     <div class="pz-toggle"><span style="flex:1"><b id="pzCdL">Include my recent trades and journal notes</b><span>${st.detailAllowed===false?'The league owner has this switched off.':'Sharper answers about specific trades. Wallet addresses are never sent.'}</span></span>
       <button type="button" role="switch" class="pz-switch" data-pz-cdetail aria-checked="${detailOn}" aria-labelledby="pzCdL"${st.detailAllowed===false?' disabled':''}><i></i></button></div>
     <p class="pz-fine">The coach sees a summary built on this device: scores, slips, habits, plans and reviews. It doesn’t give trade signals. Answers can be wrong — your rules come first.${msgs.length?' <button type="button" class="pz-linkbtn" id="pzCoachClear">Clear this chat</button>':''}</p></div>`;
@@ -696,8 +727,8 @@ function socMentorHtml(D){
   const c=socGet('mentees','/mentor',30000), L=c&&c.d?c.d.mentees:null;
   if(!L)return `${back}${pzHead('Mentor','Mentees')}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const pg=pzPage('mentees',L);
-  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
-    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
+  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}${socMentorSetHtml()}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
+    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.picked?' <span class="pz-tag win">picked you</span>':m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
       <span class="pz-sub" style="font-size:12px">7-day discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'} · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
       <span class="pz-sub" style="font-size:12px">${m.notes} note${m.notes===1?'':'s'} so far</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
       :'<section class="pz-card"><p class="pz-sub">No one has let mentors in yet. Members switch on “Let mentors see my days” under What you share.</p></section>'}`;
@@ -907,6 +938,9 @@ async function pzGrowthAction(t){
     switch(t.id){
       case 'pzRvSave': await pzSaveReview(); return true;
       case 'pzRvCoach': await pzSaveReview(); location.hash='#coach'; await pzCoachSend('Review my day. Here are my answers from tonight’s review — what went well, the one thing to fix, and my focus for tomorrow.'); return true;
+      case 'pzPackGo': COACH.buy=true; COACH.err=null; pzRender(); { const b=$('pzPackBuy'); if(b)b.focus(); } return true;
+      case 'pzPackNo': COACH.buy=false; pzRender(); { const b=$('pzPackGo'); if(b)b.focus(); } return true;
+      case 'pzPackBuy': await pzCoachBuy(); return true;
       case 'pzCoachSend': { const el=$('pzCoachIn'); const v=el?el.value:''; if(el)el.value=''; await pzCoachSend(v); return true; }
       case 'pzCoachClear': if(confirm('Clear this chat on this device?')){ COACH.msgs=[]; pzCoachSave(); pzRender(); } return true;
       case 'pzBadgeLink': { const u=location.origin+'/b/'+SOC.me.handle; if(navigator.share)navigator.share({title:'My trading badges on Daruma',url:u}).catch(()=>{});

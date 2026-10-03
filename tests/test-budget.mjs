@@ -30,6 +30,8 @@ try {
     // carried everything: 1917 KB raw / 734 KB gzipped against 1950 / 740.
     // Oct 2026: the TS9 colorway (two CSS blocks) and the drawn daruma mark took the raw sizes past the
     // old lines by a few KB; gzipped sizes barely moved (607 / 539 against 620 / 560), so only raw moves.
+    // Oct 2026: the mentor directory, rates and the send-to-a-mentor sheet (about 22 KB raw) fit under
+    // these lines: 1836 / 1636 raw, 617 / 549 gzipped.
     ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 620],
     ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
   ];
