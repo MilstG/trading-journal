@@ -1,3 +1,5 @@
+<img src="icons/daruma.svg" width="72" height="72" alt="Daruma logo">
+
 # Ledger — Hyperliquid Trading Journal & Analytics
 
 Ledger reconstructs your complete trading history from Hyperliquid fill data and
@@ -167,6 +169,14 @@ for iPhone). On Android and desktop Chrome, **Install app** (beside Wallets in t
 journal, or the card on Daruma's Today screen) opens the browser's install prompt.
 On iPhone, tap **Share** in Safari, then **Add to Home Screen**; the same button and card
 say so. Installed, both open full screen and start from their cached copy.
+
+**The logo.** A daruma whose outline is a progress track, 72% painted, with one eye
+filled in: the doll gets one eye when you set a goal and the other when you meet it.
+It is the home-screen icon of both apps, the favicon (`/pulse-icon.svg`, also served at
+`/icon.svg`), the mark in the journal, Daruma, admin and guide headers, and it signs the
+share cards. In the app it takes the colorway's accent (TS9's acid green, with a glow).
+`icons/build-daruma.mjs` draws it and writes `icons/daruma.svg` and every icon PNG; run
+it after changing the mark (it needs Playwright's Chromium).
 
 ## The coach
 
@@ -1595,7 +1605,11 @@ Treat it as positive visualization of staying the course, nothing more.
   has the same switch). It syncs with your settings and is applied before the first
   paint, so someone who picked Light never flashes the dark palette. In light mode, profit/loss
   colours are deepened to hold contrast on white.
-- **Colors:** two dark-mode colorways, INK and BB (black & amber).
+- **Colors:** three dark-mode colorways. **TS9** (the default): acid green on a green-black
+  ground, mono for anything measured, glow only on what is live. **INK**: the midnight terminal
+  it replaced. **BB**: black & amber. The footer button cycles them; Daruma → Settings has the
+  same switch; the pick syncs and rides backups. Light replaces them all. The server owner can
+  set the default for everyone with `DEFAULT_THEME=ts9|ink|bb` (a user's own pick still wins).
 - **R basis:** what 1R means when a trade has no planned risk journaled —
   average loss, fixed $ amount, or other bases.
 - **Breakeven threshold:** the ±$ band treated as "scratch" rather than

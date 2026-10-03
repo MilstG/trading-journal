@@ -356,7 +356,7 @@ function pzWeekCardDraw(m, fmt, theme){
   x.fillStyle=C.bg; x.fillRect(0,0,W,H);
   const glow=x.createRadialGradient(W*0.85,H*0.08,0,W*0.85,H*0.08,W*0.7); glow.addColorStop(0,C.good+(L?'22':'2A')); glow.addColorStop(1,C.good+'00'); x.fillStyle=glow; x.fillRect(0,0,W,H);
   // the brand mark and the week
-  ring(P+22,P+24,19,7,0.72,C.good); text('Daruma',P+58,P+38,F(600,40),C.text);
+  drawDarumaMark(x,P,P-2,48,{acc:C.good,track:C.track,fill:C.card,eye:C.muted}); text('Daruma',P+62,P+38,F(600,40),C.text);
   const md=k=>MONTHS[+k.slice(5,7)-1]+' '+(+k.slice(8));
   text('Week of '+md(m.from)+' – '+md(m.to),W-P,P+36,F(500,28),C.muted,'right',W-2*P-240);
   // Discipline, the week's average, as the big ring

@@ -26,15 +26,15 @@ try {
     const cfg = (await call('/config')).d;
     eq(cfg.autoLeagues.map(L => L.name).sort(), ['Main league', 'Night owls']);
     const owls = cfg.autoLeagues.find(L => L.name === 'Night owls').id;
-    K.ann = await join_('ann_trades', { share: { seek: true } });
-    K.bob = await join_('bob_scalps', { skip: ['main', owls] });
+    K.ann = await join_('ann_trades', { share: { seek: true, mentor: false } });
+    K.bob = await join_('bob_scalps', { skip: ['main', owls], share: { mentor: false } });
     eq(K.ann.me.leagues.map(L => L.name).sort(), ['Main league', 'Night owls']);
     eq(K.bob.me.leagues, [], 'skipped both: a profile, no ranking');
     eq(K.ann.share.seek, true);
   });
   await t('the directory: public profiles and mentors, with what each is open to — never trades or wallets', async () => {
     K.cat = await join_('cat_mentor', { share: { profile: false } });
-    K.dan = await join_('dan_hidden', { share: { profile: false, duels: false } });
+    K.dan = await join_('dan_hidden', { share: { profile: false, duels: false, mentor: false } });
     const cat = (await call('/admin/members', { owner: true })).d.members.find(m => m.handle === 'cat_mentor');
     await call('/admin/members/' + cat.id, { method: 'POST', owner: true, body: { action: 'mentor' } });
     await call('/me', { method: 'PUT', key: K.ann.key, body: { bio: 'Swing trader, ETH and SOL' } });

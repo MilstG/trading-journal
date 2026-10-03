@@ -15,7 +15,8 @@ const PZ_C=2*Math.PI*52;
 // everything, SVG attributes included (CSS variables don't reach those).
 const PZ_COL_DARK={good:'#3FE0A0',mid:'#F4C04E',low:'#FF7A59',none:'#2C333C',risk:'#5AA9FF',xp:'#B69CFF'};
 const PZ_COL_LIGHT={good:'#0A9A63',mid:'#B07D05',low:'#D9481F',none:'#CDD4DD',risk:'#2F7FD8',xp:'#7656E0'};
-const PZ_COL=new Proxy({},{get:(_,k)=>((typeof document!=='undefined'&&document.body&&document.body.classList.contains('light'))?PZ_COL_LIGHT:PZ_COL_DARK)[k]});
+const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#4fd8ff'};
+const PZ_COL=new Proxy({},{get:(_,k)=>{ const c=typeof document!=='undefined'&&document.body&&document.body.classList; return (c&&c.contains('light')?PZ_COL_LIGHT:c&&c.contains('ts9')?PZ_COL_TS9:PZ_COL_DARK)[k]; }});
 const pzBand=v=>v==null?'none':v>=70?'good':v>=40?'mid':'low';
 const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'Stops written while open',stops:'Stops honored',limit:'Under the loss limit',journal:'Trades journaled'};
 
@@ -162,6 +163,11 @@ function pzRing(value, pct, color, opts){ opts=opts||{};
   const d=Math.max(0,Math.min(1,pct||0))*PZ_C;
   return `<span class="pz-ring"${opts.size?` style="--sz:${opts.size}px"`:''}><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="pz-track"/><circle cx="60" cy="60" r="52" class="pz-arc" style="stroke:${color}" stroke-dasharray="${d.toFixed(1)} ${PZ_C.toFixed(1)}" transform="rotate(-90 60 60)"/></svg><span class="pz-rv">${value}${opts.cap?`<small>${opts.cap}</small>`:''}</span></span>`;
 }
+// Daruma's logo (DARUMA_BODY in progress.js; icons/build-daruma.mjs draws the app icons), drawn from the
+// colorway's variables so it follows TS9, INK, BB and Light.
+function pzMark(size){
+  return `<svg class="pz-mark" viewBox="0 0 100 100" width="${size}" height="${size}" fill="none" stroke-linecap="round" aria-hidden="true"><path d="${DARUMA_BODY}" style="fill:var(--pz-card);stroke:var(--pz-line)" stroke-width="10"/><path class="pz-mark-arc" d="${DARUMA_BODY}" style="stroke:var(--pz-acc)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="pz-mark-eye" cx="40.5" cy="48" r="9.25" style="fill:var(--pz-acc)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--pz-muted)" stroke-width="3.5"/></svg>`;
+}
 const pzBar=(pct,color)=>`<div class="pz-bar"><i style="width:${Math.round(Math.max(0,Math.min(1,pct||0))*100)}%;background:${color}"></i></div>`;
 function pzRows(rows,color){ return rows.map(r=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(r.label)}</span><b>${esc(r.value)}</b></div>${pzBar(r.pct,r.color||color)}</div>`).join(''); }
 // /ledger.html, not /: with HOME_VIEW=keel the server sends / to Keel
@@ -176,7 +182,7 @@ function pzNav(tab, level){
   const noCoach=typeof COACH!=='undefined'&&COACH&&COACH.status&&!COACH.status.enabled; // the owner hasn't switched the AI coach on: no tab for it
   const items=[['today','Today'],['trends','Stats'],['checkin','Prep'],...(noCoach?[]:[['coach','Coach']]),['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
-  return `<nav class="pz-nav" aria-label="Daruma"><div class="pz-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}Daruma</div>
+  return `<nav class="pz-nav" aria-label="Daruma"><div class="pz-brand">${pzMark(30)}<span>Daruma</span></div>
     ${items.map(([k,l])=>`<a href="#${k}"${k===cur?' aria-current="page"':''}${k==='trends'&&lockT?` aria-label="Trends, ${pzNeedsProfile(lockT)?'needs a profile':'unlocks at level '+lockT}"`:''}>${pzI(k==='trends'&&lockT?'lock':k,22)}<span>${l}</span></a>`).join('')}
     <div class="pz-navfoot"><a href="${esc(pzFullHref())}">Open the full journal →</a></div></nav>`;
 }
@@ -1241,7 +1247,7 @@ async function pzUnskipJournal(){
 // The first-run screen: what Pulse is on one side, connecting your trades on the other
 function pzWelcomeHero(){
   const dial=(v,pct,col,l)=>`<div>${pzRing(esc(v),pct,col,{size:76})}<span>${l}</span></div>`;
-  return `<section class="pz-wl-hero"><div class="pz-wl-brand">${pzRing('',0.72,'var(--pz-acc)',{size:30})}<b>Daruma</b></div>
+  return `<section class="pz-wl-hero"><div class="pz-wl-brand">${pzMark(30)}<b>Daruma</b></div>
     <h1>Know when to trade.<br><span>And when to stop.</span></h1>
     <p class="pz-wl-lede">Daruma reads your own fills on Hyperliquid, Lighter, Bybit or Binance and turns them into three dials for your trading day.</p>
     <div class="pz-wl-dials" aria-hidden="true">${dial('86',0.86,'var(--pz-good)','Form')}${dial('84',0.84,'var(--pz-good)','Discipline')}${dial('1.0×',0.5,'var(--pz-risk)','Load')}</div>
@@ -1315,6 +1321,9 @@ function pzSheetHtml(){
     <section><span class="pz-lbl" style="color:var(--pz-muted)">Appearance</span>
       <div class="pz-seg" role="group" aria-label="Appearance" style="margin-top:6px">${[['dark','Dark'],['light','Light'],['auto','Auto']].map(([v,l])=>`<button type="button" data-pz-appear="${v}" aria-pressed="${(['dark','light','auto'].includes(settings.appearance)?settings.appearance:'dark')===v}" style="flex:1">${l}</button>`).join('')}</div>
       <p class="pz-fine" style="margin-top:6px">Dark unless you pick otherwise. Auto follows your phone’s light or dark setting.</p></section>
+    <section><span class="pz-lbl" style="color:var(--pz-muted)">Colorway</span>
+      <div class="pz-seg" role="group" aria-label="Colorway" style="margin-top:6px">${[['ts9','TS9'],['ink','Ink'],['bb','BB']].map(([v,l])=>`<button type="button" data-pz-colorway="${v}" aria-pressed="${(COLORWAYS.includes(settings.theme)?settings.theme:defaultTheme())===v}" style="flex:1">${l}</button>`).join('')}</div>
+      <p class="pz-fine" style="margin-top:6px">TS9 is the default. Colorways apply in dark mode; Light replaces them.</p></section>
     ${pzProfilePickHtml()}
     ${pzTaSetHtml()}
     ${pzPushHtml()}

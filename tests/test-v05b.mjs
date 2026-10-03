@@ -107,7 +107,8 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
     headers: { 'Content-Type': 'application/json', ...(o.key ? { 'X-Pulse-Key': o.key } : {}), ...(o.admin ? { Authorization: 'Bearer owner-token' } : {}) },
     body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
   return { status: r.status, d: await r.json() }; };
-const join_ = async h => (await call('/join', { method: 'POST', body: { handle: h } })).d.key;
+// members join with mentors kept out, so each test lets them in when it needs to
+const join_ = async h => (await call('/join', { method: 'POST', body: { handle: h, share: { mentor: false } } })).d.key;
 const ua = crypto.createECDH('prime256v1'); ua.generateKeys();
 const subFor = host => ({ endpoint: 'https://' + host + '/push/' + crypto.randomBytes(4).toString('hex'), keys: { p256dh: Push.b64u(ua.getPublicKey()), auth: Push.b64u(crypto.randomBytes(16)) } });
 try {

@@ -38,7 +38,8 @@ try{ if(window.Chart&&Chart.defaults)Chart.defaults.animation=false; }catch(e){}
   document.querySelectorAll('#viewtog button').forEach(x=>x.classList.toggle('on',x.dataset.v===view));
   settings.rBasis=settings.rBasis||'avgloss';
   $('rBasis').value=settings.rBasis;
-  applyTheme(settings.theme||'ink');
+  if(!settings.colorway&&settings.theme==='bb')settings.colorway='bb'; // BB was only ever chosen by hand; INK was the old default, so it moves to TS9
+  applyTheme(settings.colorway);
   syncTzBtn(); syncCoachMode();
   if(settings.pageSize&&[10,20,50].includes(settings.pageSize))pageSize=settings.pageSize;
   if(settings.beThreshold==null)settings.beThreshold=50;

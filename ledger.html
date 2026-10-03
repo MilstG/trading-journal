@@ -10,7 +10,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Ledger">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='34'%20fill='%230A0E14'/%3E%3Cg%20stroke='%232FD08C'%20stroke-width='10'%20fill='none'%20stroke-linecap='round'%3E%3Cpath%20d='M34%20128%20L74%2088%20L104%20108%20L146%2054'/%3E%3C/g%3E%3Ccircle%20cx='146'%20cy='54'%20r='9'%20fill='%23C9A85C'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='38'%20fill='%23050705'/%3E%3Cg%20transform='translate%2825%2025%29%20scale%281.3%29'%20fill='none'%20stroke-linecap='round'%3E%3Cpath%20d='M50%208C70%208%2082%2024%2084%2044C87%2066%2082%2092%2050%2092C18%2092%2013%2066%2016%2044C18%2024%2030%208%2050%208Z'%20fill='%230b140a'%20stroke='%2316291a'%20stroke-width='8'/%3E%3Cpath%20d='M50%208C70%208%2082%2024%2084%2044C87%2066%2082%2092%2050%2092C18%2092%2013%2066%2016%2044C18%2024%2030%208%2050%208Z'%20stroke='%237dff4f'%20stroke-width='8'%20pathLength='100'%20stroke-dasharray='72%20100'/%3E%3Cpath%20d='M50%2030C63%2030%2071%2036%2071%2047C71%2057%2062%2062%2050%2062C38%2062%2029%2057%2029%2047C29%2036%2037%2030%2050%2030Z'%20fill='%23050705'%20stroke='%231f3a1a'%20stroke-width='1.5'/%3E%3Ccircle%20cx='40.5'%20cy='47'%20r='7.75'%20fill='%237dff4f'/%3E%3Ccircle%20cx='59.5'%20cy='47'%20r='6.5'%20stroke='%2393a393'%20stroke-width='2.5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="/pulse-icon.svg">
 <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Ledger%20%E2%80%94%20Hyperliquid%20Trade%20Journal%22%2C%22short_name%22%3A%22Ledger%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230A0E14%22%2C%22theme_color%22%3A%22%230A0E14%22%2C%22start_url%22%3A%22.%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg%2520xmlns%253D'http%253A%252F%252Fwww.w3.org%252F2000%252Fsvg'%2520viewBox%253D'0%25200%2520180%2520180'%253E%253Crect%2520width%253D'180'%2520height%253D'180'%2520fill%253D'%25230A0E14'%252F%253E%253Cg%2520stroke%253D'%25232FD08C'%2520stroke-width%253D'10'%2520fill%253D'none'%2520stroke-linecap%253D'round'%253E%253Cpath%2520d%253D'M34%2520128%2520L74%252088%2520L104%2520108%2520L146%252054'%252F%253E%253C%252Fg%253E%253C%252Fsvg%253E%22%2C%22sizes%22%3A%22any%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
 <style id="selfhost-fonts">
 @font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(app/fonts/ibm-plex-mono-400.woff2) format('woff2')}
@@ -26,7 +27,7 @@
 <style>
 /* ================================================================
    LEDGER — Terminal design system (single source of truth)
-   Themes: INK (default) · BB (body.bb — black & amber)
+   Colorways: TS9 (default: acid green on black, body.ts9) · INK (midnight) · BB (body.bb — black & amber)
    Color speaks only for PnL. Labels condensed caps. Data tabular mono.
    ================================================================ */
 :root{
@@ -44,6 +45,31 @@ body.bb{
   --text:#F5F5EE; --muted:#9C9C90; --faint:#6E6E62; --lbl:#FF9F1C;
   --profit:#1FDB72; --loss:#FF4759; --gold:#FFB020;
 }
+/* TS9 (body.ts9) — the default colorway: one neon accent on a green-black ground, mono for anything measured,
+   glow only on what is live. Self-contained: delete this block (and the #pz one below) and the look is gone. */
+body.ts9{
+  --bg:#050705; --panel2:#0b0f0a; --card:#0b0f0a; --hover:#101710;
+  --line:#16291a; --line2:#10200d;
+  --text:#e8f3e4; --muted:#93a393; --faint:#4f6b49; --lbl:#93a393;
+  --profit:#7dff4f; --loss:#ff6b4a; --gold:#ffc94a; --acc:#7dff4f;
+}
+body.ts9:not(.pz-mode){--mono:'IBM Plex Mono',ui-monospace,monospace;--cond:'IBM Plex Mono',ui-monospace,monospace}
+body.ts9 ::selection{background:rgba(125,255,79,.3)}
+body.ts9 input:focus,body.ts9 select:focus,body.ts9 textarea:focus{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+body.ts9 .brand h1::after{color:var(--acc)}
+body.ts9 .hdrsum:hover,body.ts9 .gear:hover,body.ts9 .gear.on,body.ts9 .chk.on,body.ts9 .secnav button.on,body.ts9 .btn:hover{border-color:var(--acc)}
+body.ts9 .btn,body.ts9 .settings-pop,body.ts9 .modal,body.ts9 .tip,body.ts9 .pill{border-color:#1f3a1a}
+body.ts9 .viewtog button:not(.on),body.ts9 .periods button:not(.on){color:#93a393}
+body.ts9 .viewtog button.on,body.ts9 .periods button.on{border-color:#2a4f22;color:#031003;background:var(--acc);box-shadow:0 0 14px rgba(125,255,79,.35)}
+body.ts9 .topnav button.on{color:var(--acc);background:rgba(125,255,79,.07);box-shadow:inset 2px 0 0 var(--acc)}
+body.ts9 .pill.long,body.ts9 .badge.ok,body.ts9 .win-chip{border-color:#2a4f22} body.ts9 .pill.short,body.ts9 .badge.no{border-color:#5a2a1f} body.ts9 .badge.mid{border-color:#5c4310}
+body.ts9 td{color:#d9e6d6}
+body.ts9 .coach{background:linear-gradient(90deg,rgba(125,255,79,.06),rgba(125,255,79,0) 46%)}
+body.ts9 .focus-card,body.ts9 .focus-recap{border-color:#2a4f22;border-left-color:var(--acc);background:rgba(125,255,79,.05)}
+body.ts9 .xpbar i{background:var(--acc);box-shadow:0 0 10px rgba(125,255,79,.5)}
+body.ts9 .ach.on{border-color:#2a4f22;background:rgba(125,255,79,.05)}
+body.ts9 .wrap .btn.primary{background:var(--acc);border-color:var(--acc);color:#031003;box-shadow:0 0 18px rgba(125,255,79,.35)}
+body.ts9 .wrap input,body.ts9 .wrap select,body.ts9 .wrap textarea{background:#070a07}
 /* LIGHT (body.light) — the appearance setting: Dark by default, Light by hand, or Auto to follow the device.
    Light replaces the colorway (INK/BB are dark-room palettes); PnL greens and reds are deepened
    so they hold contrast on white. */
@@ -634,7 +660,8 @@ body:not(.pz-mode) .wrap{max-width:none;padding:0}
 /* -- shell: a top bar before anything is loaded; a sidebar once the journal is open -- */
 .wrap>header{padding:16px 24px;gap:14px;border-bottom:1px solid var(--line)}
 .brand{gap:10px}
-.brand .lg-logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:linear-gradient(135deg,var(--profit),#2BB5C9);color:#05130D;flex:0 0 auto}
+.brand .lg-logo{width:28px;height:28px;display:grid;place-items:center;color:var(--acc,var(--profit));flex:0 0 auto} body.bb .brand .lg-logo{color:var(--lbl)}
+.brand .lg-logo svg{display:block}
 .brand h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
 .brand h1::after{content:none}
 .main{min-width:0;padding:20px 24px 80px;max-width:1280px;margin:0 auto;width:100%}
@@ -812,6 +839,7 @@ body.bb .secnav button.on{border-color:var(--lbl)}
   body:not(.pz-mode):has(#app:not(.hide)) .topnav button{flex:1;flex-direction:column;justify-content:center;gap:3px;font-size:11px;padding:4px 2px;border-radius:10px;box-shadow:none;background:none}
   body:not(.pz-mode):has(#app:not(.hide)) .topnav button.on{color:var(--profit);background:none;box-shadow:none}
   body.bb:not(.pz-mode):has(#app:not(.hide)) .topnav button.on{color:var(--lbl)}
+  body.ts9:not(.pz-mode):has(#app:not(.hide)) .topnav button.on{color:var(--acc)}
   .hdr-right{margin-left:auto}
   .hdr-right .btn{min-height:34px;padding:5px 12px}
   .hdrsum{display:none}
@@ -844,6 +872,29 @@ body.pz-mode .wrap,body.pz-mode #appfoot{display:none!important}
   --pz-good:#3FE0A0;--pz-mid:#F4C04E;--pz-low:#FF7A59;--pz-risk:#5AA9FF;--pz-xp:#B69CFF;--pz-streak:#FFB25A;--pz-num:'Barlow Condensed',sans-serif;
   min-height:100vh;background:var(--pz-bg);color:var(--pz-text);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:1.45;font-variant-numeric:normal;-webkit-tap-highlight-color:transparent}
 #pz{--pz-card2:#1B1F25;--pz-tint-n:#23272E;--pz-tint-xp:#22213A;--pz-tint-good:#1A2A22;--pz-err-t:#FFB39E;--pz-err-b:#6A2E20}
+/* Daruma in the TS9 colorway: the same tokens, squarer shapes, mono kickers, a dot grid, glow on the live things */
+body.ts9.pz-mode{background:#050705}
+body.ts9 #pz{--pz-acc:#7dff4f;--pz-bg:#050705;--pz-card:#0b0f0a;--pz-line:#16291a;--pz-line2:#2a4f22;--pz-track:#101710;--pz-text:#e8f3e4;--pz-muted:#93a393;--pz-soft:#c9d6c4;
+  --pz-good:#7dff4f;--pz-mid:#ffc94a;--pz-low:#ff6b4a;--pz-risk:#4fd8ff;--pz-xp:#4fd8ff;--pz-streak:#ffc94a;--pz-num:'IBM Plex Mono',ui-monospace,monospace;
+  --pz-card2:#101710;--pz-tint-n:#0d140c;--pz-tint-xp:#081a20;--pz-tint-good:#0d1f10;--pz-err-t:#ffb39e;--pz-err-b:#6a2e20;
+  background-image:radial-gradient(rgba(125,255,79,.07) 1px,transparent 1.2px);background-size:28px 28px}
+body.ts9 .pz-kick,body.ts9 .pz-lbl{font-family:var(--pz-num);letter-spacing:.18em}
+body.ts9 .pz-card,body.ts9 .pz-seg{border-radius:6px!important}
+body.ts9 .pz-tile{border-radius:5px!important}
+body.ts9 .pz-chip,body.ts9 .pz-cta,body.ts9 .pz-ghost,body.ts9 .pz-pill,body.ts9 .pz-seg button,body.ts9 .pz-chipbtn,body.ts9 #pz button.pz-fold,body.ts9 #pz input[type=text],body.ts9 #pz input[type=search],body.ts9 #pz input[type=number],body.ts9 #pz input[type=password],body.ts9 #pz textarea{border-radius:4px!important}
+body.ts9 .pz-cta{color:#031003;box-shadow:0 0 22px rgba(125,255,79,.4),inset 0 -2px 0 rgba(0,0,0,.25)}
+body.ts9 .pz-seg button[aria-pressed="true"]{background:var(--pz-acc);color:#031003;box-shadow:0 0 14px rgba(125,255,79,.35)}
+body.ts9 .pz-nav a[aria-current="page"]{text-shadow:0 0 12px rgba(125,255,79,.7)}
+body.ts9 #pz input:focus,body.ts9 #pz textarea:focus{border-color:var(--pz-acc);box-shadow:0 0 0 1px var(--pz-acc)}
+body.ts9 .pz-rings .pz-ring:nth-child(2) .pz-arc{filter:drop-shadow(0 0 5px rgba(125,255,79,.7))}
+body.ts9 #pz a.pz-chip.pz-jchip{background:rgba(125,255,79,.07);border-color:#2a4f22;color:var(--pz-acc)}
+body.ts9 #pz a.pz-chip.streak{background:rgba(255,201,74,.07);border-color:#5c4310}
+body.ts9 .pz-mark-arc,body.ts9 .pz-mark-eye,body.ts9 .lg-logo .dm-live{filter:drop-shadow(0 0 3px rgba(125,255,79,.6))}
+body.ts9 .pz-brand,body.ts9 .pz-wl-brand{font-family:var(--pz-num);font-size:16px;letter-spacing:.04em;text-transform:uppercase}
+body.ts9 .pz-brand span::after,body.ts9 .pz-wl-brand b::after{content:"_";color:var(--pz-acc)}
+body.ts9 .pz-tiltbar{background:linear-gradient(90deg,#7dff4f 0 35%,#ffc94a 35% 65%,#ff6b4a 65% 100%)}
+body.ts9 .pz-tile .pz-n{font-size:22px;letter-spacing:-.03em}
+@media(max-width:699px){body.ts9.pz-mode::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;background-image:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.16) 2px 4px)}}
 /* Pulse in light appearance: the same layout on white, signal colours deepened for contrast */
 body.light.pz-mode{background:#F3F5F8}
 body.light #pz{--pz-acc:var(--pz-acc-l,#268660);--pz-bg:#F3F5F8;--pz-card:#FFFFFF;--pz-line:#E1E5EB;--pz-line2:#CDD4DD;--pz-track:#E4E8EE;--pz-text:#111821;--pz-muted:#56606E;--pz-soft:#2A333E;
@@ -1172,6 +1223,7 @@ body.pz-quiet-on{overflow:hidden}
 .pz-welcome{min-height:100vh;max-width:1080px;margin:0 auto;padding:calc(28px + env(safe-area-inset-top)) 20px 40px;display:grid;grid-template-columns:minmax(0,1fr);gap:28px;align-content:center}
 .pz-wl-brand{display:flex;align-items:center;gap:10px;font-size:18px}
 .pz-wl-brand b{font-weight:700}
+.pz-mark{display:block;flex-shrink:0}
 .pz-wl-hero h1{margin:22px 0 0;font-family:var(--pz-num);font-size:clamp(42px,9vw,60px);font-weight:600;line-height:.98;letter-spacing:.005em;text-transform:none}
 .pz-wl-hero h1 span{color:var(--pz-acc)}
 .pz-wl-lede{margin:14px 0 0;font-size:16px;line-height:1.55;color:var(--pz-muted);max-width:480px}
@@ -1495,6 +1547,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 <script>/* Appearance before first paint: the last one this browser showed, else dark (the default),
    so someone who picked Light never flashes the dark palette while the app boots. */
 (function(){ try{ if(localStorage.getItem('ledger_appear')==='light')document.body.classList.add('light'); }catch(e){} })();
+(function(){ try{ if(document.body.classList.contains('light'))return; var th=localStorage.getItem('ledger_theme'); if(th===null){ var m=document.querySelector('meta[name="default-theme"]'); th=m?m.getAttribute('content'):'ts9'; } if(th==='ts9'||th==='bb')document.body.classList.add(th); }catch(e){} })();
 </script>
 <script>/* Installable: when served, the journal's manifest and its PNG home-screen icon (the inline
    data: ones above are for a copy opened from disk, which can't be installed anyway). */
@@ -1512,7 +1565,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   document.body.classList.add('pz-mode'); document.title='Daruma — Ledger';
   var m=function(n,v){ var el=document.querySelector('meta[name="'+n+'"]'); if(el)el.setAttribute('content',v); };
   m('theme-color','#0A0C0F'); m('apple-mobile-web-app-title','Daruma');
-  var ic=document.querySelector('link[rel="apple-touch-icon"]'); if(ic)ic.setAttribute('href',"data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='38'%20fill='%230A0C0F'/%3E%3Ccircle%20cx='90'%20cy='90'%20r='52'%20fill='none'%20stroke='%23232830'%20stroke-width='18'/%3E%3Cpath%20d='M90%2038a52%2052%200%201%201-49.5%2036'%20fill='none'%20stroke='%233FE0A0'%20stroke-width='18'%20stroke-linecap='round'/%3E%3C/svg%3E");
+  var ic=document.querySelector('link[rel="apple-touch-icon"]'); if(ic)ic.setAttribute('href',"data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='38'%20fill='%23050705'/%3E%3Cg%20transform='translate%2825%2025%29%20scale%281.3%29'%20fill='none'%20stroke-linecap='round'%3E%3Cpath%20d='M50%208C70%208%2082%2024%2084%2044C87%2066%2082%2092%2050%2092C18%2092%2013%2066%2016%2044C18%2024%2030%208%2050%208Z'%20fill='%230b140a'%20stroke='%2316291a'%20stroke-width='8'/%3E%3Cpath%20d='M50%208C70%208%2082%2024%2084%2044C87%2066%2082%2092%2050%2092C18%2092%2013%2066%2016%2044C18%2024%2030%208%2050%208Z'%20stroke='%237dff4f'%20stroke-width='8'%20pathLength='100'%20stroke-dasharray='72%20100'/%3E%3Cpath%20d='M50%2030C63%2030%2071%2036%2071%2047C71%2057%2062%2062%2050%2062C38%2062%2029%2057%2029%2047C29%2036%2037%2030%2050%2030Z'%20fill='%23050705'%20stroke='%231f3a1a'%20stroke-width='1.5'/%3E%3Ccircle%20cx='40.5'%20cy='47'%20r='7.75'%20fill='%237dff4f'/%3E%3Ccircle%20cx='59.5'%20cy='47'%20r='6.5'%20stroke='%2393a393'%20stroke-width='2.5'/%3E%3C/g%3E%3C/svg%3E");
   if(/^https?:$/.test(location.protocol)){ var l=document.querySelector('link[rel="manifest"]'); if(l)l.setAttribute('href','/pulse.webmanifest');
     if(ic)ic.setAttribute('href','/icons/pulse-180.png'); }
 }catch(e){} })();
@@ -1520,7 +1573,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 <div id="pz"><div id="pzView"></div><div id="pzSheet"></div><div id="pzQuiet"></div><div id="pzNote" class="pz-note" role="status" aria-live="polite"></div></div>
 <div class="wrap">
   <header>
-    <div class="brand"><span class="lg-logo" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-5 4 3 7-8"/></svg></span><h1>Ledger</h1></div>
+    <div class="brand"><span class="lg-logo" aria-hidden="true"><svg class="dm" viewBox="0 0 100 100" width="28" height="28" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--panel2);stroke:var(--line2)" stroke-width="10"/><path class="dm-live" d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:currentColor" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="dm-live" cx="40.5" cy="48" r="9.25" style="fill:currentColor"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg></span><h1>Ledger</h1></div>
     <div class="topnav hdrnav" id="topnav" role="tablist" aria-label="View">
       <button data-tab="dash" class="on" role="tab" aria-selected="true" aria-controls="dashView"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span>Dashboard</span></button>
       <button data-tab="review" role="tab" aria-selected="false" aria-controls="reviewView"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Review</span></button>
@@ -1593,7 +1646,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
         <div class="settings-pop hide" id="settingsPop">
           <div class="sp-row"><label>Clock</label><button class="gear" id="tzBtn" data-tip="Timezone for all time-of-day analysis — the day×hour heatmap, hour/weekday bars, the miner's session buckets, the daily calendar, and displayed timestamps. Switch between your local time and UTC; everything updates together.">🕓 Local</button></div>
           <div class="sp-row"><label>Appearance</label><button class="gear" id="appearBtn" data-tip="Auto follows your device's light/dark setting; or pick Dark or Light. Click to cycle Auto → Dark → Light. Daruma follows it too.">◐ Auto</button></div>
-          <div class="sp-row"><label>Colors</label><button class="gear" id="themeBtn" data-tip="Toggle colorway: INK (midnight terminal) ⇄ BB (black &amp; amber, Bloomberg-style). Charts re-theme too. A dark-mode choice.">◧ INK</button></div>
+          <div class="sp-row"><label>Colors</label><button class="gear" id="themeBtn" data-tip="Colorway: TS9 (acid green on black, the default) → INK (midnight terminal) → BB (black &amp; amber, Bloomberg-style). Charts re-theme too. A dark-mode choice.">◧ TS9</button></div>
           <div class="sp-row"><label>1R basis</label>
             <select id="rBasis"><option value="avgloss">Avg loss (auto)</option><option value="fixed">Fixed $</option></select>
             <input type="number" id="riskDefault" placeholder="e.g. 100" min="0" step="any" class="hide">

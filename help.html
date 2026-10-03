@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ledger — User Guide</title>
+<link rel="icon" href="/pulse-icon.svg">
 <style>
 /* Self-contained on purpose: no external fonts or scripts, so the guide works from any
    deploy (and offline) with the same zero-dependency posture as the rest of the app.
@@ -23,6 +24,7 @@ main{min-width:0;flex:1;max-width:720px}
 h1,h2,h3{line-height:1.25}
 header.hero{padding:44px 0 8px}
 header.hero h1{font-size:34px;font-weight:600;margin:0 0 10px}
+header.hero h1.brandh{display:flex;align-items:center;gap:14px} h1.brandh svg{flex:none}
 header.hero .tagline{color:var(--muted);font-size:16px;max-width:60ch;margin:0}
 .backlink{display:inline-block;margin-top:18px;font-size:13px;color:var(--accent);text-decoration:none}
 .backlink:hover{text-decoration:underline}
@@ -96,7 +98,7 @@ html{scroll-behavior:smooth}
 
 <main>
 <header class="hero">
-  <h1>Ledger User Guide</h1>
+  <h1 class="brandh"><svg class="dm" viewBox="0 0 100 100" width="36" height="36" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--panel);stroke:var(--line)" stroke-width="10"/><path class="dm-live" d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:var(--profit)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle class="dm-live" cx="40.5" cy="48" r="9.25" style="fill:var(--profit)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg><span>Ledger User Guide</span></h1>
   <p class="tagline">Ledger is a trading journal for Hyperliquid, Lighter, Bybit and Binance. It reconstructs your trades from your fill history, runs the analytics a desk reviewer would, and gives you the journaling habits — plans, reviews, rules, lessons — that actually change behavior.</p>
   <div class="badges">
     <span class="badge">runs in your browser</span>
@@ -176,7 +178,7 @@ html{scroll-behavior:smooth}
   <h3>Turning coach mode off</h3>
   <p>Prefer a plain journal? Switch <b>Coach mode</b> off in the settings panel (⚙), or click <b>hide coach</b> on the coach card. That hides everything from the coach, habits and progress work: the coach card, habits, progress and achievements, wins, the process score, the journal inbox, prep, rules from findings, live-plan badges, the question after each trade, the AI letter and the end-of-day nudge. Nothing is deleted: switch it back on and everything returns as it was. The setting follows you across devices.</p>
   <h3>Daruma: the simple view</h3>
-  <p>Open <code>/daruma</code> on your server (or <b>Daruma view</b> in the footer) for a phone-first version that works with zero effort: three dials read from your fills — <b>Form</b> (your recent trading against your usual), <b>Discipline</b> (trades free of revenge entries, sizing up after losses, adding to losers, trading on after two losses, overtrading and over-held losers) and <b>Load</b> (today against your usual day) — plus a Stats tab. <b>Plan your next trade</b> on Today saves a stop, target and one-line reason before you trade; it attaches itself to your next trade on that market and side within 24 hours (or expires), and Stats → <b>Your plans</b> tells you how often you follow your plans and what not following them cost. Logging prep, a plan or journal only adds bonus XP and sharper insights. The ✎ count at the top of Today opens the quick journal; <b>Skip</b> on a card takes a trade out of the backlog and <b>Clear them</b> skips everything from before today in one tap, with an Undo until you leave the screen. A skipped trade is not journaled (no XP, streak or discipline credit), it is just out of the way, and a note on it later counts as usual. It installs as its own app from the browser's share or install menu. Anyone you send the link to adds their own wallet address, and their journal stays in their browser; set an access token on your server before sharing, or everyone shares one journal.</p>
+  <p>Open <code>/daruma</code> on your server (or <b>Daruma view</b> in the footer) for a phone-first version that works with zero effort: three dials read from your fills — <b>Form</b> (your recent trading against your usual), <b>Discipline</b> (trades free of revenge entries, sizing up after losses, adding to losers, trading on after two losses, overtrading and over-held losers) and <b>Load</b> (today against your usual day) — plus a Stats tab. <b>Plan your next trade</b> on Today saves a stop, target and one-line reason before you trade; it attaches itself to your next trade on that market and side within 24 hours (or expires), and Stats → <b>Your plans</b> tells you how often you follow your plans and what not following them cost. Logging prep, a plan or journal only adds bonus XP and sharper insights. <b>Colorway</b> in Settings picks the look: TS9 (acid green on black, the default), Ink (midnight) or BB (black and amber); the full journal's footer button does the same, and the pick follows you across devices. The ✎ count at the top of Today opens the quick journal; <b>Skip</b> on a card takes a trade out of the backlog and <b>Clear them</b> skips everything from before today in one tap, with an Undo until you leave the screen. A skipped trade is not journaled (no XP, streak or discipline credit), it is just out of the way, and a note on it later counts as usual. It installs as its own app from the browser's share or install menu. Anyone you send the link to adds their own wallet address, and their journal stays in their browser; set an access token on your server before sharing, or everyone shares one journal.</p>
   <h3>Social: leagues, competitions and following</h3>
   <p>Daruma's <b>Social</b> tab lets the people you share your <code>/daruma</code> link with join your league. Each week the traders with the most XP move up a league (Bronze to Diamond) and the bottom ones move down. Leaderboards rank weekly XP, discipline and streaks; return boards show only traders who opt in, and returns are read from the chain, not typed in. Competitions are created by the owner — Discipline, Survivor (never hit your loss limit), Journal streak, and Return under a drawdown cap. Follow traders, give kudos, and adopt a habit someone else runs with one tap. <b>What you share</b> decides what others see; your journal, notes and trades stay in your browser unless you post a trade or send one to your mentor.</p>
   <h3>Mentors and trade reviews</h3>

@@ -302,7 +302,7 @@ function renderWhatIf(chron,name,pred,cond){
   if(_wiChart){ try{_wiChart.destroy();}catch(e){} _wiChart=null; }
   const labels=m.series.labels.map(t=>fmtDate(t));
   _wiChart=new Chart($('wiChart'),{type:'line',data:{labels,datasets:[
-    {label:'as traded',data:m.series.actual,borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,tension:.1,fill:false},
+    {label:'as traded',data:m.series.actual,borderColor:themeGreen(),borderWidth:1.6,pointRadius:0,tension:.1,fill:false},
     {label:'without it',data:m.series.cf,borderColor:'#8a7bd8',borderWidth:1.6,borderDash:[5,4],pointRadius:0,tension:.1,fill:false}]},
     options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},
       plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
@@ -866,7 +866,7 @@ function renderDiagnostic(closed, allv){
     const keys=Object.keys(by).sort(); if(!keys.length)return;
     _diagCharts.decomp=new Chart(el,{type:'bar',data:{labels:keys,datasets:[
       {label:'price PnL',data:keys.map(k=>by[k].price),backgroundColor:'rgba(139,147,255,.75)',stack:'s'},
-      {label:'funding',data:keys.map(k=>by[k].fund),backgroundColor:'rgba(47,208,140,.75)',stack:'s'},
+      {label:'funding',data:keys.map(k=>by[k].fund),backgroundColor:themeGreen()+'BF',stack:'s'},
       {label:'fees',data:keys.map(k=>by[k].fees),backgroundColor:'rgba(240,97,109,.75)',stack:'s'}]},
       options:{responsive:true,maintainAspectRatio:false,
         plugins:{legend:{display:true,labels:{color:TXT,boxWidth:10,font:{size:11}}},
@@ -899,7 +899,7 @@ function renderDiagnostic(closed, allv){
     const di=decimateIdx(eqD); // both series sampled at the equity curve's kept extremes
     _diagCharts.eq=new Chart($('diagEq'),{type:'line',data:{labels:pickIdx(ts,di).map(fmtDate),datasets:[
       {data:pickIdx(hwmD,di),borderColor:'#3A4560',borderWidth:1.2,borderDash:[4,4],pointRadius:0,fill:false},
-      {data:pickIdx(eqD,di),borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,fill:'-1',backgroundColor:'rgba(244,88,106,.14)'}]},
+      {data:pickIdx(eqD,di),borderColor:themeGreen(),borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,fill:'-1',backgroundColor:'rgba(244,88,106,.14)'}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+(c.datasetIndex?'equity ':'high-water ')+fmtUsd(c.parsed.y),
         afterBody:it=>{ const a=it.find(x=>x.datasetIndex===1), b=it.find(x=>x.datasetIndex===0); if(!a||!b)return []; const dd=a.parsed.y-b.parsed.y; return [dd<0?' Drawdown '+fmtUsd(dd)+(b.parsed.y>0?' ('+Math.round(-dd/b.parsed.y*100)+'% of the high)':''):' At the high']; }}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
@@ -915,8 +915,8 @@ function renderDiagnostic(closed, allv){
       if(i>=W-1){ roll.push(s2/W); rt.push(chronClosed[i].closeTime); } }
     const ri=decimateIdx(roll);
     _diagCharts.roll=new Chart($('diagRoll'),{type:'line',data:{labels:pickIdx(rt,ri).map(fmtDate),datasets:[
-      {data:pickIdx(roll,ri),borderColor:'#2FD08C',borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,
-       segment:{borderColor:c=>c.p1.parsed.y>=0?'rgba(63,207,142,.95)':'rgba(240,97,109,.95)'},fill:{target:{value:0}},backgroundColor:'rgba(47,208,140,.07)'}]},
+      {data:pickIdx(roll,ri),borderColor:themeGreen(),borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,
+       segment:{borderColor:c=>c.p1.parsed.y>=0?'rgba(63,207,142,.95)':'rgba(240,97,109,.95)'},fill:{target:{value:0}},backgroundColor:themeGreen()+'12'}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtUsd(c.parsed.y)+' a trade over the last '+W,afterLabel:c=>' '+fmtUsd(c.parsed.y*W)+' in total over those '+W+' trades'}}},
         scales:scales(),interaction:{intersect:false,mode:'index'}}});
     explain(_diagCharts.roll,'Your average trade over a sliding window of the last '+W+'. Above zero, your recent trading is making money; a falling line is an edge fading.');

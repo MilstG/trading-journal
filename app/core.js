@@ -113,7 +113,7 @@ async function unpackFillCache(c){
 }
 function snapshot(){ return {app:'ledger',version:8,exportedAt:new Date().toISOString(),
   wallets:settings.wallets, settings:{riskDefault:settings.riskDefault,view:settings.view,dexView:settings.dexView,rBasis:settings.rBasis,pageSize:settings.pageSize,beThreshold:settings.beThreshold,theme:settings.theme,anaBasis:settings.anaBasis,tz:settings.tz,assumedLev:settings.assumedLev,rules:settings.rules,attribBasis:settings.attribBasis,goals:settings.goals,
-    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, playbooks:settings.playbooks, appearance:settings.appearance}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
+    pins:settings.pins, habits:settings.habits, tzZone:settings.tzZone, calMode:settings.calMode, calWeeks:settings.calWeeks, coachMode:settings.coachMode, pzPlugs:settings.pzPlugs, pzProfile:settings.pzProfile, pzMarket:settings.pzMarket, pzLayout:settings.pzLayout, pzLessons:settings.pzLessons, pzGoals:settings.pzGoals, playbooks:settings.playbooks, colorway:settings.colorway,appearance:settings.appearance}, journal}; } // pins are the long-horizon forward tracker — losing them on a restore defeated the feature
 async function applySnapshot(data){ if(!data)return false; _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
@@ -124,6 +124,7 @@ async function applySnapshot(data){ if(!data)return false; _applying=true;
       if(data.settings.pzLessons&&typeof data.settings.pzLessons==='object')settings.pzLessons=pzLessonsNorm(data.settings.pzLessons);
       if(Array.isArray(data.settings.playbooks))settings.playbooks=pbNorm(data.settings.playbooks,true);
       if(['auto','dark','light'].includes(data.settings.appearance))settings.appearance=data.settings.appearance;
+      if(['ts9','ink','bb'].includes(data.settings.colorway))settings.colorway=data.settings.colorway;
       if(Array.isArray(data.settings.pzGoals))settings.pzGoals=data.settings.pzGoals.filter(x=>x&&typeof x==='object'&&typeof x.id==='string'); if(data.settings.goals&&typeof data.settings.goals==='object')settings.goals=data.settings.goals; }
     await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
     // v9+ backups may carry per-wallet fill caches (see backupAll) — restore the valid ones.
@@ -189,7 +190,7 @@ async function jPendingOverlay(localJ,pend){ if(!pend.length||!localJ)return; _j
 // bouncing back. Wallets are deliberately excluded (list merges are ambiguous; last write
 // wins there, as before).
 let _lastSyncedS=null;
-const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
+const _SYNC_S_FIELDS=['riskDefault','view','dexView','rBasis','pageSize','beThreshold','theme','anaBasis','tz','assumedLev','rules','attribBasis','goals','pins','habits','tzZone','calMode','colorway','calWeeks','coachMode','pzPlugs','pzProfile','pzMarket','pzLayout','pzLessons','pzGoals','playbooks','appearance'];
 // lessons and goals are lists edited on several devices: a conflict merges them by id instead of
 // letting one device's copy replace the other's (the newest change to an item wins; removals stick)
 function pzLessonsNorm(v){ v=v&&typeof v==='object'?v:{}; return Object.assign({},v,{items:v.items&&typeof v.items==='object'&&!Array.isArray(v.items)?v.items:{},own:Array.isArray(v.own)?v.own.filter(o=>o&&typeof o.id==='string'):[]}); }

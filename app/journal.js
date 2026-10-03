@@ -1277,8 +1277,8 @@ function renderProjection(){
   $('projBlock').onchange=e=>{ _proj.block=+e.target.value; renderProjection(); };
   const start=tzMidnight(now), labels=[];
   for(let d=1; d<=_proj.hor; d++){ const p=tzParts(addDays(start,d)); labels.push(MONTHS[p.mo]+' '+p.day+(_proj.hor>200?' \u2019'+String(p.y).slice(2):'')); }
-  const G='#2FD08C';
-  const band=(data,bg,bw)=>({data,borderColor:'rgba(47,208,140,'+bw+')',borderWidth:1,pointRadius:0,fill:false,tension:.1});
+  const G=themeGreen(), GR=[1,3,5].map(i=>parseInt(G.slice(i,i+2),16)).join(',');
+  const band=(data,bg,bw)=>({data,borderColor:'rgba('+GR+','+bw+')',borderWidth:1,pointRadius:0,fill:false,tension:.1});
   const ds=[
     Object.assign(band(fc.bands.p95,0,.30),{label:'95th'}),
     Object.assign(band(fc.bands.p05,0,.30),{label:'5th',fill:'-1',backgroundColor:'rgba(47,208,140,.06)'}),

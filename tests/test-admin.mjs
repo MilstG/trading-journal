@@ -133,6 +133,8 @@ try {
   });
   await t('global leaderboards: everyone who opted in, whatever their league', async () => {
     await call('/stats', { method: 'POST', key: A, body: st(4, 2600) });
+    // new members start on the global boards; both switch off to start from an empty board
+    for (const k of [A, Bk]) await call('/me', { method: 'PUT', key: k, body: { share: { global: false } } });
     let g = (await call('/leaderboard?board=level&scope=global', { key: A })).d;
     eq([g.rows.length, g.need], [0, 'global'], 'nobody opted in yet');
     await call('/me', { method: 'PUT', key: A, body: { share: { global: true } } });

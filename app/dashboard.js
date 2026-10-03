@@ -266,27 +266,40 @@ if(hasChart())try{ Object.assign(Chart.defaults.plugins.tooltip,{padding:10,boxP
   Chart.defaults.plugins.tooltip.callbacks.afterFooter=function(items){ const c=this&&this.chart, ex=c&&c.$explain; if(!ex)return '';
     const t=typeof ex==='function'?ex(items):ex; return t?wrapTip(t):''; };
 }catch(e){}
-const THEMES={ ink:{grid:'rgba(255,255,255,.06)',txt:'#8D97A3'}, bb:{grid:'rgba(44,44,40,.9)',txt:'#8C8C84'}, light:{grid:'rgba(18,24,38,.09)',txt:'#6B7488'} };
+const THEMES={ ts9:{grid:'rgba(125,255,79,.08)',txt:'#93a393'}, ink:{grid:'rgba(255,255,255,.06)',txt:'#8D97A3'}, bb:{grid:'rgba(44,44,40,.9)',txt:'#8C8C84'}, light:{grid:'rgba(18,24,38,.09)',txt:'#6B7488'} };
+// Colorways: TS9 is the default (or whatever the server's DEFAULT_THEME says), INK and BB stay a tap away.
+// settings.colorway is the user's own pick and wins; settings.theme is what is showing right now.
+const COLORWAYS=['ts9','ink','bb'];
+// the colorway's profit green, for charts that paint their own (always a 6-digit hex, so an alpha byte can follow)
+function themeGreen(){ try{ const v=getComputedStyle(document.body).getPropertyValue('--profit').trim(); if(/^#[0-9a-f]{6}$/i.test(v))return v; }catch(e){} return '#2FD08C'; }
+function defaultTheme(){ const m=typeof document!=='undefined'&&document.querySelector&&document.querySelector('meta[name="default-theme"]'); const v=m&&m.getAttribute('content'); return COLORWAYS.includes(v)?v:'ts9'; }
 // Appearance (settings.appearance): dark unless chosen otherwise; 'light' by hand, or 'auto' to
 // follow the device's light/dark setting. The colorway (INK/BB) is a dark-mode choice; light replaces it.
 const APPEARANCES=['dark','light','auto'];
 function appearanceIsLight(mode, prefersLight){ mode=APPEARANCES.includes(mode)?mode:'dark'; return mode==='light'||(mode==='auto'&&!!prefersLight); }
 function prefersLight(){ try{ return matchMedia('(prefers-color-scheme: light)').matches; }catch(e){ return false; } }
-function applyTheme(t){ t=(t==='bb')?'bb':'ink';
+function applyTheme(t){ t=COLORWAYS.includes(t)?t:defaultTheme();
   const light=appearanceIsLight(settings.appearance,prefersLight());
   document.body.classList.toggle('light',light);
   document.body.classList.toggle('bb',!light&&t==='bb');
+  document.body.classList.toggle('ts9',!light&&t==='ts9');
   const pal=THEMES[light?'light':t]; GRID=pal.grid; TXT=pal.txt; if(hasChart())Chart.defaults.color=TXT;
   settings.theme=t;
-  const b=$('themeBtn'); if(b){ b.textContent=t==='bb'?'◧ BB':'◧ INK'; b.disabled=light; b.title=light?'Colorways apply in dark mode':''; }
+  const b=$('themeBtn'); if(b){ b.textContent='◧ '+t.toUpperCase(); b.disabled=light; b.title=light?'Colorways apply in dark mode':''; }
   const a=$('appearBtn'); if(a)a.textContent={auto:'◐ Auto',dark:'● Dark',light:'○ Light'}[APPEARANCES.includes(settings.appearance)?settings.appearance:'dark'];
-  const m=document.querySelector('meta[name="theme-color"]'); if(m)m.setAttribute('content',light?'#F3F5F8':document.body.classList.contains('pz-mode')?'#0A0C0F':t==='bb'?'#000000':'#0A0C0F');
-  try{ localStorage.setItem('ledger_appear',light?'light':'dark'); }catch(e){} // read by the first-paint script in ledger.html
+  const m=document.querySelector('meta[name="theme-color"]'); if(m)m.setAttribute('content',light?'#F3F5F8':t==='ts9'?'#050705':document.body.classList.contains('pz-mode')?'#0A0C0F':t==='bb'?'#000000':'#0A0C0F');
+  try{ localStorage.setItem('ledger_appear',light?'light':'dark'); localStorage.setItem('ledger_theme',light?'':t); }catch(e){} // read by the first-paint script in ledger.html
+}
+// the user picks a colorway (the footer button, Daruma's settings): it sticks, syncs, and re-themes everything
+async function setColorway(t){
+  settings.colorway=COLORWAYS.includes(t)?t:defaultTheme();
+  applyTheme(settings.colorway); await Store.set(S_KEY,settings);
+  if(typeof PZ!=='undefined'&&PZ&&typeof pzRender==='function')pzRender(); else if(allTrades.length)render();
 }
 // cycle Dark -> Light -> Auto, re-theme everything that draws its own colours
 async function setAppearance(mode){
   settings.appearance=APPEARANCES.includes(mode)?mode:'dark';
-  applyTheme(settings.theme); await Store.set(S_KEY,settings);
+  applyTheme(settings.colorway); await Store.set(S_KEY,settings);
   if(typeof PZ!=='undefined'&&PZ&&typeof pzRender==='function')pzRender(); else if(allTrades.length)render();
 }
 // a device switching between light and dark (sunset, a phone's schedule) follows along in Auto
@@ -344,10 +357,10 @@ function renderCharts(closed, allv){
       while(lo<=hi){ const m=(lo+hi)>>1; if(keptT[m]<=f.time){idx=m;lo=m+1;}else hi=m-1; }
       flowAmt[idx]=(flowAmt[idx]||0)+f.usdc; }
   }
-  const ctx=$('equity').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,260);
-  g.addColorStop(0,'rgba(47,208,140,.16)'); g.addColorStop(1,'rgba(47,208,140,0)');
+  const ctx=$('equity').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,260), G=themeGreen();
+  g.addColorStop(0,G+'29'); g.addColorStop(1,G+'00');
   charts.eq=new Chart(ctx,{type:'line',data:{labels:keptT.map(fmtDate),
-    datasets:[{data:keptY,borderColor:'#2FD08C',borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4},
+    datasets:[{data:keptY,borderColor:G,borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4},
       ...(Object.keys(flowAmt).length?[{data:keptY.map((v,i)=>flowAmt[i]!=null?v:null),showLine:false,fill:false,
         pointStyle:'triangle',pointRadius:5,pointHoverRadius:7,pointBorderWidth:0,
         pointRotation:keptY.map((v,i)=>(flowAmt[i]||0)<0?180:0),
