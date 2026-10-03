@@ -239,7 +239,10 @@ function podRank(p, sides) {
   const why = !lead ? (rows.length && rows[0].key[0] === 0 ? 'everyone is out' : 'level at the top')
     : p.type === 'disc' ? 'highest average Discipline' : p.type === 'survive' ? 'last one standing' : p.type === 'clean' ? 'most clean days'
     : p.type === 'xp' ? 'most process XP' : p.type === 'ret' ? 'highest % return' : 'most journaled days';
-  rows.forEach(r => { delete r.key; });
+  // q: placed on merit, so a pot can pay them (not out, and with the agreed trading days where those count);
+  // alive: still in it at the end (a last-one-standing duel: never fell) — who "survivors split" pays
+  const need = ['disc', 'ret'].includes(p.type) ? 2 : 1;
+  rows.forEach(r => { r.q = r.key[0] >= need; r.alive = p.type === 'survive' ? r.key[0] === 2 : r.q; delete r.key; });
   return { rows, lead, why };
 }
 

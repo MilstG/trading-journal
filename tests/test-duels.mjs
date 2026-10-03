@@ -174,6 +174,8 @@ try {
     ok(/at most 250 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 300 })).d.error));
     ok(/@dee can’t cover/.test((await send(ann, 'dee', { type: 'xp', stake: 100 })).d.error));
     await call('/stats', { method: 'POST', key: dee, body: Object.assign(days([]), { xp: 1000 }) });
+    ok(/apps report themselves, at most 100 XP/.test((await send(ann, 'dee', { type: 'xp', stake: 200 })).d.error), 'process XP is reported by the app: 100 XP at most by default');
+    await call('/admin/config', { method: 'PUT', owner: true, body: { pots: { selfMax: 1000 } } });
     const r = await send(ann, 'dee', { type: 'xp', stake: 200 }); eq([r.status, r.d.duel.stake], [200, 200], JSON.stringify(r.d));
     eq((await mine(ann)).room, 50, 'what you proposed is riding');
     eq((await mine(dee)).room, 250, 'a challenge waiting on you commits nothing yet');

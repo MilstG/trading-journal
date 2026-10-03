@@ -692,9 +692,12 @@ details>summary{list-style-position:inside}
       <div class="row">${field('nMin','Minimum / target days','<input id="nMin" type="number" min="1" max="90" value="3">','Discipline: trading days to be ranked. Journal: the run that counts as done.')}${field('nTd','Trading days (return only)','<input id="nTd" type="number" min="0" max="90" placeholder="default">','Fewer and an entrant isn’t ranked. Empty: the default under Duels → Drawdown rules.')}</div>
       <div class="row">${field('nDd','Drawdown cap %','<input id="nDd" type="number" min="1" max="90" placeholder="none">','% return always has one (8% if empty). Any other kind: empty for none. Entrants then need “Show % return” with a wallet.')}${field('nDdMode','Past the cap',sel('nDdMode',[['','League default'],['out','Out, placed last'],['penalty','Score docked']],''))}</div>
       ${field('nRule','Rules, in a sentence or two','<textarea id="nRule" rows="2" maxlength="280"></textarea>')}
+      ${D.duels&&D.duels.pots&&D.duels.pots.comps?`<p class="muted small" style="margin:10px 0 4px"><b>XP pot</b> (optional): every entrant puts up the buy-in when they join, and it closes to new entrants when it starts.</p>
+      <div class="row">${field('nBuy','Buy-in (XP)','<input id="nBuy" type="number" min="0" max="'+D.duels.pots.compMaxBuyIn+'" step="50" placeholder="none">','Up to '+fmt(D.duels.pots.compMaxBuyIn)+'. Survivor and journal: up to '+fmt(D.duels.pots.selfMax)+' (the apps report them).')}${field('nOver','Overlay (XP you add)','<input id="nOver" type="number" min="0" max="100000" step="50" placeholder="0">','New XP, guaranteed in the pot.')}</div>
+      <div class="row">${field('nBurn','Burn (%)','<input id="nBurn" type="number" min="0" max="'+D.duels.pots.burnMax+'" placeholder="'+D.duels.pots.burnPct+'">','Up to '+D.duels.pots.burnMax+'%. Empty: the default.')}${field('nPay','Who gets paid',sel('nPay',[['top3','Top 3 (60 / 30 / 10)'],['wta','Winner takes all'],['topq','Top 25% (sliding)'],['surv','Everyone who qualifies, equal shares']],'top3'))}</div>`:''}
       <div class="actions"><button class="primary" id="mkComp">Create and announce</button></div></section>
       <section class="card"><h2>All competitions</h2><div class="scroll"><table><thead><tr><th>Title</th><th>Dates</th><th>Entrants</th><th>Leader</th><th></th></tr></thead><tbody>
-      ${pager('comps',D.comps).items.map(x=>`<tr><td><b>${esc(x.title)}</b><div class="muted small">${esc(x.type)} · ${esc(x.status)}${x.league?' · '+esc(x.league.name||leagueName(x.league)):''}</div>${x.rule?`<div class="muted small">${esc(x.rule)}</div>`:''}</td><td class="small">${esc(x.start)} → ${esc(x.end)}</td><td>${x.entrants}</td>
+      ${pager('comps',D.comps).items.map(x=>`<tr><td><b>${esc(x.title)}</b><div class="muted small">${esc(x.type)} · ${esc(x.status)}${x.league?' · '+esc(x.league.name||leagueName(x.league)):''}</div>${x.rule?`<div class="muted small">${esc(x.rule)}</div>`:''}</td><td class="small">${esc(x.start)} → ${esc(x.end)}${x.pot?`<div class="muted small">pot ${fmt(x.pot.pot)} XP · ${fmt(x.pot.buyIn)} buy-in${x.pot.overlay?' + '+fmt(x.pot.overlay):''}${x.pot.done?(x.pot.refund?' · refunded':' · paid'):''}</div>`:''}</td><td>${x.entrants}</td>
         <td class="small">${x.standings&&x.standings[0]?'@'+esc(x.standings[0].handle)+' · '+esc(x.standings[0].note):'<span class="muted">—</span>'}</td>
         <td><button class="sm danger" data-delcomp="${esc(x.id)}" data-t="${esc(x.title)}">Delete</button></td></tr>`).join('')||'<tr><td colspan="3" class="muted">None yet.</td></tr>'}
       </tbody></table></div>${pager('comps',D.comps).html}</section></div>`;
@@ -1022,6 +1025,7 @@ details>summary{list-style-position:inside}
         <div class="actions"><button class="primary" id="dSave">Save</button></div></section>
       <div class="stack">
       ${riskCard(X.risk)}
+      ${potCard(X.pots)}
       ${LD?`<section class="card"><h2>Ladder season: ${esc(LD.season.label)}</h2><p class="muted small">${esc(LD.season.start)} → ${esc(LD.season.end)} · ${fmt(LD.listed)} on the ladder${LD.last?' · last podium ('+esc(LD.last.label)+'): '+LD.last.podium.map(h=>'@'+esc(h)).join(', '):''}</p>
         ${LD.top.length?`<div class="scroll"><table><thead><tr><th>#</th><th>Who</th><th>Points this season</th><th>Rating</th><th>Duels</th></tr></thead><tbody>${LD.top.map((r,i)=>`<tr><td>${i+1}</td><td>@${esc(r.handle)}</td><td>${r.gain>0?'+':''}${fmt(r.gain)}</td><td>${fmt(r.r)}</td><td>${fmt(r.n)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No rated duels this season yet.</p>'}</section>`:''}
       <section class="card"><h2>Recent results</h2>
@@ -1033,14 +1037,26 @@ details>summary{list-style-position:inside}
     const M=[['out','Out (loses, or placed last)'],['penalty','Penalty (score docked)'],['off','Off (only % return has a cap)']];
     return `<section class="card"><h2>Drawdown rules</h2>
       <p class="muted small" style="margin:0 0 8px">A cap on how far below its peak an account can fall during an event, read from the member’s wallet. % return always has one; any other duel, group duel or competition can take one. A penalty docks Discipline points (or points of return) for every 1% past the cap; kinds that count days can’t be docked, so there it’s out.</p>
-      <div class="row">${field('rDuel','1v1 duels',sel('rDuel',M,R.duel))}${field('rPod','Group duels',sel('rPod',M,R.pod))}</div>
-      <div class="row">${field('rComp','Competitions (the default; each can choose)',sel('rComp',M,R.comp))}${field('rLeague','League money boards (each league can choose)',sel('rLeague',[['week','Out for the week (scores 0, listed last)'],['penalty','Penalty (return docked)'],['off','Off (no cap)']],R.league))}</div>
-      <div class="row">${field('rCaps','Caps members pick from (%)','<input id="rCaps" value="'+esc(R.caps.join(', '))+'">','Up to six, from 2 to 50.')}
-        ${field('rLeagueCap','League cap (%)','<input id="rLeagueCap" type="number" min="2" max="90" value="'+R.leagueCap+'">','For return, $ P&L and return / drawdown boards and promotion.')}</div>
-      <div class="row">${field('rPen','Penalty: points per 1% past the cap','<input id="rPen" type="number" min="0" max="20" step="0.5" value="'+R.penalty+'">')}
-        ${field('rMin','Trading days for a return competition','<input id="rMin" type="number" min="0" max="30" value="'+R.minDays+'">','So sitting flat can’t win. Each competition can set its own.')}</div>
+      <div class="row">${field('riskDuel','1v1 duels',sel('riskDuel',M,R.duel))}${field('riskPod','Group duels',sel('riskPod',M,R.pod))}</div>
+      <div class="row">${field('riskComp','Competitions (the default; each can choose)',sel('riskComp',M,R.comp))}${field('riskLeague','League money boards (each league can choose)',sel('riskLeague',[['week','Out for the week (scores 0, listed last)'],['penalty','Penalty (return docked)'],['off','Off (no cap)']],R.league))}</div>
+      <div class="row">${field('riskCaps','Caps members pick from (%)','<input id="riskCaps" value="'+esc(R.caps.join(', '))+'">','Up to six, from 2 to 50.')}
+        ${field('riskLeagueCap','League cap (%)','<input id="riskLeagueCap" type="number" min="2" max="90" value="'+R.leagueCap+'">','For return, $ P&L and return / drawdown boards and promotion.')}</div>
+      <div class="row">${field('riskPen','Penalty: points per 1% past the cap','<input id="riskPen" type="number" min="0" max="20" step="0.5" value="'+R.penalty+'">')}
+        ${field('riskMin','Trading days for a return competition','<input id="riskMin" type="number" min="0" max="30" value="'+R.minDays+'">','So sitting flat can’t win. Each competition can set its own.')}</div>
       <p class="hint">Changes apply to events made from now on. A running duel or competition keeps the rule it started with.</p>
-      <div class="actions"><button class="primary" id="rSave">Save</button></div></section>`; }
+      <div class="actions"><button class="primary" id="riskSave">Save</button></div></section>`; }
+  // XP pots: buy-ins on group duels and competitions, the burn, and the limits that keep them fair
+  function potCard(P){ if(!P)return '';
+    return `<section class="card"><h2>XP pots</h2>
+      <p class="muted small" style="margin:0 0 8px">Everyone in a group duel or competition puts up the same buy-in when they join. It’s held until the end and split among those who qualified; if nobody qualifies, everyone gets it back. XP only, never money. It moves the stake balance, never earned XP or a level.</p>
+      ${box('potPods','Members can put a buy-in on a group duel',P.pods)}
+      ${box('potComps','Competitions can have a buy-in (you set it on each one)',P.comps)}
+      <div class="row">${field('potPodMax','Most a group duel buy-in can be','<input id="potPodMax" type="number" min="0" max="100000" step="25" value="'+P.podMaxBuyIn+'">')}${field('potCompMax','Most a competition buy-in can be','<input id="potCompMax" type="number" min="0" max="100000" step="50" value="'+P.compMaxBuyIn+'">')}</div>
+      <div class="row">${field('potBurn','Burn, by default (%)','<input id="potBurn" type="number" min="0" max="50" value="'+P.burnPct+'">','Taken off every pot (group duels use this one). A refund burns nothing.')}${field('potBurnMax','Highest burn a competition can set (%)','<input id="potBurnMax" type="number" min="0" max="50" value="'+P.burnMax+'">')}</div>
+      <div class="row">${field('potPair','Most net XP two members can move a month','<input id="potPair" type="number" min="0" max="1000000" step="100" value="'+P.pairCapMonth+'">','Across duel stakes and group-duel pots. Past it, they can still play each other, without XP at stake. 0: no limit.')}${field('potSelf','Most XP on a measure the apps report','<input id="potSelf" type="number" min="0" max="100000" step="25" value="'+P.selfMax+'">','Unverified scores, journaling, process XP, survivor: what a member’s app reports, not their fills or the chain.')}</div>
+      <div class="row">${field('potMinE','Fewest entrants for a competition’s pot','<input id="potMinE" type="number" min="2" max="50" value="'+P.minEntrants+'">','Fewer when it ends and every buy-in goes back.')}</div>
+      ${box('potSeat','One seat per wallet (a second profile on the same wallet can’t enter the same pot)',P.oneSeat)}
+      <div class="actions"><button class="primary" id="potSave">Save</button></div></section>`; }
   function vWallets(){
     const W=D.wallets, c=W.counts;
     return `<datalist id="memberHandles">${D.members.map(m=>`<option value="@${esc(m.handle)}">`).join('')}</datalist>
@@ -1158,7 +1174,8 @@ details>summary{list-style-position:inside}
       return act(()=>api('/members/'+encodeURIComponent(d.unadmin),{body:{action:'unadmin'}}),'@'+am.handle+' is no longer an admin.'); }
     if(id==='codeDone'){ UI.code=null; return render(); }
     // wallets
-    if(id==='rSave')return act(()=>api('/config',{method:'PUT',body:{risk:{duel:val('rDuel'),pod:val('rPod'),comp:val('rComp'),league:val('rLeague'),caps:val('rCaps'),leagueCap:+val('rLeagueCap'),penalty:+val('rPen'),minDays:+val('rMin')}}}),'Saved.');
+    if(id==='potSave')return act(()=>api('/config',{method:'PUT',body:{pots:{pods:chk('potPods'),comps:chk('potComps'),podMaxBuyIn:+val('potPodMax'),compMaxBuyIn:+val('potCompMax'),burnPct:+val('potBurn'),burnMax:+val('potBurnMax'),pairCapMonth:+val('potPair'),selfMax:+val('potSelf'),minEntrants:+val('potMinE'),oneSeat:chk('potSeat')}}}),'Saved.');
+    if(id==='riskSave')return act(()=>api('/config',{method:'PUT',body:{risk:{duel:val('riskDuel'),pod:val('riskPod'),comp:val('riskComp'),league:val('riskLeague'),caps:val('riskCaps'),leagueCap:+val('riskLeagueCap'),penalty:+val('riskPen'),minDays:+val('riskMin')}}}),'Saved.');
     if(id==='dSave'){ const types={}; for(const t of Object.keys(D.duels.types))types[t]=chk('dT_'+t);
       return act(()=>api('/config',{method:'PUT',body:{duels:{on:chk('dOn'),types,xp:+val('dXp'),maxOpen:+val('dOpen'),perDay:+val('dDay'),stakes:chk('dStakes'),maxStake:+val('dMaxStake'),stakePct:+val('dStakePct'),ladder:chk('dLadder'),k:+val('dK'),ladderMin:+val('dLMin'),pods:chk('dPods'),podMax:+val('dPodMax')}}}),'Saved.'); }
     if(d.duelcancel){ if(!confirm('Cancel this duel? Nobody wins or loses, and everyone in it is told.'))return; return act(()=>api('/duels/'+encodeURIComponent(d.duelcancel),{body:{action:'cancel'}}),'Cancelled.'); }
@@ -1213,7 +1230,7 @@ details>summary{list-style-position:inside}
     if(d.lgrm&&!confirm('Remove this member from the league?'))return;
     if(d.lgrm) return act(()=>api('/leagues/'+encodeURIComponent(d.lgrm),{body:{remove:[d.mid]}}),'Removed.');
     // competitions
-    if(id==='mkComp') return act(()=>api('/competitions',{body:{title:val('nTitle'),type:val('nType'),league:val('nLeague')||null,start:val('nStart'),end:val('nEnd'),minDays:+val('nMin'),ddCap:+val('nDd')?+val('nDd')/100:null,ddMode:val('nDdMode')||null,tradeDays:val('nTd')===''?null:+val('nTd'),rule:val('nRule')}}),'Competition created and announced.');
+    if(id==='mkComp') return act(()=>api('/competitions',{body:{title:val('nTitle'),type:val('nType'),league:val('nLeague')||null,start:val('nStart'),end:val('nEnd'),minDays:+val('nMin'),ddCap:+val('nDd')?+val('nDd')/100:null,ddMode:val('nDdMode')||null,tradeDays:val('nTd')===''?null:+val('nTd'),rule:val('nRule'),buyIn:$('nBuy')?+val('nBuy')||0:0,overlay:$('nOver')?+val('nOver')||0:0,burnPct:$('nBurn')&&val('nBurn')!==''?+val('nBurn'):undefined,pay:$('nPay')?val('nPay'):undefined}}),'Competition created and announced.');
     if(d.delcomp){ if(!confirm('Delete “'+d.t+'”?'))return; return act(()=>api('/competitions/'+encodeURIComponent(d.delcomp),{method:'DELETE'}),'Deleted.'); }
     // badges
     if(id==='bNew'){ UI.badgeEdit='new'; return render(); }

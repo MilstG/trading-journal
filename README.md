@@ -573,6 +573,25 @@ link to join *your* league. A server upgraded from an older version imports its
   placed last, or under the penalty rule their score is docked. A return
   competition can require a number of trading days before an entrant is ranked.
   Prizes are badges and bragging rights, never money.
+- **XP pots on competitions.** The owner can give a competition a buy-in (up to
+  1,000 XP by default), an **overlay** (new XP they add, shown as guaranteed),
+  a **burn** (a share of the pot removed, up to the ceiling they set) and a
+  payout table: *top 3* (60 / 30 / 10), *winner takes all*, *top 25%* (sliding)
+  or *everyone who qualifies*. Entrants put up the buy-in when they join, so a
+  competition with one closes to new entrants when it starts; backing out
+  before the start gives it back, after the start it stays in the pot. When the
+  results are final the pot is paid (ties share the prizes for the places they
+  cover; shares meant for places nobody qualified for go to those who did). Too
+  few entrants (3 by default) or nobody qualifying, and every buy-in goes back;
+  so does removing the competition before it pays.
+- **What keeps pots fair** (Admin → Duels → XP pots). A member can have at most
+  25% of their stake balance riding at once, duels and pots together. Two
+  members can move at most 1,000 XP net between them in a calendar month,
+  across duel stakes and group-duel pots (a duel's stake is trimmed to what's
+  left; past it they can still play, without XP at stake). A measure the apps
+  report themselves (unverified Discipline, clean days or last one standing,
+  journaling, process XP, survivor) can carry at most 100 XP. A wallet takes
+  one seat in a pot, so a second profile on it can't enter twice.
 - **Drawdown rules** (Admin → Duels → Drawdown rules). The owner picks, per
   format, what happens past a cap: *out*, a *penalty* (points per 1% over), or
   *off* (only % return carries a cap). League money boards (return, $ P&L,
@@ -1424,8 +1443,18 @@ A member sets up a group duel ("pod") for 3 to 6 people (the owner sets the
 most) from **Social → Duels → Group duel**: Discipline, clean days, last one
 standing, journaling, process XP or % return (when the league runs % return
 duels), for a week or a month, verified from fills if everyone has verification
-on. No XP stakes. It can carry a drawdown rule like a 1v1: past the cap, you're
-out and placed last. They pick people
+on. It can carry a drawdown rule like a 1v1: past the cap, you're out and
+placed last.
+
+- **XP pot.** The creator can put a buy-in on it (up to 250 XP each by
+  default): everyone puts up the same XP when they're in, and it's split among
+  those who placed on merit: *winner takes all*, *top 2* (70 / 30), or
+  *survivors split* (everyone still in at the end, equal shares). If nobody
+  qualifies, everyone gets their buy-in back. Backing out before the start (or
+  the group duel being called off or lapsing) gives it back; leaving after the
+  start leaves it in the pot. A suspended member gets theirs back. The league's
+  default burn comes off the pot. Buy-ins and payouts move the stake balance,
+  never earned XP or a level. They pick people
 with the same quick picks as a 1v1, or by name; anyone who takes challenges can
 be invited.
 

@@ -35,6 +35,7 @@ const SC = require('./social-config.js');
 const Store = require('./db.js');
 const Bench = require('./bench.js');
 const Duels = require('./duels.js');
+const Pots = require('./pots.js');
 const Insights = require('./insights.js');
 const Push = require('./push.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
@@ -512,7 +513,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -539,6 +540,9 @@ function createSocial(opts) {
   S.config.bench = Bench.sanitizeBenchCfg(S.config.bench, null);
   S.config.duels = Duels.sanitizeDuelCfg(S.config.duels, null);
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
+  S.config.pots = Pots.sanitizePotCfg(S.config.pots, null);
+  // XP moved between two members, by calendar month: {'2026-10': {'idA|idB': what the first id gained}}
+  if (!S.pairFlow || typeof S.pairFlow !== 'object' || Array.isArray(S.pairFlow)) S.pairFlow = {};
   if (!S.badges || typeof S.badges !== 'object') S.badges = {};
   // the owner's wallet decisions, by address (so a new profile can't launder a rejected wallet):
   // { '0x…': { s: 'approved' | 'rejected', at, by: 'owner' | 'existing', note } }
@@ -755,6 +759,55 @@ function createSocial(opts) {
     m.stakeNet = (+m.stakeNet || 0) + n;
     m.stakes = [...(m.stakes || []), { id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), ref: ref || null }].slice(-100); };
   const balanceOf = m => Math.max(0, ((m && m.stats && m.stats.xp) || 0) + ((m && +m.stakeNet) || 0));
+  // ---- XP pots: a buy-in leaves the balance when a member joins (ev.potIn[id]), comes back if the event is
+  // called off or they back out before the start, stays in the pot if they leave after it (ev.potKept), and
+  // the pot is paid out when the event settles (ev.potDone) ----
+  const escrowOf = m => { let x = 0;
+    for (const p of Object.values(S.pods)) if (p.potIn && !p.potDone && p.potIn[m.id]) x += p.potIn[m.id];
+    for (const c of Object.values(S.comps)) if (c.potIn && !c.potDone && c.potIn[m.id]) x += c.potIn[m.id];
+    return x; };
+  const potHold = (ev, m, name) => { ev.potIn = ev.potIn || {}; stakeMove(m, -ev.buyIn, 'Buy-in: ' + name, ev.id); ev.potIn[m.id] = ev.buyIn; };
+  const potRefund = (ev, id, name) => { const x = ev.potIn && ev.potIn[id]; if (!x) return; delete ev.potIn[id];
+    const m = S.members[id]; if (m) { stakeMove(m, x, 'Buy-in back: ' + name, ev.id); touch(m); } };
+  const potKeep = (ev, id) => { const x = ev.potIn && ev.potIn[id]; if (!x) return; delete ev.potIn[id];
+    ev.potKept = (ev.potKept || 0) + x; ev.potKeptBy = Object.assign({}, ev.potKeptBy, { [id]: x }); };
+  // nobody qualified, or it never happened: everyone gets their buy-in back, those who left after the start too
+  const potRefundAll = (ev, name) => {
+    for (const [id, x] of Object.entries(ev.potKeptBy || {})) { ev.potIn = ev.potIn || {}; ev.potIn[id] = (ev.potIn[id] || 0) + x; }
+    ev.potKept = 0; ev.potKeptBy = {};
+    for (const id of Object.keys(ev.potIn || {})) potRefund(ev, id, name);
+    ev.potDone = true; };
+  // pays out a settled event. rows: the field in finishing order, {id, place, q}; n: entrants for the split
+  const potPay = (ev, rows, name, extra) => {
+    const held = Object.assign({}, ev.potIn || {}), put = Object.assign({}, held, ev.potKeptBy || {});
+    const gross = Object.values(held).reduce((a, b) => a + b, 0) + (ev.potKept || 0) + (extra || 0);
+    const size = Pots.potSize(gross, ev.burnPct || 0), res = Pots.payouts(size.pot, rows.filter(r => own(held, r.id)), ev.pay, Object.keys(put).length);
+    if (res.refund) { potRefundAll(ev, name); ev.potResult = Object.assign({ refund: true, paid: {} }, size); return ev.potResult; }
+    for (const [id, x] of Object.entries(res.paid)) { const m = S.members[id]; if (m && !m.banned) { stakeMove(m, x, 'Won ' + x + ' XP from the pot: ' + name, ev.id); touch(m); } }
+    // who moved XP to whom, for the monthly limit between two members
+    const nets = {}; for (const id of Object.keys(put)) nets[id] = (res.paid[id] || 0) - put[id];
+    for (const [from, to, x] of Pots.pairFlows(nets)) pairRecord(from, to, x);
+    ev.potIn = {}; ev.potDone = true; ev.potResult = Object.assign({ refund: false, paid: res.paid }, size);
+    return ev.potResult; };
+  // ---- XP between two members this month: stakes and pots, for the owner's monthly limit ----
+  const monthKey = () => todayKey().slice(0, 7);
+  const pairGain = (a, b) => { const v = (S.pairFlow[monthKey()] || {})[Pots.pairKey(a, b)] || 0; return a < b ? v : -v; }; // what a gained from b
+  const pairRecord = (from, to, x) => { if (!x || from === to) return; const mk = monthKey(), f = S.pairFlow[mk] = S.pairFlow[mk] || {}, k = Pots.pairKey(from, to);
+    f[k] = (f[k] || 0) + Pots.pairSign(from, to) * x;
+    for (const old of Object.keys(S.pairFlow)) if (old < mk) delete S.pairFlow[old]; // only this month counts
+    touch('pairFlow'); };
+  // a staked event between `a` and these people: blocked when a pair already moved the month's limit
+  const pairBlock = (a, others) => { const cap = S.config.pots.pairCapMonth; if (!cap) return null;
+    for (const o of others) if (o && Math.abs(pairGain(a.id, o.id)) >= cap)
+      return (a === o ? '' : 'You and @' + o.handle) + ' have moved ' + cap + ' XP between you this month, the league’s limit. Play this one without XP at stake.';
+    return null; };
+  // a pot takes one seat per wallet, so a second profile on the same wallet can't enter twice
+  const seatTaken = (m, ids) => { if (!S.config.pots.oneSeat) return null; const mine = new Set(walletsOf(m));
+    if (!mine.size) return null;
+    for (const id of ids) { const o = S.members[id]; if (o && o.id !== m.id && walletsOf(o).some(a => mine.has(a))) return 'A wallet of yours is already in this pot under another profile. One seat per wallet.'; }
+    return null; };
+  // scored from what the app reports (not verified from fills, not read on chain): XP at stake is capped lower
+  const selfReported = t => !(t.verified || t.type === 'ret' || t.type === 'return' || t.type === 'discipline');
   const levelTitle = n => { const t = S.config.levels.titles; return t[Math.min(n, t.length) - 1] || ('Level ' + n); };
   // one formatter per time zone, made once: making them is the slow part (the reminder pass runs every minute over every member)
   const fmts = new Map();
@@ -1200,7 +1253,9 @@ function createSocial(opts) {
   // XP riding on a member's open duels: the ones running, and the terms they've put to someone
   // (a challenge waiting on them commits nothing until they accept it). `except`: the duel being decided.
   const duelRiding = (m, except) => openDuels(m).filter(d => d !== except && (d.status === 'active' || d.awaiting !== m.id)).reduce((s, d) => s + (d.stake || 0), 0);
-  const stakeRoomOf = (m, except) => Duels.stakeRoom(balanceOf(m), duelRiding(m, except), S.config.duels);
+  // the share of a member's XP that can ride at once counts what they've put into pots too
+  const stakeRoomOf = (m, except) => Duels.stakeRoom(balanceOf(m) + escrowOf(m), duelRiding(m, except) + escrowOf(m), S.config.duels);
+  const potRoomOf = m => Duels.stakeRoom(balanceOf(m) + escrowOf(m), duelRiding(m) + escrowOf(m), Object.assign({}, S.config.duels, { maxStake: Infinity }));
   // the duel settings with the league's drawdown rules, for reading terms
   const duelCfg = () => Object.assign({}, S.config.duels, { risk: S.config.risk });
   // a capped event keeps the rule it was made under (fmt: 'duel' | 'pod' | 'comp'), whatever the owner changes later
@@ -1228,6 +1283,8 @@ function createSocial(opts) {
       if (t.stake > cfg.maxStake) return 'The most XP a duel can stake here is ' + cfg.maxStake + '.';
       const ra = stakeRoomOf(a, self || t); if (t.stake > ra) return ra ? 'You can put up at most ' + ra + ' XP right now.' : 'You don’t have XP to stake right now. Make it a duel without a stake.';
       if (t.stake > stakeRoomOf(b, self || t)) return '@' + b.handle + ' can’t cover a stake that big right now. Try a smaller one.';
+      if (selfReported(t) && t.stake > S.config.pots.selfMax) return 'On a measure the apps report themselves, at most ' + S.config.pots.selfMax + ' XP can be at stake. Verify it from fills, or stake less.';
+      const pb = pairBlock(a, [b]); if (pb) return pb;
     }
     return null;
   };
@@ -1265,7 +1322,10 @@ function createSocial(opts) {
     // the stake changes hands only when both sides are still on the books to give and take it
     // (a suspended loser keeps no grants, so a suspended side moves no stake either way)
     const loserId = winner ? (winner === d.a ? d.b : d.a) : null, ok = id => S.members[id] && !S.members[id].banned;
-    const stake = winner && d.stake && ok(winner) && ok(loserId) ? d.stake : 0;
+    // the stake changes hands up to what's left of the month's limit between the two
+    const cap = S.config.pots.pairCapMonth, left = cap && winner ? Math.max(0, cap - pairGain(winner, loserId)) : Infinity;
+    const stake = winner && d.stake && ok(winner) && ok(loserId) ? Math.min(d.stake, left) : 0;
+    if (stake) pairRecord(loserId, winner, stake);
     d.status = 'done'; d.result = { winner, why, forfeit: forfeiter || null, at: now(), xp, stake };
     ladderRate(d, winner);
     const grant = (m, n, why) => { m.grants = [...(m.grants || []), { id: crypto.randomBytes(4).toString('hex'), xp: n, why, at: now(), duel: d.id }].slice(-200); };
@@ -1313,6 +1373,8 @@ function createSocial(opts) {
     // finished duels are kept a year and a bit, for records and rematches
     for (const [id, d] of Object.entries(S.duels)) if (!duelOpen(d) && now() - (d.result ? d.result.at : d.at) > 400 * 86400000) { delete S.duels[id]; changed = true; }
     if (podSweep()) changed = true;
+    // competitions with a pot pay out as soon as their results are final, whether or not anyone looks
+    for (const c of Object.values(S.comps)) if (c.buyIn && !c.potDone && todayKey() > addDaysKey(c.end, 1)) compRows(c);
     if (ladderRoll()) changed = true; // after the results above, so a duel that ended last season counts in it
     if (changed) save('duels'); // members notified above were touched and go in the same write
   };
@@ -1387,6 +1449,12 @@ function createSocial(opts) {
     if (out && !s.out) s.note = 'out';
     else if (p.start <= upto && p.w && p.w[id] && (m.address || null) !== p.w[id]) { out = true; s.note = 'changed wallet mid-duel'; }
     return { id, s, out }; }));
+  // a pot as a member sees it: the buy-in, how it's split, its size so far (or at the end) and what they got
+  const potView = (ev, me, field) => { const held = Object.values(ev.potIn || {}).reduce((a, b) => a + b, 0) + (ev.potKept || 0) + (ev.overlay || 0);
+    const size = ev.potResult || Pots.potSize(held, ev.burnPct || 0), r = ev.potResult;
+    return { buyIn: ev.buyIn, pay: ev.pay, payLabel: (Pots.PAYS[ev.pay] || {}).label || '', burnPct: ev.burnPct || 0, overlay: ev.overlay || 0,
+      gross: size.gross, burned: size.burned, pot: size.pot, field: field || 0, done: !!ev.potDone, refund: !!(r && r.refund),
+      mine: me ? { in: !!(ev.potIn && ev.potIn[me.id]) || !!(r && (r.paid[me.id] || ev.potKeptBy && ev.potKeptBy[me.id])), won: r && r.paid ? r.paid[me.id] || 0 : 0 } : null }; };
   const podView = (p, me) => {
     const fin = p.status === 'done' && p.final, st = fin ? p.final : podStarted(p) ? podStanding(p, todayKey()) : null;
     const at = new Map(st ? st.rows.map(r => [r.id, r]) : []), h = id => S.members[id] ? S.members[id].handle : '(left)';
@@ -1396,21 +1464,32 @@ function createSocial(opts) {
       .sort((a, b) => (a.place || 99) - (b.place || 99) || (a.st === 'in' ? 0 : 1) - (b.st === 'in' ? 0 : 1) || a.handle.localeCompare(b.handle));
     const v = { id: p.id, pod: true, type: p.type, label: Duels.TYPES[p.type].label, rule: Duels.POD_RULES[p.type], period: p.period, start: p.start || null, end: p.end || null,
       verified: !!p.verified, minDays: p.minDays, ddCap: p.ddCap || null, ddMode: p.ddCap ? p.ddMode || 'out' : null, msg: p.msg || '', status: p.status, at: p.at, exp: podOpen(p) ? p.exp : null, by: h(p.by), mine: p.by === me.id,
-      my: p.mem[me.id] ? p.mem[me.id].st : null, members: mem, in: podIds(p, 'in', 'out').length, preview: p.status === 'pending' ? Duels.windowFor(p.period, now()) : null };
+      my: p.mem[me.id] ? p.mem[me.id].st : null, members: mem, in: podIds(p, 'in', 'out').length, preview: p.status === 'pending' ? Duels.windowFor(p.period, now()) : null,
+      pot: p.buyIn ? potView(p, me, podIds(p, 'in', 'invited', 'out').length) : null };
     if (st) { v.lead = st.lead ? h(st.lead) : null; v.leadMe = st.lead === me.id; v.why = st.why; }
     if (p.status === 'done') { const r = p.result || {}, mine = at.get(me.id);
       v.result = { winner: r.winner ? h(r.winner) : null, won: r.winner === me.id, place: mine ? mine.place : null, of: st.rows.length, xp: r.winner === me.id ? r.xp || 0 : 0, at: r.at }; }
     return v;
   };
+  // a group duel's pot after anything changed: buy-ins back to those who backed out before the start, to a
+  // suspended member, and to everyone when it was called off or lapsed; kept in the pot for a forfeit
+  const potTidy = p => { if (!p.potIn || p.potDone) return;
+    if (['cancelled', 'lapsed', 'expired'].includes(p.status)) return potRefundAll(p, podName(p));
+    for (const id of Object.keys(p.potIn)) { const x = p.mem[id], m = S.members[id];
+      if (!m || m.banned || !x || x.st === 'left' || x.st === 'declined' || x.st === 'expired') potRefund(p, id, podName(p));
+      else if (x.st === 'out') potKeep(p, id); } };
   // fewer than 3 still in before the start: back to waiting while invitations are open, else it's off
   const podShort = p => {
     if (p.status !== 'active' || podStarted(p) || podIds(p, 'in').length >= 3) return;
     if (now() <= p.exp) { p.status = 'pending'; delete p.start; delete p.end; return; }
-    p.status = 'cancelled'; p.endedAt = now();
-    podTell(podIds(p, 'in'), 'Your ' + podName(p) + ' is off: fewer than 3 people are left in it.', 'Group duel called off');
+    p.status = 'cancelled'; p.endedAt = now(); potTidy(p);
+    podTell(podIds(p, 'in'), 'Your ' + podName(p) + ' is off: fewer than 3 people are left in it.' + (p.buyIn ? ' Your buy-in is back.' : ''), 'Group duel called off');
   };
   const podSettle = p => {
+    potTidy(p);
     const st = podStanding(p, p.end), winner = st.lead, n = st.rows.length;
+    // the pot: paid on merit (survivors split pays everyone still in it at the end)
+    const pot = p.buyIn && !p.potDone ? potPay(p, st.rows.map(r => ({ id: r.id, place: r.place, q: p.pay === 'surv' ? !!r.alive : !!r.q })), podName(p)) : null;
     // the league's bonus needs a pod played to the end: at least one other member who didn't forfeit
     const xp = winner && S.members[winner] && !S.members[winner].banned && podIds(p, 'in').length >= 2 ? S.config.duels.xp : 0;
     p.status = 'done'; p.final = { lead: st.lead, why: st.why, rows: st.rows.map(r => ({ id: r.id, place: r.place, out: r.out, s: { score: r.s.score, note: r.s.note, n: r.s.n, fell: r.s.fell || null, dd: r.s.dd != null ? r.s.dd : null } })) };
@@ -1418,8 +1497,9 @@ function createSocial(opts) {
     const wh = winner && S.members[winner] ? '@' + S.members[winner].handle : '';
     for (const r of st.rows) { const m = S.members[r.id]; if (!m || m.banned) continue;
       const rec = m.podRec = Object.assign({ w: 0, n: 0 }, m.podRec); rec.n++; if (r.id === winner) rec.w++;
-      notify(m, 'duel', r.id === winner ? 'You won your ' + podName(p) + ' against ' + (n - 1) + ' others.' + (xp ? ' +' + xp + ' XP.' : '')
-        : (winner ? wh + ' won your ' + podName(p) + '.' : 'Your ' + podName(p) + ' ended level at the top.') + ' You placed ' + nth(r.place) + ' of ' + n + '.', { title: 'Group duel result', url: duelUrl }); }
+      const won = pot && pot.paid[r.id] ? ' +' + pot.paid[r.id] + ' XP from the pot.' : pot && pot.refund ? ' Nobody qualified for the pot: your buy-in is back.' : '';
+      notify(m, 'duel', (r.id === winner ? 'You won your ' + podName(p) + ' against ' + (n - 1) + ' others.' + (xp ? ' +' + xp + ' XP.' : '')
+        : (winner ? wh + ' won your ' + podName(p) + '.' : 'Your ' + podName(p) + ' ended level at the top.') + ' You placed ' + nth(r.place) + ' of ' + n + '.') + won, { title: 'Group duel result', url: duelUrl }); }
     const w = winner && S.members[winner];
     if (w && !w.banned) {
       if (xp) w.grants = [...(w.grants || []), { id: crypto.randomBytes(4).toString('hex'), xp, why: 'Won a ' + podName(p), at: now(), duel: p.id }].slice(-200);
@@ -1430,13 +1510,14 @@ function createSocial(opts) {
   // invitations closing, pods lapsing or starting short, results, and a nudge when the lead changes (once a day at most)
   const podSweep = () => {
     const today = todayKey(); let changed = false;
-    for (const p of Object.values(S.pods)) { if (!podOpen(p)) continue;
+    for (const p of Object.values(S.pods)) { if (p.potIn && !p.potDone && Object.keys(p.potIn).length) { const before = JSON.stringify(p.potIn); potTidy(p); if (JSON.stringify(p.potIn) !== before) changed = true; }
+      if (!podOpen(p)) continue;
       for (const [id, x] of Object.entries(p.mem)) { const m = S.members[id];
         if ((!m || m.banned) && (x.st === 'in' || x.st === 'invited')) { x.st = podStarted(p) && x.st === 'in' ? 'out' : 'left'; changed = true; }
         else if (x.st === 'invited' && (now() > p.exp || podStarted(p))) { x.st = 'expired'; changed = true; } }
-      if (p.status === 'pending' && !podHas(p, p.by)) { p.status = 'cancelled'; p.endedAt = now(); changed = true;
+      if (p.status === 'pending' && !podHas(p, p.by)) { p.status = 'cancelled'; p.endedAt = now(); changed = true; potTidy(p);
         podTell(podIds(p, 'in', 'invited'), 'The ' + podName(p) + ' you were invited to was called off.', 'Group duel called off'); continue; }
-      if (p.status === 'pending' && now() > p.exp) { p.status = 'lapsed'; p.endedAt = now(); changed = true;
+      if (p.status === 'pending' && now() > p.exp) { p.status = 'lapsed'; p.endedAt = now(); changed = true; potTidy(p);
         podTell(podIds(p, 'in'), 'Your ' + podName(p) + ' didn’t start: fewer than 3 people accepted in 48 hours.', 'Group duel lapsed'); continue; }
       if (p.status !== 'active') continue;
       if (!podStarted(p)) { podShort(p); if (p.status !== 'active') changed = true; continue; }
@@ -1578,6 +1659,17 @@ function createSocial(opts) {
   };
   // A competition's standings are frozen the day after it ends (a day's grace for the last sync)
   // and served from then on: members' later days and their history being trimmed can't move them.
+  // a competition's pot, once its results are final: too few entrants (or nobody qualified) and every buy-in
+  // comes back; else it's paid on merit, the overlay added and the burn taken off
+  const compPot = c => { if (!c.buyIn || c.potDone) return;
+    for (const id of Object.keys(c.potIn || {})) { const m = S.members[id]; if (!m || m.banned) potRefund(c, id, c.title); }
+    const field = Object.keys(c.potIn || {}).length + Object.keys(c.potKeptBy || {}).length;
+    if (field < (c.minEntrants || S.config.pots.minEntrants)) { potRefundAll(c, c.title); c.potResult = { refund: true, short: true, paid: {}, gross: 0, burned: 0, pot: 0 };
+      for (const id of Object.keys(c.entrants)) notify(S.members[id], 'season', c.title + ': too few entrants put up the buy-in, so it’s back with you.', { title: 'Competition pot' }); return; }
+    const ok = r => !r.out && r.score != null && isFinite(r.score);
+    const res = potPay(c, (c.final || []).map(r => ({ id: r.id, place: r.rank, q: ok(r) })), c.title, c.overlay || 0);
+    for (const id of Object.keys(Object.assign({}, c.entrants, res.paid))) { const m = S.members[id]; if (!m) continue;
+      notify(m, 'season', res.refund ? c.title + ': nobody qualified for the pot, so your buy-in is back.' : res.paid[id] ? c.title + ': +' + res.paid[id] + ' XP from the pot.' : c.title + ': results are final. The pot went to the top places.', { title: 'Competition pot' }); } };
   const compRows = c => {
     if (c.final) return c.final.filter(r => own(S.members, r.id) && !S.members[r.id].banned); // as members stand today
     const rows = compStandings(c, S.members, todayKey(), !!S.config.requireClaim, m => ({ approval: 'Wallet waiting for approval', rejected: 'Wallet not accepted' })[walletBlock(m)] || null);
@@ -1587,7 +1679,8 @@ function createSocial(opts) {
       if (!m || m.banned) return true;
       const moneyOk = !(c.type === 'return' || c.ddCap) || !(m.share.ret && m.address) || (m.money && m.money.at > endMs);
       return moneyOk && (c.type !== 'discipline' || !(m.share.verify && m.address) || (m.vAt || 0) > endMs); });
-    if (todayKey() > addDaysKey(c.end, 1) && (fresh() || todayKey() > addDaysKey(c.end, 7))) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log; save('comps'); }
+    if (todayKey() > addDaysKey(c.end, 1) && (fresh() || todayKey() > addDaysKey(c.end, 7))) { c.final = rows.map(r => ({ id: r.id, handle: r.handle, score: r.score, note: r.note, out: r.out, rank: r.rank })); delete c.log;
+      compPot(c); save('comps'); }
     else if (c.type === 'return' || c.type === 'discipline' || c.ddCap) for (const id of Object.keys(c.entrants)) if (own(S.members, id)) refreshAll(S.members[id]); // a few at a time (the refresh caps)
     return rows; };
   // each synced day of a survivor or journal competition's entrants is kept with the competition;
@@ -1606,7 +1699,8 @@ function createSocial(opts) {
     const mine = viewer ? rows.find(r => r.id === viewer.id) || null : null;
     const o = { id: c.id, title: c.title, type: c.type, rule: c.rule, start: c.start, end: c.end, minDays: c.minDays, ddCap: c.ddCap, ddMode: c.ddCap ? c.ddMode || 'out' : null, tradeDays: c.tradeDays || 0,
       league: c.league && own(S.leagues, c.league) ? { id: c.league, name: S.leagues[c.league].name } : null,
-      status: st, entrants: rows.length, joined: !!(viewer && c.entrants[viewer.id]), me: mine };
+      status: st, entrants: rows.length, joined: !!(viewer && c.entrants[viewer.id]), me: mine,
+      pot: c.buyIn ? potView(c, viewer, Object.keys(c.potIn || {}).length + Object.keys(c.potKeptBy || {}).length) : null };
     if (full) o.standings = rows.slice(0, 50).map(r => ({ rank: r.rank, handle: r.handle, av: avUrl(S.members[r.id]), note: r.note, out: r.out, score: r.score, me: !!viewer && r.id === viewer.id }));
     return o; };
   const joinTimes = new Map();
@@ -2117,6 +2211,7 @@ function createSocial(opts) {
             benchDirty = true; save('benchSeeds'); seedSchedule(); } }
         if (body.duels) c.duels = Duels.sanitizeDuelCfg(body.duels, c.duels);
         if (body.risk) c.risk = Duels.sanitizeRiskCfg(body.risk, c.risk);
+        if (body.pots) c.pots = Pots.sanitizePotCfg(body.pots, c.pots);
         if (typeof body.requireClaim === 'boolean' && body.requireClaim !== c.requireClaim) {
           c.requireClaim = body.requireClaim;
           // numbers read from wallets nobody signed for stop counting at once, and come back after a claim
@@ -2149,7 +2244,7 @@ function createSocial(opts) {
         const sb = seasonBoard(), sid = S.ladder.season;
         const ladder = { season: Object.assign({ id: sid, label: seasonLabel(sid) }, seasonBounds(sid)), top: sb.slice(0, 10).map(m => ({ handle: m.handle, gain: seasonGain(m), r: m.ladder.r, n: m.ladder.n })),
           listed: ladderBoard().length, last: (S.ladder.hall || []).filter(x => x.podium.length).slice(-1).map(x => ({ label: x.label, podium: x.podium.map(y => y.handle) }))[0] || null };
-        return json(res, 200, { config: S.config.duels, risk: S.config.risk, types: Duels.TYPES, ladder, pods: { open: pods.filter(podOpen).length, done30: pods.filter(p => p.status === 'done' && now() - p.result.at < 30 * 86400000).length },
+        return json(res, 200, { config: S.config.duels, risk: S.config.risk, pots: S.config.pots, types: Duels.TYPES, ladder, pods: { open: pods.filter(podOpen).length, done30: pods.filter(p => p.status === 'done' && now() - p.result.at < 30 * 86400000).length },
           counts: { pending: all.filter(d => d.status === 'pending').length, active: all.filter(d => d.status === 'active').length, done: all.filter(d => d.status === 'done').length,
             done30: all.filter(d => d.status === 'done' && now() - d.result.at < 30 * 86400000).length, declined: all.filter(d => d.status === 'declined').length },
           open: [...all.filter(duelOpen).map(out), ...pods.filter(podOpen).map(pout)].sort((x, y) => y.at - x.at).slice(0, 100),
@@ -2159,7 +2254,7 @@ function createSocial(opts) {
         const pod = own(S.pods, parts[2]) ? S.pods[parts[2]] : null;
         if (pod) { if (body.action !== 'cancel') return json(res, 400, { error: 'unknown action' });
           if (!podOpen(pod)) return json(res, 409, { error: 'That group duel is already over.' });
-          pod.status = 'cancelled'; pod.endedAt = now(); pod.cancelledBy = who.by;
+          pod.status = 'cancelled'; pod.endedAt = now(); pod.cancelledBy = who.by; potTidy(pod);
           podTell(podIds(pod, 'in', 'out', 'invited'), 'Your ' + podName(pod) + ' was cancelled by the league’s admins. It doesn’t count.', 'Group duel cancelled');
           save('pods'); return json(res, 200, { ok: true }); }
         const d = own(S.duels, parts[2]) ? S.duels[parts[2]] : null; if (!d) return json(res, 404, { error: 'no such duel' });
@@ -2254,12 +2349,20 @@ function createSocial(opts) {
         if (c.ddCap && c.type !== 'return' && S.config.risk.comp === 'off') c.ddCap = null;
         if (c.ddCap) { c.ddMode = c.ddMode || Duels.ddModeFor('comp', S.config.risk); c.penalty = S.config.risk.penalty; } else c.ddMode = null;
         if (c.type === 'return' && c.tradeDays == null) c.tradeDays = S.config.risk.minDays;
+        // a pot: a buy-in every entrant puts up, an overlay the league adds (new XP), and the share burned
+        const pt = Pots.sanitizePotTerms(body, S.config.pots, 'comp'); if (pt.error) return json(res, 400, { error: pt.error });
+        if (pt.buyIn) {
+          if (selfReported(c) && pt.buyIn > S.config.pots.selfMax) return json(res, 400, { error: 'Survivor and journal competitions are scored from what the apps report: a buy-in can be at most ' + S.config.pots.selfMax + ' XP.' });
+          Object.assign(c, { buyIn: pt.buyIn, pay: pt.pay, overlay: Math.round(clampNum(body.overlay, 0, 100000) || 0),
+            burnPct: body.burnPct === undefined || body.burnPct === '' || body.burnPct === null ? S.config.pots.burnPct : Math.round(clampNum(body.burnPct, 0, S.config.pots.burnMax) || 0),
+            minEntrants: S.config.pots.minEntrants, potIn: {} }); }
         c.id = crypto.randomBytes(5).toString('hex'); c.createdAt = now(); c.entrants = {};
         S.comps[c.id] = c; pushEvent(null, { type: 'announce', text: 'New competition: ' + c.title + (c.league && S.leagues[c.league].open && !S.leagues[c.league].invite ? ' · ' + S.leagues[c.league].name : ''), quote: c.rule }); save();
         return json(res, 200, { ok: true, id: c.id });
       }
       if (sub === 'competitions' && parts[2] && M === 'DELETE') {
         if (!own(S.comps, parts[2])) return json(res, 404, { error: 'no such competition' });
+        const dc = S.comps[parts[2]]; if (dc.buyIn && !dc.potDone) potRefundAll(dc, dc.title); // called off: every buy-in comes back
         delete S.comps[parts[2]]; save(); return json(res, 200, { ok: true });
       }
       if (sub === 'competitions' && M === 'GET')
@@ -2570,13 +2673,21 @@ function createSocial(opts) {
         if (ddNeed && !canDd(o)) return json(res, 409, { error: '@' + o.handle + ' doesn’t share % return with a wallet, which ' + (t.type === 'ret' ? 'a % return duel' : 'a drawdown rule') + ' needs.' });
         os.push(o); }
       if (os.length < 2) return json(res, 400, { error: 'Invite at least 2 people.' });
+      // a pot: everyone puts up the same buy-in when they're in; the creator's is held now
+      const pt = Pots.sanitizePotTerms(body, S.config.pots, 'pod'); if (pt.error) return json(res, 409, { error: pt.error });
+      if (pt.buyIn) {
+        if (selfReported(t) && pt.buyIn > S.config.pots.selfMax) return json(res, 409, { error: 'On a measure the apps report themselves, a buy-in can be at most ' + S.config.pots.selfMax + ' XP. Verify it from fills, or put up less.' });
+        const room = potRoomOf(me); if (pt.buyIn > room) return json(res, 409, { error: room ? 'You can put up at most ' + room + ' XP right now.' : 'You don’t have XP to put up right now. Make it a group duel without a buy-in.' });
+        const pb = pairBlock(me, os); if (pb) return json(res, 409, { error: pb });
+      }
       if (os.length + 1 > cfg.podMax) return json(res, 400, { error: 'A group duel here has at most ' + cfg.podMax + ' people, you included.' });
       if (dayLimit(me, 'duelLog', cfg.perDay)) return json(res, 429, { error: 'That’s ' + cfg.perDay + ' challenges today. Try again tomorrow.' });
       const id = crypto.randomBytes(6).toString('hex'), mem = { [me.id]: { st: 'in', at: now() } };
       for (const o of os) mem[o.id] = { st: 'invited', at: now() };
       S.pods[id] = Object.assign({ id, by: me.id, mem, status: 'pending', at: now(), exp: now() + DUEL_TTL, w: { [me.id]: me.address || null } }, t);
+      if (pt.buyIn) { Object.assign(S.pods[id], { buyIn: pt.buyIn, pay: pt.pay, burnPct: S.config.pots.burnPct }); potHold(S.pods[id], me, podName(t)); }
       for (const o of os) notify(o, 'duel', '@' + me.handle + ' invited you to a ' + podName(t) + ' (' + (t.period === 'month' ? 'a month' : 'a week') + ') with '
-        + os.filter(x => x !== o).map(x => '@' + x.handle).join(', ') + (t.msg ? ': “' + t.msg + '”' : '.') + ' Answer within 48 hours.', { title: 'Group duel invite', url: duelUrl });
+        + os.filter(x => x !== o).map(x => '@' + x.handle).join(', ') + (pt.buyIn ? ', ' + pt.buyIn + ' XP buy-in each' : '') + (t.msg ? ': “' + t.msg + '”' : '.') + ' Answer within 48 hours.', { title: 'Group duel invite', url: duelUrl });
       save('pods', me, ...os);
       return json(res, 200, { ok: true, pod: podView(S.pods[id], me) });
     }
@@ -2597,6 +2708,12 @@ function createSocial(opts) {
           if (openCount(me) - 1 >= cfg.maxOpen) return json(res, 409, { error: 'You have ' + cfg.maxOpen + ' duels going already. Finish one first.' });
           if (p.verified && !(me.share.verify && me.address)) return json(res, 409, { error: 'You need “Verify my discipline” switched on for this verified duel.' });
           if ((p.type === 'ret' || p.ddCap) && !canDd(me)) return json(res, 409, { error: 'You need “Show % return” switched on (with a wallet) for this duel: it reads drawdown from your wallet.' });
+          if (p.buyIn) {
+            const room = potRoomOf(me); if (p.buyIn > room) return json(res, 409, { error: room ? 'The buy-in is ' + p.buyIn + ' XP; you can put up ' + room + ' XP right now.' : 'You don’t have the ' + p.buyIn + ' XP buy-in to put up right now.' });
+            const ins = podIds(p, 'in'), pb = pairBlock(me, ins.map(id => S.members[id]).filter(Boolean)); if (pb) return json(res, 409, { error: pb });
+            const seat = seatTaken(me, ins); if (seat) return json(res, 409, { error: seat });
+            potHold(p, me, podName(p));
+          }
           x.st = 'in'; x.at = now(); p.w = Object.assign({}, p.w, { [me.id]: me.address || null });
           // three in: the dates are fixed — the next Monday, or the 1st
           if (p.status === 'pending' && podIds(p, 'in').length >= 3) {
@@ -2608,14 +2725,15 @@ function createSocial(opts) {
       } else if (a === 'cancel') { // the one who set it up calls it off before it starts
         if (p.by !== me.id) return json(res, 409, { error: 'Only the person who set it up can call it off. You can leave it instead.' });
         if (!podOpen(p) || podStarted(p)) return json(res, 409, { error: 'It has started already: leave it instead.' });
-        p.status = 'cancelled'; p.endedAt = now();
-        podTell(podIds(p, 'in', 'invited').filter(id => id !== me.id), '@' + me.handle + ' called off the ' + podName(p) + '. It doesn’t count.', 'Group duel called off');
+        p.status = 'cancelled'; p.endedAt = now(); potTidy(p);
+        podTell(podIds(p, 'in', 'invited').filter(id => id !== me.id), '@' + me.handle + ' called off the ' + podName(p) + '. It doesn’t count.' + (p.buyIn ? ' Your buy-in is back.' : ''), 'Group duel called off');
       } else if (a === 'leave') {
         if (x.st !== 'in' || !podOpen(p)) return json(res, 409, { error: 'You’re not in this group duel.' });
         if (p.by === me.id && !podStarted(p)) return json(res, 409, { error: 'You set it up: call it off instead.' });
         x.at = now();
-        if (podStarted(p)) x.st = 'out'; // a forfeit: you're out, and placed last
-        else { x.st = 'left'; podShort(p); } // before the start nothing counts
+        if (podStarted(p)) x.st = 'out'; // a forfeit: you're out, and placed last (a buy-in stays in the pot)
+        else { x.st = 'left'; podShort(p); } // before the start nothing counts (a buy-in comes back)
+        potTidy(p);
       } else return json(res, 400, { error: 'unknown action' });
       save('pods', me, ...others);
       return json(res, 200, { ok: true, pod: podView(p, me) });
@@ -2636,7 +2754,9 @@ function createSocial(opts) {
         ladder: cfg.ladder ? ladderOut(me) : { on: false }, podOn: !!cfg.pods, podMax: cfg.podMax, podRec: Object.assign({ w: 0, n: 0 }, me.podRec), pods: pods.map(p => podView(p, me)),
         podTypes: Duels.POD_TYPES.filter(k => cfg.types[k]).map(k => ({ type: k, label: Duels.TYPES[k].label, rule: Duels.POD_RULES[k], verifiedDefault: !!Duels.TYPES[k].verifiedDefault })),
         stakes: !!cfg.stakes, maxStake: cfg.maxStake, stakePct: cfg.stakePct, room: stakeRoomOf(me), balance: balanceOf(me),
-        risk: { caps: S.config.risk.caps, duel: S.config.risk.duel, pod: S.config.risk.pod, penalty: S.config.risk.penalty, minDays: S.config.risk.minDays }, people: [...people.values()],
+        risk: { caps: S.config.risk.caps, duel: S.config.risk.duel, pod: S.config.risk.pod, penalty: S.config.risk.penalty, minDays: S.config.risk.minDays },
+        pots: { pods: !!S.config.pots.pods, podMaxBuyIn: S.config.pots.podMaxBuyIn, burnPct: S.config.pots.burnPct, selfMax: S.config.pots.selfMax, potRoom: potRoomOf(me), escrow: escrowOf(me),
+          pays: Pots.POD_PAYS.map(k => ({ k, label: Pots.PAYS[k].label })) }, people: [...people.values()],
         types: Object.keys(Duels.TYPES).filter(k => cfg.types[k]).map(k => ({ type: k, label: Duels.TYPES[k].label, rule: Duels.TYPES[k].rule, verifiedDefault: !!Duels.TYPES[k].verifiedDefault })),
         weekPreview: Duels.windowFor('week', now()), monthPreview: Duels.windowFor('month', now()), duels: list.map(d => duelView(d, me)) });
     }
@@ -3145,8 +3265,15 @@ function createSocial(opts) {
       const c = own(S.comps, arg) ? S.comps[arg] : null; if (!c || !compVisible(c)) return json(res, 404, { error: 'no such competition' });
       if (compStatus(c, todayKey()) === 'finished') return json(res, 400, { error: 'This competition has finished.' });
       if (M === 'POST' && c.league && !own(S.leagues[c.league].members, me.id)) return json(res, 403, { error: 'This competition is for ' + S.leagues[c.league].name + ' — join that league first.' });
-      if (M === 'DELETE') delete c.entrants[me.id];
+      const started = todayKey() >= c.start;
+      if (M === 'DELETE') { delete c.entrants[me.id];
+        if (c.buyIn && c.potIn && c.potIn[me.id]) { if (started) potKeep(c, me.id); else potRefund(c, me.id, c.title); } } // after the start a buy-in stays in the pot
       else {
+        if (c.buyIn && !c.entrants[me.id]) {
+          if (started) return json(res, 409, { error: 'This competition has a buy-in, so it closed to new entrants when it started.' });
+          const room = potRoomOf(me); if (c.buyIn > room) return json(res, 409, { error: room ? 'The buy-in is ' + c.buyIn + ' XP; you can put up ' + room + ' XP right now.' : 'You don’t have the ' + c.buyIn + ' XP buy-in to put up right now.' });
+          const seat = seatTaken(me, Object.keys(c.potIn || {})); if (seat) return json(res, 409, { error: seat });
+        }
         const need = S.config.unlocksOn && !me.unlocked && S.config.modules.compete > 1 ? S.config.modules.compete : 0;
         if (need && ((me.stats && me.stats.level) || 1) < need) return json(res, 403, { error: 'Competitions unlock at level ' + need + '.' });
         if (standingLock(me, 'Competitions')) return json(res, 403, { error: standingLock(me, 'Competitions'), standing: true });
@@ -3155,11 +3282,12 @@ function createSocial(opts) {
         if (ddNeed && !walletFor(me)) return json(res, 400, { error: walletBlock(me) === 'approval' ? 'Your wallet is waiting for the league owner’s approval. You can join return competitions once it’s approved.'
           : walletBlock(me) === 'rejected' ? 'The league owner hasn’t accepted this wallet, so it can’t enter return competitions.'
           : 'This league only counts claimed wallets. Claim yours under Profile & privacy first.' });
+        if (c.buyIn && !c.entrants[me.id]) potHold(c, me, c.title);
         c.entrants[me.id] = { joinedAt: now() };
         if (me.share.feed) pushEvent(me, { type: 'compete', text: 'joined ' + c.title });
         if (ddNeed) refreshMoney(me, true);
       }
-      save('comps'); return json(res, 200, { joined: M === 'POST' });
+      save('comps', me); return json(res, 200, { joined: M === 'POST' });
     }
     return json(res, 404, { error: 'not found' });
   }
