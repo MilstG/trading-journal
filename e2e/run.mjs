@@ -335,6 +335,28 @@ try {
     await ctx.close();
   });
 
+  console.log('\nXP kept by the server');
+  await t('a member’s app sends each day’s parts, never a total, and Daruma shows the XP and level the server worked out', async () => {
+    const j = await (await fetch(BASE + '/api/social/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: 'xp_e2e' }) })).json();
+    const p = await browser.newPage({ viewport: { width: 390, height: 844 } }); const errs = [], posts = [];
+    p.on('pageerror', e => errs.push(e.message));
+    p.on('request', r => { if (r.url().endsWith('/api/social/stats')) posts.push(JSON.parse(r.postData())); });
+    await p.route('**/*', r => r.request().url().startsWith(BASE) ? r.continue() : r.abort());
+    await p.addInitScript(k => { localStorage.setItem('pz_social_key', k); }, j.key);
+    await p.goto(BASE + '/daruma'); await p.waitForFunction(() => typeof SOC !== 'undefined' && SOC.me);
+    // sample trades as if they were the member's own (sample data itself never syncs)
+    await p.evaluate(async () => { pzS.demo = true; await loadDemo(); pzS.demo = false; settings.wallets = [{ address: '0x' + 'e'.repeat(40) }]; SOC.lastSentAt = 0; pzRender(); });
+    await p.waitForFunction(() => SOC.me.xp > 0, null, { timeout: 20000 });
+    const sent = posts[posts.length - 1];
+    ok(sent && sent.xpLog && Object.keys(sent.xpLog).length > 20, 'day parts sent');
+    eq(['xp', 'level', 'weekXp', 'xpDays'].filter(k => k in sent), [], 'no totals');
+    const v = await p.evaluate(() => { const g = gameContext(); return { srv: SOC.me.xp, total: g.xp.total, level: g.level.level, want: levelFor(SOC.me.xp).level, local: g.xp.local }; });
+    eq([v.total, v.level], [v.srv, v.want], 'the total and level shown are the server’s');
+    ok(v.local >= v.srv, 'the app’s own count covers more history than the server takes in (the last 100 days): ' + v.local + ' vs ' + v.srv);
+    eq(errs, [], 'no uncaught errors');
+    await p.close();
+  });
+
   console.log('\nOffline (service worker)');
   await t('after one visit the app opens offline, scripts and all, from the service worker cache', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 } });

@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { t, ok, eq, report } from './harness.mjs';
+import { t, ok, eq, report, xpLogFor } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const server = require('../server.js');
@@ -22,7 +22,7 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
 const K = {};
 const join_ = async h => { const r = await call('/join', { method: 'POST', ip: '10.0.9.' + (++ipN), body: { handle: h } }); if (!r.d.key) throw new Error(JSON.stringify(r)); return (K[h] = r.d.key); };
 const idOf = async h => (await call('/admin/members', { owner: true })).d.members.find(m => m.handle === h).id;
-const xp = (h, day, n) => call('/stats', { method: 'POST', key: K[h], body: { xp: 5000, tz: 'UTC', xpDays: { [day]: n } } });
+const xp = (h, day, n) => call('/stats', { method: 'POST', key: K[h], body: { tz: 'UTC', xpLog: xpLogFor(n, day) } }); // one day's parts, adding up to n
 const top = async () => (await call('/leagues/main', { key: K.amy })).d.league.top.map(r => r.handle);
 
 try {

@@ -100,7 +100,7 @@ try {
   await t('a total the app reports never pays for a pack (audit X1)', async () => {
     await stats(A.k, 100000000, 900);
     const o = (await status(A.k)).packs; eq(o.spend, 1000); eq(o.blocked, 'You need 1,200 XP to spend and have 1,000.');
-    ok(o.xp > 1000 && o.xp < 1e7, 'the total shown is capped at what a perfect player could have earned (since 2015 here): ' + o.xp);
+    eq(o.xp, 1000, 'the total shown is the server’s: a posted one changes nothing');
     eq((await buy(A.k, 1200)).status, 409);
     await stats(A.k, 1000, 900);
   });

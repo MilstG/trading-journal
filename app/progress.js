@@ -275,7 +275,7 @@ function pzPluggedKeys(plugs){ const by=new Map();
 let _gameMemo={key:null,g:null};
 function gameContext(){
   const ctx=coachContext(true); // every trade, independent of the view and dex filters (AUDIT-4 X10)
-  const keyOf=()=>_coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length;
+  const keyOf=()=>_coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(typeof SOC!=='undefined'&&SOC.me?SOC.me.xp:'')+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length;
   const key=keyOf();
   if(_gameMemo.key===key)return _gameMemo.g;
   const X=pzXpCfg();
@@ -361,9 +361,13 @@ function gameContext(){
       const first=catalog.earned.filter(b=>b.xp).map(b=>({key:b.k,xp:b.xp,why:b.t,src:b.src||'badge'}));
       const led1=xpLedger(dayRows,bonuses.concat(first));
       catalog=pzEarnedBadges(pzBadgeCatalog(Object.assign({},G0,{xp:led1.total,xpByDay:led1.byDay,xpByDayOwn:own(bonuses.concat(first)),level:levelFor(led1.total).level})),E,add);
-      for(const b of catalog.earned)if(b.xp)bonuses.push({key:b.k,xp:b.xp,why:b.t,src:b.src||'badge'});
+      for(const b of catalog.earned)if(b.xp)bonuses.push({key:b.k,xp:b.xp,why:b.t,src:b.src||'badge',badge:true});
       led=xpLedger(dayRows,bonuses); lv=levelFor(led.total); } }
   catch(e){ console.warn('badges failed',e); }
+  // A member's XP is the server's: its ledger of the days this app reports (pzXpLog), with its own score for a
+  // day it read from the wallet, plus what it paid. The total and level shown are the server's; this device's
+  // own count stays in xp.local. Without a profile there's no server ledger, so it's this device's.
+  if(me&&typeof me.xp==='number'){ led=Object.assign({},led,{local:led.total,total:me.xp}); lv=levelFor(me.xp); }
   const wkFrom=dayKey(lastCompletedWeekRange(now).to);
   const weekXp=Object.keys(led.byDay).filter(k=>k>=wkFrom).reduce((s,k)=>s+led.byDay[k],0);
   const xpBase=xpLedger(baseRows,bonuses.filter(b=>b.src!=='mentor')), weekXpBase=Object.keys(xpBase.byDay).filter(k=>k>=wkFrom).reduce((s,k)=>s+xpBase.byDay[k],0);

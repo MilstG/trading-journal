@@ -89,7 +89,8 @@ const call = async (p, o = {}) => { const r = await fetch(B + '/api/social' + p,
     body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
   return { status: r.status, d: await r.json().catch(() => ({})) }; };
 const join_ = async h => (await call('/join', { method: 'POST', ip: '10.0.2.' + (++ipN), body: { handle: h, share: { feed: true } } })).d.key;
-const days = (pairs, xp) => ({ xp: 100, days: pairs.map(([k, s]) => ({ k, s, j: s >= 70, r: s >= 70 })), xpDays: xp || {} });
+// a day's process score, and XP by day as the parts the app reports (the server works out each day's XP from them)
+const days = (pairs, xp) => ({ days: pairs.map(([k, s]) => ({ k, s, j: s >= 70, r: s >= 70 })), xpLog: Object.fromEntries(Object.entries(xp || {}).map(([k, x]) => [k, { e: x }])) });
 const send = (key, to, terms) => call('/duels', { method: 'POST', key, body: Object.assign({ to, type: 'disc', period: 'week', verified: false }, terms) });
 const mine = async (key) => (await call('/duels', { key })).d;
 const inbox = async key => (await call('/inbox', { key })).d.items.map(x => x.text);
@@ -244,10 +245,11 @@ try {
     row.m.grants = [{ id: 'g1', xp: 100, why: 'Won a Discipline duel', at: clock, duel: 'dx' }, { id: 'g2', xp: 150, why: 'Won 150 XP staked by @ann', at: clock, duel: 'dx' },
       { id: 'g3', xp: -50, why: 'Lost a Clean days duel to @dee', at: clock, duel: 'dy' }, { id: 'g4', xp: 40, why: 'Bonus from the league owner', at: clock }];
     row.m.grants[1].at = clock + DAY; // won after the app last posted: its total doesn't count it yet (audit X11)
-    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240 }); row.m.statsAt = clock; // what the app last posted: earned XP with the other grants in it
+    row.m.stats = Object.assign({}, row.m.stats, { xp: 1240, xpDays: {} }); row.m.statsAt = clock; // what the app last posted: earned XP with the other grants in it
+    delete row.m.xpl; // as before the server kept XP: its ledger starts from the total once the split is done (xplStart)
     db.prepare('UPDATE members SET data = ? WHERE id = ?').run(JSON.stringify(row.m), row.id);
     const kv = k => JSON.parse(db.prepare('SELECT v FROM kv WHERE k = ?').get(k).v);
-    const mg = kv('migrations'); ok(mg.stakeSplit, 'recorded'); delete mg.stakeSplit;
+    const mg = kv('migrations'); ok(mg.stakeSplit && mg.xpl, 'recorded'); delete mg.stakeSplit; delete mg.xpl;
     db.prepare('UPDATE kv SET v = ? WHERE k = ?').run(JSON.stringify(mg), 'migrations'); db.close();
     app = mk(); B = await listen();
     const me = (await call('/me', { key: cat })).d.me;

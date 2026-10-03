@@ -242,7 +242,9 @@ activity:
   process score below stays a grade on the calendar and the report card; it no
   longer decides XP or the streak. Levels by default start at
   200·n·(n−1) XP, titled Rookie → Legend (the tenth title stays from level 10 on);
-  on a server, the owner can change the curve, the titles and every XP amount.
+  on a server, the owner can change the curve, the titles and every XP amount. With a profile,
+  the server keeps your XP: the total and level shown are its own, worked out from the day-by-day
+  parts your app reports (see *Trust model* under Social); without one, they're this browser's.
   A focus habit picked mid-week earns from the day it's picked (the next day once
   you've traded that day), not back to Monday; the one it replaced keeps the days
   it held.
@@ -643,8 +645,8 @@ link to join *your* league. A server upgraded from an older version imports its
 `social.json` on the first start and keeps the file as `social.json.migrated`.
 
 - **Leagues.** New members join the main league by default: five tiers (Bronze → Diamond). Each ISO
-  week, traders in a tier are ranked by the XP they earned that week (the server's own sum of the
-  XP by day each app reports, so a day journaled late still lands in its week); the top quarter
+  week, traders in a tier are ranked by the XP they earned that week (the server's own sum of its
+  XP by day, so a day journaled late still lands in its week); the top quarter
   (up to 5) move up and the bottom quarter move down, once at least four traders are
   in the tier. The owner can add more leagues, each ranked on its own metric (XP,
   verified discipline, streak, all-time XP, % return, $ P&L or return/drawdown),
@@ -836,12 +838,16 @@ link to join *your* league. A server upgraded from an older version imports its
   (RFC 8291) with the server's own keys — no third-party service. On iPhone it needs
   Daruma added to the Home Screen.
 
-**Trust model.** Process numbers are computed by each member's browser and are
-self-reported. The server checks them against each other and against what it knows (the level
-is the league's own for the XP; weekly XP is its sum of XP by day; a day is never later than
-the member's today, at most 100 days back, fixed once a week old, and capped at what the XP
-weights can pay in a day; the total is capped at what a perfect player could have earned since
-their first trade; at most 60 posts in 10 minutes), but only the XP balance is the server's own. Money numbers are never taken from the browser: the server reads
+**Trust model.** XP is tracked by the server. Each member's app reports the parts of each day's
+XP it reads from their fills and journal (the Discipline score, the logging bonus, and focus-habit
+days, challenges, achievements and badges), never a total. The server keeps them in its own
+ledger of days and works out the member's XP, level, XP by day and weekly XP itself, adding what
+it paid (grants, coach purchases, reward badges, mentoring). A day is never later than the
+member's today, at most 100 days back, fixed once a week old, and each of its parts is capped
+at what the XP weights can pay in a day. For a member who verifies their wallet, a day the server
+scored from fills counts with the server's score, whatever the app says. Posts are limited to
+60 in 10 minutes. The XP balance (what moves between members) stays narrower: only what the
+server can vouch for (below). Money numbers are never taken from the browser: the server reads
 them from Hyperliquid's public `portfolio` endpoint for the member's wallet, and only
 when they opted in. Naming an address proves nothing; *claiming* it does (below).
 Addresses stay hidden by default and the owner can remove anyone.
@@ -929,7 +935,8 @@ chosen members. Sample data shows everything. The full journal at `/` is never l
 
 **Without a profile.** Anyone can use Daruma with just a wallet. Their levels stop at
 the owner's cap (Features → **Without a profile**: level 3 by default, 0 for no limit).
-Their XP keeps counting, so creating a profile unlocks everything they earned at once.
+Their XP keeps counting, so creating a profile unlocks what they earned at once: the server takes in the
+last 100 days of their history (further back for days it reads from a verified wallet).
 At the default cap, share cards are the last thing open. Anything the owner puts past
 the cap shows "needs a profile" instead of a level. Competitions, the AI coach, "traders
 like you" and duels always need a profile. The cap applies only where someone could
@@ -1575,9 +1582,10 @@ follow and your leagues' members). Money is never staked; XP can be.
   league's Discipline weight × that week's multiplier; credited as the wallet is read and
   kept when verification is switched off), the owner's grants, duel bonuses won on a
   measure the server reads, reward badges awarded by hand or on a number the server holds,
-  mentoring XP, and stake and pot results; less mentor fees paid and coach purchases. The
-  XP an app reports (earned XP: the level, the title, the weekly XP leagues and every level
-  unlock) is shown as the member's XP but never backs anything that moves XP. The balance
+  mentoring XP, and stake and pot results; less mentor fees paid and coach purchases. Earned
+  XP (the level, the title, the weekly XP leagues and every level unlock) is the server's too,
+  but it counts the logging and other parts the apps report, so it never backs anything that
+  moves XP. The balance
   isn't floored at zero: a member who owes stakes, buys and pays nothing until it's earned
   back. `/me` shows it as `balance` with its parts (`ledger`). Losing stakes can't lock a
   feature, and winning them can't buy a level.
@@ -2102,13 +2110,18 @@ curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/
 
 ## Limitations, stated honestly
 
-- **XP is still partly self-reported.** Earned XP, the level, the streak, badges, weekly XP and
-  XP by day are computed in each member's browser from their trades and journal, which they
-  control (any public wallet when *Only count claimed wallets* is off; a crafted backup). The
-  server bounds them (see the trust model under Pulse) so no one ranks past what an honest
-  perfect player could earn, but within those bounds weekly and all-time XP boards, league
-  promotion, season podiums, level unlocks and owner badges on those numbers rest on what the
-  app says. Duels and pots on measures the app reports are capped at 100 XP at stake. What
+- **XP is the server's, but some of what it counts is reported.** The server keeps every
+  member's XP in its own ledger of days and works out the total, level, XP by day and weekly XP
+  itself; a posted total or level is ignored. But it can only score a day from fills for a
+  verified wallet: the logging bonus, focus-habit days, challenges, achievements and app badges,
+  and the Discipline score of a member who doesn't verify, come from each member's app, which
+  reads a journal they control (any public wallet when *Only count claimed wallets* is off; a
+  crafted backup). Each part is capped at what a day can pay and a day is fixed once a week
+  old, so no one ranks past an honest perfect player, but within that the boards, promotion,
+  podiums, level unlocks and owner badges count what the apps report. The streak and badge
+  list are still the app's. A new profile counts the last 100 days of its history (verified
+  days the server read go back further); profiles from before the ledger kept the total their
+  app last reported, once. Duels and pots on measures the app reports are capped at 100 XP at stake. What
   moves XP between members (stakes, buy-ins, mentor fees) and what it buys (coach messages)
   comes only from the server's balance. The XP multiplier still reads the loss-limit, prep and
   journal parts of Trader Age that the app reports, so verified Discipline XP can be up to the

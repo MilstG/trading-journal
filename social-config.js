@@ -68,8 +68,12 @@ function levelOf(cfg, xp) { let n = 1; while (n < 1000 && levelStart(cfg, n + 1)
 // The most XP one day can pay under these weights, before the multiplier: a perfect Discipline score, every
 // logging bonus, a focus-habit day, the week's challenge and room for several achievements or badges landing
 // the same day. What the server accepts for a day from a member's app: an honest perfect day stays under it.
-function dayXpCap(x) { x = Object.assign({}, DEFAULTS.xp, x || {});
-  return Math.round(100 * x.discipline) + x.checkin + x.plan + x.journal + x.stops + x.limit + x.review + x.focus + x.challenge + 10 * x.achievement; }
+function dayXpCap(x) { const p = dayXpParts(x); return p.discipline + p.bonus + p.extra; }
+// The same cap in the parts a member's app reports for a day: the Discipline score's XP, the logging bonus
+// (every bonus at once), and the rest (a focus-habit day, the week's challenge, achievements and badges).
+function dayXpParts(x) { x = Object.assign({}, DEFAULTS.xp, x || {});
+  return { discipline: Math.round(100 * x.discipline), bonus: x.checkin + x.plan + x.journal + x.stops + x.limit + x.review,
+    extra: x.focus + x.challenge + 10 * x.achievement }; }
 function sanitizeXp(b, prev) {
   const out = Object.assign({}, DEFAULTS.xp, prev || {});
   if (!b || typeof b !== 'object') return out;
@@ -168,4 +172,4 @@ function rangeError(label, b, prev, sanitize) {
 }
 
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,
-  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, rangeError };
+  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, dayXpParts, rangeError };

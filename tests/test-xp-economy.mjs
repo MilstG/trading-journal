@@ -11,6 +11,7 @@ import { t, ok, eq, report } from './harness.mjs';
 const require = createRequire(import.meta.url);
 const server = require('../server.js');
 const SC = require('../social-config.js');
+const { isoWeekOfKey } = require('../social.js');
 const htmlPath = new URL('../ledger.html', import.meta.url).pathname;
 const DAY = 864e5, key = ms => new Date(ms).toISOString().slice(0, 10);
 const A = h => '0x' + h.repeat(40);
@@ -47,7 +48,8 @@ try {
   await verified('bob'); await verified('cat');
 
   await t('X1: a member with no trades posts any XP: it shows, but it’s no balance, and nothing can be staked on it', async () => {
-    const forged = { xp: 1e8, level: 500, week: '2026-W41', weekXp: 1e6, streak: 10000, best: 10000, days: [{ k: '2026-10-06', s: 100 }], xpDays: { '2026-10-06': 1e5 } };
+    const forged = { xp: 1e8, level: 500, week: '2026-W41', weekXp: 1e6, streak: 10000, best: 10000, days: [{ k: '2026-10-06', s: 100 }], xpDays: { '2026-10-06': 1e5 },
+      xpLog: { '2026-10-06': { s: 1e5, b: 1e5, e: 1e5 } } };
     eq((await stats('eve', forged)).status, 200);
     const e = await me('eve'); eq([e.balance, e.ledger.verified], [0, 0]);
     eq((await call('/duels', { key: K.eve })).d.room, 0, 'the audit’s repro: room 500 on a posted 100,000,000');
@@ -70,39 +72,49 @@ try {
     await call('/admin/config', { method: 'PUT', owner: true, body: { xp: { discipline: 1 } } });
     clock += 31 * 60000; await stats('cat', { xp: 10 }); await until(async () => (await me('cat')).ledger.verified === 400);
   });
-  await t('X2: the level is the league’s for the XP, the posted one is ignored; the total is capped by what a perfect player could earn', async () => {
-    await stats('fay', { xp: 0, level: 500 }); eq([(await me('fay')).level, (await me('fay')).xp], [1, 0], 'level 500 on 0 XP was stored as level 500');
-    // a trader whose first fill was 10 days ago can't have more than 12 days at the daily cap, at the top multiplier
+  await t('X2: XP and the level are the server’s, from its ledger of days: a posted total or level changes nothing', async () => {
+    await stats('fay', { xp: 1e8, level: 500, weekXp: 1e6 }); eq([(await me('fay')).level, (await me('fay')).xp], [1, 0], 'level 500 on 0 XP was stored as level 500');
+    // the forged day: each part capped at what a day can pay, so a perfect day is the most a report can buy
     const cap = SC.dayXpCap(SC.DEFAULTS.xp); eq(cap, 850);
-    await stats('fay', { xp: 1e8, level: 500, firstAt: clock - 10 * DAY });
-    const f = await me('fay'); eq(f.xp, Math.round(12 * cap * 1.5)); eq(f.level, SC.levelOf(SC.DEFAULTS.levels, f.xp));
-    const e = await me('eve'); ok(e.xp < 1e8 && e.level < 500, 'without a first fill: capped from 2015 (' + e.xp + ', level ' + e.level + ')');
-    ok((await me('eve')).streak <= 4300, 'a streak can’t be longer than the days there were');
+    const e = await me('eve'); eq([e.xp, e.level], [cap, SC.levelOf(SC.DEFAULTS.levels, cap)], 'one day, at the cap');
+    ok(e.streak <= 4300, 'a streak can’t be longer than the days there were');
   });
-  await t('X2: XP by day is capped at what the weights pay, never later than today, and must add up to no more than the total', async () => {
-    const x = (await mstate('eve')).stats.xpDays; eq(x['2026-10-06'], 850, 'a posted 100,000 is capped');
-    eq((await stats('fay', { xp: 5000, xpDays: { '2026-10-06': 300, '2026-10-08': 300, '2026-05-01': 300 } })).status, 200);
-    eq((await mstate('fay')).stats.xpDays, { '2026-10-06': 300 }, 'tomorrow and five months ago are dropped');
-    const r = await stats('fay', { xp: 100, xpDays: { '2026-10-06': 500 } }); eq(r.status, 400); ok(/adds up to more than your total/.test(r.d.error));
-    // the server's own grants on a day lift that day's cap (the app counts them in its XP by day)
+  await t('X2: each part of a day is capped at what the weights pay, never later than today or older than 100 days', async () => {
+    eq((await mstate('eve')).stats.xpDays, { '2026-10-06': 850 }, 'a posted 100,000 is capped');
+    eq((await stats('fay', { xpLog: { '2026-10-06': { s: 60 }, '2026-10-08': { s: 60 }, '2026-05-01': { s: 60 } } })).status, 200);
+    eq((await mstate('fay')).stats.xpDays, { '2026-10-06': 60 }, 'tomorrow and five months ago are dropped');
+    // what the server pays itself lands on its day, on top of what a day's parts can carry
     await call('/admin/members/' + await idOf('fay'), { method: 'POST', owner: true, body: { action: 'grant', xp: 1000 } });
-    await stats('fay', { xp: 5000, xpDays: { '2026-10-07': 1700 } }); eq((await mstate('fay')).stats.xpDays['2026-10-07'], 1700);
-    await stats('fay', { xp: 5000, xpDays: { '2026-10-07': 9000 } }); eq((await mstate('fay')).stats.xpDays['2026-10-07'], 1850);
+    eq([(await me('fay')).xp, (await mstate('fay')).stats.xpDays['2026-10-07']], [1060, 1000], 'the grant is in the total at once, no report needed');
+    await stats('fay', { xpLog: { '2026-10-06': { s: 60 }, '2026-10-07': { s: 900, b: 9000, e: 9000 } } });
+    eq((await mstate('fay')).stats.xpDays['2026-10-07'], 1850); eq((await me('fay')).xp, 1910);
   });
-  await t('X2: weekly XP is the server’s sum of XP by day; the board and owner badges read the checked numbers', async () => {
+  await t('X2: weekly XP is the server’s sum of XP by day; the board and owner badges read the server’s numbers', async () => {
     const lb = (await call('/leaderboard?board=xp', { key: K.bob })).d.rows; eq(lb.find(r => r.handle === 'eve').value, 850, 'not the posted 1,000,000');
-    // an owner badge on a number the app reports is still awarded (it shows), but its XP never joins the balance
-    const bid = (await call('/admin/badges', { method: 'POST', owner: true, body: { name: 'Whale', metric: 'xp', op: 'gte', value: 50000, xp: 500 } })).d.id;
-    await stats('eve', { xp: 1e8, xpDays: { '2026-10-06': 1e5 } });
-    ok((await me('eve')).awards.some(a => a.id === bid), 'awarded'); eq((await me('eve')).balance, 0, 'no XP to stake from it');
+    eq([lb.find(r => r.handle === 'bob').value, (await me('bob')).xp], [160, 400], 'bob’s verified days with no app report at all: this week’s two at 80, five in all');
+    // an owner badge on total XP reads the server’s total: a posted 100,000,000 doesn’t reach it
+    const whale = (await call('/admin/badges', { method: 'POST', owner: true, body: { name: 'Whale', metric: 'xp', op: 'gte', value: 50000, xp: 500 } })).d.id;
+    await stats('eve', { xp: 1e8, xpLog: { '2026-10-06': { s: 100, b: 75, e: 675 } } });
+    ok(!(await me('eve')).awards.some(a => a.id === whale), 'not awarded on a posted total');
+    // one it reaches is awarded and its XP joins the total (the level's), but not the balance: the XP it reads comes from the app's reports
+    const first = (await call('/admin/badges', { method: 'POST', owner: true, body: { name: 'Started', metric: 'xp', op: 'gte', value: 800, xp: 500 } })).d.id;
+    const e = await me('eve'); ok(e.awards.some(a => a.id === first), 'awarded'); eq([e.xp, e.level, e.balance], [1350, 3, 0]);
     const hand = (await call('/admin/badges', { method: 'POST', owner: true, body: { name: 'Helper', xp: 70 } })).d.id;
     await call('/admin/members/' + await idOf('eve'), { method: 'POST', owner: true, body: { action: 'award', badge: hand } });
     eq((await me('eve')).ledger.awards, 70, 'a badge the owner hands out is the owner’s word: it counts');
+    eq((await me('eve')).xp, 1420);
+    for (const id of [whale, first, hand]) await call('/admin/badges/' + id, { method: 'DELETE', owner: true });
+    eq((await me('eve')).xp, 850, 'a deleted badge’s XP leaves the total');
   });
-  await t('X2: a day more than a week old keeps the XP first reported for it; a recent one can still change', async () => {
-    await stats('cat', { xp: 5000, xpDays: { '2026-09-28': 100, '2026-10-05': 100 } });
-    await stats('cat', { xp: 5000, xpDays: { '2026-09-28': 800, '2026-10-05': 300 } });
-    const x = (await mstate('cat')).stats.xpDays; eq([x['2026-09-28'], x['2026-10-05']], [100, 300]);
+  await t('X2: a day more than a week old keeps what was first reported for it; a recent one can still change', async () => {
+    await stats('cat', { xpLog: { '2026-09-28': { s: 50 }, '2026-10-01': { s: 50 } } });
+    await stats('cat', { xpLog: { '2026-09-28': { s: 100, b: 75 }, '2026-10-01': { s: 100 } } });
+    const x = (await mstate('cat')).stats.xpDays; eq([x['2026-09-28'], x['2026-10-01']], [50, 100]);
+  });
+  await t('a day the server scored from the wallet counts with the server’s score, whatever the app says', async () => {
+    await stats('cat', { xpLog: { '2026-10-05': { s: 100, b: 10 } } });
+    eq((await mstate('cat')).stats.xpDays['2026-10-05'], 90, '80 from fills, plus the logging bonus');
+    eq((await mstate('cat')).stats.xpDays['2026-10-02'], 80, 'a verified day the app no longer reports still counts');
   });
   await t('D7: two profiles on one wallet can’t duel each other', async () => {
     await join_('bob_alt', A('b'));
@@ -119,8 +131,8 @@ try {
   });
   await t('X15: late XP reaches the week it belongs to (the server sums XP by day)', async () => {
     clock = Date.parse('2026-10-12T10:00:00Z'); // Monday: Sunday's trades journaled late
-    await stats('cat', { xp: 5000, xpDays: { '2026-10-05': 300, '2026-10-11': 250 } });
-    eq((await mstate('cat')).weekXp['2026-W41'], 550);
+    await stats('cat', { xpLog: { '2026-10-05': { s: 90, b: 30 }, '2026-10-11': { s: 100, b: 50 } } });
+    eq((await mstate('cat')).weekXp['2026-W41'], 110 + 80 + 150, 'Mon 80 (fills) + 30, Tue 80 (fills), Sun 100 + 50');
   });
   await t('D4: a duel accepted on a Monday starts the Monday after, so nobody gets a head start', async () => {
     clock = Date.parse('2026-10-11T18:00:00Z');
@@ -187,6 +199,30 @@ try {
     eq((await verified('dan')).ledger.verified, 400);
     await call('/admin/wallets', { method: 'POST', owner: true, body: { action: 'reject', addresses: [A('d')] } });
     eq((await me('dan')).ledger.verified, 0);
+  });
+  // rewrites a member's stored row and the migrations record, then restarts the server on them
+  const restartWith = async (h, edit, mgEdit) => { const id = await idOf(h); await new Promise(r => app.close(r));
+    const { DatabaseSync } = await import('node:sqlite'), db = new DatabaseSync(join(dataDir, 'pulse.db'));
+    const row = JSON.parse(db.prepare('SELECT data FROM members WHERE id = ?').get(id).data); edit(row);
+    db.prepare('UPDATE members SET data = ? WHERE id = ?').run(JSON.stringify(row), id);
+    const mg = JSON.parse(db.prepare('SELECT v FROM kv WHERE k = ?').get('migrations').v); if (mgEdit) mgEdit(mg);
+    db.prepare('UPDATE kv SET v = ? WHERE k = ?').run(JSON.stringify(mg), 'migrations'); db.close();
+    app = mk(); B = await listen(); };
+  await t('the update: a profile keeps the total its app last reported, once; from then on the server counts its days', async () => {
+    const today = key(clock), yday = key(clock - DAY);
+    await restartWith('eve', row => { delete row.xpl; row.stats = Object.assign({}, row.stats, { xp: 5000, xpDays: { [yday]: 300, [today]: 120 }, coachSpent: 0 }); }, mg => { delete mg.xpl; });
+    eq((await me('eve')).xp, 4880, 'today is left for the app’s next report');
+    await stats('eve', { xpLog: { [yday]: { s: 100, b: 75 }, [today]: { s: 100, e: 20 } } });
+    eq((await me('eve')).xp, 5000, 'today counts again; yesterday was in the total already');
+    eq([(await mstate('eve')).stats.xpDays[yday], (await mstate('eve')).stats.xpDays[today]], [300, 120], 'the days already reported stay for their weeks and seasons');
+    // the Trader Age multiplier counts toward the total, never the XP by day leagues rank on
+    await restartWith('eve', row => { row.multHist = { [isoWeekOfKey(today)]: 1.5 }; });
+    eq([(await me('eve')).xp, (await mstate('eve')).stats.xpDays[today]], [4880 + 150 + 20, 120], 'once: a restart doesn’t start the ledger over');
+  });
+  await t('an app from before the ledger (no day parts) changes no XP and wipes no days', async () => {
+    const before = (await mstate('eve')).stats;
+    await stats('eve', { xp: 1e8, level: 500, xpDays: { [key(clock)]: 1e5 }, days: [] });
+    const after = (await mstate('eve')).stats; eq([after.xp, after.xpDays], [before.xp, before.xpDays]);
   });
   await t('the stats rate limit: 60 posts in 10 minutes', async () => {
     let last = 0; for (let i = 0; i < 61; i++) last = (await stats('fay', { xp: 5000 })).status;
