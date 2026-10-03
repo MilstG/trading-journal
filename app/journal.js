@@ -194,7 +194,7 @@ function wireExtraDiag(closed,allv,s){
   // cost drag by month
   const fee=feeDragByMonth(closed);
   if(fee.length&&$('diagFeeMonth')){ const lab=fee.map(r=>r.k.slice(2)), d=fee.map(r=>r.drag!=null?r.drag*100:0);
-    _diagCharts.feeMonth=new Chart($('diagFeeMonth'),{type:'bar',data:{labels:lab,datasets:[{data:d,backgroundColor:d.map(v=>v>25?'rgba(244,88,106,.8)':'rgba(201,168,92,.75)'),borderRadius:4}]},
+    _diagCharts.feeMonth=new Chart($('diagFeeMonth'),{type:'bar',data:{labels:lab,datasets:[{data:d,backgroundColor:d.map(v=>v>25?tint(themeRed(),.8):tint(themeGold(),.75)),borderRadius:4}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' Costs: '+c.parsed.y.toFixed(0)+'% of gross profit',
         afterLabel:c=>{ const r=fee[c.dataIndex]; return [' Fees and funding '+fmtUsd(-r.cost),' Gross profit '+fmtUsd(r.gross)]; }}}},
         scales:{x:{grid:{display:false},border:{display:false},ticks:{maxRotation:45,minRotation:45,font:{size:9}}},y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>v+'%'}}}}});
@@ -919,7 +919,7 @@ function drawHabitCharts(){
   const yTick=v=>u==='$'?'$'+Number(v).toLocaleString():(+Number(v).toFixed(2))+(u==='%'?'%':'R');
   const jit=k=>{ let h=0; for(const c of k)h=(h*31+c.charCodeAt(0))|0; return ((h>>>0)%1000/1000-0.5)*3; };
   const P=L.points, x0=Math.min(...P.map(p=>p.score));
-  const band={id:'hlBand',beforeDatasetsDraw(ch){ const xa=ch.scales.x, ya=ch.scales.y, c=ch.ctx; c.save(); c.fillStyle='rgba(47,208,140,.06)';
+  const band={id:'hlBand',beforeDatasetsDraw(ch){ const xa=ch.scales.x, ya=ch.scales.y, c=ch.ctx; c.save(); c.fillStyle=tint(themeGreen(),.06);
     c.fillRect(xa.getPixelForValue(70),ya.top,xa.getPixelForValue(100)-xa.getPixelForValue(70),ya.bottom-ya.top); c.restore(); }};
   const ds=[{type:'scatter',label:'Trading day',data:P.map(p=>({x:Math.max(0,Math.min(100,p.score+jit(p.key))),y:p.v,p})),
     backgroundColor:P.map(p=>p.v>=0?pos:neg),pointRadius:5,pointHoverRadius:7,borderColor:'rgba(0,0,0,.25)',borderWidth:1}];
@@ -1281,9 +1281,9 @@ function renderProjection(){
   const band=(data,bg,bw)=>({data,borderColor:'rgba('+GR+','+bw+')',borderWidth:1,pointRadius:0,fill:false,tension:.1});
   const ds=[
     Object.assign(band(fc.bands.p95,0,.30),{label:'95th'}),
-    Object.assign(band(fc.bands.p05,0,.30),{label:'5th',fill:'-1',backgroundColor:'rgba(47,208,140,.06)'}),
-    Object.assign(band(fc.bands.p75,0,0),{label:'75th',borderColor:'rgba(47,208,140,0)'}),
-    Object.assign(band(fc.bands.p25,0,0),{label:'25th',borderColor:'rgba(47,208,140,0)',fill:'-1',backgroundColor:'rgba(47,208,140,.14)'}),
+    Object.assign(band(fc.bands.p05,0,.30),{label:'5th',fill:'-1',backgroundColor:tint(G,.06)}),
+    Object.assign(band(fc.bands.p75,0,0),{label:'75th',borderColor:tint(G,0)}),
+    Object.assign(band(fc.bands.p25,0,0),{label:'25th',borderColor:tint(G,0),fill:'-1',backgroundColor:tint(G,.14)}),
     {label:'median',data:fc.bands.p50,borderColor:G,borderWidth:2,pointRadius:0,fill:false,tension:.1}
   ];
   _projChart=new Chart($('projChart'),{type:'line',data:{labels,datasets:ds},

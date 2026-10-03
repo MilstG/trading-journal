@@ -15,7 +15,7 @@ const PZ_C=2*Math.PI*52;
 // everything, SVG attributes included (CSS variables don't reach those).
 const PZ_COL_DARK={good:'#3FE0A0',mid:'#F4C04E',low:'#FF7A59',none:'#2C333C',risk:'#5AA9FF',xp:'#B69CFF'};
 const PZ_COL_LIGHT={good:'#0A9A63',mid:'#B07D05',low:'#D9481F',none:'#CDD4DD',risk:'#2F7FD8',xp:'#7656E0'};
-const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#4fd8ff'};
+const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#7dff4f'};
 const PZ_COL=new Proxy({},{get:(_,k)=>{ const c=typeof document!=='undefined'&&document.body&&document.body.classList; return (c&&c.contains('light')?PZ_COL_LIGHT:c&&c.contains('ts9')?PZ_COL_TS9:PZ_COL_DARK)[k]; }});
 const pzBand=v=>v==null?'none':v>=70?'good':v>=40?'mid':'low';
 const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'Stops written while open',stops:'Stops honored',limit:'Under the loss limit',journal:'Trades journaled'};

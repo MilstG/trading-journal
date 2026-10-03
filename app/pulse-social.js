@@ -487,8 +487,8 @@ function socTradeHtml(t){
   const cell=(l,v,c)=>`<div class="pz-lv"><span>${l}</span><b${c?` style="color:${c}"`:''}>${v}</b></div>`;
   const res=t.status==='closed'&&(t.r!=null||t.pct!=null)?[t.r!=null?socSignedN(t.r,'R'):'',t.pct!=null?socSignedN(t.pct,'%'):'',t.usd!=null?signedPlain(t.usd):''].filter(Boolean).join(' · '):'';
   const win=t.status==='closed'&&((t.r!=null?t.r:t.pct)||0)>=0;
-  return `<div class="pz-tr"><div class="pz-trh"><b>${long?'Long':'Short'} ${esc(t.label||dispMarket(t.coin))}</b>${t.tf?`<span class="pz-pill">${esc(t.tf)}</span>`:''}${t.setup?`<span class="pz-pill">${esc(t.setup)}</span>`:''}
-      <span class="pz-pill" style="margin-left:auto;color:${st[1]};border-color:currentColor">${st[0]}</span></div>
+  return `<div class="pz-tr"><div class="pz-trh"><b>${long?'Long':'Short'} ${esc(t.label||dispMarket(t.coin))}</b>${t.tf?`<span class="pz-pill pz-tagp">${esc(t.tf)}</span>`:''}${t.setup?`<span class="pz-pill pz-tagp">${esc(t.setup)}</span>`:''}
+      <span class="pz-pill pz-tagp" style="margin-left:auto;color:${st[1]};border-color:currentColor">${st[0]}</span></div>
     <div class="pz-lvs">${[cell('Entry',socPx(t.entry)),t.stop?cell('Stop',socPx(t.stop),'#FF9A7E'):'',t.target?cell('Target',socPx(t.target),'#3FE0A0'):'',
       t.status==='closed'&&t.exit?cell('Exit',socPx(t.exit)):rr?cell('R : R',rr.toFixed(1)+' : 1'):''].join('')}</div>
     ${res?`<div class="pz-trres" style="color:${win?PZ_COL.good:PZ_COL.low}">${esc(res)}</div>`:''}</div>`;

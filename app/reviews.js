@@ -29,8 +29,8 @@ async function mrShare(id, extra){
   const d=await socFetch('/reviews',{method:'POST',body:JSON.stringify({key:mrTradeKey(id),trade})});
   SOC.cache['tr:'+d.review.id]={at:Date.now(),d,err:null}; delete SOC.cache.reviews; return d; }
 function mrWhen(ms){ const p=tzParts(ms); return dayLabel(dayKey(ms))+' '+String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0'); }
-function mrBadge(r){ return r.reviewed?`<span class="pz-pill mr-ok">Reviewed${r.reviewed.by?' by @'+esc(r.reviewed.by):''} ✓</span>`
-  :`<span class="pz-pill">${r.waiting?'Waiting for a mentor':'Mentor replied'}</span>`; }
+function mrBadge(r){ return r.reviewed?`<span class="pz-pill pz-tagp mr-ok">Reviewed${r.reviewed.by?' by @'+esc(r.reviewed.by):''} ✓</span>`
+  :`<span class="pz-pill pz-tagp">${r.waiting?'Waiting for a mentor':'Mentor replied'}</span>`; }
 function mrRowHtml(r, mod){ const t=r.trade||{};
   return `<a class="pz-card pz-cardlink" href="#tr/${esc(r.id)}${mod?'/mod':''}">${socAv(r.handle,32)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
     <b style="font-size:14px">${esc((t.side==='short'?'Short ':'Long ')+(t.label||t.coin||''))} <span class="pz-sub" style="font-weight:400">· @${esc(r.handle||'?')} · ${esc(dayLabel(dayKey(t.openedAt||r.at)))}</span></b>
@@ -50,7 +50,7 @@ function mrListHtml(D){
 }
 function mrThreadInner(d, mod){ const r=d.review, me=d.role, id=r.id, rep=SOC.confirm==='mrdel:'+id;
   const cs=d.comments.map(x=>`<div class="pz-com">${socAv(x.handle,30)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-    <span style="font-size:13px"><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor?' <span class="pz-pill">mentor</span>':''} <span class="pz-sub" style="font-size:11px">${socAgo(x.at)}</span></span>
+    <span style="font-size:13px"><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor?' <span class="pz-pill pz-tagp">mentor</span>':''} <span class="pz-sub" style="font-size:11px">${socAgo(x.at)}</span></span>
     <span class="pz-thesis" style="font-size:14px">${esc(x.text)}</span></span></div>`).join('');
   return `<b style="font-size:15px">${r.comments} comment${r.comments===1?'':'s'}</b>${cs||'<p class="pz-sub" style="font-size:13px">No comments yet.</p>'}
     ${mod?'<p class="pz-fine">Read-only: you see this as an admin, for moderation.</p>':`<div class="pz-field"><label for="mrText" class="pz-vh">${me==='mentor'?'Comment on this trade':'Reply'}</label><textarea id="mrText" rows="3" maxlength="1000" placeholder="${me==='mentor'?'What you see, and one thing to try':'Reply to your mentor'}"></textarea></div>
