@@ -202,7 +202,10 @@ try {
   console.log('\nJournal editing (autosave, plan check, phone width)');
   const demoPage = async (viewport) => { const o = await openPage(viewport);
     await o.page.goto(BASE + '/'); await o.page.waitForFunction(() => typeof SRV !== 'undefined' && SRV.enabled && SRV.rev > 0);
-    await o.page.click('#demoBtn'); await o.page.waitForSelector('#tbody tr.trow'); return o; };
+    // the sample's own fills, pasted: the user's data (sample mode never saves, and these test saving)
+    await o.page.evaluate(() => { window.__pasted = loadFromPaste(demoFills(1), { offline: true }).then(() => true); });
+    await o.page.waitForFunction(() => window.__pasted && allTrades.length && !isDemoData());
+    await o.page.waitForSelector('#tbody tr.trow'); return o; };
   await t('the trade journal saves as you type: no Save click, the caret stays put, and it survives a reload', async () => {
     const { page: p, errors: errs } = await demoPage({ width: 1366, height: 900 });
     const id = await p.locator('#tbody tr.trow').nth(2).getAttribute('data-id');
