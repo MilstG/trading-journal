@@ -262,7 +262,7 @@ await t('409 handling applies server state instead of clobbering', () => {
   ok(html.includes('Loaded newer data saved from another device.'));
 });
 await t('writes carry the rev and the excursion measurements', () => {
-  ok(html.includes('body:JSON.stringify({rev:SRV.rev,snapshot:snap})'));
+  ok(html.includes('const body={rev:SRV.rev,snapshot:snap}; if(sentRestore)body.restore=true;') && html.includes('body:JSON.stringify(body)'), 'and a restore says so');
   ok(html.includes('if(excRows)snap.excRows=excRows;'));
 });
 await t('token UI present with localStorage persistence', () => {

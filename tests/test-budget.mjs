@@ -32,7 +32,8 @@ try {
     // old lines by a few KB; gzipped sizes barely moved (607 / 539 against 620 / 560), so only raw moves.
     // Oct 2026: the mentor directory, rates and the send-to-a-mentor sheet (about 22 KB raw) fit under
     // these lines: 1836 / 1636 raw, 617 / 549 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 620],
+    // Oct 2026: restores that survive a 409 (srvRestored / srvSaveNow) and the pasted-fill derivation: 621 KB gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 625],
     ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
