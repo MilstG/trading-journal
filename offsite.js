@@ -61,6 +61,36 @@ function decrypt(blob, passphrase) {
 // gzip( repeated: JSON header line {p, n, m} + "\n" + n raw bytes ). No base64, no tar
 // path-length limits (attachment keys run to 200 chars); unpacked by restoreBundle below.
 const BUNDLE_SKIP = new Set(['backups', 'snapshots', 'social-fills', 'market.json']); // mirrored separately, redundant, or re-fetchable
+// SQLite databases (pulse.db: members, the feed, reviews — backed up nowhere else) run in WAL mode:
+// committed rows sit in pulse.db-wal until a checkpoint moves them into pulse.db. Reading the two
+// files one after the other, with the server writing in between, could pair an old pulse.db with a
+// WAL a checkpoint had already restarted — a bundle that opens cleanly, passes integrity_check, and
+// is missing everything since the last checkpoint. So a database ships as one consistent copy made
+// by SQLite itself (VACUUM INTO, through a connection of its own: it reads one snapshot of the
+// committed data, WAL included, while the server keeps writing), and its -wal/-shm never ship.
+const SQLITE_MAGIC = Buffer.from('SQLite format 3\0');
+function isSqlite(file) {
+  let fd; try { fd = fs.openSync(file, 'r'); const b = Buffer.alloc(16); return fs.readSync(fd, b, 0, 16, 0) === 16 && b.equals(SQLITE_MAGIC); }
+  catch (e) { return false; } finally { if (fd != null) try { fs.closeSync(fd); } catch (e) {} }
+}
+let _DatabaseSync;
+function sqliteSnapshot(file) {
+  if (_DatabaseSync === undefined) { // node:sqlite is built in from Node 22.13 (db.js runs on it); quiet its "experimental" warning
+    const emit = process.emitWarning;
+    process.emitWarning = function (w, ...a) { if (/SQLite/i.test(String(w && w.message || w))) return; return emit.call(process, w, ...a); };
+    try { _DatabaseSync = require('node:sqlite').DatabaseSync; } catch (e) { _DatabaseSync = null; } finally { process.emitWarning = emit; }
+  }
+  if (!_DatabaseSync) throw new Error('node:sqlite is unavailable, so ' + path.basename(file) + ' cannot be copied consistently');
+  const tmp = file + '.offsite-' + process.pid + '-' + crypto.randomBytes(4).toString('hex') + '.tmp'; // .tmp: never itself bundled
+  const db = new _DatabaseSync(file); // read-write only so a WAL database opens even without its -shm; VACUUM INTO never writes to it
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.prepare('VACUUM INTO ?').run(tmp);
+    return fs.readFileSync(tmp);
+  } finally { try { db.close(); } catch (e) {} try { fs.unlinkSync(tmp); } catch (e) {} }
+}
+// one file's bytes for the bundle: a database as its consistent copy, anything else as it is
+async function bundleBytes(full, f) { return f.sqlite ? sqliteSnapshot(full) : fs.promises.readFile(full); }
 function collectFiles(dataDir, opts) {
   opts = opts || {};
   const maxBytes = opts.maxBytes || Infinity;
@@ -74,10 +104,18 @@ function collectFiles(dataDir, opts) {
       let st; try { st = fs.statSync(path.join(dataDir, r)); } catch (e) { continue; }
       if (st.isDirectory()) { walk(r); continue; }
       if (!st.isFile()) continue;
-      out.push({ p: r, n: st.size, m: st.mtimeMs }); total += st.size;
+      const e = { p: r, n: st.size, m: st.mtimeMs };
+      if (isSqlite(path.join(dataDir, r))) e.sqlite = true;
+      out.push(e); total += st.size;
     }
   };
   walk('');
+  // a database's -wal / -shm / -journal are inside its consistent copy: they never ship on their own
+  const dbs = new Set(out.filter(f => f.sqlite).map(f => f.p));
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = /^(.*)-(wal|shm|journal)$/.exec(out[i].p);
+    if (m && dbs.has(m[1])) { total -= out[i].n; out.splice(i, 1); }
+  }
   // over the cap: attachments go first (the largest and the most re-attachable), then the
   // fill caches; the journal itself always ships
   for (const dropDir of ['att/', 'fills/', 'funding/', 'ledger/']) {
@@ -91,7 +129,8 @@ function packBundle(dataDir, opts) {
   const { files, total, skipped } = collectFiles(dataDir, opts);
   const parts = [];
   for (const f of files) {
-    let buf; try { buf = fs.readFileSync(path.join(dataDir, f.p)); } catch (e) { continue; } // vanished mid-walk
+    let buf; try { buf = f.sqlite ? sqliteSnapshot(path.join(dataDir, f.p)) : fs.readFileSync(path.join(dataDir, f.p)); }
+    catch (e) { if (f.sqlite) throw e; continue; } // vanished mid-walk; a database that can't be copied fails the bundle, loudly
     parts.push(Buffer.from(JSON.stringify({ p: f.p, n: buf.length, m: Math.round(f.m) }) + '\n'), buf);
   }
   return { buf: zlib.gzipSync(Buffer.concat(parts)), files: files.length, bytes: total, skipped };
@@ -102,7 +141,7 @@ async function packBundleAsync(dataDir, opts) {
   const { files, total, skipped } = collectFiles(dataDir, opts);
   const parts = [];
   for (const f of files) {
-    let buf; try { buf = await fs.promises.readFile(path.join(dataDir, f.p)); } catch (e) { continue; }
+    let buf; try { buf = await bundleBytes(path.join(dataDir, f.p), f); } catch (e) { if (f.sqlite) throw e; continue; }
     parts.push(Buffer.from(JSON.stringify({ p: f.p, n: buf.length, m: Math.round(f.m) }) + '\n'), buf);
   }
   const gz = await new Promise((res, rej) => zlib.gzip(Buffer.concat(parts), (e, out) => e ? rej(e) : res(out)));
