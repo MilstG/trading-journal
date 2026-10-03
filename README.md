@@ -1,3 +1,5 @@
+<img src="icons/daruma.svg" width="72" height="72" alt="Daruma logo">
+
 # Ledger — Hyperliquid Trading Journal & Analytics
 
 Ledger reconstructs your complete trading history from Hyperliquid fill data and
@@ -167,6 +169,14 @@ for iPhone). On Android and desktop Chrome, **Install app** (beside Wallets in t
 journal, or the card on Daruma's Today screen) opens the browser's install prompt.
 On iPhone, tap **Share** in Safari, then **Add to Home Screen**; the same button and card
 say so. Installed, both open full screen and start from their cached copy.
+
+**The logo.** A daruma whose outline is a progress track, 72% painted, with one eye
+filled in: the doll gets one eye when you set a goal and the other when you meet it.
+It is the home-screen icon of both apps, the favicon (`/pulse-icon.svg`, also served at
+`/icon.svg`), the mark in the journal, Daruma, admin and guide headers, and it signs the
+share cards. In the app it takes the colorway's accent (TS9's acid green, with a glow).
+`icons/build-daruma.mjs` draws it and writes `icons/daruma.svg` and every icon PNG; run
+it after changing the mark (it needs Playwright's Chromium).
 
 ## The coach
 
