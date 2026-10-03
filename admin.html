@@ -261,7 +261,7 @@ details>summary{list-style-position:inside}
   // the sidebar: sections in groups; each page has a title and a line on what it's for
   const NAV=[['',[['overview','Overview'],['insights','Insights']]],['People',[['members','Members'],['wallets','Wallets']]],
     ['Compete',[['leagues','Leagues'],['competitions','Competitions'],['duels','Duels']]],['Progress',[['levels','Levels & XP'],['badges','Badges'],['features','Features']]],
-    ['Coaching',[['coach','Coach'],['routines','Routines'],['bench','Benchmarks']]],['Community',[['feed','Feed & reports']]],['',[['settings','Settings']]]];
+    ['Coaching',[['coach','Coach'],['routines','Routines'],['bench','Benchmarks']]],['Community',[['feed','Feed & reports'],['referrals','Referrals']]],['',[['settings','Settings']]]];
   const TABS=NAV.flatMap(g=>g[1]);
   const PAGES={overview:['Overview','How the league is doing, and what needs you.'],
     insights:['Insights','Every member’s process and results, the whole league at once, or any segment of it. Segments use the “Traders like you” groups (style, trade size, experience, activity). Members are told in Profile & privacy that you can see their stats.'],
@@ -276,6 +276,7 @@ details>summary{list-style-position:inside}
     features:['Features','Which Daruma features open at which level.'],
     coach:['Coach','How much members can ask the AI coach, and what it may see.'],
     routines:['Routines','The morning prep and end-of-day questions members answer, by how they trade.'],
+    referrals:['Referrals','Members’ invite links, who joined through them, and what each side earns. Run a promotion by setting its dates and amounts.'],
     feed:['Feed & reports','Reported posts, announcements to everyone, what members can post, and shared playbooks.'],
     settings:['Settings','Joining, wallets, sync, and the security of this panel.']};
   // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Daruma member key.
@@ -313,7 +314,7 @@ details>summary{list-style-position:inside}
   const pager=(key,list,size)=>{ size=size||10; const n=list.length, pages=Math.max(1,Math.ceil(n/size)), p=Math.max(0,Math.min(UI.pages[key]||0,pages-1)); UI.pages[key]=p;
     return {items:list.slice(p*size,(p+1)*size), html:n>size?`<div class="pager"><button class="sm" data-pg="${esc(key)}" data-d="-1"${p?'':' disabled'} aria-label="Previous page">‹ Prev</button><span class="muted small">${p*size+1}–${Math.min(n,(p+1)*size)} of ${n}</span><button class="sm" data-pg="${esc(key)}" data-d="1"${p<pages-1?'':' disabled'} aria-label="Next page">Next ›</button></div>`:''}; };
   const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
-  const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],playbooks:[],wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
+  const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],playbooks:[],refs:{refs:[],links:[],earners:[]},wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
   const UI={msel:new Set(),ins:{f:{},by:'style',sort:'disc30',metric:'disc30'},tab:'overview',member:null,q:'',filter:'all',wq:'',wfilter:null,wsel:new Set(),leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
   const linkFor=code=>location.origin+'/daruma#link='+encodeURIComponent(code);
   const adminLinkFor=code=>location.origin+'/admin#code='+encodeURIComponent(code);
@@ -324,11 +325,11 @@ details>summary{list-style-position:inside}
   async function load(signin){
     // signing in: one call first, so a wrong token is one wrong guess (and one second step), not thirteen
     const first=signin?await api('/me'):api('/me');
-    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl,pb]=await Promise.all([first,api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null),api('/playbooks').catch(()=>({playbooks:[]}))]);
+    const [me,ov,ms,ls,bs,cs,ev,ws,lg,rp,bn,du,pl,pb,rf]=await Promise.all([first,api('/overview'),api('/members'),api('/leagues'),api('/badges'),api('/competitions'),api('/events'),api('/wallets'),api('/log'),api('/reports'),api('/bench').catch(()=>null),api('/duels').catch(()=>null),api('/pool').catch(()=>null),api('/playbooks').catch(()=>({playbooks:[]})),api('/referrals').catch(()=>({refs:[],links:[],earners:[]}))]);
     D.perf={}; // a member's numbers are read again when their page opens
     if(UI.tab==='insights')await loadIns();
     ME=me; $('whoami').textContent=me.owner?'Owner':'Admin · '+me.name;
-    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du,pool:pl,playbooks:pb.playbooks});
+    Object.assign(D,{ov,members:ms.members,leagues:ls.leagues,badges:bs.badges,comps:cs.competitions,events:ev.events,wallets:ws,log:lg.log,reports:rp.reports,bench:bn,duels:du,pool:pl,playbooks:pb.playbooks,refs:rf});
     for(const a of [...UI.wsel])if(!ws.wallets.some(w=>w.address===a))UI.wsel.delete(a);
     $('login').classList.add('hide'); $('app').classList.remove('hide'); $('signout').classList.remove('hide'); document.body.classList.add('in');
     render();
@@ -365,7 +366,7 @@ details>summary{list-style-position:inside}
     lastView=view; UI.submitted=null; UI.fresh=false;
     const cnt={feed:D.reports.length?[D.reports.length,'']:null,wallets:D.wallets.approveWallets&&D.wallets.counts.pending?[D.wallets.counts.pending,'w']:null};
     $('tabs').innerHTML=NAV.map(([g,items])=>(g?`<div class="navh">${esc(g)}</div>`:'')+items.map(([k,l])=>`<a href="#${k}"${k===UI.tab?' aria-current="page"':''}><span>${esc(l)}</span>${cnt[k]?`<span class="cnt ${cnt[k][1]}" title="${cnt[k][1]?'waiting for you':'open reports'}">${cnt[k][0]}</span>`:''}</a>`).join('')).join('');
-    const f={overview:vOverview,insights:vInsights,members:vMembers,wallets:vWallets,bench:vBench,duels:vDuels,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,settings:vSettings}[UI.tab];
+    const f={overview:vOverview,insights:vInsights,members:vMembers,wallets:vWallets,bench:vBench,duels:vDuels,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,referrals:vReferrals,settings:vSettings}[UI.tab];
     $('view').innerHTML=(UI.tab==='members'&&UI.member&&D.members.some(x=>x.id===UI.member)?'':pageHead())+f();
     for(const [id,v] of keep){ const el=$(id); if(!el)continue; if(el.type==='checkbox')el.checked=v; else el.value=v; }
     const back=foc&&$(foc); if(back&&$('view').contains(back))back.focus({preventScroll:true});
@@ -911,6 +912,36 @@ details>summary{list-style-position:inside}
   const keepRoutines=()=>{ UI.custom=readCustom(); UI.overrides=readOverrides(); };
   const readCustom=()=>(UI.custom||[]).map((c,i)=>({id:c.id,name:val('rc_'+i+'_n').trim(),base:val('rc_'+i+'_b'),desc:val('rc_'+i+'_d').trim(),morning:lines(val('rc_'+i+'_m')),eod:lines(val('rc_'+i+'_e'))}));
 
+  // ---------------- referrals ----------------
+  const REF_ST={pending:['pending','wait'],active:['active','ok'],expired:['expired',''],void:['doesn’t count','ban']};
+  const REF_WHY={claim:'no claimed wallet yet',approval:'wallet waiting for approval',verify:'verify switched off',days:'not enough trading days yet',wallet:'wallet already counted',owner:'voided by you',gone:'referrer left'};
+  function vReferrals(){
+    const c=D.ov.config.referrals||{}, P=c.promo||{}, R=D.refs, num=(id,label,v,hint,min,max)=>field(id,label,`<input type="number" id="${id}" min="${min}" max="${max}" step="1" value="${esc(String(v))}">`,hint);
+    const T=R.terms||{}, st=D.ov.referrals||{};
+    const pgR=pager('refs',R.refs,15), pgL=pager('reflinks',R.links,15);
+    return `${tiles([['Active',fmt(st.active||0),''],['Pending',fmt(st.pending||0),''],['Expired',fmt(st.expired||0),''],['Don’t count',fmt(st.void||0),'']])}
+      <div class="two"><section class="card"><h2>Terms</h2>
+        ${box('rfOn','Referrals on',c.on,'Members get a link on their handle; members with a claimed (and, if you approve wallets, approved) wallet can make codes of their own.')}
+        <div class="grid">${num('rfRx','Referrer’s bonus (XP)',c.referrerXp,'When the person they invited becomes active.',0,5000)}${num('rfEx','Welcome bonus (XP)',c.refereeXp,'For the person who joined, when they become active.',0,5000)}
+          ${num('rfPct','Share of their trading XP (%)',c.sharePct,'Paid to the referrer weekly.',0,50)}${num('rfWk','For (weeks)',c.shareWeeks,'From the week they joined.',0,104)}
+          ${num('rfAd','Trading days to be active',c.activeDays,'Read from their claimed wallet.',1,30)}${num('rfAw','Within (days of joining)',c.activeWindow,'',7,90)}
+          ${num('rfCap','Paid referrals per member a month',c.monthlyCap,'0 for no cap. Past it, a referral still activates (the welcome is paid) but pays the referrer nothing.',0,100)}${num('rfLinks','Own links per member',c.linksMax,'',0,20)}</div>
+        <p class="hint">A referral keeps the terms of the day the member joined. Referral XP raises levels and XP to spend; league tables and duels never count it.</p>
+        <h3>Promotion</h3>
+        ${box('rfPOn','Run a promotion',P.on,'Members who join between these dates get its terms instead.')}
+        <div class="grid">${field('rfPLabel','Label','<input type="text" id="rfPLabel" maxlength="40" value="'+esc(P.label||'')+'" placeholder="Launch week">','Shown on invite links and the Invite screen.')}
+          ${field('rfPFrom','From','<input type="date" id="rfPFrom" value="'+esc(P.from||'')+'">','UTC days; empty = open-ended.')}${field('rfPTo','To (last day)','<input type="date" id="rfPTo" value="'+esc(P.to||'')+'">','')}
+          ${num('rfPRx','Referrer’s bonus (XP)',P.referrerXp,'',0,5000)}${num('rfPEx','Welcome bonus (XP)',P.refereeXp,'',0,5000)}${num('rfPPct','Share (%)',P.sharePct,'',0,50)}</div>
+        <p class="hint">Today someone joining gets: ${fmt(T.rx)} XP for the referrer, ${fmt(T.ex)} XP welcome, ${T.pct}% for ${T.wk} weeks${T.promo?' — <b>'+esc(T.promo)+'</b>':''}.</p>
+        <div class="actions"><button class="primary" id="rfSave">Save</button></div></section>
+      <section class="card"><h2>Top earners</h2>${R.earners.length?R.earners.slice(0,15).map(x=>`<div class="ev"><div><b>@${esc(x.handle)}</b></div><span class="muted">${fmt(x.xp)} XP</span></div>`).join(''):'<p class="muted">Nobody yet.</p>'}
+        <h3>Links of their own</h3>${pgL.items.map(l=>`<div class="ev"><div><b>${esc(l.code)}</b> <span class="muted small">@${esc(l.handle||'?')}${l.label?' · '+esc(l.label):''} · ${fmt(l.visits)} visits · ${fmt(l.joins)} joins</span></div><button class="sm danger" data-delref="${esc(l.code)}">Remove</button></div>`).join('')||'<p class="muted">None yet.</p>'}${pgL.html}</section></div>
+      <section class="card"><h2>Referrals</h2>${pgR.items.length?`<table><thead><tr><th>Joined</th><th>Member</th><th>Invited by</th><th>Status</th><th>Shared</th><th></th></tr></thead><tbody>${pgR.items.map(r=>`<tr>
+        <td class="small">${esc(new Date(r.at).toISOString().slice(0,10))}</td><td>@${esc(r.handle)}${r.terms.promo?` <span class="pill">${esc(r.terms.promo)}</span>`:''}</td><td>@${esc(r.by||'?')} <span class="muted small">${esc(r.code)}</span></td>
+        <td><span class="pill ${REF_ST[r.st][1]}">${REF_ST[r.st][0]}</span>${r.st==='pending'?` <span class="muted small">${r.why==='days'?r.days+'/'+r.need+' days':esc(REF_WHY[r.why]||'')}</span>`:r.why&&r.st!=='active'?` <span class="muted small">${esc(REF_WHY[r.why]||'')}</span>`:''}${r.capped?' <span class="muted small">past the cap</span>':''}</td>
+        <td>${fmt(r.shared)} XP <span class="muted small">${r.weeksPaid}/${r.terms.wk} wk</span></td><td>${r.st==='active'||r.st==='pending'?`<button class="sm danger" data-voidref="${esc(r.id)}">Void</button>`:''}</td></tr>`).join('')}</tbody></table>${pgR.html}`:'<p class="muted">Nobody has joined through a link yet.</p>'}</section>`;
+  }
+
   // ---------------- feed ----------------
   const tradeLine=t=>!t?'':`${t.side==='short'?'Short':'Long'} ${esc(t.label||t.coin)} · in ${esc(String(t.entry))}${t.stop?' · stop '+esc(String(t.stop)):''}${t.target?' · target '+esc(String(t.target)):''} · ${esc(t.status)}${t.r!=null?' · '+(t.r>=0?'+':'')+t.r+'R':''}`;
   const postBody=e=>e.post?`${e.post.trade?`<div class="small">${tradeLine(e.post.trade)}</div>`:''}${e.text?`<div class="muted" style="white-space:pre-wrap">${esc(e.text.length>400?e.text.slice(0,400)+'…':e.text)}</div>`:''}${e.post.media.length?`<div class="thumbs">${e.post.media.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Picture on the post"></a>`).join('')}</div>`:''}`
@@ -1347,6 +1378,11 @@ details>summary{list-style-position:inside}
     // feed
     if(id==='postAnn'){ const t=val('ann').trim(); if(!t)return; return act(()=>api('/announce',{body:{text:t}}),'Posted.'); }
     if(id==='pSave') return act(()=>put({posts:{on:chk('pOn'),plans:chk('pPlans'),images:chk('pImages')}}),'Saved.');
+    if(id==='rfSave'){ const n=id=>val(id).trim()===''?undefined:+val(id);
+      return act(()=>put({referrals:{on:chk('rfOn'),referrerXp:n('rfRx'),refereeXp:n('rfEx'),sharePct:n('rfPct'),shareWeeks:n('rfWk'),activeDays:n('rfAd'),activeWindow:n('rfAw'),monthlyCap:n('rfCap'),linksMax:n('rfLinks'),
+        promo:{on:chk('rfPOn'),label:val('rfPLabel').trim(),from:val('rfPFrom'),to:val('rfPTo'),referrerXp:n('rfPRx'),refereeXp:n('rfPEx'),sharePct:n('rfPPct')}}}),'Referral terms saved.'); }
+    if(d.voidref){ if(!confirm('Void this referral? It pays nothing more; what was paid stays.'))return; return act(()=>api('/referrals/'+encodeURIComponent(d.voidref),{body:{action:'void'}}),'Voided.'); }
+    if(d.delref){ if(!confirm('Remove the code “'+d.delref+'”? The link stops working; people who joined with it still count.'))return; return act(()=>api('/referrals/links/'+encodeURIComponent(d.delref),{method:'DELETE'}),'Removed.'); }
     if(id==='pbSave') return act(()=>put({playbooks:{on:chk('pbOn'),who:val('pbWho')}}),'Saved.');
     if(d.delpb){ if(!confirm('Stop sharing this playbook for everyone? Copies members adopted stay theirs.'))return; return act(()=>api('/playbooks/'+encodeURIComponent(d.delpb),{method:'DELETE'}),'Removed.'); }
     if(d.rep){ if(d.a==='remove'&&!confirm('Remove it for everyone? This can’t be undone.'))return; return act(()=>api('/reports/'+encodeURIComponent(d.rep),{body:{action:d.a}}),d.a==='remove'?'Removed.':'Kept.'); }

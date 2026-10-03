@@ -983,6 +983,34 @@ like you" and duels always need a profile. The cap applies only where someone co
 create a profile: never to the owner, members, sample data, a closed league, or a page
 opened without a server.
 
+**Referrals.** Social → **Invite** (`#invite`). Every member has a link on their handle,
+`/daruma?ref=<handle>`; a member whose wallet is claimed (and approved, when the owner approves
+wallets) can also make up to 5 codes of their own (`/daruma?ref=mia-twitter`), each with a label
+for where it's posted and its own visits, joins and activations. Opening a link keeps the code on
+that device until they join (it's taken off the address bar) and counts a visit (one per address a
+day); the "Create your profile" form then says who invited them and the welcome bonus on offer.
+Joining records the referral **on that day's terms**, which it keeps whatever the owner changes later.
+It counts once the new member is **active**: a wallet they claimed that no member used before (not
+the referrer's, not a deleted profile's, not one that already activated a referral), "Verify my
+discipline" on, and 5 trading days read from that wallet in their first 30 days. Then the referrer
+gets 100 XP, the new member a 50 XP welcome bonus, and the referrer 20% of the new member's trading
+XP (each day's Discipline XP plus what their app reported for it: logging bonuses, habits,
+challenges, achievements; never grants or referral XP) for the 26 weeks from the week they joined,
+paid a week at a time once the week can't change any more (the week after it ends; weeks that ended
+before activation are paid on activation). Referral XP raises levels and XP to spend, like
+mentoring; league tables, seasons and duels never count it, and the **Recruiter** badge family
+(1, 3, 5, 10, 25 and 50 active referrals) is kept out of them the same way. Up to 10 referrals
+a month pay the referrer: past that a referral still activates (the welcome is paid) but pays the
+referrer nothing. Nothing is paid while either side is suspended (those weeks are forfeited). A
+referral that didn't become active within its window expires. Both sides hear about each step in
+the inbox (push kind `referral`). The owner sets every number, and can run a **promotion** (a label,
+dates, and its own bonuses and share) under Admin → Referrals, which also lists every referral (with
+**Void**, which stops what it still pays), the codes members made (with **Remove**) and the top
+earners. Routes: `GET /ref/<code>` and `POST /ref/<code>/visit` (no profile needed), `GET /referrals`,
+`POST /referrals/links {code, label}`, `DELETE /referrals/links/<code>`; the owner's
+`GET /admin/referrals`, `POST /admin/referrals/<member id> {action: 'void'}` and
+`DELETE /admin/referrals/links/<code>`.
+
 **Invite link.** With an invite code set, Settings shows an invite link
 (`/daruma?invite=CODE`) with a Copy button. Opening it fills the code in on the "Create
 your profile" form. The code is kept on that device until they join, and it's taken off
@@ -1124,7 +1152,7 @@ action. Sections:
 - **Routines** — replace the built-in profiles' questions and add your own profiles.
 - **Wallets** — wallet approval on/off, and approve or reject each member's wallet
   (single or in bulk, with a note); waiting wallets come first.
-- **Feed** — announcements and moderation, and shared playbooks (on/off, mentors only, remove one). **Settings** — open/closed, invite code and
+- **Feed** — announcements and moderation, and shared playbooks (on/off, mentors only, remove one). **Referrals** — the terms, a promotion, every referral and member code. **Settings** — open/closed, invite code and
   invite link, claimed wallets only, encrypted sync, and **Security**: two-factor for the panel (above).
 
 Without `AUTH_TOKEN` the admin API refuses every request instead of opening to everyone.

@@ -1273,6 +1273,7 @@ const PZ_FAMILIES=[
   ['teacher','mentoring','Teacher',t=>t+' trade'+(t===1?'':'s')+' reviewed for a mentee',[1,10,30,75,150,300],0],
   ['helped','mentoring','Made a difference',t=>t+' mentee result'+(t===1?'':'s')+' (a leak plugged, a perfect week, a Trader Age milestone)',[1,3,6,12,24,48],0],
   ['traderage','milestones','Seasoned',t=>'a Trader Age of '+t+' year'+(t===1?'':'s'),[1,2,4,6,8,12],2],
+  ['recruiter','milestones','Recruiter',t=>t+' member'+(t===1?'':'s')+' you invited who became active',[1,3,5,10,25,50],0],
 ];
 // days -> keys where a condition held; nth key = the day the nth was reached
 let _pzCatPass=null; // the last pass's XP-independent families (see `again` below)
@@ -1287,7 +1288,7 @@ function pzBadgeCatalog(G){
   // Only the XP and level families read G.xp. gameContext runs this twice per rebuild (the second pass
   // counts the first pass's badge XP), so the second pass takes every other family from the first —
   // same rebuild, same inputs, checked below — instead of working them all out again.
-  const sig=[_jrev,G.now,G.nowWeek,JSON.stringify([settings.pzGoals||null,settings.habits||null,settings.pzPlugs||null]),typeof SOC!=='undefined'&&SOC.me?JSON.stringify(SOC.me.mentorXp||null):''].join('|');
+  const sig=[_jrev,G.now,G.nowWeek,JSON.stringify([settings.pzGoals||null,settings.habits||null,settings.pzPlugs||null]),typeof SOC!=='undefined'&&SOC.me?JSON.stringify([SOC.me.mentorXp||null,SOC.me.refActs||null]):''].join('|');
   const P=_pzCatPass, again=!!P&&P.D===D&&P.ctx===ctx&&P.streak===G.streak&&P.pa===G.pa&&P.ach===G.achievements&&P.ch===G.challenges&&P.slips===_pzSlipDays&&P.sig===sig;
   if(again){ Object.assign(EV,P.EV); Object.assign(SER,P.SER); } else {
   add('clean',D.filter(d=>d.n>=1&&d.score===100).map(d=>d.key));
@@ -1358,6 +1359,8 @@ function pzBadgeCatalog(G){
   { const md=(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp&&SOC.me.mentorXp.days)||{}, rk=[], ok=[];
     for(const k of Object.keys(md).sort()){ for(let i=0;i<(md[k].r||0);i++)rk.push(k); for(let i=0;i<(md[k].o||0);i++)ok.push(k); }
     add('teacher',rk); add('helped',ok); }
+  // referrals: the days members you invited became active, as the server counted them
+  add('recruiter',(typeof SOC!=='undefined'&&SOC.me&&Array.isArray(SOC.me.refActs))?SOC.me.refActs.slice():[]);
   // Trader Age (app/features/trader-age.js): its value at the end of each trading day
   if(typeof taHistoryOf==='function'){ try{ run('traderage',taHistoryOf(D).filter(h=>h.age!=null).map(h=>[h.key,h.age])); }catch(e){ console.warn('trader age history',e); } }
   { const first=D.length?D[0].key:null; if(first){ const span=Math.floor((Date.parse(today)-Date.parse(first))/86400000); run('tenure',[[today,span]]); SER.tenureFrom=first; } }
@@ -1377,7 +1380,7 @@ function pzBadgeCatalog(G){
   // level tier reached only with mentoring XP in the total (G.xpByDayOwn is the same days without it)
   { let top=Infinity; if(G.xpByDayOwn){ let c=0; top=0; for(const k of Object.keys(G.xpByDayOwn).sort()){ c+=G.xpByDayOwn[k]; if(c>top)top=c; } }
     const lvOwn=top===Infinity?Infinity:levelFor(top).level;
-    for(const b of out)if(b.fam==='teacher'||b.fam==='helped'||(b.fam==='xp'&&top<b.need)||(b.fam==='level'&&lvOwn<b.need))b.src='mentor'; }
+    for(const b of out)if(b.fam==='teacher'||b.fam==='helped'||b.fam==='recruiter'||(b.fam==='xp'&&top<b.need)||(b.fam==='level'&&lvOwn<b.need))b.src='mentor'; }
   // the classic achievements keep their own XP; they join the case as gold milestones
   for(const a of (G.achievements||[]))if(a.at)out.push({id:'a-'+a.id,fam:'a',c:'milestones',r:2,t:a.title,desc:a.desc,k:a.at,earned:true,xp:0});
   out.sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:b.r-a.r);

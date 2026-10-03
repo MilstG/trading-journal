@@ -61,8 +61,11 @@ try {
     // Oct 2026: shared playbooks — Daruma's Playbooks screen (app/features/playbooks.js, Daruma only, ~23 KB raw /
     // ~8 KB gzipped, a third of it comments), the playbook checklist on its journal card and the admin's
     // controls: Daruma 1589 raw / 535 gzipped; the journal ~1 KB raw for keeping an adopted playbook's source.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1950, 662],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1592, 537],
+    // Oct 2026: referrals — Daruma's Invite screen (app/features/referrals.js, Daruma only, ~11 KB raw / ~4 KB gzipped),
+    // the ?ref= capture and the join form's invite card (pulse-social.js, both screens) and the Recruiter badges:
+    // Daruma 1605 raw / 541 gzipped, the journal 1951 raw / 662 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1953, 663],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1608, 542],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
