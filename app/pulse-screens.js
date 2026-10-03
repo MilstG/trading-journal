@@ -27,6 +27,9 @@ function pzXpSources(g, fromKey){
 function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
 // a challenge as a rule for the week ("No SOL trades this week"), else the habit sentence
 function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); return m?'No '+m[1]+' this week':habitSentence(spec); }
+// XP won or lost on stakes moves a separate balance: the level counts only XP earned
+function pzStakeLine(L){ const n=typeof SOC!=='undefined'&&SOC.me?+SOC.me.stakeNet||0:0; if(!n)return '';
+  return `<p class="pz-sub" style="font-size:12px;margin:0" data-pz-tip="${esc('Stakes move XP between members without touching your level: what you win or lose on duels changes the XP you can stake, never what you’ve earned.')}">${Math.max(0,L.xp+n).toLocaleString()} XP to stake · ${n>0?'+':'−'}${Math.abs(n).toLocaleString()} from stakes</p>`; }
 function pzProgressHtml(D){
   const {g}=D, L=g.level, cat=g.catalog||{earned:[],families:[],total:0}, nowK=D.todayK, wkFrom=dayKey(lastCompletedWeekRange(Date.now()).to);
   const src=pzXpSources(g,wkFrom), srcRows=[['discipline','Discipline scores',PZ_COL.good],['bonus','Prep, plans, journal, reviews',PZ_COL.xp],['badges','Badges',PZ_TIER_COL[2]],
@@ -37,6 +40,7 @@ function pzProgressHtml(D){
     <div class="pz-hero-main"><span class="pz-lbl" style="color:${PZ_COL.xp}">Level ${L.level}</span><h2 class="pz-hero-t">${esc(L.title)}</h2>
       <div class="pz-xpbar" role="progressbar" aria-label="XP to next level" aria-valuemin="0" aria-valuemax="${L.need}" aria-valuenow="${L.into}" data-pz-tip="${esc(L.max?'Top level reached':L.into.toLocaleString()+' of '+L.need.toLocaleString()+' XP into level '+L.level+'\n'+(L.need-L.into).toLocaleString()+' XP to '+pzLevelTitle(L.level+1)+'. XP comes from process, never profit.')}"><i style="width:${L.max?100:Math.round(100*L.into/L.need)}%"></i></div>
       <p class="pz-sub" style="font-size:13px">${L.xp.toLocaleString()} XP · ${L.capped?`level ${L.earned} earned. Without a profile, levels stop at ${L.level}: <a href="#social">create your profile</a> to unlock it.`:L.max?'top level reached':(L.need-L.into).toLocaleString()+' XP to '+esc(pzLevelTitle(L.level+1))}</p>
+      ${pzStakeLine(L)}
     </div></section>`;
   const xpCard=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Where this week’s XP came from</b><span class="pz-sub" style="font-size:12px">${wkTot.toLocaleString()} XP</span></div>
     ${wkTot?srcRows.map(([k,l,c])=>`<div class="pz-row"><div class="pz-row-t"><span>${esc(l)}</span><b>+${src[k].toLocaleString()}</b></div>${pzBar(src[k]/wkTot,c)}</div>`).join('')
@@ -538,8 +542,9 @@ function socRowsHtml(rows, board, emptyText, key){
   if(!rows)return '';
   if(!rows.length)return `<section class="pz-card"><p class="pz-sub">${esc(emptyText)}</p></section>`;
   const pg=pzPage('rows:'+(key||board),rows), mine=rows.find(r=>r.me), mineOff=mine&&!pg.items.includes(mine);
-  const li=r=>`<li class="pz-li${r.me?' me':''}"><span class="pz-rank${r.rank<=3?' top':''}">${r.rank}</span>${socAv(r.handle)}
-    <a class="pz-who" href="#u/${esc(r.handle)}"><b>${r.me?'You':'@'+esc(r.handle)}</b><span>${esc(r.sub||'')}</span></a><span class="pz-val">${esc(socValue(board,r.value))}</span></li>`;
+  // past a drawdown cap: listed last, crossed out, with the reason
+  const li=r=>`<li class="pz-li${r.me?' me':''}"><span class="pz-rank${r.rank<=3&&!r.out?' top':''}">${r.out?'–':r.rank}</span>${socAv(r.handle)}
+    <a class="pz-who" href="#u/${esc(r.handle)}"><b${r.out?' style="text-decoration:line-through;color:var(--pz-muted)"':''}>${r.me?'You':'@'+esc(r.handle)}</b><span${r.out?' style="color:var(--pz-err-t)"':''}>${esc(r.sub||'')}</span></a><span class="pz-val">${r.out?'Out':esc(socValue(board,r.value))}</span></li>`;
   return `<ol class="pz-list" aria-label="Standings">${pg.items.map(li).join('')}</ol>${pg.html}${mineOff?`<ol class="pz-list" aria-label="Your place">${li(mine)}</ol>`:''}`;
 }
 // one "Ranked by" picker instead of a row of pills under the tabs
@@ -576,13 +581,17 @@ function socLeagueHtml(g){
   // the note says what this league's ranking covers: its season, its month, or its week — and only promises promotion where there are tiers
   const ranks=L.season?'this season ('+L.season.label+')':L.period==='month'?'this month':'this week';
   const leagueNote=L.metric==='xp'?'XP earned '+ranks+' — process, never profit.'+(L.season?' The top three when the season ends take the podium and a badge.':L.tiers?' The top of each tier moves up '+(L.period==='month'?'when the month ends':'on Monday')+', the bottom moves down.':'')
-    :L.season?(SOC_BOARD_NOTE[d.board]||'')+' Ranked over '+ranks+'; the top three take the podium.':SOC_BOARD_NOTE[d.board]||'';
-  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=d.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d.me.rank}</b> of ${d.size} with ${esc(socValue(d.board,d.me.value))}.</p>`:''; }
+    :L.season?(SOC_BOARD_NOTE[d.board]||'')+' Ranked over '+ranks+'; the top three take the podium.':socMoneyNote(d.board,L.risk,ranks);
+  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=socMineHtml(d.me,d.size,d.board); }
   else { const c2=socGet('lb:'+L.id+':'+b,'/leaderboard?board='+b+'&league='+encodeURIComponent(L.id),30000), d2=c2&&c2.d;
-    list=d2?socRowsHtml(d2.rows,b,'No one on this board yet.'):`<p class="pz-sub">${c2&&c2.err?esc(c2.err):'<span class="pz-spin"></span>Loading…'}</p>`; note=SOC_BOARD_NOTE[b]||''; opt=socOptHtml(d2)+socOffBoardsHtml(d2);
-    mine=d2&&d2.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d2.me.rank}</b> of ${d2.total} with ${esc(socValue(b,d2.me.value))}.</p>`:''; }
+    list=d2?socRowsHtml(d2.rows,b,'No one on this board yet.'):`<p class="pz-sub">${c2&&c2.err?esc(c2.err):'<span class="pz-spin"></span>Loading…'}</p>`; note=socMoneyNote(b,d2&&d2.risk,ranks); opt=socOptHtml(d2)+socOffBoardsHtml(d2);
+    mine=d2?socMineHtml(d2.me,d2.total,b):''; }
   return `${quiet}${chipsL}${banner}${chipsB}<p class="pz-sub" style="font-size:12px">${esc(note)}</p>${opt}${mine}${list}`;
 }
+// your place on a board, or why you're off it (past the drawdown cap: out for the period, listed last)
+function socMineHtml(me,of,board){ if(!me)return '';
+  return me.out?`<p class="pz-sub" style="font-size:13px;color:var(--pz-err-t)">You’re out of this ranking for now: ${esc((me.sub||'').replace(/^Out: /,''))}.</p>`
+    :`<p class="pz-sub" style="font-size:13px">You’re <b>#${me.rank}</b> of ${of} with ${esc(socValue(board,me.value))}.</p>`; }
 // a lapsed standing takes you off the leaderboards (your league's own table still counts you)
 function socOffBoardsHtml(d){ return d&&d.offBoards?'<p class="pz-warn">You’re off the leaderboards while your standing is lapsed. Your league table still counts you. <a href="#age">Your standing</a></p>':''; }
 // the global boards: everyone on the server who opted in, whatever their league
@@ -593,8 +602,8 @@ function socBoardsHtml(g){
   const join=`<section class="pz-card" style="padding:4px 16px"><div class="pz-toggle"><span style="flex:1"><b id="socGlobL">Show me on the global boards</b><span>Everyone on this server who opted in, across all leagues. Your league boards don’t change.</span></span>
     <button type="button" role="switch" class="pz-switch" id="socGlobSw" data-soc-global="${on?'0':'1'}" aria-checked="${on}" aria-labelledby="socGlobL"><i></i></button></div></section>`;
   const list=d?socRowsHtml(d.rows,b,on?'No one on this board yet.':'No one has opted in to this board yet — be the first.'):`<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const mine=d&&d.me?`<p class="pz-sub" style="font-size:13px">You’re <b>#${d.me.rank}</b> of ${d.total} with ${esc(socValue(b,d.me.value))}.</p>`:'';
-  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(SOC_BOARD_NOTE[b]||'')}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
+  const mine=d?socMineHtml(d.me,d.total,b):'';
+  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(socMoneyNote(b,d&&d.risk,'over the last 30 days'))}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
 }
 // find a league by name or number
 function socFindHtml(D){

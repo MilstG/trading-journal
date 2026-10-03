@@ -35,8 +35,13 @@ t('settings: ladder on/off, K, minimum duels, pods on/off and size are clamped',
   const d = Duels.sanitizeDuelCfg(null); eq([d.ladder, d.k, d.ladderMin, d.pods, d.podMax], [true, 32, 3, true, 6]);
   eq(Duels.sanitizeDuelCfg({ podMax: 1 }).podMax, 3);
 });
-t('pod terms: the five process kinds, no % return, never a stake', () => {
-  eq(Duels.sanitizePodTerms({ type: 'ret' }, Duels.sanitizeDuelCfg({ types: { ret: true } })).error, 'Pick what to compete on.');
+t('pod terms: the process kinds, % return when the league runs it (with its cap), never a stake', () => {
+  eq(Duels.sanitizePodTerms({ type: 'poker' }).error, 'Pick what to compete on.');
+  ok(/doesn’t run/.test(Duels.sanitizePodTerms({ type: 'ret' }).error), '% return is off by default, as for a 1v1');
+  const r = Duels.sanitizePodTerms({ type: 'ret', period: 'month', ddCap: 0.15 }, Duels.sanitizeDuelCfg({ types: { ret: true } }));
+  eq([r.type, r.ddCap, r.minDays], ['ret', 0.15, 5], 'a month of % return needs 5 trading days by default');
+  eq(Duels.sanitizePodTerms({ type: 'disc', ddCap: 0.2 }).ddCap, 0.2, 'a drawdown rule on a process kind');
+  eq(Duels.sanitizePodTerms({ type: 'disc', ddCap: 0.2 }, Object.assign(Duels.sanitizeDuelCfg(null), { risk: Duels.sanitizeRiskCfg({ pod: 'off' }) })).ddCap, null, 'unless the owner switched the rule off for group duels');
   const p = Duels.sanitizePodTerms({ type: 'disc', period: 'month', stake: 500, minDays: 4 });
   eq([p.type, p.period, p.verified, p.minDays, p.stake], ['disc', 'month', true, 4, undefined]);
 });
@@ -139,8 +144,9 @@ try {
   });
 
   let pod;
-  await t('a group duel: 3 to 6 people, process kinds only, people who take challenges', async () => {
-    ok(/Pick what to compete on/.test((await podNew('ann', ['bob', 'cat'], { type: 'ret' })).d.error));
+  await t('a group duel: 3 to 6 people, the kinds the league runs, people who take challenges', async () => {
+    ok(/doesn’t run/.test((await podNew('ann', ['bob', 'cat'], { type: 'ret' })).d.error), '% return only when the league runs it');
+    ok(/Show % return/.test((await podNew('ann', ['bob', 'cat'], { type: 'disc', ddCap: 0.15 })).d.error), 'a drawdown rule needs a wallet that shares returns');
     eq((await podNew('ann', ['bob'])).d.error, 'Invite at least 2 people.');
     eq((await podNew('ann', ['bob', 'ann', '@BOB'])).d.error, 'Invite at least 2 people.', 'yourself and the same person twice don’t count');
     ok(/no member called @zed/.test((await podNew('ann', ['bob', 'zed'])).d.error));

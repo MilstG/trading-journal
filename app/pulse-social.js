@@ -32,15 +32,21 @@ const SOC_BOARD_NOTE={
   discipline:'Average Discipline score over the last 7 days, minimum 3 trading days — recomputed by the server from each trader’s own fills, so it can’t be typed in.',
   streak:'Current discipline streak: trading days in a row at 70+. Shields count; days off never break it.',
   level:'All the XP you’ve earned, by process.',
-  riskadj:'30-day return divided by max drawdown, read on chain. Rewards making money without blowing up.',
-  ret:'30-day return, read on chain. Over 25% drawdown drops you off this board.',
-  usd:'30-day dollar P&L, read on chain. Only traders who opt in appear — it reveals account size.'};
+  riskadj:'Return divided by max drawdown, read on chain. Rewards making money without blowing up.',
+  ret:'Return, read on chain.',
+  usd:'Dollar P&L, read on chain. Only traders who opt in appear — it reveals account size.'};
+// a money board's note: what it covers (span: 'over the last 30 days', 'this week', …) and its drawdown rule
+function socMoneyNote(b,risk,span){ const base=SOC_BOARD_NOTE[b]||'';
+  if(!['ret','riskadj','usd'].includes(b))return base;
+  const cap=risk&&risk.cap?Math.round(risk.cap*100)+'%':'';
+  const rule=!risk?'':risk.mode==='off'?' No drawdown cap.':risk.mode==='penalty'&&b!=='usd'?' Past a '+cap+' drawdown, the return is docked for every 1% over.':' Past a '+cap+' drawdown you’re out'+(span==='over the last 30 days'?'':' for '+span)+', listed last.';
+  return base.replace(/\.$/,'')+(span?' '+span:'')+'.'+rule; }
 const SOC_COMP_KIND={discipline:'Discipline',survivor:'Survivor',journal:'Journal streak',return:'Return under a drawdown cap'};
 const SOC_COMP_HOW={
   discipline:'Your daily process score, averaged over the competition days. Profit doesn’t count: a red day with a clean process scores the same as a green one.',
   survivor:'Stay under your daily loss limit on every trading day. The first day you hit it, you’re out. Days you don’t trade are safe.',
   journal:'Journal every closed trade, day after day. Your longest run of fully journaled trading days counts.',
-  return:'Return over the competition dates, read from your wallet on chain. Cross the drawdown cap at any point and you finish last.'};
+  return:'Return over the competition dates, read from your wallet on chain.'};
 const PZ_UNLOCK_DEFAULTS={unlocksOn:true,unlocks:{trends:2,share:3,compete:4}};
 var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'league',board:'rank',cfilter:'mine',feed:'following',
   cache:{},busy:{},lastSent:'',lastSentAt:0,timer:null,draft:null,avs:{},more:{},upd:{},compose:null,confirm:null};
@@ -168,7 +174,7 @@ async function socMeRefresh(){
   _socMeAt=Date.now();
   let d; try{ d=await socFetch('/me'); }catch(e){ return; }
   if(!d||!d.me)return;
-  const sig=m=>JSON.stringify([m.grants||[],m.awards||[],m.mentorXp?m.mentorXp.total:0,!!m.unlocked,!!m.admin,m.tier||0,m.mentor||false,(m.leagues||[]).map(l=>l.id),m.mult&&m.mult.hist]);
+  const sig=m=>JSON.stringify([m.grants||[],m.awards||[],m.mentorXp?m.mentorXp.total:0,!!m.unlocked,!!m.admin,m.tier||0,m.mentor||false,(m.leagues||[]).map(l=>l.id),m.mult&&m.mult.hist,m.stakeNet||0]);
   const moved=sig(d.me)!==sig(SOC.me);
   SOC.me=d.me; SOC.share=d.share;
   if(!moved)return;
@@ -344,6 +350,21 @@ function socJoinHtml(){
   </div>`;
 }
 
+// an XP pot in one line: its size, the buy-in, how it's split, what the league adds or burns, and how it ended for you
+function socPotLine(p){ if(!p)return '';
+  const bits=[(p.done?'Pot ':'Pot so far ')+p.pot.toLocaleString()+' XP',p.buyIn+' XP buy-in',p.payLabel];
+  if(p.overlay)bits.push(p.overlay.toLocaleString()+' XP added by the league'); if(p.burnPct)bits.push(p.burnPct+'% burned');
+  const end=p.done?(p.refund?'Nobody qualified: every buy-in went back.':p.mine&&p.mine.won?'You won '+p.mine.won.toLocaleString()+' XP.':''):'';
+  return `<p class="pz-sub" style="margin:0;font-size:12.5px;color:${PZ_COL.xp}">${esc(bits.join(' · '))}${end?'<br><b>'+esc(end)+'</b>':''}</p>`; }
+// what putting up a buy-in does: the stake balance drops, the level doesn't
+function socLoseLine(buyIn){ const b=SOC.me&&SOC.me.balance!=null?SOC.me.balance:null; if(!buyIn)return '';
+  return 'If you lose: '+(b==null?'the '+buyIn+' XP leaves your stake balance':b.toLocaleString()+' → '+Math.max(0,b-buyIn).toLocaleString()+' XP to stake')+'. Your level stays where it is, and nothing you’ve unlocked locks.'; }
+// a competition's conditions: its drawdown rule (any kind can have one) and the trading days a return needs
+function socCompTerms(c){ const t=[];
+  if(c.ddCap)t.push(c.ddMode==='penalty'&&['discipline','return'].includes(c.type)?'Past '+Math.round(c.ddCap*100)+'% drawdown, the score is docked for every 1% over':'Out past '+Math.round(c.ddCap*100)+'% drawdown');
+  if(c.tradeDays)t.push(c.tradeDays+'+ trading days to be ranked');
+  if(c.ddCap&&c.type!=='return')t.push('needs “Show % return” with a wallet');
+  return t.length?`<p class="pz-fine" style="margin:0;color:var(--pz-soft)">${esc(t.join(' · '))}</p>`:''; }
 function socCompCard(c, level){
   const need=pzLocked('compete',level);
   const when=c.status==='upcoming'?'Starts '+dayLabel(c.start):c.status==='live'?'Ends '+dayLabel(c.end):'Finished '+dayLabel(c.end);
@@ -351,9 +372,10 @@ function socCompCard(c, level){
   const act=c.status==='finished'?`<a class="pz-ghost pz-sm" href="#c/${esc(c.id)}">Results</a>`
     :c.joined?`<a class="pz-ghost pz-sm" href="#c/${esc(c.id)}">Standings</a>`
     :need?`<span class="pz-fine">${pzI('lock',14)} ${pzNeedsProfile(need)?'Needs a profile':'Unlocks at level '+need}</span>`
-    :`<button type="button" class="pz-cta pz-sm" style="width:auto;min-height:40px;padding:0 18px" data-soc-join="${esc(c.id)}">Join</button>`;
+    :c.pot&&c.status!=='upcoming'?`<span class="pz-fine">Closed: it has a buy-in</span>`
+    :`<button type="button" class="pz-cta pz-sm" style="width:auto;min-height:40px;padding:0 18px" data-soc-join="${esc(c.id)}"${c.pot?` data-buyin="${c.pot.buyIn}"`:''}>${c.pot?'Join · '+c.pot.buyIn+' XP':'Join'}</button>`;
   return `<section class="pz-card" style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;justify-content:space-between;gap:10px"><span class="pz-lbl" style="color:${c.type==='survivor'?'#FFB25A':c.type==='return'?PZ_COL.xp:c.type==='journal'?PZ_COL.risk:PZ_COL.good}">${esc(SOC_COMP_KIND[c.type]||c.type)}</span><span class="pz-sub" style="font-size:12px">${esc(when)}</span></div>
-    <a href="#c/${esc(c.id)}" style="color:var(--pz-text);text-decoration:none"><b style="font-size:17px">${esc(c.title)}</b></a>${c.rule?`<p class="pz-sub" style="font-size:13px">${esc(c.rule)}</p>`:''}
+    <a href="#c/${esc(c.id)}" style="color:var(--pz-text);text-decoration:none"><b style="font-size:17px">${esc(c.title)}</b></a>${c.rule?`<p class="pz-sub" style="font-size:13px">${esc(c.rule)}</p>`:''}${socCompTerms(c)}${socPotLine(c.pot)}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span style="font-size:13px;font-weight:600;color:${c.me&&c.me.out?PZ_COL.low:'var(--pz-soft)'}">${esc(meLine)}</span>${act}</div></section>`;
 }
 function socCompeteHtml(g){
@@ -372,12 +394,14 @@ function socCompHtml(D, id){
   if(!x)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const need=pzLocked('compete',D.g.level.level);
   const act=x.status==='finished'?'':x.joined?`<button type="button" class="pz-ghost" data-soc-leave="${esc(x.id)}">Leave this competition</button>`
-    :need?`<p class="pz-fine">${pzI('lock',14)} Competitions unlock at level ${need}. You’re level ${D.g.level.level}.</p>`:`<button type="button" class="pz-cta" data-soc-join="${esc(x.id)}">Join</button>`;
+    :need?`<p class="pz-fine">${pzI('lock',14)} Competitions unlock at level ${need}. You’re level ${D.g.level.level}.</p>`
+    :x.pot&&x.status!=='upcoming'?`<p class="pz-fine">This competition has a buy-in, so it closed to new entrants when it started.</p>`
+    :`<button type="button" class="pz-cta" data-soc-join="${esc(x.id)}"${x.pot?` data-buyin="${x.pot.buyIn}"`:''}>${x.pot?'Join · put up '+x.pot.buyIn+' XP':'Join'}</button>${x.pot?`<p class="pz-fine" style="margin:0">${esc(socLoseLine(x.pot.buyIn))}</p>`:''}`;
   const spg=pzPage('st:'+x.id,x.standings||[]), rows=spg.items.map(r=>`<li class="pz-li${r.me?' me':''}"><span class="pz-rank${r.rank<=3?' top':''}">${r.rank}</span>${socAv(r.handle)}<a class="pz-who" href="#u/${esc(r.handle)}"><b>${r.me?'You':'@'+esc(r.handle)}</b><span${r.out?' style="color:var(--pz-err-t)"':''}>${esc(r.note)}</span></a></li>`).join('');
   return `${back}${pzHead((SOC_COMP_KIND[x.type]||x.type)+' · '+(x.status==='upcoming'?'starts '+dayLabel(x.start):x.status==='live'?'ends '+dayLabel(x.end):'finished'),x.title)}
     <div class="pz-wide"><div class="pz-col">
       ${x.me?`<div class="pz-grid3"><div class="pz-tile good"><span class="pz-t">Your rank</span><span class="pz-n">#${x.me.rank}</span><span class="pz-t">of ${x.entrants}</span></div><div class="pz-tile" style="grid-column:span 2"><span class="pz-t">Your standing</span><span style="font-size:15px;font-weight:600">${esc(x.me.note)}</span></div></div>`:''}
-      <section class="pz-card" style="display:flex;flex-direction:column;gap:8px"><b style="font-size:15px">How it’s scored</b>${x.rule?`<p class="pz-sub" style="font-size:13px">${esc(x.rule)}</p>`:''}<p class="pz-sub" style="font-size:13px">${esc(SOC_COMP_HOW[x.type]||'')}</p><p class="pz-fine">${esc(dayLabel(x.start))} → ${esc(dayLabel(x.end))}${x.type==='discipline'?' · minimum '+x.minDays+' trading days':x.type==='journal'?' · done at '+x.minDays+' days':x.type==='return'&&x.ddCap?' · drawdown cap '+Math.round(x.ddCap*100)+'%':''}</p></section>
+      <section class="pz-card" style="display:flex;flex-direction:column;gap:8px"><b style="font-size:15px">How it’s scored</b>${x.rule?`<p class="pz-sub" style="font-size:13px">${esc(x.rule)}</p>`:''}<p class="pz-sub" style="font-size:13px">${esc(SOC_COMP_HOW[x.type]||'')}</p>${socCompTerms(x)}${socPotLine(x.pot)}<p class="pz-fine">${esc(dayLabel(x.start))} → ${esc(dayLabel(x.end))}${x.type==='discipline'?' · minimum '+x.minDays+' trading days':x.type==='journal'?' · done at '+x.minDays+' days':x.type==='return'&&x.ddCap?' · drawdown cap '+Math.round(x.ddCap*100)+'%':''}</p></section>
       ${act}</div>
       <div class="pz-col">${rows?`<ol class="pz-list" aria-label="Standings">${rows}</ol>${spg.html}`:'<section class="pz-card"><p class="pz-sub">No one has joined yet.</p></section>'}</div></div>`;
 }
@@ -487,8 +511,8 @@ function socTradeHtml(t){
   const cell=(l,v,c)=>`<div class="pz-lv"><span>${l}</span><b${c?` style="color:${c}"`:''}>${v}</b></div>`;
   const res=t.status==='closed'&&(t.r!=null||t.pct!=null)?[t.r!=null?socSignedN(t.r,'R'):'',t.pct!=null?socSignedN(t.pct,'%'):'',t.usd!=null?signedPlain(t.usd):''].filter(Boolean).join(' · '):'';
   const win=t.status==='closed'&&((t.r!=null?t.r:t.pct)||0)>=0;
-  return `<div class="pz-tr"><div class="pz-trh"><b>${long?'Long':'Short'} ${esc(t.label||dispMarket(t.coin))}</b>${t.tf?`<span class="pz-pill">${esc(t.tf)}</span>`:''}${t.setup?`<span class="pz-pill">${esc(t.setup)}</span>`:''}
-      <span class="pz-pill" style="margin-left:auto;color:${st[1]};border-color:currentColor">${st[0]}</span></div>
+  return `<div class="pz-tr"><div class="pz-trh"><b>${long?'Long':'Short'} ${esc(t.label||dispMarket(t.coin))}</b>${t.tf?`<span class="pz-pill pz-tagp">${esc(t.tf)}</span>`:''}${t.setup?`<span class="pz-pill pz-tagp">${esc(t.setup)}</span>`:''}
+      <span class="pz-pill pz-tagp" style="margin-left:auto;color:${st[1]};border-color:currentColor">${st[0]}</span></div>
     <div class="pz-lvs">${[cell('Entry',socPx(t.entry)),t.stop?cell('Stop',socPx(t.stop),'#FF9A7E'):'',t.target?cell('Target',socPx(t.target),'#3FE0A0'):'',
       t.status==='closed'&&t.exit?cell('Exit',socPx(t.exit)):rr?cell('R : R',rr.toFixed(1)+' : 1'):''].join('')}</div>
     ${res?`<div class="pz-trres" style="color:${win?PZ_COL.good:PZ_COL.low}">${esc(res)}</div>`:''}</div>`;
@@ -710,6 +734,7 @@ const duelWhen=v=>v.start?duelDate(v.start)+' – '+duelDate(v.end):v.preview?du
 function duelScoreTxt(v,side){ if(!side)return '—';
   if(v.type==='ret')return side.score==null?'—':(side.score>=0?'+':'')+(side.score*100).toFixed(1)+'%';
   if(v.type==='survive')return side.out?'Out':'In';
+  if(side.out&&v.ddCap)return 'Out';
   if(side.score==null)return '—';
   return String(side.score)+(v.type==='xp'?'':''); }
 // what the winner takes: the league's bonus (for a duel played to the end) and the other side's stake
@@ -717,8 +742,25 @@ function duelPrize(v){ const bonus=(SOC.cache.duels&&SOC.cache.duels.d&&SOC.cach
   return v.stake?'You each put up '+v.stake+' XP: the winner takes the other’s'+(bonus?', plus +'+bonus+' XP from the league':'')+'. A draw gives both back.'
     :bonus?'Winner gets +'+bonus+' XP.':'The win goes on your record.'; }
 function duelTerms(v){ const c=[]; if(v.stake)c.push(v.stake+' XP each at stake');
-  if(v.minDays)c.push(v.minDays+'+ trading days each'); if(v.verified)c.push('verified from fills'); if(v.ddCap)c.push('drawdown cap '+Math.round(v.ddCap*100)+'%');
+  if(v.minDays)c.push(v.minDays+'+ trading days each'); if(v.verified)c.push('verified from fills'); if(v.ddCap)c.push(duelDdTxt(v));
   return c.join(' · '); }
+// the drawdown rule in words: "out past 15% drawdown", or what it costs under the penalty rule
+function duelDdTxt(v){ const p=Math.round(v.ddCap*100);
+  return v.ddMode==='penalty'&&['disc','ret'].includes(v.type)?'past '+p+'% drawdown: −'+(v.penalty||2)+(v.type==='ret'?' points of return':' points')+' per 1%':'out past '+p+'% drawdown'; }
+// the drawdown rule when setting up a duel or a group duel: % return always has a cap (pick it); any other
+// kind can carry one when the league allows it. attr: the button's data attribute; fmt: 'duel' | 'pod'
+function socDdHtml(st,d,attr,fmt){
+  const R=d.risk||{caps:[10,15,20,25],duel:'out',pod:'out',penalty:2}, mode=R[fmt]||'out', ret=st.type==='ret';
+  if(!ret&&mode==='off')return '';
+  const opts=(ret?[]:[0]).concat((R.caps||[]).map(c=>c/100)); if(st.ddCap&&!opts.includes(st.ddCap)){ opts.push(st.ddCap); opts.sort((a,b)=>a-b); }
+  const pen=mode==='penalty'&&['disc','ret'].includes(st.type);
+  const desc=(pen?'Past it, '+(R.penalty||2)+(ret?' points of return':' Discipline points')+' come off for every 1% over':'Go past it at any point and you lose outright')+(ret?'':'. Everyone needs “Show % return” on, with a wallet.');
+  return `<div class="pz-toggle" style="flex-wrap:wrap"><span style="flex:1;min-width:180px"><b>${ret?'Drawdown cap':'Drawdown rule'}</b><span>${esc(desc)}</span></span><span class="pz-seg" style="flex-wrap:wrap">${opts.map(v=>`<button type="button" ${attr}="${v}" aria-pressed="${(st.ddCap||0)===v}">${v?Math.round(v*100)+'%':'Off'}</button>`).join('')}</span></div>`; }
+// % return: the trading days default to the league's number (a month), three fifths of it (a week)
+function socRetMinSet(st){ if(st.type!=='ret')return; const d=SOC.cache.duels&&SOC.cache.duels.d, n=+(d&&d.risk&&d.risk.minDays)||5;
+  st.minDays=st.period==='month'?Math.min(20,Math.max(1,n)):Math.min(5,Math.max(1,Math.ceil(n*3/5))); }
+// % return starts on the league's second preset (or its first)
+function socDdDefault(st,d){ if(st.type==='ret'&&!st.ddCap){ const c=((d.risk&&d.risk.caps)||[10,15]); st.ddCap=(c[1]||c[0])/100; } }
 // the day-by-day marks, one row per side
 function duelMarks(v){
   const s=v.start, e=v.end; if(!s)return '';
@@ -792,7 +834,7 @@ function socDuelsHtml(D){
         ${L?`<div class="pz-kvrow"><span>${L.me.n>0?`Rating <b style="font-family:var(--pz-num);font-size:20px;color:${PZ_COL.xp}">${L.me.r}</b>`:'<span class="pz-sub" style="font-size:13px">Your rating starts at 1000 after your first duel.</span>'}</span><span class="pz-sub" style="font-size:12px">${L.me.rank?'#'+L.me.rank+' on the ladder':L.me.n<L.min?L.me.n+' of '+L.min+' duels to join the ladder':'not listed'}${L.me.gain?' · '+(L.me.gain>0?'+':'')+L.me.gain+' this season':''}</span></div>`:''}
         <div class="pz-kvrow" style="gap:8px"><input id="duelWho" aria-label="Name to challenge" placeholder="@name to challenge" autocomplete="off" style="flex:1;min-width:0;font-family:inherit"><button type="button" class="pz-cta" id="duelGo" style="width:auto;padding:0 18px">Challenge</button></div>
         ${socDuelPeopleHtml(d)}<a class="pz-link" href="#people/duels" style="min-height:0;align-self:flex-start">Find someone to duel ${pzI('chev',14)}</a>
-        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Daruma from your fills and your app. ${d.stakes?(d.room>0?'You can put XP on it (never money): up to '+d.room+' XP. ':'You can put XP on it (never money) once you’ve earned some. '):'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
+        <p class="pz-fine" style="margin:0">Anyone in the league can be challenged: type their name, pick someone above, or open a profile from a leaderboard. Duels are scored by Daruma from your fills and your app. ${d.stakes?(d.room>0?'You can put XP on it (never money): up to '+d.room+' XP. Stakes move your stake balance, never your level. ':'You can put XP on it (never money) once you’ve earned some. '):'No money is ever staked. '}${d.xp?'A duel played to the end gives the winner +'+d.xp+' XP.':''}${d.accepting?'':' You’re not taking challenges (switched off under <a href="#sharing">Profile & privacy</a>).'}</p>
         ${d.podOn?`<a class="pz-ghost" href="#podnew">${pzI('medal',16)} Group duel: 3 to ${d.podMax} people</a>`:''}</section>
       ${grp('Waiting for you',inv)}${grp('Running',act)}${grp('Sent',sent)}</div>
     <div class="pz-col">${L?socLadderHtml(d):''}${grp('Finished',done)}${grp('Didn’t happen',other)}${!d.duels.length&&!P.length?'<section class="pz-card"><p class="pz-sub" style="margin:0">No duels yet. Challenge someone to a week of clean trading.</p></section>':''}</div></div>`;
@@ -814,8 +856,9 @@ function socDuelNewHtml(D, handle){
   const lock=pzLocked('duels',D.g.level.level); if(lock)return back+pzLockedHtml('Duels',lock,D.g);
   const c=socDuels(), d=c&&c.d, w=socGet('dw:'+handle.toLowerCase(),'/duels/with/'+encodeURIComponent(handle),30000), x=w&&w.d;
   if(!d||!x)return `${back}<p class="pz-sub">${(w&&w.err)||(c&&c.err)?esc((w&&w.err)||c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const o=x.other, st=pzS.duel&&pzS.duel.h===o.handle?pzS.duel:(pzS.duel={h:o.handle,type:(d.types[0]||{}).type,period:'week',verified:!!(x.me.verified&&o.verified),minDays:3,ddCap:0.08,stake:0}); // verified by default only when both can be
+  const o=x.other, st=pzS.duel&&pzS.duel.h===o.handle?pzS.duel:(pzS.duel={h:o.handle,type:(d.types[0]||{}).type,period:'week',verified:!!(x.me.verified&&o.verified),minDays:3,ddCap:null,stake:0}); // verified by default only when both can be
   if(!d.types.some(t=>t.type===st.type))st.type=(d.types[0]||{}).type;
+  socDdDefault(st,d);
   const T=d.types.find(t=>t.type===st.type)||{}, verifiable=['disc','clean','survive'].includes(st.type), counter=pzS.duelCounter&&pzS.duelCounter.h===o.handle?pzS.duelCounter.id:null;
   // when answering with new terms, their room still holds the stake they proposed; it's freed by this answer
   const held=counter?((d.duels.find(v=>v.id===counter)||{}).stake||0):0, theirRoom=x.room==null?null:x.room+held;
@@ -824,6 +867,7 @@ function socDuelNewHtml(D, handle){
     :verifiable&&st.verified&&!x.me.verified?'Switch on “Verify my discipline” under Profile & privacy, or turn verification off for this duel.'
     :verifiable&&st.verified&&!o.verified?'@'+o.handle+' hasn’t switched on “Verify my discipline”. Turn verification off for this duel, or pick another kind.'
     :st.type==='ret'&&!(x.me.ret&&o.ret)?'Both of you need “Show % return” switched on for a % return duel.'
+    :st.ddCap&&!(x.me.ret&&o.ret)?'Both of you need “Show % return” switched on (with a wallet) for a drawdown rule. Turn the rule off, or pick someone who shares returns.'
     :st.stake&&st.stake>stakeMax?'You can put up at most '+stakeMax+' XP'+(theirRoom!=null&&theirRoom<x.me.room?' (what @'+o.handle+' can cover)':'')+'.':'';
   const pv=st.period==='month'?d.monthPreview:d.weekPreview, h2=x.h2h;
   return `${back}${pzHead(counter?'Suggest different terms':'One on one','Challenge @'+esc(o.handle))}
@@ -833,12 +877,12 @@ function socDuelNewHtml(D, handle){
     <div><span class="pz-lbl" style="color:var(--pz-muted)">When</span><div class="pz-seg" style="margin-top:6px">${[['week','A week · '+duelDate(d.weekPreview.start)+'–'+duelDate(d.weekPreview.end)],['month','A month · '+new Date(d.monthPreview.start+'T12:00:00Z').toLocaleDateString('en-US',{month:'long',timeZone:'UTC'})]].map(([k,l])=>`<button type="button" data-duel-period="${k}" aria-pressed="${st.period===k}">${esc(l)}</button>`).join('')}</div>
       <p class="pz-fine" style="margin:6px 0 0">It starts on the next Monday (or the 1st) after it’s accepted, so nobody gets a head start.</p></div>
     <div><span class="pz-lbl" style="color:var(--pz-muted)">Conditions</span>
-      ${st.type==='disc'?`<div class="pz-toggle"><span style="flex:1"><b>At least ${st.minDays} trading day${st.minDays===1?'':'s'} each</b><span>So nobody wins by not trading</span></span><span style="display:flex;gap:6px"><button type="button" class="pz-chipbtn" data-duel-min="-1" aria-label="Fewer">−</button><button type="button" class="pz-chipbtn" data-duel-min="1" aria-label="More">+</button></span></div>`:''}
+      ${st.type==='disc'||st.type==='ret'?`<div class="pz-toggle"><span style="flex:1"><b>At least ${st.minDays} trading day${st.minDays===1?'':'s'} each</b><span>So nobody wins by not trading</span></span><span style="display:flex;gap:6px"><button type="button" class="pz-chipbtn" data-duel-min="-1" aria-label="Fewer">−</button><button type="button" class="pz-chipbtn" data-duel-min="1" aria-label="More">+</button></span></div>`:''}
       ${verifiable?`<div class="pz-toggle"><span style="flex:1"><b id="duelVerLbl">Verified from fills</b><span>Scored from both wallets’ public fills, not what the apps report</span></span><button type="button" role="switch" class="pz-switch" data-duel-verified="1" aria-labelledby="duelVerLbl" aria-checked="${!!st.verified}"><i></i></button></div>`:''}
-      ${st.type==='ret'?`<div class="pz-toggle"><span style="flex:1"><b>Drawdown cap</b><span>Going past it loses outright</span></span><span class="pz-seg">${[0.05,0.08,0.1,0.15].map(v=>`<button type="button" data-duel-dd="${v}" aria-pressed="${st.ddCap===v}">${v*100}%</button>`).join('')}</span></div>`:''}
+      ${socDdHtml(st,d,'data-duel-dd','duel')}
       ${d.stakes?socDuelStakeHtml(st,stakeMax,d):''}
       <label class="pz-sub" for="duelMsg" style="display:block;margin-top:8px;font-size:12px">Message (optional)</label><input id="duelMsg" maxlength="140" placeholder="Loser buys coffee" autocomplete="off"></div>
-    <div class="pz-quote">${esc(T.label||'')} · ${esc(duelDate(pv.start))} – ${esc(duelDate(pv.end))}. ${esc(T.rule||'')}${st.type==='disc'?' At least '+st.minDays+' trading days each.':''}${verifiable&&st.verified?' Verified from fills.':''}${st.type==='ret'?' Drawdown cap '+Math.round(st.ddCap*100)+'%.':''} ${esc(duelPrize({stake:st.stake}))}</div>
+    <div class="pz-quote">${esc(T.label||'')} · ${esc(duelDate(pv.start))} – ${esc(duelDate(pv.end))}. ${esc(T.rule||'')}${st.type==='disc'||st.type==='ret'?' At least '+st.minDays+' trading days each.':''}${verifiable&&st.verified?' Verified from fills.':''}${st.ddCap?' '+esc(duelDdTxt({ddCap:st.ddCap,type:st.type,ddMode:(d.risk||{}).duel,penalty:(d.risk||{}).penalty})).replace(/^./,c=>c.toUpperCase())+'.':''} ${esc(duelPrize({stake:st.stake}))}</div>
     ${why?`<p class="pz-sub pz-err" style="margin:0;font-size:13px">${esc(why)}</p>`:''}
     <button type="button" class="pz-cta" id="duelSend"${why?' disabled':''}>${counter?'Send these terms back':'Send challenge'}</button></section></div></div>`;
 }
@@ -869,15 +913,17 @@ function socPodCardHtml(v, compact){
   const head=`<div class="pz-kvrow"><b style="font-size:15px">${pzI(DUEL_IC[v.type]||'medal',16)} ${esc(v.label)} · group</b><span class="pz-sub" style="font-size:12px">${esc(duelWhen(v))}</span></div>`;
   const hrs=v.exp?Math.max(1,Math.round((v.exp-Date.now())/3600000)):0, inN=v.members.filter(m=>m.st==='in').length;
   const faces=`<div class="pz-podfaces">${v.members.filter(m=>['in','invited','out'].includes(m.st)).map(m=>`<span class="pz-podface${m.st==='in'?'':' wait'}" data-pz-tip="${esc((m.me?'You':'@'+m.handle)+(m.st==='in'?' · in':' · not answered yet'))}">${socAv(m.handle,30)}<i>${m.me?'you':esc(m.handle)}</i></span>`).join('')}</div>`;
-  const btn=(act,lbl,cls)=>`<button type="button" class="${cls||'pz-linkbtn'}" data-pod-act="${act}" data-id="${v.id}"${cls?'':' style="align-self:flex-start"'}>${lbl}</button>`;
+  const btn=(act,lbl,cls)=>`<button type="button" class="${cls||'pz-linkbtn'}" data-pod-act="${act}" data-id="${v.id}"${act==='accept'&&v.pot?` data-buyin="${v.pot.buyIn}"`:''}${act==='leave'&&v.pot?' data-pot="1"':''}${cls?'':' style="align-self:flex-start"'}>${lbl}</button>`;
+  const potL=socPotLine(v.pot);
   if((v.status==='pending'||v.status==='active')&&v.my==='invited') return `<section class="pz-card pz-duel">${head}
     <div class="pz-kvrow" style="justify-content:flex-start;gap:10px">${socAv(v.by,36)}<span><b>@${esc(v.by)}</b> invited you to a group duel<span class="pz-sub" style="display:block;font-size:12px">${esc(v.period==='month'?'A month':'A week')} · answer within ${hrs}h</span></span></div>
     ${v.msg?`<div class="pz-quote">“${esc(v.msg)}”</div>`:''}${faces}
-    <p class="pz-sub" style="margin:0;font-size:13px">${esc(v.rule)}${v.verified?' Verified from fills.':''} It starts once 3 are in.</p>
-    <div class="pz-grid2">${btn('decline','Decline','pz-ghost')}${btn('accept','Accept','pz-cta')}</div></section>`;
-  if(v.status==='pending') return `<section class="pz-card pz-duel">${head}<span>Waiting for answers: <b>${inN} in</b>, 3 needed<span class="pz-sub" style="display:block;font-size:12px">${hrs}h left · ${esc(v.rule)}</span></span>${faces}
+    <p class="pz-sub" style="margin:0;font-size:13px">${esc(v.rule)}${v.verified?' Verified from fills.':''}${v.ddCap?' '+esc(duelDdTxt(v)).replace(/^./,c=>c.toUpperCase())+'.':''} It starts once 3 are in.</p>
+    ${potL}${v.pot?`<p class="pz-fine" style="margin:0">${esc(socLoseLine(v.pot.buyIn))}</p>`:''}
+    <div class="pz-grid2">${btn('decline','Decline','pz-ghost')}${btn('accept',v.pot?'Accept · '+v.pot.buyIn+' XP':'Accept','pz-cta')}</div></section>`;
+  if(v.status==='pending') return `<section class="pz-card pz-duel">${head}<span>Waiting for answers: <b>${inN} in</b>, 3 needed<span class="pz-sub" style="display:block;font-size:12px">${hrs}h left · ${esc(v.rule)}</span></span>${faces}${potL}
     ${compact?'':v.mine?btn('cancel','Call it off'):''}</section>`;
-  if(v.status==='active'&&!v.lead&&!v.why) return `<section class="pz-card pz-duel">${head}<span>Starts ${esc(duelDate(v.start))} · <b>${inN} in</b><span class="pz-sub" style="display:block;font-size:12px">${esc(v.rule)}</span></span>${faces}
+  if(v.status==='active'&&!v.lead&&!v.why) return `<section class="pz-card pz-duel">${head}<span>Starts ${esc(duelDate(v.start))} · <b>${inN} in</b><span class="pz-sub" style="display:block;font-size:12px">${esc(v.rule)}</span></span>${faces}${potL}
     ${compact?'':v.mine?btn('cancel','Call it off'):v.my==='in'?btn('leave','Back out (it won’t count)'):''}</section>`;
   if(v.status==='active'||v.status==='done'){
     const done=v.status==='done', r=v.result||{}, ppl=v.members.filter(m=>m.place);
@@ -886,7 +932,7 @@ function socPodCardHtml(v, compact){
       :`<div class="pz-dlead">${v.leadMe?'You lead':v.lead?'@'+esc(v.lead)+' leads':'Level'}<span class="pz-sub"> · ${esc(v.why||'')}</span></div>`;
     const rows=(compact?ppl.slice(0,4):ppl).map(m=>`<li class="pz-li${m.me?' me':''}"><span class="pz-rank${m.place===1?' top':''}">${m.place}</span>${socAv(m.handle,30)}<span class="pz-who"><b>${m.me?'You':'@'+esc(m.handle)}</b><span${m.out?' style="color:var(--pz-err-t)"':''}>${esc(m.note||'')}</span></span><span class="pz-val">${esc(duelScoreTxt(v,m))}</span></li>`).join('');
     return `<section class="pz-card pz-duel"><div class="pz-kvrow"><b style="font-size:15px">${pzI(DUEL_IC[v.type]||'medal',16)} ${esc(v.label)} · group of ${ppl.length}</b><span class="pz-sub" style="font-size:12px">${done?esc(duelWhen(v)):esc(left)}</span></div>
-      ${banner}<ol class="pz-list pz-dlad" aria-label="Standings">${rows}</ol>
+      ${banner}${potL}<ol class="pz-list pz-dlad" aria-label="Standings">${rows}</ol>
       ${!done&&v.members.some(m=>m.me&&m.missing)?'<p class="pz-fine" style="margin:0">Your days count once “Verify my discipline” is on.</p>':''}
       ${done?'':compact?`<a class="pz-link" href="#duels" style="min-height:0;align-self:flex-start">Details ›</a>`:v.my==='in'?btn('leave','Leave (you’ll place last)'):''}</section>`;
   }
@@ -899,10 +945,13 @@ function socPodNewHtml(D){
   const c=socDuels(), d=c&&c.d;
   if(!d)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   if(!d.on||!d.podOn||!d.podTypes)return `${back}${pzHead('Duels','Group duel')}<section class="pz-card"><p class="pz-sub">Group duels are switched off in this league.</p></section>`;
-  const st=pzS.pod||(pzS.pod={type:(d.podTypes[0]||{}).type,period:'week',verified:false,minDays:3,pick:[]});
+  const st=pzS.pod||(pzS.pod={type:(d.podTypes[0]||{}).type,period:'week',verified:false,minDays:3,ddCap:null,buyIn:0,pay:'wta',pick:[]});
   if(!d.podTypes.some(t=>t.type===st.type))st.type=(d.podTypes[0]||{}).type;
+  socDdDefault(st,d);
   const T=d.podTypes.find(t=>t.type===st.type)||{}, verifiable=['disc','clean','survive'].includes(st.type), max=d.podMax-1, n=st.pick.length, pv=st.period==='month'?d.monthPreview:d.weekPreview;
-  const why=d.open>=d.maxOpen?'You have '+d.maxOpen+' duels going already. Finish one first.':n<2?'Pick at least 2 people.':n>max?'Pick at most '+max+' people.':'';
+  const P=d.pots||{}, selfRep=!(st.verified||st.type==='ret'), buyMax=Math.min(P.podMaxBuyIn||0,P.potRoom||0,selfRep?(P.selfMax!=null?P.selfMax:100):Infinity);
+  const why=d.open>=d.maxOpen?'You have '+d.maxOpen+' duels going already. Finish one first.':n<2?'Pick at least 2 people.':n>max?'Pick at most '+max+' people.'
+    :st.buyIn>buyMax?'You can put up at most '+buyMax+' XP here'+(selfRep&&st.buyIn<=(P.podMaxBuyIn||0)?' (the app reports this measure itself; verify it from fills for more)':'')+'.':'';
   return `${back}${pzHead('3 to '+d.podMax+' people','Group duel')}
   <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:14px">
     <div><span class="pz-lbl" style="color:var(--pz-muted)">Who (${n} picked)</span>${socDuelPeopleHtml(d,st.pick)}
@@ -910,15 +959,27 @@ function socPodNewHtml(D){
       ${n?`<div class="pz-pchips" style="margin-top:8px">${st.pick.map(h=>`<button type="button" class="pz-pchip" data-pod-pick="${esc(h)}" aria-label="${esc('Remove @'+h)}">@${esc(h)} ×</button>`).join('')}</div>`:''}</div>
     <div><span class="pz-lbl" style="color:var(--pz-muted)">Compete on</span><div class="pz-dtypes">${d.podTypes.map(t=>`<button type="button" class="pz-dtype" data-pod-type="${t.type}" aria-pressed="${t.type===st.type}">${pzI(DUEL_IC[t.type]||'medal',16)}<b>${esc(t.label)}</b><span>${esc(t.rule)}</span></button>`).join('')}</div></div>
     <div><span class="pz-lbl" style="color:var(--pz-muted)">When</span><div class="pz-seg" style="margin-top:6px">${[['week','A week'],['month','A month']].map(([k,l])=>`<button type="button" data-pod-period="${k}" aria-pressed="${st.period===k}">${l}</button>`).join('')}</div></div>
-    ${st.type==='disc'||verifiable?`<div>${st.type==='disc'?`<div class="pz-toggle"><span style="flex:1"><b>At least ${st.minDays} trading day${st.minDays===1?'':'s'} each</b><span>So nobody wins by not trading</span></span><span style="display:flex;gap:6px"><button type="button" class="pz-chipbtn" data-pod-min="-1" aria-label="Fewer">−</button><button type="button" class="pz-chipbtn" data-pod-min="1" aria-label="More">+</button></span></div>`:''}
+    ${socDdHtml(st,d,'data-pod-dd','pod')}
+    ${st.type==='disc'||st.type==='ret'||verifiable?`<div>${st.type==='disc'||st.type==='ret'?`<div class="pz-toggle"><span style="flex:1"><b>At least ${st.minDays} trading day${st.minDays===1?'':'s'} each</b><span>So nobody wins by not trading</span></span><span style="display:flex;gap:6px"><button type="button" class="pz-chipbtn" data-pod-min="-1" aria-label="Fewer">−</button><button type="button" class="pz-chipbtn" data-pod-min="1" aria-label="More">+</button></span></div>`:''}
       ${verifiable?`<div class="pz-toggle"><span style="flex:1"><b id="podVerLbl">Verified from fills</b><span>Everyone needs “Verify my discipline” on</span></span><button type="button" role="switch" class="pz-switch" data-pod-verified="1" aria-labelledby="podVerLbl" aria-checked="${!!st.verified}"><i></i></button></div>`:''}</div>`:''}
+    ${P.pods?socPodPotHtml(st,P,buyMax,n):''}
     <div><label class="pz-sub" for="podMsg" style="display:block;font-size:12px">Message (optional)</label><input id="podMsg" maxlength="140" placeholder="Last one standing buys lunch" autocomplete="off"></div>
-    <div class="pz-quote">${esc(T.label||'')} · ${esc(duelDate(pv.start))} – ${esc(duelDate(pv.end))} if 3 of you are in by then. ${esc(T.rule||'')} ${d.xp?'Winner gets +'+d.xp+' XP.':''}</div>
+    <div class="pz-quote">${esc(T.label||'')} · ${esc(duelDate(pv.start))} – ${esc(duelDate(pv.end))} if 3 of you are in by then. ${esc(T.rule||'')}${st.ddCap&&st.type!=='ret'?' '+esc(duelDdTxt({ddCap:st.ddCap,type:st.type,ddMode:(d.risk||{}).pod,penalty:(d.risk||{}).penalty})).replace(/^./,c=>c.toUpperCase())+'.':st.ddCap?' Cap: '+Math.round(st.ddCap*100)+'%.':''} ${d.xp?'Winner gets +'+d.xp+' XP.':''}</div>
     ${why?`<p class="pz-sub pz-err" style="margin:0;font-size:13px">${esc(why)}</p>`:''}
     <button type="button" class="pz-cta" id="podSend"${why?' disabled':''}>Send invites</button>
     <p class="pz-fine" style="margin:0">They have 48 hours to answer. It doesn’t change your ladder rating.</p></section></div></div>`;
 }
 
+// the pot on a group duel: a buy-in everyone puts up, and who gets paid
+function socPodPotHtml(st,P,max,n){
+  const opts=[0,25,50,100,250,500,1000].filter(v=>v<=(P.podMaxBuyIn||0)), field=n+1, gross=st.buyIn*field, burned=Math.floor(gross*(P.burnPct||0)/100);
+  return `<div class="pz-toggle" style="flex-wrap:wrap"><span style="flex:1;min-width:180px"><b>Buy-in</b><span>${max?'Everyone puts up the same XP (never money). Up to '+max+' XP here.':'Nothing to put up yet: you can stake once you’ve earned some XP.'}</span></span>
+    <span class="pz-seg" style="flex-wrap:wrap">${opts.map(v=>`<button type="button" data-pod-buy="${v}" aria-pressed="${(st.buyIn||0)===v}"${v>max&&v!==(st.buyIn||0)?' disabled':''}>${v?v+' XP':'None'}</button>`).join('')}</span></div>
+    ${st.buyIn?`<div class="pz-toggle" style="flex-wrap:wrap"><span style="flex:1;min-width:180px"><b>Who gets paid</b><span>${st.pay==='surv'?'Everyone still in it at the end shares the pot equally.':st.pay==='top2'?'70% to first, 30% to second.':'The winner takes the whole pot.'} If nobody qualifies, everyone gets their buy-in back.</span></span>
+      <span class="pz-seg" style="flex-wrap:wrap">${(P.pays||[]).map(x=>`<button type="button" data-pod-pay="${x.k}" aria-pressed="${st.pay===x.k}">${esc(x.label)}</button>`).join('')}</span></div>
+    <p class="pz-sub" style="margin:0;font-size:12.5px;color:${PZ_COL.xp}">Pot with everyone in: ${(gross-burned).toLocaleString()} XP (${field} × ${st.buyIn}${burned?', '+(P.burnPct)+'% burned':''})</p>
+    <p class="pz-fine" style="margin:0">${esc(socLoseLine(st.buyIn))}</p>`:''}`;
+}
 // ---- actions ----
 // ---- Find people: duel, partner with, or learn from anyone on this server, no shared league needed ----
 const SOC_PEOPLE_F=[['','Everyone'],['duels','Open to duels'],['partner','Looking for a partner'],['mentor','Mentors']];
@@ -1071,11 +1132,11 @@ async function socAction(t){
       const r=await socFetch('/me',{method:'PUT',body:JSON.stringify(body)}); if(r.me)SOC.me=r.me; socMDrop();
       done('Saved. '+(SOC.me.mentorRate?'You charge '+SOC.me.mentorRate+' XP a reviewed trade':'Your reviews are free')+', '+SOC.me.mentorSlots+' mentee'+(SOC.me.mentorSlots===1?'':'s')+' at once.'); return true; }
     // duels
-    if(ds.duelType){ pzS.duel.type=ds.duelType; pzRender(); return true; }
-    if(ds.duelPeriod){ pzS.duel.period=ds.duelPeriod; pzRender(); return true; }
+    if(ds.duelType){ if(pzS.duel.type==='ret'&&ds.duelType!=='ret')pzS.duel.ddCap=null; pzS.duel.type=ds.duelType; socRetMinSet(pzS.duel); pzRender(); return true; }
+    if(ds.duelPeriod){ pzS.duel.period=ds.duelPeriod; socRetMinSet(pzS.duel); pzRender(); return true; }
     if(ds.duelVerified){ pzS.duel.verified=!pzS.duel.verified; pzRender(); return true; }
     if(ds.duelMin){ pzS.duel.minDays=Math.max(1,Math.min(pzS.duel.period==='month'?20:5,(pzS.duel.minDays||3)+(+ds.duelMin))); pzRender(); return true; }
-    if(ds.duelDd){ pzS.duel.ddCap=+ds.duelDd; pzRender(); return true; }
+    if(ds.duelDd!=null){ pzS.duel.ddCap=+ds.duelDd||null; pzRender(); return true; }
     if(ds.duelStake!=null){ pzS.duel.stake=+ds.duelStake||0; pzRender(); return true; }
     if(t.id==='duelGo'){ const h=(($('duelWho')||{value:''}).value||'').trim().replace(/^@/,''); if(!/^[A-Za-z0-9_]{3,20}$/.test(h)){ pzNote('Type their name, like @nora_fx.','err'); return true; }
       pzS.duelCounter=null; location.hash='#duel/'+h; return true; }
@@ -1089,8 +1150,11 @@ async function socAction(t){
       location.hash='#duels'; done(counter?'Sent back to @'+st.h+'.':'Challenge sent to @'+st.h+'. They have 48 hours to answer.'); return true; }
     // group duels and the ladder
     if(ds.ladTab){ pzS.ladTab=ds.ladTab; pzRender(); return true; }
-    if(ds.podType&&pzS.pod){ pzS.pod.type=ds.podType; pzRender(); return true; }
-    if(ds.podPeriod&&pzS.pod){ pzS.pod.period=ds.podPeriod; pzS.pod.minDays=Math.min(pzS.pod.minDays,ds.podPeriod==='month'?20:5); pzRender(); return true; }
+    if(ds.podType&&pzS.pod){ if(pzS.pod.type==='ret'&&ds.podType!=='ret')pzS.pod.ddCap=null; pzS.pod.type=ds.podType; socRetMinSet(pzS.pod); pzRender(); return true; }
+    if(ds.podDd!=null&&pzS.pod){ pzS.pod.ddCap=+ds.podDd||null; pzRender(); return true; }
+    if(ds.podBuy!=null&&pzS.pod){ pzS.pod.buyIn=+ds.podBuy||0; pzRender(); return true; }
+    if(ds.podPay&&pzS.pod){ pzS.pod.pay=ds.podPay; pzRender(); return true; }
+    if(ds.podPeriod&&pzS.pod){ pzS.pod.period=ds.podPeriod; pzS.pod.minDays=Math.min(pzS.pod.minDays,ds.podPeriod==='month'?20:5); socRetMinSet(pzS.pod); pzRender(); return true; }
     if(ds.podVerified&&pzS.pod){ pzS.pod.verified=!pzS.pod.verified; pzRender(); return true; }
     if(ds.podMin&&pzS.pod){ pzS.pod.minDays=Math.max(1,Math.min(pzS.pod.period==='month'?20:5,(pzS.pod.minDays||3)+(+ds.podMin))); pzRender(); return true; }
     if((ds.podPick||t.id==='podAdd')&&pzS.pod){ const h=ds.podPick||(($('podWho')||{value:''}).value||'').trim().replace(/^@/,''), L=pzS.pod.pick, i=L.findIndex(x=>x.toLowerCase()===h.toLowerCase());
@@ -1100,18 +1164,19 @@ async function socAction(t){
       const el=$('podWho'); if(el&&!ds.podPick)el.value=''; pzRender(); return true; }
     if(t.id==='podSend'&&pzS.pod){ const st=pzS.pod, msg=(($('podMsg')||{value:''}).value||'').trim();
       t.disabled=true;
-      try{ await socFetch('/pods',{method:'POST',body:JSON.stringify({to:st.pick,type:st.type,period:st.period,verified:st.verified,minDays:st.minDays,msg})}); }
+      try{ await socFetch('/pods',{method:'POST',body:JSON.stringify({to:st.pick,type:st.type,period:st.period,verified:st.verified,minDays:st.minDays,ddCap:st.ddCap,buyIn:st.buyIn||0,pay:st.pay,msg})}); }
       finally{ t.disabled=false; }
       pzS.pod=null; delete SOC.cache.duels; location.hash='#duels'; done('Invites sent. It starts once 3 of you are in.'); return true; }
     if(ds.podAct){ const a=ds.podAct;
+      if(a==='accept'&&ds.buyin&&!confirm('Put up '+ds.buyin+' XP to join?\n\n'+socLoseLine(+ds.buyin)+'\n\nBack out before it starts and you get it back.'))return true;
       if(a==='decline'&&!confirm('Decline this group duel?'))return true;
       if(a==='cancel'&&!confirm('Call off this group duel? Nobody wins or loses.'))return true;
-      if(a==='leave'&&!confirm(t.textContent.includes('won’t count')?'Back out? It hasn’t started, so it won’t count.':'Leave this group duel? You’ll be placed last.'))return true;
+      if(a==='leave'&&!confirm(t.textContent.includes('won’t count')?'Back out? It hasn’t started, so it won’t count'+(t.dataset.pot?' and your buy-in comes back.':'.'):'Leave this group duel? You’ll be placed last'+(t.dataset.pot?' and your buy-in stays in the pot.':'.')))return true;
       const r=await socFetch('/pods/'+encodeURIComponent(ds.id),{method:'POST',body:JSON.stringify({action:a})}); delete SOC.cache.duels;
       done(a==='accept'?(r.pod.status==='active'?'You’re in. It runs '+duelWhen(r.pod)+'.':'You’re in. It starts once 3 are in.'):a==='decline'?'Declined.':a==='cancel'?'Called off.':'You left.'); return true; }
     if(ds.duelAct){ const a=ds.duelAct, id=ds.id;
       if(a==='counter'||a==='rematch'){ const v=((SOC.cache.duels&&SOC.cache.duels.d&&SOC.cache.duels.d.duels)||[]).find(x=>x.id===id);
-        if(v)pzS.duel={h:v.other.handle,type:v.type,period:v.period,verified:v.verified,minDays:v.minDays||3,ddCap:v.ddCap||0.08,stake:v.stake||0};
+        if(v)pzS.duel={h:v.other.handle,type:v.type,period:v.period,verified:v.verified,minDays:v.minDays||3,ddCap:v.ddCap||null,stake:v.stake||0};
         pzS.duelCounter=a==='counter'?{id,h:ds.h}:null; location.hash='#duel/'+ds.h; return true; }
       const fv=((SOC.cache.duels&&SOC.cache.duels.d&&SOC.cache.duels.d.duels)||[]).find(x=>x.id===id)||{};
       if(a==='forfeit'&&!confirm(ds.early?'Back out of this duel? It hasn’t started, so it won’t count either way.':'Forfeit this duel? The other side wins'+(fv.stake?' and takes your '+fv.stake+' XP stake.':'.')))return true;
@@ -1151,6 +1216,7 @@ async function socAction(t){
     if(ds.socDraft){ SOC.draft=SOC.draft||{...(SOC.share||SOC_DEFAULT_SHARE)}; SOC.draft[ds.socDraft]=!SOC.draft[ds.socDraft]; t.setAttribute('aria-checked',String(SOC.draft[ds.socDraft])); return true; }
     if(ds.socKudos){ const r=await socFetch('/kudos/'+encodeURIComponent(ds.socKudos),{method:'POST'}); t.setAttribute('aria-pressed',String(r.liked)); t.setAttribute('aria-label','Kudos, '+r.kudos); t.lastChild.textContent=r.kudos; socStale(); return true; }
     if(ds.socFollow){ const on=ds.on==='1'; await socFetch('/follow/'+encodeURIComponent(ds.socFollow),{method:on?'DELETE':'POST'}); done(on?'Unfollowed.':'Following @'+ds.socFollow+'. Their milestones show up in your feed.'); return true; }
+    if(ds.socJoin&&ds.buyin&&!confirm('Put up '+ds.buyin+' XP to join?\n\n'+socLoseLine(+ds.buyin)+'\n\nBack out before it starts and you get it back.'))return true;
     if(ds.socJoin){ await socFetch('/competitions/'+encodeURIComponent(ds.socJoin)+'/join',{method:'POST'}); done('You’re in. Good luck — play your process.'); return true; }
     if(ds.socLeave){ if(!confirm('Leave this competition?'))return true; await socFetch('/competitions/'+encodeURIComponent(ds.socLeave)+'/join',{method:'DELETE'}); done('You left the competition.'); return true; }
     if(ds.socAdopt){ await adoptHabit(socHabitSpec(ds.socAdopt)); done('Added to your habits. It’s tracked by the day journal’s “I followed the plan”.'); return true; }

@@ -28,8 +28,10 @@ try {
   const BUDGETS = [ // name, measured, raw KB, gzipped KB
     // Oct 2026: fonts moved out of the page and each screen got its own script list. Before, one page
     // carried everything: 1917 KB raw / 734 KB gzipped against 1950 / 740.
-    // Oct 2026: +50 KB raw each for the mentor directory, mentor rates and the send-to-a-mentor sheet
-    // (about 22 KB); both screens were within 3 KB of the old 1800 / 1600. Gzipped budgets unchanged.
+    // Oct 2026: the TS9 colorway (two CSS blocks) and the drawn daruma mark took the raw sizes past the
+    // old lines by a few KB; gzipped sizes barely moved (607 / 539 against 620 / 560), so only raw moves.
+    // Oct 2026: the mentor directory, rates and the send-to-a-mentor sheet (about 22 KB raw) fit under
+    // these lines: 1836 / 1636 raw, 617 / 549 gzipped.
     ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 620],
     ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
   ];
