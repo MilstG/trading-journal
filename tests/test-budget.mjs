@@ -28,10 +28,10 @@ try {
   const BUDGETS = [ // name, measured, raw KB, gzipped KB
     // Oct 2026: fonts moved out of the page and each screen got its own script list. Before, one page
     // carried everything: 1917 KB raw / 734 KB gzipped against 1950 / 740.
-    // Oct 2026: +30 KB raw each for duel drawdown rules, XP pots and the stake balance (the duel, group-duel,
-    // competition and board screens, shared by both pages); measured 1807 / 1607 against 1800 / 1600.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1830, 620],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1630, 560],
+    // Oct 2026: the TS9 colorway (two CSS blocks) and the drawn daruma mark took the raw sizes past the
+    // old lines by a few KB; gzipped sizes barely moved (607 / 539 against 620 / 560), so only raw moves.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1850, 620],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1650, 560],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

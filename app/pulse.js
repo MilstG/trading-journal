@@ -15,7 +15,7 @@ const PZ_C=2*Math.PI*52;
 // everything, SVG attributes included (CSS variables don't reach those).
 const PZ_COL_DARK={good:'#3FE0A0',mid:'#F4C04E',low:'#FF7A59',none:'#2C333C',risk:'#5AA9FF',xp:'#B69CFF'};
 const PZ_COL_LIGHT={good:'#0A9A63',mid:'#B07D05',low:'#D9481F',none:'#CDD4DD',risk:'#2F7FD8',xp:'#7656E0'};
-const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#4fd8ff'};
+const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#7dff4f'};
 const PZ_COL=new Proxy({},{get:(_,k)=>{ const c=typeof document!=='undefined'&&document.body&&document.body.classList; return (c&&c.contains('light')?PZ_COL_LIGHT:c&&c.contains('ts9')?PZ_COL_TS9:PZ_COL_DARK)[k]; }});
 const pzBand=v=>v==null?'none':v>=70?'good':v>=40?'mid':'low';
 const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'Stops written while open',stops:'Stops honored',limit:'Under the loss limit',journal:'Trades journaled'};
@@ -300,7 +300,7 @@ function pzOneThingHtml(D){
 function pzNextHtml(D){
   const g=D.g, h=tzParts(Date.now()).h, e=D.dayE||{}, traded=D.risk.trades>0||D.todayTrades.length>0;
   const checked=!!(e.sleep||e.stress||e.focus||e.plan||e.rules), reviewed=!!(e.eod&&e.eod.at), lockR=pzLocked('review',g.level.level);
-  const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
+  const card=(href,ic,col,title,sub)=>`<a class="pz-card pz-cardlink pz-nextcard" href="${href}"><span class="pz-ico" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${pzI(ic,20)}</span><span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">${title}</b><span class="pz-sub" style="font-size:12px">${sub}</span></span>${pzI('chev',18)}</a>`;
   if(!checked&&!traded)return card('#checkin','checkin',PZ_COL.risk,'Morning prep','Thirty seconds: readiness, limits and today’s rules · +'+pzXpCfg().checkin+' XP');
   if(!lockR&&!reviewed&&(traded||h>=16))return card('#review','pen',PZ_COL.good,'End-of-day review',(D.day?'Five minutes, +'+pzXpCfg().review+' XP. ':'Five minutes. ')+'One lesson, one focus for tomorrow.');
   if(D.inbox.length)return card('#journal','pen',PZ_COL.xp,D.inbox.length+' trade'+(D.inbox.length===1?'':'s')+' to journal','From the last 30 days: a rating, a setup or one line each'+(reviewed?' · today is reviewed':''));

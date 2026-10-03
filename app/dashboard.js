@@ -203,10 +203,10 @@ function renderCalendar(trades){
       const dateStr=DOWN[p.dow]+', '+MONTHS[p.mo]+' '+p.day+', '+p.y;
       const isFuture=d>today; let bg='var(--panel2)', tip=dateStr+' · no trades';
       if(o!==undefined&&proc&&proc[k]){ const sc=proc[k].score;
-        bg=sc>=70?`rgba(47,208,140,${0.3+0.55*(sc-70)/30})`:sc>=50?'rgba(201,168,92,.55)':`rgba(244,88,106,${0.35+0.5*(50-sc)/50})`;
+        bg=sc>=70?tint(themeGreen(),0.3+0.55*(sc-70)/30):sc>=50?tint(themeGold(),.55):tint(themeRed(),0.35+0.5*(50-sc)/50);
         tip=`${dateStr} · process ${sc}/100 · ${fmtUsd(o.net)} · ${o.n} trade${o.n===1?'':'s'}`; }
       else if(o!==undefined){ const inten=0.28+0.6*Math.min(1,Math.abs(o.net)/scale);
-        bg=o.net>=0?`rgba(47,208,140,${inten})`:`rgba(244,88,106,${inten})`;
+        bg=o.net>=0?tint(themeGreen(),inten):tint(themeRed(),inten);
         tip=`${dateStr} · ${fmtUsd(o.net)} · ${o.n} trade${o.n===1?'':'s'}`; }
       else if(isFuture){ bg='transparent'; }
       if(!isFuture)tip+=' · click to open this day’s journal';
@@ -240,7 +240,7 @@ function renderDowHour(trades){
     for(let h=0;h<24;h++){ const v=grid[d][h];
       if(v==null){ html+='<td class="dh-cell" style="background:var(--panel2)" aria-hidden="true"></td>'; continue; }
       const inten=0.25+0.65*Math.min(1,Math.abs(v)/mx);
-      const bg=v>=0?`rgba(47,208,140,${inten})`:`rgba(244,88,106,${inten})`;
+      const bg=v>=0?tint(themeGreen(),inten):tint(themeRed(),inten);
       html+=`<td class="dh-cell" style="background:${bg}" data-tip="${DOW[d]} ${h}:00–${h}:59 · ${esc(fmtUsd(v))} · ${cnt[d][h].n} trade${cnt[d][h].n===1?'':'s'}${cnt[d][h].w+cnt[d][h].l?' · '+Math.round(100*cnt[d][h].w/(cnt[d][h].w+cnt[d][h].l))+'% wins':''} · avg ${esc(fmtUsd(v/Math.max(1,cnt[d][h].n)))}" role="img" aria-label="${DOW[d]} ${h} o'clock, ${esc(fmtUsd(v))}"></td>`; }
     html+='</tr>'; }
   html+='</tbody></table>';
@@ -272,6 +272,10 @@ const THEMES={ ts9:{grid:'rgba(125,255,79,.08)',txt:'#93a393'}, ink:{grid:'rgba(
 const COLORWAYS=['ts9','ink','bb'];
 // the colorway's profit green, for charts that paint their own (always a 6-digit hex, so an alpha byte can follow)
 function themeGreen(){ try{ const v=getComputedStyle(document.body).getPropertyValue('--profit').trim(); if(/^#[0-9a-f]{6}$/i.test(v))return v; }catch(e){} return '#2FD08C'; }
+function themeRed(){ try{ const v=getComputedStyle(document.body).getPropertyValue('--loss').trim(); if(/^#[0-9a-f]{6}$/i.test(v))return v; }catch(e){} return '#F4586A'; }
+function themeGold(){ try{ const v=getComputedStyle(document.body).getPropertyValue('--gold').trim(); if(/^#[0-9a-f]{6}$/i.test(v))return v; }catch(e){} return '#C9A85C'; }
+// a theme colour at an alpha, for chart fills: tint(themeGreen(),.75)
+function tint(hex,a){ return 'rgba('+[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)).join(',')+','+a+')'; }
 function defaultTheme(){ const m=typeof document!=='undefined'&&document.querySelector&&document.querySelector('meta[name="default-theme"]'); const v=m&&m.getAttribute('content'); return COLORWAYS.includes(v)?v:'ts9'; }
 // Appearance (settings.appearance): dark unless chosen otherwise; 'light' by hand, or 'auto' to
 // follow the device's light/dark setting. The colorway (INK/BB) is a dark-mode choice; light replaces it.
@@ -308,7 +312,7 @@ function destroyCharts(){ Object.values(charts).forEach(c=>c&&c.destroy()); char
 const usdTip={callbacks:{label:c=>' '+fmtUsd(c.parsed.y)}};
 function scales(x={}){ return {x:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:8},...x},
   y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{callback:v=>'$'+Number(v).toLocaleString()}}};}
-const signCol=arr=>arr.map(v=>v>=0?'rgba(47,208,140,.75)':'rgba(244,88,106,.75)');
+const signCol=arr=>{ const g=tint(themeGreen(),.75), r=tint(themeRed(),.75); return arr.map(v=>v>=0?g:r); };
 // Min-max decimation for per-trade line series: each bucket of consecutive points keeps
 // its extremes (order preserved) plus the final point, so the drawn pixels are identical
 // while a 30k-trade curve ships ~1.5k points instead of 30k labels + 30k date formats.
@@ -411,7 +415,7 @@ function renderCharts(closed, allv){
   charts.side=bar('bySide',sideLabels,sideLabels.map(k=>sides[k]),{ds:{barThickness:60},groups:sideLabels.map(k=>gSide[k]),explain:'Net P&L split by direction. A big gap means you’re much better one way than the other.'});
   const w=closed.filter(t=>isWin(t.net)).length,l=closed.filter(t=>isLoss(t.net)).length,be=closed.filter(t=>isBE(t.net)).length;
   charts.dist=new Chart($('dist'),{type:'doughnut',data:{labels:['Wins','Losses','Break-even'],
-    datasets:[{data:[w,l,be],backgroundColor:['rgba(47,208,140,.85)','rgba(244,88,106,.85)','rgba(91,100,120,.6)'],borderColor:getComputedStyle(document.body).getPropertyValue('--bg').trim()||'#0A0E18',borderWidth:3}]},
+    datasets:[{data:[w,l,be],backgroundColor:[tint(themeGreen(),.85),tint(themeRed(),.85),'rgba(91,100,120,.6)'],borderColor:getComputedStyle(document.body).getPropertyValue('--bg').trim()||'#0A0E18',borderWidth:3}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'62%',interaction:{mode:'nearest',intersect:true},plugins:{legend:{position:'right',labels:{boxWidth:10,padding:12}},
       tooltip:{callbacks:{label:c=>' '+c.parsed+' '+c.label.toLowerCase()+' · '+(closed.length?Math.round(100*c.parsed/closed.length):0)+'% of trades',
         afterLabel:c=>{ const g=[closed.filter(t=>isWin(t.net)),closed.filter(t=>isLoss(t.net)),closed.filter(t=>isBE(t.net))][c.dataIndex]; const sum=g.reduce((a,t)=>a+t.net,0);
@@ -423,7 +427,7 @@ function renderCharts(closed, allv){
   const rdCanvas=$('rdist'), rdEmpty=$('rdistEmpty');
   if(rs.length){ rdEmpty.classList.add('hide'); rdCanvas.style.display='';
     charts.rdist=new Chart(rdCanvas,{type:'bar',data:{labels:buckets,
-    datasets:[{data:bc,backgroundColor:buckets.map((_,i)=>i<3?'rgba(244,88,106,.75)':'rgba(47,208,140,.75)'),borderRadius:4}]},
+    datasets:[{data:bc,backgroundColor:buckets.map((_,i)=>i<3?tint(themeRed(),.75):tint(themeGreen(),.75)),borderRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{title:c=>c[0].label+' R',label:c=>' '+c.parsed.y+' trade'+(c.parsed.y===1?'':'s')+' · '+Math.round(100*c.parsed.y/rs.length)+'% of trades with a risk set'}}},
       scales:{x:{grid:{color:GRID,drawTicks:false},border:{display:false}},y:{grid:{color:GRID,drawTicks:false},border:{display:false},ticks:{precision:0}}}}});
     explain(charts.rdist,'R = a trade’s result ÷ the risk you planned for it. Bars on the right (above 1R) are winners bigger than your risk.');
