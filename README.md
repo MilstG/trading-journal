@@ -573,10 +573,43 @@ link to join *your* league. A server upgraded from an older version imports its
 - **Leaderboards.** Weekly XP (your league), discipline (7-day average, minimum 3
   trading days, **verified**: the server recomputes each member's Discipline from
   their public fills with the app's own code, so it can't be typed in), streak, all-time XP, and — only for traders who opt in — return /
-  drawdown, % return (dropped over 25% drawdown) and dollar P&L, all over 30 days.
+  drawdown, % return (dropped over 25% drawdown) and dollar P&L. The global boards
+  read these over the last 30 days; a league's boards and its promotion read them
+  over the league's own window (its week, its month as its weeks count it, or its
+  season so far), so a weekly return league promotes on the week that closed.
 - **Competitions** (listed under Social → League), created by the owner: *Discipline* (best average process score),
   *Survivor* (never hit your daily loss limit), *Journal streak*, and *Return under a
-  drawdown cap*. Prizes are badges and bragging rights, never money.
+  drawdown cap*. Any kind can carry a drawdown cap: past it an entrant is out and
+  placed last, or under the penalty rule their score is docked. A return
+  competition can require a number of trading days before an entrant is ranked.
+  Prizes are badges and bragging rights, never money.
+- **XP pots on competitions.** The owner can give a competition a buy-in (up to
+  1,000 XP by default), an **overlay** (new XP they add, shown as guaranteed),
+  a **burn** (a share of the pot removed, up to the ceiling they set) and a
+  payout table: *top 3* (60 / 30 / 10), *winner takes all*, *top 25%* (sliding)
+  or *everyone who qualifies*. Entrants put up the buy-in when they join, so a
+  competition with one closes to new entrants when it starts; backing out
+  before the start gives it back, after the start it stays in the pot. When the
+  results are final the pot is paid (ties share the prizes for the places they
+  cover; shares meant for places nobody qualified for go to those who did). Too
+  few entrants (3 by default) or nobody qualifying, and every buy-in goes back;
+  so does removing the competition before it pays.
+- **What keeps pots fair** (Admin → Duels → XP pots). A member can have at most
+  25% of their stake balance riding at once, duels and pots together. Two
+  members can move at most 1,000 XP net between them in a calendar month,
+  across duel stakes and pots (a duel's stake is trimmed to what's
+  left; past it they can still play, without XP at stake). A measure the apps
+  report themselves (unverified Discipline, clean days or last one standing,
+  journaling, process XP, survivor) can carry at most 100 XP. A wallet takes
+  one seat in a pot, so a second profile on it can't enter twice.
+- **Drawdown rules** (Admin → Duels → Drawdown rules). The owner picks, per
+  format, what happens past a cap: *out*, a *penalty* (points per 1% over), or
+  *off* (only % return carries a cap). League money boards (return, $ P&L,
+  return / drawdown) and their promotion use a league cap (25% by default):
+  past it a member is out for the league's week (scores 0, listed last and
+  crossed out, so they're in the relegation zone), docked, or nothing happens.
+  Each league can set its own cap and rule. The server-wide boards use the
+  default. A running duel or competition keeps the rule it started with.
 - **Following and the feed.** Level-ups, streak milestones, badges, completed
   challenges and adopted habits post to the feed; others can give kudos, follow you,
   and adopt a habit you run with one tap. The feed pages back through everything
@@ -1339,7 +1372,17 @@ follow and your leagues' members). Money is never staked; XP can be.
   - **Journal streak:** more days with every trade journaled and the day reviewed.
   - **Process XP:** more XP earned from process.
   - **% return with a drawdown cap.** Going past the cap loses outright. Both
-    sides must share % return. This type is off unless the owner switches it on.
+    sides must share % return, and each needs a minimum of trading days (3 for a
+    week, 5 for a month by default) so sitting flat can't win. This type is off
+    unless the owner switches it on.
+  - **A drawdown rule on any duel.** Any kind (a Discipline duel, say) can carry
+    a drawdown cap picked from the owner's presets (10 / 15 / 20 / 25% by
+    default). Going more than the cap below your peak at any point during the
+    duel loses outright, whatever the measure; under the owner's **penalty** rule
+    a Discipline score loses points instead (2 per 1% over by default; kinds that
+    count days can't be docked, so there it's out). Both sides need "Show %
+    return" with a wallet; drawdown is read from the wallet's account value, from
+    the duel's first day to its last.
   - **Verified scoring.** The first three can be scored "verified from fills",
     which reads the Discipline the server computes from each wallet, instead of
     what the apps report.
@@ -1353,6 +1396,13 @@ follow and your leagues' members). Money is never staked; XP can be.
   stake at most 500 XP, and at most 25% of a member's XP can ride on their open
   duels at once (the owner sets both). The other side's limit is checked too.
   XP won in a duel doesn't count toward a Process XP duel.
+- **Earned XP and the stake balance.** Stakes never touch earned XP: the level,
+  the title, the weekly XP leagues and every level unlock count only XP earned
+  from process, badges and grants. What's won or lost on stakes moves a separate
+  balance (earned XP ± stake results, kept by the server), and the 25% limit is
+  a share of that balance. Losing stakes can't lock a feature, and winning them
+  can't buy a level. Progress shows "N XP to stake" once a member has won or lost
+  a stake.
 - **Results.** A duel is settled the day after it ends. The winner gets a feed
   line (naming the loser only if they share milestones too), the stake, and an XP
   bonus the owner sets (default +100, the same for every duel and only for a duel
@@ -1401,8 +1451,20 @@ and on the Duels screen.
 
 A member sets up a group duel ("pod") for 3 to 6 people (the owner sets the
 most) from **Social → Duels → Group duel**: Discipline, clean days, last one
-standing, journaling or process XP (no % return, no XP stakes), for a week or a
-month, verified from fills if everyone has verification on. They pick people
+standing, journaling, process XP or % return (when the league runs % return
+duels), for a week or a month, verified from fills if everyone has verification
+on. It can carry a drawdown rule like a 1v1: past the cap, you're out and
+placed last.
+
+- **XP pot.** The creator can put a buy-in on it (up to 250 XP each by
+  default): everyone puts up the same XP when they're in, and it's split among
+  those who placed on merit: *winner takes all*, *top 2* (70 / 30), or
+  *survivors split* (everyone still in at the end, equal shares). If nobody
+  qualifies, everyone gets their buy-in back. Backing out before the start (or
+  the group duel being called off or lapsing) gives it back; leaving after the
+  start leaves it in the pot. A suspended member gets theirs back. The league's
+  default burn comes off the pot. Buy-ins and payouts move the stake balance,
+  never earned XP or a level. They pick people
 with the same quick picks as a 1v1, or by name; anyone who takes challenges can
 be invited.
 
