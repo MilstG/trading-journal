@@ -795,6 +795,7 @@ function pzCostHtml(tr){
 // one price format everywhere a price is shown: thousands separated, decimals by size, no trailing noise
 function pzPx(v){
   if(v==null||!isFinite(v))return '—';
+  if(Math.abs(v)>=1e12)return (v<0?'−':'')+Math.abs(v).toExponential(2); // no price is this big: say it short, not in 300 digits
   const a=Math.abs(v), d=a>=1000?2:a>=1?4:a>=0.01?5:7;
   let s=(+v).toFixed(d); if(d>2)s=s.replace(/(\.\d\d\d*?)0+$/,'$1');
   const [i,f]=s.split('.'); return (i.startsWith('-')?'−':'')+Math.abs(+i).toLocaleString('en-US')+(f?'.'+f:'');
@@ -1009,7 +1010,7 @@ function pzLessonsHtml(D){
   const shown=L.filter(l=>(F==='due'?!l.done&&l.due<=now:F==='kept'?l.done:true)&&(!q||l.text.toLowerCase().includes(q)));
   const seg=`<div class="pz-seg" role="group" aria-label="Show">${[['all','All'],['due','To revisit'],['kept','Kept']].map(([k,l])=>`<button type="button" data-pz-lf="${k}" aria-pressed="${F===k}">${l}</button>`).join('')}</div>`;
   const pg=pzPage('lessons:'+F+':'+q,shown);
-  const row=l=>`<section class="pz-card pz-kv"><p style="margin:0;font-size:15px;line-height:1.45">${esc(l.text)}</p>
+  const row=l=>`<section class="pz-card pz-kv"><p style="margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere">${esc(l.text)}</p>
     <div class="pz-kvrow"><span class="pz-sub" style="font-size:12px">${l.key?esc(dayLabel(l.key)):'Added by you'}${l.kind==='mistake'?' · a mistake':''}${l.tag?' · about '+esc(PZ_SLIP_TOPIC[l.tag]):''} · ${l.done?'kept for good':l.due<=now?'to revisit now':'next '+esc(dayLabel(dayKey(l.due)))}</span>
     <span style="display:flex;gap:10px;flex-wrap:wrap">${!l.done&&l.due<=now?`<button type="button" class="pz-linkbtn" data-pz-lesson="got" data-id="${esc(l.id)}">I still live by it</button><button type="button" class="pz-linkbtn" data-pz-lesson="again" data-id="${esc(l.id)}">I slipped on it</button>`:''}${l.done?`<button type="button" class="pz-linkbtn" data-pz-lesson="back" data-id="${esc(l.id)}">Bring it back</button>`:''}<button type="button" class="pz-linkbtn" data-pz-lesson="off" data-id="${esc(l.id)}" aria-label="Remove this lesson">Remove</button></span></div></section>`;
   return `${back}${pzHead(L.length+' lesson'+(L.length===1?'':'s'),'Lessons',seg)}

@@ -1103,11 +1103,14 @@ function buildFindings(closed, s, ext){
       evidence:`${dispMarket(B.topMkt.key)}: ${fmtUsd(B.topMkt.net)} over ${B.topMkt.n} trades`,conf:'early',impact:B.topMkt.net*0.2});
   (function(){ const A=assetContribution(closed,'usd',5);
     if(A.worst.length&&A.neg>0){ const w=A.worst[0];
+      // w.share is its part of the net losses of the markets that lost overall, not of every losing trade's
+      // dollars (winning markets have losing trades too), so it's said that way: "100% of your losses" was false
+      const nl=(A.rows||A.worst).filter(r=>r.v<0).length, only=nl===1, nm=dispMarket(w.key);
       if(w.share>=0.25&&Math.abs(w.net)>Math.abs(s.expectancy)*5)
-        add({id:'loss-market',tone:'leak',title:`${dispMarket(w.key)} caused ${pc(w.share)} of your losses`,
-          body:`${dispMarket(w.key)} alone caused ${pc(w.share)} of every dollar you lost this period: ${signedPlain(w.net)} across ${w.n} trades, ${Math.round(w.winRate*100)}% of them winners.`,
-          action:`Before you drop ${dispMarket(w.key)}, compare its average trade with your other markets. If it holds up, trade it smaller instead of dropping it.`,
-          evidence:`Share of all losing-market dollars: ${pc(w.share)}`,conf:w.n>=20?'likely':'early',n:w.n,impact:Math.abs(w.net)*0.5}); }
+        add({id:'loss-market',tone:'leak',title:only?`${nm} is your only losing market`:`${nm} is ${pc(w.share)} of what your losing markets lost`,
+          body:`${only?`${nm} is the one market you lost money on this period`:`Of the markets you lost money on this period, ${nm} lost the most, ${pc(w.share)} of their combined net loss`}: ${signedPlain(w.net)} net across ${w.n} trades, ${Math.round(w.winRate*100)}% of them winners.`,
+          action:`Before you drop ${nm}, compare its average trade with your other markets. If it holds up, trade it smaller instead of dropping it.`,
+          evidence:`Net ${fmtUsd(w.net)} · ${only?'the only market net negative':`${pc(w.share)} of the net loss of the ${nl} markets net negative`}`,conf:w.n>=20?'likely':'early',n:w.n,impact:Math.abs(w.net)*0.5}); }
     if(A.best.length&&A.bestShare>=0.8&&A.markets>=8)
       add({id:'few-markets',tone:'edge',title:`${A.best.length} markets make ${pc(A.bestShare)} of your profit`,
         body:`Out of ${A.markets} markets you traded, a handful do nearly all the earning.`,

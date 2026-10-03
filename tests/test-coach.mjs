@@ -100,6 +100,25 @@ t('drawdown percentages over 100% are said in dollars', () => {
   eq(f.title, 'You’re $2,909 below your peak');
 });
 
+t('a losing market is described as what the math measured: its part of the losing markets’ net loss, not of every lost dollar', () => {
+  const real = vm.runInContext('(' + grabFn('assetContribution').replace(/^function assetContribution/, 'function') + ')', ctx), stub = ctx.assetContribution;
+  ctx.assetContribution = real;
+  try {
+    // BTC wins overall but has losing trades of its own; SOL is the only market net negative
+    const closed = [];
+    for (let i = 0; i < 20; i++) closed.push(mk('b' + i, i, i % 4 === 0 ? -150 : 200));
+    for (let i = 0; i < 10; i++) closed.push(mk('s' + i, 20 + i, i % 5 === 0 ? 60 : -180, { coin: 'SOL' }));
+    let f = ctx.buildFindings(closed, stats(closed), {}).find(x => x.id === 'loss-market');
+    ok(f, 'finding present'); eq(f.title, 'SOL is your only losing market');
+    ok(!/100%|every dollar|of your losses/.test(f.title + f.body + f.evidence), f.title + ' / ' + f.body);
+    ok(/−\$1,320 net across 10 trades/.test(f.body), f.body);
+    // two losing markets: SOL's share of their combined net loss
+    for (let i = 0; i < 6; i++) closed.push(mk('e' + i, 40 + i, -100, { coin: 'ETH' }));
+    f = ctx.buildFindings(closed, stats(closed), {}).find(x => x.id === 'loss-market');
+    eq(f.title, 'SOL is 69% of what your losing markets lost'); ok(/2 markets net negative/.test(f.evidence));
+  } finally { ctx.assetContribution = stub; }
+});
+
 console.log('\nHabits');
 const days = [
   { key: '2026-06-01', parts: { journal: 1, plan: 1 } },

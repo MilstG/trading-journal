@@ -50,6 +50,14 @@ const HANDLE_RE = /^[A-Za-z0-9_]{3,20}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 const BADGE_RE = /^[a-z0-9-]{1,40}$/;
+// results badges whose tiers are dollar amounts (In the black, Big day: the id, title and tier name all
+// give it away), shown only for members who share dollar P&L; stats posted before the app held them back
+// still have them, so every way out filters (the badge page, the profile, the feed, reward-badge counts)
+const USD_BADGE_RE = /^(netprofit|bestday)-/, USD_BADGE_TXT = /(In the black|Big day) · [A-Za-z]+/;
+function shownBadges(st, share) {
+  const all = (st && st.badges) || [], n = (st && st.badgeN) || 0; if (share && share.usd) return { badges: all, badgeN: n };
+  const badges = all.filter(b => !USD_BADGE_RE.test(b.id)); return { badges, badgeN: Math.max(badges.length, n - (all.length - badges.length)) };
+}
 const MAX_SOCIAL_BODY = 64 * 1024;
 const MAX_AVATAR = 256 * 1024;              // a profile picture, already shrunk to a small square by the app
 const MAX_IMAGE = 1536 * 1024;              // one image on a post
@@ -211,7 +219,7 @@ function eventsFromStats(prev, next, share, titles) {
   const mark = STREAK_MARKS.filter(m => prev.streak < m && next.streak >= m).pop();
   if (mark) E.push({ type: 'streak', text: 'hit a ' + mark + '-day discipline streak' });
   const had = new Set((prev.badges || []).map(b => b.id));
-  const fresh = next.badges.filter(b => !had.has(b.id));
+  const fresh = next.badges.filter(b => !had.has(b.id) && (share.usd || !USD_BADGE_RE.test(b.id)));
   // a handful post one by one; a burst (a first sync, a big day) posts once, naming the best ones
   if (fresh.length <= 2) for (const b of fresh) E.push({ type: 'badge', text: 'unlocked ' + (b.t || b.id) });
   else { const top = [...fresh].sort((a, b) => (b.r || 0) - (a.r || 0)).slice(0, 3).map(b => b.t || b.id);
@@ -945,7 +953,7 @@ function createSocial(opts) {
       case 'streak': return st.streak || 0;
       case 'best': return st.best || 0;
       case 'discipline30': { const ver = m.share.verify && Array.isArray(m.vdays); const d = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3); return d.avg; }
-      case 'badges': return st.badgeN || 0;
+      case 'badges': return shownBadges(st, m.share).badgeN;
       case 'challenges': return st.challengesDone || 0;
       case 'ret30': return mo && mo.ret != null && m.share.ret ? mo.ret * 100 : null;
       case 'usd30': return mo && mo.usd != null && m.share.usd ? mo.usd : null;
@@ -1810,7 +1818,7 @@ function createSocial(opts) {
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
     Object.assign(out, { duels: Object.assign({ w: 0, l: 0, d: 0 }, m.duelRec), rating: S.config.duels.ladder && m.ladder && m.ladder.n ? m.ladder.r : null,
       pods: Object.assign({ w: 0, n: 0 }, m.podRec), xp: st.xp || 0, streak: st.streak || 0, best: st.best || 0, discipline30: d30.avg == null ? null : Math.round(d30.avg), verified: ver,
-      badges: (st.badges || []).map(b => b.t || b.id), badgeN: st.badgeN || 0, awards: awardsOut(m) });
+      badges: shownBadges(st, m.share).badges.map(b => b.t || b.id), badgeN: shownBadges(st, m.share).badgeN, awards: awardsOut(m) });
     if (m.share.habits || out.isMe) out.habits = st.habits || [];
     if ((m.share.ret || out.isMe) && m.money && m.money.ret != null) { out.ret = m.money.ret; out.dd = m.money.dd; }
     if ((m.share.usd || out.isMe) && m.money && m.money.usd != null) out.usd = m.money.usd;
@@ -1822,7 +1830,10 @@ function createSocial(opts) {
   const likedBy = (viewer, rows) => { if (!viewer || !rows.length) return new Set();
     return new Set(q('SELECT event FROM kudos WHERE member = ? AND event IN (SELECT value FROM json_each(?))').all(viewer.id, JSON.stringify(rows.map(e => e.id))).map(r => r.event)); };
   const eventOut = (e, viewer, liked) => { const m = e.member && own(S.members, e.member) ? S.members[e.member] : null;
-    const o = { id: e.id, at: e.at, type: e.type, text: e.text, quote: e.quote, handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null,
+    const usdB = e.type === 'badge' && !(m && m.share.usd); // a feed line from before the app held those badges back
+    const o = { id: e.id, at: e.at, type: e.type, text: usdB && USD_BADGE_TXT.test(e.text || '') ? 'unlocked a results badge' : e.text,
+      quote: usdB && e.quote ? e.quote.replace(/(In the black|Big day) · [A-Za-z]+( · )?/g, '').replace(/ · $/, '') : e.quote,
+      handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null,
       admin: !e.member, kudos: e.kudos || 0, liked: !!liked && liked.has(e.id), mine: !!viewer && e.member === viewer.id };
     if (e.type === 'post') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
       const t = d.trade ? Object.assign({}, d.trade) : null;
@@ -2287,7 +2298,7 @@ function createSocial(opts) {
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
         bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on },
-        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail }, posts: postCfgOut(),
+        coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), // ai: visitors (no coach status of their own) know whether to show a Coach tab
         badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),
         leagues: Object.values(S.leagues).filter(L => L.open).length,
         autoLeagues: Object.values(S.leagues).filter(L => L.autoJoin).map(L => ({ id: L.id, name: L.name, metricLabel: SC.LEAGUE_METRICS ? SC.LEAGUE_METRICS[L.metric] || '' : '' })) });
@@ -2752,7 +2763,7 @@ function createSocial(opts) {
       const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
       return json(res, 200, { handle: m.handle, level: st.level || 1, title: levelTitle(st.level || 1), xp: st.xp || 0, streak: st.streak || 0, best: st.best || 0,
         since: utcDayKey(m.createdAt || now()), discipline30: d30.avg == null ? null : Math.round(d30.avg), verified: ver, claimed: !!m.claimed,
-        badges: st.badges || [], badgeN: st.badgeN || 0, badgeTotal: st.badgeTotal || 0, awards: awardsOut(m).map(a => ({ name: a.name, icon: a.icon, desc: a.desc, at: a.at })),
+        ...shownBadges(st, m.share), badgeTotal: st.badgeTotal || 0, awards: awardsOut(m).map(a => ({ name: a.name, icon: a.icon, desc: a.desc, at: a.at })),
         leagues: leaguesOf(m).filter(L => L.open && !L.invite).map(L => ({ name: L.name, tier: L.tiers ? TIERS[leagueTier(L, m)] : null })) });
     }
 
@@ -3747,5 +3758,5 @@ function createSocial(opts) {
   return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
 }
 
-module.exports = { createSocial, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
+module.exports = { createSocial, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, shownBadges, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
   boardRows, compStandings, compStatus, disciplineOver, isoWeekOfKey, seasonOf, seasonBounds, seasonLabel, weeksIn, TIERS, DEFAULT_CONFIG, DEFAULT_SHARE };

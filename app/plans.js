@@ -12,9 +12,19 @@
 // one spelling for a market: case, a HIP-3 dex prefix and a spot quote don't matter ("xyz:TSLA" = "tsla")
 function planCoinKey(s){ return String(s||'').trim().toUpperCase().replace(/^[A-Z0-9_-]+:/,'').split('/')[0]; }
 // what's wrong with a plan form, in plain words ('' = fine). Entry is optional (the fills give it).
-function pplanCheck(p){
-  if(!p||!planCoinKey(p.coin))return 'Which market? Type its name, like BTC.';
+// known: {MARKET: price or 0} — the markets Daruma knows (planKnownMarkets); without it the name isn't checked.
+// Prices must be real numbers, and within 10× of the market's price (else of the entry, else of each other):
+// a typo of a few zeros is caught, and 1e300 can't be saved and then print 300 digits across the phone.
+function pplanCheck(p, known){
+  const ck=p&&planCoinKey(p.coin);
+  if(!ck)return 'Which market? Type its name, like BTC.';
+  if(known&&!Object.prototype.hasOwnProperty.call(known,ck))return 'No market called '+ck+' among the ones you trade or on Hyperliquid. Check the name.';
+  const nm={entry:'entry',stop:'stop',target:'target'};
+  for(const k in nm)if(p[k]!=null&&!(isFinite(p[k])&&p[k]>0&&p[k]<1e9))return 'The '+nm[k]+' isn’t a price Daruma can use. Check the number.';
   if(!(p.stop>0))return 'Add a stop: the price where the idea is wrong.';
+  const ref=known&&known[ck]>0?known[ck]:p.entry>0?p.entry:null, far=(a,b)=>a/b>10||b/a>10;
+  for(const k in nm)if(p[k]>0&&(ref?far(p[k],ref):k==='target'&&far(p.target,p.stop)))
+    return 'That '+nm[k]+' is far from '+(ref?(known&&known[ck]>0?ck+'’s price ('+planPzPx(ref)+')':'your entry'):'your stop')+'. Check the number.';
   const long=p.dir!=='Short';
   if(p.entry>0&&(long?p.stop>=p.entry:p.stop<=p.entry))return 'For a '+(long?'long':'short')+', the stop goes '+(long?'below':'above')+' the entry.';
   if(p.target>0&&(long?p.target<=p.stop:p.target>=p.stop))return 'For a '+(long?'long':'short')+', the target goes '+(long?'above':'below')+' the stop.';
@@ -176,6 +186,22 @@ function planDiagHtml(closed){
 }
 
 /* ============================ Pulse: Plan a trade, Your plans, step-through ============================ */
+// Hyperliquid's perp list with mark prices, read once when the plan form opens (spot comes from the
+// cached spot registry), so a plan's market can be checked and its prices held against the market's
+let _planPerps=null, _planPerpsP=null, _planPerpsFail=0;
+function planPerpsLoad(){ if(_planPerps||typeof hlPost!=='function'||Date.now()-_planPerpsFail<6e4)return Promise.resolve(); // offline: try again in a minute
+  return _planPerpsP||(_planPerpsP=hlPost({type:'metaAndAssetCtxs'}).then(r=>{ const m={}; ((r&&r[0]&&r[0].universe)||[]).forEach((u,i)=>{ const px=parseFloat(((r[1]||[])[i]||{}).markPx); if(u&&u.name)m[planCoinKey(u.name)]=px>0?px:0; }); _planPerps=m; },()=>{ _planPerpsFail=Date.now(); }).finally(()=>{ _planPerpsP=null; })); }
+// every market Daruma knows, with a price when there's a fresh one: Hyperliquid's perps and spot, your
+// open positions, and anything you've traded (a trade from the last 30 days lends its exit as the price)
+function planKnownMarkets(){
+  const m=Object.assign({},_planPerps||{}), sm=(typeof spotMaps!=='undefined'&&spotMaps)||{}, add=(c,px)=>{ const k=planCoinKey(c); if(k&&!(m[k]>0))m[k]=px>0?px:0; };
+  for(const [c,px] of Object.entries(sm.markBySym||{}))if(c!=='USDC')add(c,px);
+  for(const c of Object.values(sm.nameByCoin||{}))add(c,0);
+  for(const p of (typeof openPositions!=='undefined'?openPositions:[]))add(p.coin,0);
+  const since=Date.now()-30*864e5;
+  for(const t of (typeof allTrades!=='undefined'?allTrades:[])){ const px=(t.closeTime||t.openTime)>=since?(t.avgExit||t.avgEntry):0; add(dcoin(t),px); add(t.coin,px); }
+  return m;
+}
 function planPzRR(p){ const en=p.entry>0?p.entry:null; return en&&p.target>0&&p.stop>0?Math.abs(p.target-en)/Math.abs(en-p.stop):null; }
 function planPzPx(v){ return typeof pzPx==='function'?pzPx(v):v>0?(+v).toLocaleString(undefined,{maximumFractionDigits:v>=1000?1:v>=1?4:6}):'—'; }
 // Today: one card to plan the next trade, with what's waiting
@@ -184,13 +210,14 @@ function planTodayHtml(D){
   return `<a class="pz-card pz-plancta" href="#plan">${pzI('target',22)}<span style="flex:1;min-width:0"><b>Plan your next trade</b><span class="pz-sub" style="display:block;font-size:13px">${wait.length?esc(wait.map(p=>planCoinKey(p.coin)+' '+(p.dir==='Short'?'short':'long')).join(', '))+' waiting · '+(wait.length===1?'it attaches':'they attach')+' when you trade':'Stop and target first, then the trade'}</span></span>${pzI('chev',18)}</a>`;
 }
 function planPzHtml(D){
+  planPerpsLoad();
   const now=Date.now(), side=pzS.planSide==='Short'?'Short':'Long', L=pplanList(journal).reverse();
   const coins=[...new Set(allTrades.slice(-300).map(t=>planCoinKey(dcoin(t))))].slice(-12).reverse(), setups=pzSetups().slice(0,6);
   const num=(id,l,ph)=>`<div class="pz-field" style="flex:1;min-width:0"><label for="${id}" style="font-size:13px">${l}</label><input type="number" id="${id}" inputmode="decimal" step="any" min="0" placeholder="${ph}"></div>`;
   const left=p=>{ const h=Math.max(0,(p.at+864e5-now)/36e5); return h>=1?Math.floor(h)+'h left':Math.max(1,Math.round(h*60))+' min left'; };
   const row=p=>{ const st=pplanStatus(p,now), t=p.tid&&allTrades.find(x=>x.id===p.tid), r=t&&!t.isOpen?planVerdict(t,nfPlan(journal[t.id]),_excM[t.id]):null, rr=planPzRR(p);
     const what=st==='pending'?left(p):st==='expired'?'Expired — no trade within 24h':!t?'Attached':t.isOpen?'Attached · trade open':r&&r.v!=='none'?planWords(r.v)[1]+' · '+planFmtR(r.R):'Attached';
-    return `<div class="pz-row-t" data-pz-tip="${esc(planCoinKey(p.coin)+' '+(p.dir==='Short'?'short':'long')+'\nStop '+planPzPx(p.stop)+(p.target?' · target '+planPzPx(p.target):'')+(p.entry?' · entry '+planPzPx(p.entry):'')+(rr?'\nRisk 1 to make '+rr.toFixed(1):'')+(p.setup?'\n'+p.setup:''))}" tabindex="0"><span><b>${esc(planCoinKey(p.coin))} ${p.dir==='Short'?'short':'long'}</b> <span class="pz-sub" style="font-size:12px">stop ${esc(planPzPx(p.stop))}${p.target?' · target '+esc(planPzPx(p.target)):''}</span></span><span style="display:flex;gap:8px;align-items:center"><b style="font-size:13px;color:${st==='pending'?'var(--pz-text)':r&&r.v==='followed'?PZ_COL.good:r&&r.v!=='none'?PZ_COL.low:'var(--pz-muted)'}">${esc(what)}</b>${st==='pending'?`<button type="button" class="pz-chip icon" data-pz-pldel="${esc(p.key)}" aria-label="Delete the ${esc(planCoinKey(p.coin))} plan">${pzI('x',16)}</button>`:''}</span></div>`; };
+    return `<div class="pz-row-t" style="flex-wrap:wrap" data-pz-tip="${esc(planCoinKey(p.coin)+' '+(p.dir==='Short'?'short':'long')+'\nStop '+planPzPx(p.stop)+(p.target?' · target '+planPzPx(p.target):'')+(p.entry?' · entry '+planPzPx(p.entry):'')+(rr?'\nRisk 1 to make '+rr.toFixed(1):'')+(p.setup?'\n'+p.setup:''))}" tabindex="0"><span style="min-width:0;overflow-wrap:anywhere"><b>${esc(planCoinKey(p.coin))} ${p.dir==='Short'?'short':'long'}</b> <span class="pz-sub" style="font-size:12px">stop ${esc(planPzPx(p.stop))}${p.target?' · target '+esc(planPzPx(p.target)):''}</span></span><span style="display:flex;gap:8px;align-items:center"><b style="font-size:13px;color:${st==='pending'?'var(--pz-text)':r&&r.v==='followed'?PZ_COL.good:r&&r.v!=='none'?PZ_COL.low:'var(--pz-muted)'}">${esc(what)}</b>${st==='pending'?`<button type="button" class="pz-chip icon" data-pz-pldel="${esc(p.key)}" aria-label="Delete the ${esc(planCoinKey(p.coin))} plan">${pzI('x',16)}</button>`:''}</span></div>`; };
   return `<a class="pz-back" href="#today">${pzI('back',20)}Today</a>${pzHead('Before you trade','Plan a trade')}
     <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:10px;align-items:flex-end"><div class="pz-field" style="flex:1;min-width:0"><label for="pzPlCoin" style="font-size:13px">Market</label><input type="text" id="pzPlCoin" maxlength="24" placeholder="BTC" list="pzPlCoins" autocomplete="off" autocapitalize="characters" spellcheck="false"><datalist id="pzPlCoins">${coins.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
@@ -242,7 +269,8 @@ async function planPzAction(el){
   if(ds.pzPldel){ if(journal[ds.pzPldel]&&!journal[ds.pzPldel].tid){ delete journal[ds.pzPldel]; markJEdit(ds.pzPldel); await Store.set(J_KEY,journal); pzNote('Plan deleted.'); pzRender(); } return true; }
   if(ds.pzPlsave!==undefined){ const v=id=>{ const e=$(id); return e?e.value.trim():''; }, n=id=>{ const x=parseFloat(v(id)); return x>0?x:null; };
     const p={coin:planCoinKey(v('pzPlCoin')),dir:pzS.planSide==='Short'?'Short':'Long',entry:n('pzPlEntry'),stop:n('pzPlStop'),target:n('pzPlTarget'),setup:v('pzPlWhy').slice(0,80),at:Date.now()};
-    const err=pplanCheck(p); if(err){ pzNote(err,'err'); return true; }
+    if(!_planPerps)await Promise.race([planPerpsLoad(),new Promise(r=>setTimeout(r,1500))]); // a moment for the list on a slow line
+    const err=pplanCheck(p,planKnownMarkets()); if(err){ pzNote(err,'err'); return true; }
     if(p.setup&&typeof pzCanonSetup==='function')p.setup=pzCanonSetup(p.setup);
     const key='pplan:'+p.at.toString(36)+Math.random().toString(36).slice(2,6);
     journal[key]=p; markJEdit(key); await Store.set(J_KEY,journal);

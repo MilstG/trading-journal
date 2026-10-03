@@ -544,12 +544,12 @@ function pzCoachHtml(D){
   pzCoachStatus();
   const lock=pzLocked('coach',D.g.level.level); if(lock)return `${back}${pzLockedHtml('Your AI coach',lock,D.g)}`;
   const owner=!!(SRV.token&&!SRV.badAuth);
-  if(!socAvailable()||(!SOC.me&&!owner))return `${back}${pzHead('Coach','Your AI coach')}<section class="pz-card pz-empty">
+  const st=COACH.status||(socAvailable()&&SOC.cfg&&SOC.cfg.coach&&SOC.cfg.coach.ai===false?{enabled:false}:null); // a visitor: the league config says whether there's a coach
+  if(!(st&&!st.enabled)&&(!socAvailable()||(!SOC.me&&!owner)))return `${back}${pzHead('Coach','Your AI coach')}<section class="pz-card pz-empty">
     <span class="pz-ico" style="width:52px;height:52px;background:var(--pz-tint-good);color:var(--pz-good)">${pzI('coach',26)}</span>
     <b style="font-size:18px">A coach that knows your trades</b>
     <p class="pz-sub" style="max-width:460px">Ask why a day went wrong, what to change this week, or whether a setup is worth keeping. It reads your summaries, never your keys, and runs on the league server this page comes from.</p>
     ${socAvailable()?'<a class="pz-cta" href="#social" style="max-width:280px">Create your profile to start</a>':'<p class="pz-fine">Open Daruma from your server’s /daruma link to use it.</p>'}</section>`;
-  const st=COACH.status;
   if(!st)return `${back}${pzHead('Coach','Your AI coach')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
   if(!st.enabled)return `${back}${pzHead('Coach','Your AI coach')}${typeof _pzLastD!=='undefined'&&_pzLastD?`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('chat',18)}</span><p>${esc(pzCoachLine(_pzLastD))}</p></section>`:''}<section class="pz-card pz-kv"><p class="pz-sub">The AI coach isn’t switched on for this server yet.${owner?' Set <code>COACH_AI=1</code> and an <code>ANTHROPIC_API_KEY</code> (or <code>OPENAI_API_KEY</code>) on the server, then restart it.':' Ask the league owner.'}</p></section>`;
   const msgs=pzCoachLoad();
@@ -927,7 +927,7 @@ async function pzGrowthAction(t){
       const r=await socFetch('/me',{method:'PUT',body:JSON.stringify({share})}); SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; pzNote(on?'Your public badge page is live.':'Your badge page is private again.'); pzRender(); return true; }
     if(ds.pzRk){ pzS.rk=ds.pzRk; pzS.rkey=null; pzRender(); return true; }
     if(ds.pzRkey!==undefined){ if(ds.pzRkey){ pzS.rkey=ds.pzRkey; pzRender(); } return true; }
-    if(ds.pzRvrate&&pzS.rv){ const n=+ds.pzRvrate; pzS.rv.rating=pzS.rv.rating===n?null:n; t.closest('.pz-pills').querySelectorAll('button').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRvrate===pzS.rv.rating))); return true; }
+    if(ds.pzRvrate&&pzS.rv){ const n=+ds.pzRvrate; pzS.rv.rating=pzS.rv.rating===n?null:n; t.closest('.pz-pills').querySelectorAll('button').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRvrate===pzS.rv.rating))); pzRoving(t.closest('[role=radiogroup]')); return true; }
     if(ds.pzAsk){ await pzCoachSend(ds.pzAsk); return true; }
     if(ds.pzCdetail!==undefined){ const on=t.getAttribute('aria-checked')!=='true';
       if(SOC.me){ const r=await socFetch('/me',{method:'PUT',body:JSON.stringify({coachDetail:on})}); SOC.me=r.me; PZ_CFG.rev++; COACH.tried=false; pzCoachStatus(true); }

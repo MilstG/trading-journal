@@ -89,20 +89,24 @@ function pzDayTip(d){
 function pzHasPlan(e){ return !!(e&&(e.plan||e.bias||e.maxLoss>0||(r=>!!r&&typeof r==='object'&&Object.values(r).some(v=>Array.isArray(v)?v.length:!!v))(e.rules))); }
 
 // The bonus XP still on offer today, and what's already earned. Pure given its inputs.
+// left: what an item can still pay today (a plan written after the first entry pays half, a loss limit
+// set after it nothing), so "to go" never counts XP that can't be earned any more.
 function pzBonusItems(D){
   const e=D.dayE||{}, todayT=D.todayTrades||[], j=todayT.filter(t=>isJournaled(journal[t.id])).length;
-  const planned=pzHasPlan(D.dayE), opened=D.risk.trades>0, lim=D.risk.limit;
+  const planned=pzHasPlan(D.dayE), opened=D.risk.trades>0, lim=D.risk.limit, X=pzXpCfg();
   const earned=(D.day&&D.day.bonus&&D.day.bonus.parts)||{};
   return [
-    {k:'checkin',label:'Morning prep',xp:pzXpCfg().checkin,done:pzReadinessManual(D.dayE)!=null,href:'#checkin',hint:'Thirty seconds: sleep, calm, focus'},
-    {k:'plan',label:'Plan before your first trade',xp:pzXpCfg().plan,done:planned&&(!opened||earned.plan===pzXpCfg().plan),partial:planned&&opened&&earned.plan>0&&earned.plan<pzXpCfg().plan,href:'#checkin',
-      hint:planned?(opened?'Written after your first entry: half the bonus':'Written — it counts when you trade'):'A line and a loss limit, before you trade'},
-    {k:'journal',label:'Journal today’s trades',xp:pzXpCfg().journal,done:todayT.length>0&&j===todayT.length,partial:j>0&&j<todayT.length,href:'#journal',
+    {k:'checkin',label:'Morning prep',xp:X.checkin,left:X.checkin,done:pzReadinessManual(D.dayE)!=null,href:'#checkin',hint:'Thirty seconds: sleep, calm, focus'},
+    {k:'plan',label:'Plan before your first trade',xp:X.plan,left:planned?0:opened?Math.round(X.plan*0.5):X.plan,done:planned&&(!opened||earned.plan===X.plan),partial:planned&&opened&&earned.plan>0&&earned.plan<X.plan,href:'#checkin',
+      hint:planned?(opened?'Written after your first entry: half the bonus':'Written — it counts when you trade'):opened?'Written now, after your first entry: half the bonus':'A line and a loss limit, before you trade'},
+    {k:'journal',label:'Journal today’s trades',xp:X.journal,left:Math.max(0,X.journal-(earned.journal||0)),done:todayT.length>0&&j===todayT.length,partial:j>0&&j<todayT.length,href:'#journal',
       hint:todayT.length?j+' of '+todayT.length+' journaled':'After your trades close'},
-    lim>0?{k:'limit',label:'Respect your loss limit',xp:pzXpCfg().limit,done:!!earned.limit,href:'#discipline',hint:usdPlain(lim)+' today'}:null,
-    pzLocked('review',(D.g&&D.g.level.level)||1)?null:{k:'review',label:'End-of-day review',xp:pzXpCfg().review,done:!!(D.dayE&&D.dayE.eod&&D.dayE.eod.at),href:'#review',hint:'Five minutes: what happened, one lesson, one focus for tomorrow'},
+    // the limit pays only when it was set before the first entry and still holds: after an entry, unearned is lost
+    lim>0?{k:'limit',label:'Respect your loss limit',xp:X.limit,left:opened?0:X.limit,done:!!earned.limit,href:'#discipline',hint:usdPlain(lim)+' today'}:null,
+    pzLocked('review',(D.g&&D.g.level.level)||1)?null:{k:'review',label:'End-of-day review',xp:X.review,left:X.review,done:!!(D.dayE&&D.dayE.eod&&D.dayE.eod.at),href:'#review',hint:'Five minutes: what happened, one lesson, one focus for tomorrow'},
   ].filter(Boolean);
 }
+function pzBonusLeft(items){ return items.filter(x=>!x.done).reduce((s,x)=>s+(x.left!=null?x.left:x.xp),0); }
 // One line from the coach, most urgent first: a hit limit, then the slip you just made, then
 // load and form, then the biggest leak in your numbers.
 // finding text written for the full journal, minus its directions to full-journal panels
@@ -182,7 +186,8 @@ function pzNav(tab, level){
   const ft=pzFeatTab(tab);
   const cur=ft?(ft.tab.nav||'today'):tab==='discipline'||tab==='journal'||tab==='review'||tab==='plan'||tab==='askmentor'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='mentors'||tab==='mentorp'||tab==='reviews'||tab==='tr'||tab==='lginfo'||tab==='duels'||tab==='people'||tab==='duelnew'||tab==='podnew'||tab==='post'||tab==='compose'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   if(typeof pzCoachStatus==='function')pzCoachStatus(); // asked once per profile, so the bar knows whether there is a coach
-  const noCoach=typeof COACH!=='undefined'&&COACH&&COACH.status&&!COACH.status.enabled; // the owner hasn't switched the AI coach on: no tab for it
+  // the owner hasn't switched the AI coach on: no tab for it (a visitor has no coach status yet: the league config says)
+  const noCoach=typeof COACH!=='undefined'&&COACH&&(COACH.status?!COACH.status.enabled:!!(SOC.cfg&&SOC.cfg.coach&&SOC.cfg.coach.ai===false));
   const items=[['today','Today'],['trends','Stats'],['checkin','Prep'],...(noCoach?[]:[['coach','Coach']]),['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
   return `<nav class="pz-nav" aria-label="Daruma"><div class="pz-brand">${pzMark(30)}<span>Daruma</span></div>
@@ -252,8 +257,13 @@ const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab)||null;
 function pzOrdered(screen){ const all=(PZ_FLOW[screen]||[]).flat(), o=((settings.pzLayout||{})[screen]||{})._order;
   if(!Array.isArray(o))return null;
   return [...o.filter(id=>all.includes(id)),...all.filter(id=>!o.includes(id))]; }
-function pzMove(screen,id,d){ const cur=pzOrdered(screen)||(PZ_FLOW[screen]||[]).flat(), i=cur.indexOf(id), j=i+d;
-  if(i<0||j<0||j>=cur.length)return false; [cur[i],cur[j]]=[cur[j],cur[i]];
+// vis: the sections on the screen right now. A press hops the ones that aren't (switched off, or empty
+// today) and lands past the next one that is, so it always moves something you can see.
+let _pzTodayVis=null;
+function pzMove(screen,id,d,vis){ const cur=pzOrdered(screen)||(PZ_FLOW[screen]||[]).flat(), i=cur.indexOf(id); let j=i+d;
+  if(i<0||j<0||j>=cur.length)return false;
+  if(vis){ let k=j; while(k>=0&&k<cur.length&&!vis.has(cur[k]))k+=d; if(k>=0&&k<cur.length)j=k; }
+  cur.splice(i,1); cur.splice(j,0,id);
   const L=settings.pzLayout=settings.pzLayout||{}, M=L[screen]=L[screen]||{}; M._order=cur; return true; }
 function pzShow(screen,id){ const L=(settings.pzLayout||{})[screen]; if(L&&Object.prototype.hasOwnProperty.call(L,id))return !!L[id];
   const d=(PZ_SECTIONS[screen]||[]).find(x=>x[0]===id); return d?!!d[3]:true; }
@@ -328,7 +338,7 @@ function pzTodayStripHtml(D,F){
   const col=v=>v>0?PZ_COL.good:v<0?PZ_COL.low:null, n=F.closedT.length;
   const used=risk.used, usedCol=used==null?null:used>=1?PZ_COL.low:used>=0.75?PZ_COL.mid:PZ_COL.good;
   return `<div class="pz-strip pz-span" role="group" aria-label="Today in numbers">
-    ${X('Net today',n?esc(pzSigned(F.net)):'—',n?n+' closed · '+F.wins+'W '+F.losses+'L':'nothing closed yet',n?col(F.net):null,n?signedPlain(F.net)+(F.fees?' after '+usdPlain(F.fees)+' fees':''):'')}
+    ${X('Net today',n?esc(pzSigned(F.net)):'—',n?n+' closed · '+F.wins+'W '+F.losses+'L'+(n-F.wins-F.losses>0?' '+(n-F.wins-F.losses)+' even':''):'nothing closed yet',n?col(F.net):null,n?signedPlain(F.net)+(F.fees?' after '+usdPlain(F.fees)+' fees':''):'')}
     ${X('Entries',String(risk.trades)+(risk.cap>0?`<small> / ${risk.cap}</small>`:''),risk.cap>0?(risk.trades>=risk.cap?'at your cap':(risk.cap-risk.trades)+' left today'):'opened today')}
     ${X('Risk used',used==null?'—':Math.round(used*100)+'%',risk.limit>0?usdPlain(risk.loss)+' of '+usdPlain(risk.limit):'set a loss limit',usedCol)}
   </div>`;
@@ -611,7 +621,8 @@ function pzComingUpHtml(D){
 const pzDueRows=items=>items.map(([ic,c,a,b,href])=>`<a class="pz-uprow" href="${href}"><span class="pz-bc" style="color:${c}">${pzI(ic,13,2.4)}</span><span style="flex:1;min-width:0"><b style="font-size:13px">${esc(a)}</b><span class="pz-sub" style="display:block;font-size:12px">${esc(b)}</span></span></a>`).join('');
 function pzDueItems(D){
   const {g,todayK}=D, items=[], dow=new Date(todayK+'T12:00:00Z').getUTCDay(), daysLeft=dow===0?0:7-dow;
-  if(g.current){ const kept=g.current.res.filter(r=>r.kept).length; items.push(['bolt',PZ_COL.xp,'Weekly challenge',`${kept} day${kept===1?'':'s'} kept · ${daysLeft?daysLeft+' day'+(daysLeft===1?'':'s')+' left this week':'ends tonight'}`,'#progress']); }
+  if(g.current){ const kept=g.current.res.filter(r=>r.kept).length; items.push(g.current.status==='missed'?['bolt',PZ_COL.low,'Weekly challenge','Missed once · a new challenge comes Monday','#progress'] // as Progress says it: no days left to win it back
+    :['bolt',PZ_COL.xp,'Weekly challenge',`${kept} day${kept===1?'':'s'} kept · ${daysLeft?daysLeft+' day'+(daysLeft===1?'':'s')+' left this week':'ends tonight'}`,'#progress']); }
   for(const h of habitsList().slice(0,3)){ const r=habitProgress(h,g.ctx).res.find(x=>x.key===todayK);
     items.push(['check',r?(r.kept?PZ_COL.good:PZ_COL.low):'var(--pz-soft)',habitSentence(h),r?(r.kept?'kept today':'broken today'):'due today','#progress']); }
   for(const p of pzPlugs().filter(p=>!p.dropped&&!p.done).slice(0,2))items.push(['shield',PZ_COL.risk,'Plugging: '+(PZ_BEH[p.slip]||p.slip),`${p.cleanRun} of 3 clean trading weeks · ${pzPlugWeekNote(p)}`,'#progress']);
@@ -679,10 +690,10 @@ function pzTodayHtml(D){
   }
   const detail=`<section class="pz-card pz-detail" aria-live="polite"><div class="pz-dh"><span class="pz-lbl" style="color:${det.col}">${esc(det.lbl)}</span><a class="pz-link" href="${det.href}">${esc(det.link)}${pzI('chev',16)}</a></div>
     <div><div class="pz-big">${esc(det.head)}</div><p class="pz-sub" style="margin-top:4px">${esc(det.sub)}</p></div>${pzRows(det.rows,det.col)}</section>`;
-  const items=pzBonusItems(D), earned=day?day.bonus.total:0, left=items.filter(x=>!x.done).reduce((s,x)=>s+x.xp,0);
+  const items=pzBonusItems(D), earned=day?day.bonus.total:0, left=pzBonusLeft(items);
   let due=[]; try{ due=pzDueItems(D); }catch(err){}
   const bonus=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Today’s XP</b><span style="font-size:12px;font-weight:700;color:${PZ_COL.xp}">${earned?'+'+earned+' earned':''}${earned&&left?' · ':''}${left?'+'+left+' to go':''}</span></div>
-    ${items.map(x=>`<a class="pz-bonus" href="${x.href}"><span class="pz-bc ${x.done?'done':x.partial?'part':''}">${pzI(x.done?'check':x.partial?'minus':'plus',14,3)}</span><span style="flex:1;min-width:0"><b>${esc(x.label)}</b><span>${esc(x.hint)}</span></span><span class="pz-bx">+${x.xp}</span></a>`).join('')}
+    ${items.map(x=>`<a class="pz-bonus" href="${x.href}"><span class="pz-bc ${x.done?'done':x.partial?'part':''}">${pzI(x.done?'check':x.partial?'minus':'plus',14,3)}</span><span style="flex:1;min-width:0"><b>${esc(x.label)}</b><span>${esc(x.hint)}</span></span><span class="pz-bx">+${x.done||x.partial&&!x.left?x.xp:x.left}</span></a>`).join('')}
     ${due.length?`<span class="pz-lbl pz-sublbl">This week</span>${pzDueRows(due)}`:''}
     ${g.mult>1?`<a class="pz-fine" href="#age" style="color:${PZ_COL.good};text-decoration:none">×${String(g.mult)} XP multiplier this week, for holding your Trader Age ›</a>`:''}</section>`;
   const coach=`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('chat',18)}</span><p>${esc(pzCoachLine(D))}</p></section>`;
@@ -704,7 +715,8 @@ function pzTodayHtml(D){
         // your own order (or the default one) reads top to bottom, then on into the second column on a
         // wide screen, the two balanced so neither runs far below the other
         const ord=pzOrdered('today')||PZ_FLOW.today[0].concat(PZ_FLOW.today[1]), lead=pzLinkCardHtml()+pzNudgesHtml(D)+safe(()=>planTodayHtml(D));
-        if(ord)return `<div class="pz-span pz-flow">${lead?`<div class="pz-col">${lead}</div>`:''}${ord.map(id=>card[id]()).filter(Boolean).map(h=>`<div class="pz-col">${h}</div>`).join('')}</div>`;
+        if(ord){ const H=ord.map(id=>[id,card[id]()]).filter(x=>x[1]); _pzTodayVis=new Set(H.map(x=>x[0]));
+          return `<div class="pz-span pz-flow">${lead?`<div class="pz-col">${lead}</div>`:''}${H.map(x=>`<div class="pz-col">${x[1]}</div>`).join('')}</div>`; }
         return `<div class="pz-col">${lead}${PZ_FLOW.today[0].map(id=>card[id]()).join('')}</div><div class="pz-col">${PZ_FLOW.today[1].map(id=>card[id]()).join('')}</div>`; })()}</div>
     ${pzCustomizeLink('today')}`;
 }
@@ -1355,6 +1367,11 @@ function pzNote(m, kind){
   if(!allTrades.length&&$('pzView'))pzRender();
 }
 let _pzLastD=null;
+// Daruma's 1–5 radio groups (prep, the review, a trade's execution) as ARIA's radio group: one Tab stop
+// each (the checked radio, else the first), and the arrow keys move the choice (see the keydown below)
+function pzRoving(scope){ if(!scope)return;
+  for(const g of scope.matches&&scope.matches('[role=radiogroup]')?[scope]:scope.querySelectorAll('[role=radiogroup]')){
+    const R=[...g.querySelectorAll('[role=radio]')], on=R.find(b=>b.getAttribute('aria-checked')==='true')||R[0]; for(const b of R)b.tabIndex=b===on?0:-1; } }
 function pzRender(){
   if(!PZ)return; const view=$('pzView'); if(!view)return;
   try{ socVisitPing(); }catch(e){}
@@ -1384,6 +1401,7 @@ function pzRender(){
   pzQuietMount(allTrades.length?_pzLastD:null);
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   view.inert=!!(sh&&(pzS.sheet||pzS.custom)); // with a sheet open, Tab stays inside it
+  pzRoving(root);
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
   // (by data-* only when they name a single control: several identical Save buttons stay unfocused rather than jumping to the first)
   const f=(actId&&$(actId))||(actSel&&(()=>{ const all=root.querySelectorAll(actSel+':not([disabled])'); return all.length===1?all[0]:null; })()); if(f&&f.focus)f.focus({preventScroll:true});
@@ -1421,11 +1439,11 @@ function wirePulse(){
     if(ds.pzHlmore){ pzS.hlOpen=!pzS.hlOpen; pzRender(); return; }
     if(ds.pzBadge){ pzS.badge=pzS.badge===ds.pzBadge?null:ds.pzBadge; pzRender(); return; }
     if(ds.pzCk&&pzS.ck){ const n=+ds.n; pzS.ck[ds.pzCk]=pzS.ck[ds.pzCk]===n?null:n;
-      t.closest('.pz-pills').querySelectorAll('button').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.n===pzS.ck[ds.pzCk])));
+      t.closest('.pz-pills').querySelectorAll('button').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.n===pzS.ck[ds.pzCk]))); pzRoving(t.closest('[role=radiogroup]'));
       const r=pzCkReady(pzS.ck), p=$('pzCkPrev'); if(p)p.innerHTML=pzCkPrevHtml(r,pzBand(r)); return; }
     if(ds.pzCap&&pzS.ck){ const cur=pzS.ck.maxTrades||0; pzS.ck.maxTrades=Math.max(0,Math.min(50,cur+(+ds.pzCap)))||null; const o=$('pzCap'); if(o)o.textContent=pzS.ck.maxTrades||'—'; return; }
     if(ds.pzRate){ const sec=t.closest('[data-pz-trade]'); if(!sec)return; const id=sec.dataset.pzTrade, n=+ds.pzRate;
-      pzS.jr[id]=pzS.jr[id]===n?0:n; sec.querySelectorAll('[data-pz-rate]').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRate===pzS.jr[id]))); return; }
+      pzS.jr[id]=pzS.jr[id]===n?0:n; sec.querySelectorAll('[data-pz-rate]').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRate===pzS.jr[id]))); pzRoving(t.closest('[role=radiogroup]')); return; }
     if(ds.pzJsave!==undefined){ const sec=t.closest('[data-pz-trade]'); if(sec)await pzSaveJournal(sec); return; }
     if(ds.pzJskip!==undefined){ const sec=t.closest('[data-pz-trade]'); if(!sec)return; const id=sec.dataset.pzTrade, tr=allTrades.find(x=>x.id===id);
       await pzSkipJournal([id],'Skipped '+(tr?dispMarket(dcoin(tr))+' '+(tr.dir==='Short'?'short':'long'):'the trade')); return; }
@@ -1435,7 +1453,7 @@ function wirePulse(){
     if(ds.pzSheet!==undefined){ pzS.sheet=true; pzRender(); const c=$('pzSheet').querySelector('[data-pz-close].pz-chip'); if(c)c.focus(); return; }
     if(ds.pzClose!==undefined){ if(t.classList.contains('pz-sheet-bg')&&ev.target!==t)return; pzS.sheet=false; pzS.custom=null; pzRender(); return; }
     if(ds.pzCustomize){ pzS.custom=ds.pzCustomize; pzRender(); const c=$('pzSheet').querySelector('[data-pz-close].pz-chip'); if(c)c.focus(); return; }
-    if(ds.pzMove){ const [sc,id,d]=ds.pzMove.split(':'); if(pzMove(sc,id,+d)){ await Store.set(S_KEY,settings); pzRender();
+    if(ds.pzMove){ const [sc,id,d]=ds.pzMove.split(':'); if(pzMove(sc,id,+d,sc==='today'?_pzTodayVis:null)){ await Store.set(S_KEY,settings); pzRender();
         const b=$('pzSheet').querySelector(`[data-pz-move="${sc}:${id}:${d}"]:not([disabled])`)||$('pzSheet').querySelector(`[data-pz-move^="${sc}:${id}:"]:not([disabled])`); if(b)b.focus(); } return; }
     if(ds.pzSect){ const [sc,id]=ds.pzSect.split(':'), L=settings.pzLayout=settings.pzLayout||{}, M=L[sc]=L[sc]||{}; M[id]=!pzShow(sc,id); await Store.set(S_KEY,settings); pzRender(); return; }
     if(ds.pzSectreset){ if(settings.pzLayout)delete settings.pzLayout[ds.pzSectreset]; await Store.set(S_KEY,settings); pzRender(); return; }
@@ -1490,6 +1508,10 @@ function wirePulse(){
       pzRender(); const n=$(t.id); if(n)n.focus(); return; }
     if(t.id==='pzProf'){ settings.pzProfile=t.value==='auto'?null:t.value; await Store.set(S_KEY,settings); pzNote('Profile set: '+pzProfile(gameContext().ctx.closed).name+'.'); pzRender(); } });
   root.addEventListener('keydown',ev=>{
+    const rg=/^(Arrow(Left|Right|Up|Down)|Home|End)$/.test(ev.key)&&ev.target.getAttribute&&ev.target.getAttribute('role')==='radio'&&ev.target.closest('[role=radiogroup]');
+    if(rg){ const R=[...rg.querySelectorAll('[role=radio]:not([disabled])')], i=R.indexOf(ev.target), k=ev.key; if(i<0)return; ev.preventDefault();
+      const b=R[k==='Home'?0:k==='End'?R.length-1:(i+(k==='ArrowRight'||k==='ArrowDown'?1:-1)+R.length)%R.length];
+      b.focus(); if(b.getAttribute('aria-checked')!=='true')b.click(); return; } // arrows select as they move (a click on the chosen one would clear it)
     if(ev.key==='Enter'&&(ev.target.id==='pzAddr'||ev.target.id==='pzAddr2')){ ev.preventDefault(); pzConnect(ev.target.id); }
     else if(ev.key==='Enter'&&ev.target.id==='pzTok'){ ev.preventDefault(); pzToken(); }
     else if(ev.key==='Enter'&&ev.target.id==='pzCexSecret'){ ev.preventDefault(); pzCexGo(); }

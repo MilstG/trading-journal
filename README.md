@@ -365,7 +365,9 @@ use one format everywhere (`pzPx`). On a wide screen the tabs become a sidebar.
 
 **Plan a trade.** The *Plan your next trade* card on Today opens a short form:
 market, long or short, stop (required), target and entry (optional), and one line
-on why. The plan waits in your journal (synced like any note) and attaches itself
+on why. The market has to be one you've traded, hold, or one listed on Hyperliquid, and
+each price within 10× of the market's price (of the entry, or of the stop, when no price
+is known), so a typo of a few zeros is caught. The plan waits in your journal (synced like any note) and attaches itself
 to your next trade on that market and side that opens within 24 hours (a long plan
 also takes a spot buy) — the
 trade's stop and target come from it, it counts as a plan written live, and the
@@ -443,7 +445,9 @@ tend to slip after is happening right now (a fresh loss, a fast re-entry).
 **Badges.** About 270 badges in 45 families (discipline, consistency,
 journaling, risk, P&L, habits, social …), each with six tiers from Bronze to
 Legend; new ones are revealed as you earn the earlier ones. Members can switch
-on a public **badge page** at `/b/<name>` to share. Habit badges count retired
+on a public **badge page** at `/b/<name>` to share. **In the black** and **Big day**,
+whose tiers are dollar amounts, leave the device (badge page, profile, feed, counts) only
+when the member shares dollar P&L; the server holds them back too. Habit badges count retired
 habits for the days they were kept (re-adopting one starts a new copy beside the
 old), and **Toolbox** counts different habits: each library habit, leak plug or
 pattern once, and habits you write yourself as one.
@@ -584,7 +588,7 @@ fee in basis points, fees against your result on price and funding paid, with
 one line each when it matters — e.g. how much entering half your taker volume
 with limit orders would have kept.
 
-**AI coach.** With `COACH_AI=1`, a **Coach** tab lets members chat with Claude
+**AI coach.** With `COACH_AI=1`, a **Coach** tab (none without it, for visitors too) lets members chat with Claude
 about their trading, within a daily allowance (10 messages by default; the owner
 sets a server-wide default, overrides it per member, and has a larger default for fully unlocked
 members). The coach receives a summary of the member's numbers, habits and
