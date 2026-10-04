@@ -1521,7 +1521,7 @@ async function toggleArchivePanel(){
       out(`${esc(s.key)}: ${mb(s.bytes)} ${esc(s.encoding)}, ${s.lines} lines, ${s.fillsSeen} fills in it (${esc(JSON.stringify(s.shapes))})${w?'; '+w:''}.<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px">${esc(s.preview)}</pre>`); }
       catch(e){ out('Sample failed: '+esc(e.message)); } };
     $('arcGo').onclick=async()=>{ const address=$('arcWallet').value, maxGB=parseFloat($('arcGB').value)||75;
-      out('Planning…'); try{ await sync(); const j=await call('/backfill',{address,maxGB,scope:$('arcScope').value}); out(j.source==='index'?'Started: reading the wallet’s shard from the index, every day it has.':`Started: ${j.total} hours, ${gbOf(j.plan.bytes)} ≈ ${usd(j.plan.estCost)}.`); poll(); }
+      out('Planning…'); try{ await sync(); const j=await call('/backfill',{address,maxGB,scope:$('arcScope').value}); out(j.source==='index'?'Started: reading the wallet’s shard from the index, every day it has.':`Started: ${j.total} hours, ${gbOf(j.plan.bytes)} ≈ ${usd(j.plan.estCost)}.${j.indexSkipped?' (Index skipped: '+j.indexSkipped+')':''}`); poll(); }
       catch(e){ out('Not started: '+esc(e.message)); } };
     const sb=$('arcStop'); if(sb)sb.onclick=async()=>{ try{ await call('/stop',{}); }catch(e){} poll(); };
   };
