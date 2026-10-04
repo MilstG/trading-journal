@@ -137,6 +137,7 @@ function fakeS3(url, init) {
   return new Response(b, { status: 200, headers: { 'content-length': String(b.length) } });
 }
 const hlFetch = async (url, init) => {
+  if (/^https:\/\/(noaa-ghcn-pds|arxiv)\.s3/.test(url)) return new Response(null, { status: 200, headers: { 'content-length': '10' } });
   if (/^https:\/\/s3\.amazonaws\.com\/$/.test(url)) return new Response('<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>', { status: 200 });
   if (/sts\.amazonaws\.com/.test(url)) return new Response('<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>arn:aws:iam::123456789012:user/ledger-archive</Arn><UserId>AIDA</UserId><Account>123456789012</Account></GetCallerIdentityResult></GetCallerIdentityResponse>', { status: 200 });
   if (/amazonaws\.com/.test(url)) return fakeS3(url, init); return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }); };
