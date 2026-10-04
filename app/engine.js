@@ -1271,6 +1271,25 @@ function viewFilter(t){ return !(t.orphan||(t.offRecord&&!t.isOpen)) && (view===
 // minus perps and always differs from the fills (unsold holdings, airdrops, transferred tokens).
 // Shared by the journal's Net PnL card and Daruma's Stats tile, so the two say the same thing;
 // each caller decides when the all-time, every-dex figure applies to what it shows.
+// several wallets' curves as one: at every time any of them has a point, the sum of each one's latest
+// value so far (a step series). Pure.
+function sumSeries(list){
+  const L=(list||[]).filter(s=>Array.isArray(s)&&s.length); if(!L.length)return [];
+  if(L.length===1)return L[0].slice();
+  const times=[...new Set(L.flatMap(s=>s.map(p=>p[0])))].sort((a,b)=>a-b), idx=L.map(()=>0), cur=L.map(()=>0), out=[];
+  for(const t of times){ for(let i=0;i<L.length;i++){ const s=L[i]; while(idx[i]<s.length&&s[idx[i]][0]<=t){ cur[i]=s[idx[i]][1]; idx[i]++; } }
+    out.push([t,cur.reduce((a,b)=>a+b,0)]); }
+  return out;
+}
+// Hyperliquid's own all-time P&L curve for a market: perps as reported, the whole account for
+// combined, spot as the difference (the account's minus perps, pointwise). null without one.
+function verifiedCurve(mkt){
+  const h=hlPnl&&hlPnl.hist; if(!h)return null;
+  const c=mkt==='perp'?h.perp:mkt==='spot'?sumSeries([h.all,(h.perp||[]).map(p=>[p[0],-p[1]])]):h.all;
+  return c&&c.length>1?c:null;
+}
+// the deepest fall from a high on a curve of [time, value] points
+function curveDrawdown(curve){ let peak=-Infinity, dd=0, at=null; for(const [t,v] of (curve||[])){ if(v>peak)peak=v; const d=v-peak; if(d<dd){ dd=d; at=t; } } return {dd, at, peak:isFinite(peak)?peak:0}; }
 function verifiedFigure(mkt){
   const all=hlPnl.all, perp=hlPnl.perp;
   const ver=mkt==='perp'?perp:mkt==='spot'?((all!=null&&perp!=null)?all-perp:null):all;

@@ -120,6 +120,16 @@ t('leads only with seams, or a material perp gap; spot and combined keep whole f
   ctx.hlPnl = { all: null, perp: null }; eq(ctx.verifiedFigure('perp'), null, 'nothing verified, nothing to lead with');
 });
 
+t('the exchange’s curves: summed across wallets as a step series, per market, with their drawdown', () => {
+  vm.runInContext(['sumSeries', 'verifiedCurve', 'curveDrawdown'].map(grabFn).join('\n'), ctx);
+  eq(ctx.sumSeries([[[1, 10], [3, 30]], [[2, 5], [3, 6]]]), [[1, 10], [2, 15], [3, 36]], 'each wallet’s latest value so far, summed at every time');
+  eq(ctx.sumSeries([[[1, 1]]]), [[1, 1]]); eq(ctx.sumSeries([]), []);
+  ctx.hlPnl = { all: 100, perp: 40, hist: { all: [[1, 0], [2, 100]], perp: [[1, 0], [2, 40]] } };
+  eq(ctx.verifiedCurve('perp'), [[1, 0], [2, 40]]); eq(ctx.verifiedCurve('combined'), [[1, 0], [2, 100]]); eq(ctx.verifiedCurve('spot'), [[1, 0], [2, 60]]);
+  ctx.hlPnl = { all: 1, perp: 1, hist: null }; eq(ctx.verifiedCurve('perp'), null);
+  const d = ctx.curveDrawdown([[1, 0], [2, 50], [3, -20], [4, 10], [5, -40]]); eq([d.dd, d.at, d.peak], [-90, 5, 50]);
+});
+
 console.log('\nTWAP slice fills, paged by time');
 const slice = (time, i) => ({ fill: F('ETH', 'B', 1, 100, time, i), twapId: 1 });
 await t('pages until a short page, resumes AT the boundary, dedupes, honors since', async () => {

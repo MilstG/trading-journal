@@ -59,7 +59,12 @@ function s3Client(cfg) {
       const br = (res.headers && res.headers.get && res.headers.get('x-amz-bucket-region')) || xmlText(text || '', 'Region');
       if (!retried && br && br !== r) { region = br; return request(method, path, query, opts, true); }
       const code = xmlText(text || '', 'Code') || ('HTTP ' + res.status), msg = xmlText(text || '', 'Message') || '';
-      const e = new Error('S3 ' + code + (msg ? ': ' + msg : '') + (res.status === 403 ? ' — check ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET and the key’s policy (s3:GetObject and s3:ListBucket on the bucket)' : ''));
+      // say which of the three things it is: the key id, the secret, or what the key is allowed to do
+      const hint = code === 'InvalidAccessKeyId' ? ' — ARCHIVE_AWS_KEY_ID isn’t a key AWS knows; copy the Access key ID again'
+        : code === 'SignatureDoesNotMatch' ? ' — the key is known but ARCHIVE_AWS_SECRET doesn’t match it; copy the secret again (or make a new access key)'
+        : code === 'AccessDenied' ? ' — the key and secret are accepted, but this IAM user isn’t allowed to read the bucket: in IAM → Users → the user → Permissions, attach a policy with s3:ListBucket and s3:GetObject on arn:aws:s3:::' + cfg.bucket + ' and arn:aws:s3:::' + cfg.bucket + '/* (or the AWS-managed AmazonS3ReadOnlyAccess)'
+        : res.status === 403 ? ' — check ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET and the key’s policy' : '';
+      const e = new Error('S3 ' + code + (msg ? ': ' + msg : '') + hint);
       e.code = code; e.status = res.status; throw e;
     }
     if (opts.binary) { const len = +(res.headers.get('content-length') || 0); if (opts.maxBytes && len > opts.maxBytes) throw new Error('object is ' + len + ' bytes — over the ' + opts.maxBytes + ' byte limit');
