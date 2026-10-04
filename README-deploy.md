@@ -137,6 +137,10 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ADMIN_2FA_RESET`      | *(unset)*                        | Escape hatch if the owner lost every second factor: set it (e.g. `1`), restart, then remove it. Clears the owner's admin passkeys, app and recovery codes and ends every admin session; each value resets once. Or run `node server.js --reset-admin-2fa` |
 | `CORS_ORIGIN`          | *(unset)*                        | Exact origin allowed to call `/api/*` from a browser app |
 | `PUBLIC_ORIGIN`        | *(unset)*                        | The address people open Daruma at (e.g. `https://pulse.example.com`; comma-separate several). Wallet sign-in messages name only this site, so a look-alike site can't collect a valid signature. Not needed on Railway, whose edge only passes the service's own domains (custom ones included); set it when self-hosting |
+| `ARCHIVE_AWS_KEY_ID` / `ARCHIVE_AWS_SECRET` | *(unset)* | An AWS access key that can read Hyperliquid's node-data archive (`s3:GetObject` and `s3:ListBucket` on `hl-mainnet-node-data`, a requester-pays bucket — the transfer is billed to that AWS account). Turns on Data health → **Recover from the archive**, which pulls the fills the public API no longer serves (TWAP slices older than ~3 months) for the hours a wallet's seams need. See "Recovering fills from Hyperliquid's archive" |
+| `ARCHIVE_COST_PER_GB`  | `0.09`                           | The egress price used in the archive's estimates |
+| `ARCHIVE_MAX_WINDOW_DAYS` | `14`                          | A seam wider than this (days between a coin's last served fill and the fill that revealed the gap) is skipped by the backfill and reported instead |
+| `ARCHIVE_BUCKET` / `ARCHIVE_PREFIX` / `ARCHIVE_REGION` | `hl-mainnet-node-data` / `node_fills/hourly/` / *(learned)* | Where the archive is; only for a mirror or a format change |
 | `DEFAULT_THEME`        | *(unset = `ts9`)*                | The colorway the app opens in for anyone who hasn't picked one: `ts9` (acid green on black), `ink` (midnight) or `bb` (black & amber). Flip it and restart to re-theme every screen without a code change; a user's own pick always wins |
 | `HOME_VIEW`            | *(unset = journal)*              | `daruma` (or `keel`, its earlier name) makes the site's root (`/`) redirect to Daruma (`/daruma`), for a site that's mainly Daruma. The full journal stays at `/ledger.html`, and the installed journal app opens there |
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
@@ -177,6 +181,33 @@ tests/          test suites (`npm test`; CI runs them on every push)
 
 The analytics API, scheduled refresh, alerts, and weekly digests are documented
 in the main [README](README.md).
+
+## Recovering fills from Hyperliquid's archive
+
+Hyperliquid keeps TWAP slice fills for about three months and ordinary fills for a finite time. A
+wallet added to Ledger later has **seams**: a perp fill that starts from a position no earlier fill
+reaches. The data-health strip counts them, keeps the affected trades out of the stats, and leads the
+all-time headline with Hyperliquid's own P&L figure. The fills themselves still exist: Hyperliquid's
+node software streams every fill of every address into a requester-pays S3 bucket
+(`hl-mainnet-node-data`, `node_fills/hourly/{YYYYMMDD}/{hour}`), and the server can read it.
+
+1. In AWS, create an IAM user with this policy and an access key:
+   `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::hl-mainnet-node-data","arn:aws:s3:::hl-mainnet-node-data/*"]}]}`
+2. Set `ARCHIVE_AWS_KEY_ID` and `ARCHIVE_AWS_SECRET` on the service and redeploy. Nothing is
+   downloaded until you ask.
+3. In the journal, Data health → **Recover from the archive…** → **Check coverage**: the archive's
+   first and last day, one day's size, and per wallet the hours its seams need, how many of them the
+   archive has, and what they would cost (`$0.09/GB` by default). **Fetch a sample hour** shows a
+   file's format and how many of the wallet's fills it holds.
+4. **Backfill** downloads only those hours (within the GB cap you set; a plan over the cap is refused
+   with its size), keeps the wallet's fills, and merges them into the server's fill cache
+   (`GET /api/v1/archive` reports progress). The journal then merges the server's copy into the
+   browser's cache on its next load and reconstructs: the seams close, the trades come back with
+   their real exits, and the fill-based total moves toward the verified figure.
+
+Hours before the archive's first day stay unrecoverable; the exchange's own figure covers them. The
+same endpoints work from scripts: `POST /api/v1/archive/check`, `/sample`, `/backfill`
+(`{address, maxGB}`), `/stop`, all with the owner token.
 
 ## Off-site backups
 
