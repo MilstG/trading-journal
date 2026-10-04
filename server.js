@@ -1755,6 +1755,7 @@ function createApp(opts) {
     { method: 'POST', path: '/api/v1/archive/sample', auth: 'full', desc: 'download one hour and show its format and the wallets\' fills in it; body {day?, hour?, key?, wallets?}' },
     { method: 'POST', path: '/api/v1/archive/backfill', auth: 'full', desc: 'download the hours a wallet\'s seams need and merge the fills found into its cache; body {address, maxGB (default 2), dryRun?}; 413 with the plan when over budget; progress at GET /api/v1/archive' },
     { method: 'POST', path: '/api/v1/archive/stop', auth: 'full', desc: 'stop the running backfill' },
+    { method: 'POST', path: '/api/v1/archive/diagnose', auth: 'full', desc: 'when a check fails: who AWS says the key is, the bucket\'s region, a root listing, the dataset listing and one object read, with their raw answers and a one-line verdict' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
@@ -1856,6 +1857,7 @@ function createApp(opts) {
         if (act === 'backfill') { if (!ADDR_RE.test(String(body.address || ''))) return send(400, { error: 'address required' });
           return send(202, await archive.backfill({ address: body.address, maxGB: body.maxGB, dryRun: !!body.dryRun })); }
         if (act === 'stop') return send(200, archive.stop() || {});
+        if (act === 'diagnose') return send(200, await archive.diagnose());
         return send(404, { error: 'unknown archive action' });
       } catch (e) { return send(e.code >= 400 && e.code < 600 ? e.code : 502, Object.assign({ error: e.message }, e.plan ? { plan: e.plan } : {})); }
     }

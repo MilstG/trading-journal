@@ -24,7 +24,7 @@ const amzDate = d => d.toISOString().replace(/[:-]|\.\d{3}/g, ''); // 20130524T0
 // The signature for one request. Header names are lower-cased and values trimmed, headers and query
 // parameters sorted, the path encoded once with its slashes kept — the canonical form AWS hashes.
 function signV4(o) {
-  const service = 's3', hdrs = Object.assign({ host: o.host }, o.headers || {});
+  const service = o.service || 's3', hdrs = Object.assign({ host: o.host }, o.headers || {});
   const canon = Object.keys(hdrs).map(k => [k.toLowerCase(), String(hdrs[k]).trim().replace(/\s+/g, ' ')]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   const signedHeaders = canon.map(h => h[0]).join(';'), canonHeaders = canon.map(h => h[0] + ':' + h[1] + '\n').join('');
   const q = Object.keys(o.query || {}).sort().map(k => enc(k) + '=' + enc(o.query[k] == null ? '' : o.query[k])).join('&');
@@ -84,7 +84,36 @@ function s3Client(cfg) {
     return { keys, prefixes, truncated: !!token };
   }
   const get = (key, opts) => request('GET', '/' + key, {}, Object.assign({ binary: true }, opts || {}));
-  return { list, get, region: () => region, host: () => hostFor(region || 'us-east-1') };
+  // one request, reported rather than thrown: status, S3's error code and message, the region it names
+  async function probe(method, path, query, regionOverride) {
+    const r = regionOverride || region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = sha256('');
+    const headers = { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date), 'x-amz-request-payer': 'requester' };
+    const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: cfg.keyId, secret: cfg.secret, date });
+    const url = 'https://' + host + enc(path, true) + (s.query ? '?' + s.query : '');
+    try {
+      const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), redirect: 'manual', signal: AbortSignal.timeout(30000) });
+      const text = method === 'HEAD' ? '' : await res.text().catch(() => '');
+      return { url, signedFor: r, status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'),
+        bucketRegion: (res.headers.get && res.headers.get('x-amz-bucket-region')) || xmlText(text, 'Region') || null,
+        prefixes: xmlAll(text, 'CommonPrefixes').map(p => xmlText(p, 'Prefix')).slice(0, 5), keys: xmlAll(text, 'Contents').map(c => xmlText(c, 'Key')).slice(0, 5), bytes: method === 'HEAD' ? null : text.length };
+    } catch (e) { return { url, signedFor: r, error: e.message }; }
+  }
+  return { list, get, probe, region: () => region, host: () => hostFor(region || 'us-east-1'), setRegion: r => { region = r; } };
+}
+
+// AWS's own answer to "who is this key": the account and the user or role it belongs to (STS
+// GetCallerIdentity, which every valid key may call). Tells a key made under the wrong user apart
+// from a policy problem.
+async function callerIdentity(cfg, fetchImpl, now) {
+  const fetchFn = fetchImpl || ((...a) => globalThis.fetch(...a)), host = 'sts.amazonaws.com', body = 'Action=GetCallerIdentity&Version=2011-06-15';
+  const date = new Date((now || Date.now)()), payloadHash = sha256(body);
+  const headers = { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8', 'x-amz-date': amzDate(date) };
+  const s = signV4({ method: 'POST', host, path: '/', query: {}, headers, payloadHash, region: 'us-east-1', service: 'sts', keyId: cfg.keyId, secret: cfg.secret, date });
+  try {
+    const res = await fetchFn('https://' + host + '/', { method: 'POST', headers: Object.assign({ Authorization: s.authorization }, headers), body, signal: AbortSignal.timeout(30000) });
+    const text = await res.text().catch(() => '');
+    return { status: res.status, account: xmlText(text, 'Account'), arn: xmlText(text, 'Arn'), userId: xmlText(text, 'UserId'), code: xmlText(text, 'Code'), message: xmlText(text, 'Message') };
+  } catch (e) { return { error: e.message }; }
 }
 
 /* ============================ LZ4 frames ============================ */
@@ -300,9 +329,35 @@ function createArchive(deps) {
     })().catch(e => { cur.state = 'failed'; cur.lastError = e.message; cur.finishedAt = Date.now(); });
     return job;
   }
+  // Five probes with their raw answers, for when a check fails and the reason isn't on the error: who
+  // the key is, the bucket's region, a listing of the bucket root, of the dataset, and one object read.
+  async function diagnose() {
+    need();
+    const out = { keyId: cfg.keyId.slice(0, 4) + '…' + cfg.keyId.slice(-4), bucket: cfg.bucket, prefix: cfg.prefix, regionSetting: cfg.region || '(learned)', steps: {} };
+    out.steps.identity = await callerIdentity(cfg, deps.fetchImpl, deps.now);
+    out.steps.headBucket = await s3.probe('HEAD', '/', {});
+    const learned = out.steps.headBucket.bucketRegion; if (learned && !cfg.region) s3.setRegion(learned);
+    out.steps.listRoot = await s3.probe('GET', '/', { 'list-type': '2', delimiter: '/', 'max-keys': '5' });
+    out.steps.listDataset = await s3.probe('GET', '/', { 'list-type': '2', prefix: cfg.prefix, delimiter: '/', 'max-keys': '5' });
+    // the other dataset too: a bucket policy that allows one prefix and not the other shows up here
+    const alt = /node_fills_by_block/.test(cfg.prefix) ? 'node_fills/hourly/' : 'node_fills_by_block/hourly/';
+    out.steps['list:' + alt] = await s3.probe('GET', '/', { 'list-type': '2', prefix: alt, delimiter: '/', 'max-keys': '5' });
+    const day = out.steps.listDataset.prefixes && out.steps.listDataset.prefixes[0];
+    if (day) { const hours = await s3.probe('GET', '/', { 'list-type': '2', prefix: day, 'max-keys': '3' }); out.steps.listDay = hours;
+      const key = hours.keys && hours.keys[0]; if (key) { const g = await s3.probe('HEAD', '/' + key, {}); out.steps.headObject = g; } }
+    // a one-line reading of it
+    const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset;
+    out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
+      : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
+      : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
+      : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses to list ' + cfg.bucket + '/' + cfg.prefix + ' for it: either that identity has no policy allowing s3:ListBucket on this bucket, or the bucket’s own policy does not allow it. Check IAM → Users → the user named in that ARN → Permissions'
+      : ld.bucketRegion && ld.bucketRegion !== ld.signedFor ? 'the bucket is in ' + ld.bucketRegion + ' but the request was signed for ' + ld.signedFor + ': set ARCHIVE_REGION=' + ld.bucketRegion
+      : 'S3 answered ' + (ld.code || ld.status || ld.error) + (ld.message ? ': ' + ld.message : '');
+    return out;
+  }
   function stop() { if (job && job.state === 'running') { job.state = 'stopped'; job.finishedAt = Date.now(); } return job; }
   const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, lastCheck, job });
-  return { configured, cfg, check, sample, backfill, stop, status, plan: (addr, fills, archiveDays) => { need(); return plan(addr, fills, archiveDays); } };
+  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, archiveDays) => { need(); return plan(addr, fills, archiveDays); } };
 }
 
-module.exports = { signV4, s3Client, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
+module.exports = { signV4, s3Client, callerIdentity, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };

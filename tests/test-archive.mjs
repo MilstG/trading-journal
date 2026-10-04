@@ -130,9 +130,12 @@ function fakeS3(url, init) {
   }
   const key = decodeURIComponent(u.pathname.slice(1)); const b = objects[key];
   if (!b) return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
+  if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(b.length) } });
   return new Response(b, { status: 200, headers: { 'content-length': String(b.length) } });
 }
-const hlFetch = async (url, init) => { if (/amazonaws\.com/.test(url)) return fakeS3(url, init); return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }); };
+const hlFetch = async (url, init) => {
+  if (/sts\.amazonaws\.com/.test(url)) return new Response('<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>arn:aws:iam::123456789012:user/ledger-archive</Arn><UserId>AIDA</UserId><Account>123456789012</Account></GetCallerIdentityResult></GetCallerIdentityResponse>', { status: 200 });
+  if (/amazonaws\.com/.test(url)) return fakeS3(url, init); return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }); };
 const dataDir = mkdtempSync(join(tmpdir(), 'ledger-archive-'));
 const mk = env => createApp({ dataDir, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch, archiveEnv: env });
 const listen = app => new Promise(r => app.listen(0, '127.0.0.1', () => r('http://127.0.0.1:' + app.address().port)));
@@ -175,6 +178,13 @@ try {
     eq(r.status, 413); ok(/over the/.test(r.body.error)); eq(r.body.plan.hours, 4);
     const d = await call(base, '/api/v1/archive/backfill', { address: ADDR, maxGB: 1, dryRun: true });
     eq(d.status, 202); eq([d.body.state, d.body.total, d.body.done], ['done', 4, 0]);
+  });
+  await t('diagnose: each probe reports, and the verdict reads the archive as readable', async () => {
+    const r = await call(base, '/api/v1/archive/diagnose', {});
+    eq(r.status, 200, JSON.stringify(r.body)); ok(/readable/.test(r.body.verdict), r.body.verdict);
+    ok(r.body.steps.listDataset.ok && r.body.steps.listDataset.prefixes.length === 2, JSON.stringify(r.body.steps.listDataset));
+    ok(r.body.steps.identity && (r.body.steps.identity.status || r.body.steps.identity.error), 'STS was asked');
+    eq(r.body.steps.headObject.status, 200);
   });
   await t('backfill: the four hours are read, the lost close is merged into the cache, and the browser can tell', async () => {
     const before = s3Calls.length;
