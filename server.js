@@ -868,7 +868,7 @@ function createApp(opts) {
         const fr = await E.fetchAllFills(w.address, since);
         // a cache from before TWAP slices were paged: fetch the whole slice history once (it is older than
         // the watermark) and mark the file, so later refreshes stay incremental
-        let twapFull = !cache || !!cache.twapFull;
+        let twapFull = cache ? !!cache.twapFull : !fr.twapPartial; // a new cache whose slice fetch was cut short retries the whole slice history next time
         if (cache && !twapFull) { try { const tw = await E.fetchTwapFills(w.address, 0); fr.fills.push(...tw.fills); twapFull = !tw.partial; } catch (e) {} }
         let fills;
         if (body.full && old && old.fills && old.fills.length) {

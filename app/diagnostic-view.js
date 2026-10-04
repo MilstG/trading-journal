@@ -455,7 +455,7 @@ function setupSectionHtml(closed){
 // and says so. Renders nothing when no flows were fetched (pasted data, fetch failure).
 function capitalSectionHtml(){
   if(!ledFlows.length)return '';
-  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime);
+  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord); // an off-record result would misstate realized and the drawdown
   const equityNow=(accountValue!=null||spotAccountValue!=null)?((accountValue||0)+(spotAccountValue||0)):null;
   const m=capitalModel(ledFlows,allClosed,equityNow);
   if(!m)return '';

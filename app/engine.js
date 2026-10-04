@@ -96,13 +96,17 @@ function reconstructTrades(fills, addr, market){
           t0.durationMs=t0.closeTime-t0.openTime; trades.push(t0); delete open[coin]; }
       }
     }
+    const wasFlat=!spot&&lastAfter[coin]!=null&&Math.abs(lastAfter[coin])<EPS; // the fills saw this coin go flat, so a new trade must start from 0
     lastAfter[coin]=after;
     let t=open[coin];
     if(spot&&t&&signed>0&&t.closeSz>0&&Math.abs(before)>EPS)t=open[coin]=realize(t,coin,f,Math.abs(before));
     // a fill acting on a position held before the history began (closing it, or flipping through it)
     // belongs to the side that was held; a fresh position takes the side it opens
     if(!t){ t=open[coin]=newTrade(coin,f,(Math.abs(before)>EPS?before>0:after>0)?'Long':'Short',0,0,0);
-      if(!spot&&Math.abs(before)>EPS)t.partialHistory=true; } // held before its first served fill: the entry is unknown, adds or not
+      if(!spot&&Math.abs(before)>EPS){ t.partialHistory=true; // held before its first served fill: the entry is unknown, adds or not
+        // the fills saw this coin go flat earlier, so the position it starts from was opened in fills we
+        // never got: a seam like the others (it was counted as none, so coverage read whole)
+        if(wasFlat){ t.gaps=1; t.gapSz=Math.abs(before); t.gapNotional=Math.abs(before)*px; t.gapTimes=[f.time]; } } }
     const flipped=Math.abs(before)>EPS&&Math.abs(after)>EPS&&(before>0)!==(after>0);
     // a flip fill's notional and fee are split by size between the closing and opening trade —
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
@@ -1264,6 +1268,9 @@ function dexPositions(){ return dexView==='all'?openPositions:openPositions.filt
 // while still open it stays in view, its result isn't final anyway. The same test is inlined wherever orphans
 // were already left out (coach, progress, pulse, fee tier, reconcile): those run in bare contexts in the tests.
 function viewFilter(t){ return !(t.orphan||(t.offRecord&&!t.isOpen)) && (view==='combined' ? true : t.market===view) && dexFilter(t); }
+// The trades table keeps the off-record ones (badged "incomplete"): they happened, they carry notes, and
+// hiding them made a TWAP-heavy wallet's history look thinner than it was. Orphans stay out as before.
+function tableFilter(t){ return !t.orphan && (view==='combined' ? true : t.market===view) && dexFilter(t); }
 // The all-time net the fills can't give: Hyperliquid's own P&L for a market ('perp', 'spot' or
 // 'combined' — what its app and trackers such as Hyperdash show, unrealized included) with the
 // fill-based sum beside it, when seams were found or, for perps, the two differ materially.
@@ -1291,14 +1298,26 @@ function verifiedCurve(mkt){
 // the deepest fall from a high on a curve of [time, value] points
 function curveDrawdown(curve){ let peak=-Infinity, dd=0, at=null; for(const [t,v] of (curve||[])){ if(v>peak)peak=v; const d=v-peak; if(d<dd){ dd=d; at=t; } } return {dd, at, peak:isFinite(peak)?peak:0}; }
 function verifiedFigure(mkt){
-  const all=hlPnl.all, perp=hlPnl.perp;
-  const ver=mkt==='perp'?perp:mkt==='spot'?((all!=null&&perp!=null)?all-perp:null):all;
+  // Spot never leads with it: the seam check is perp-only (spot balances move without fills), and the
+  // account's figure minus perps carries unsold holdings, airdrops and transferred tokens the spot fills
+  // never had — a perp seam says nothing about the spot history.
+  if(mkt==='spot')return null;
+  const ver=mkt==='perp'?hlPnl.perp:hlPnl.all;
   if(ver==null)return null;
-  const hl=allTrades.filter(t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&!t.isOpen&&(mkt==='combined'||mkt==='all'||t.market===mkt));
+  const hlOf=t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&(mkt==='combined'||mkt==='all'||t.market===mkt);
+  const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen);
   const rec=hl.reduce((s,t)=>s+t.net,0);
   const seams=!!(dataCoverage&&dataCoverage.gaps>0);
-  if(!seams&&!(mkt==='perp'&&Math.abs(rec-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
-  return {ver,rec,seams,n:hl.length,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
+  // The exchange's figure is account-based, unrealized included. Set against it, the fills must count
+  // what open trades have realized so far and what the open positions are marked at — a large open
+  // position used to read as a material gap on its own, and the exchange's curve took over a
+  // dashboard whose fills were whole.
+  const hlPos=p=>!p.venue||p.venue==='hyperliquid';
+  const live=rec+allTrades.filter(t=>hlOf(t)&&t.isOpen).reduce((s,t)=>s+t.net,0)
+    +(mkt==='perp'||mkt==='combined'||mkt==='all'?openPositions.filter(hlPos).reduce((s,p)=>s+(p.uPnl||0),0):0)
+    +(mkt==='combined'||mkt==='all'?spotHoldings.filter(hlPos).reduce((s,h)=>s+(h.uPnl||0),0):0);
+  if(!seams&&!(mkt==='perp'&&Math.abs(live-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
+  return {ver,rec,live,seams,n:hl.length,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
 }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
@@ -1322,7 +1341,7 @@ function computeStatsMemo(closed,allv){ allv=allv||closed; let a=0,b=0;
 function periodTrades(){ const closed=allTrades.filter(t=>!t.isOpen && viewFilter(t));
   if(rangeActive())return closed.filter(inRange);
   if(!period)return closed; const cut=Date.now()-period*86400000; return closed.filter(t=>t.closeTime>=cut); }
-function periodTradesAll(){ const inv=allTrades.filter(viewFilter);
+function periodTradesAll(forTable){ const inv=allTrades.filter(forTable?tableFilter:viewFilter);
   if(rangeActive())return inv.filter(inRange);
   if(!period)return inv; const cut=Date.now()-period*86400000; return inv.filter(t=>t.closeTime>=cut); }
 // maxDDpct's label: |maxDD| ÷ the all-time high of cumulative PnL, which is not "% off the peak it fell from"

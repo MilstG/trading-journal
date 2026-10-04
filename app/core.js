@@ -708,7 +708,7 @@ async function fetchAllFills(addr, since=0){
   const tw=await fetchTwapFills(addr,since);
   for(const f of tw.fills) add(f);
   if(tw.partial&&typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.twap=true;
-  return {fills:all, truncated};
+  return {fills:all, truncated, twapPartial:!!tw.partial};
 }
 // Every TWAP slice fill the exchange still serves, from `since` on. userTwapSliceFills returns
 // only the newest 2,000 slices: a wallet that TWAPs out of its positions had everything older
