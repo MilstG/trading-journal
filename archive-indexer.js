@@ -39,13 +39,25 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 // so the main thread appends it to the shard's file (concatenated members are one valid gzip stream).
 async function splitHour(src, key) {
   const buf = await src.get(key, { maxBytes: 2 * 1024 * 1024 * 1024 });
-  const parts = new Map(); let fills = 0, lines = 0;
+  const parts = new Map(); let fills = 0, lines = 0, sample = null; const shapes = {};
+  const keep = (addr, fill, shape) => { shapes[shape] = (shapes[shape] || 0) + 1; const sh = SHARD(addr); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } arr.push(JSON.stringify([addr, fill])); fills++; };
+  // the same walk as archive.js's extractFills: [address, fill] pairs (under "events" or anywhere a
+  // few levels deep), {user, fill} objects, and fills carrying their user — so the older dataset's
+  // lines land in the index too, whatever wraps them
+  const walk = (n, d) => {
+    if (!n || typeof n !== 'object' || d > 10) return;
+    if (Array.isArray(n)) {
+      if (n.length === 2 && typeof n[0] === 'string' && /^0x[0-9a-fA-F]{40}$/.test(n[0]) && A.isFill(n[1])) return keep(n[0], n[1], 'pair');
+      for (const x of n) walk(x, d + 1); return;
+    }
+    if (A.isFill(n)) { const u = n.user || n.address; if (typeof u === 'string') { const f = Object.assign({}, n); delete f.user; delete f.address; return keep(u, f, 'user'); } }
+    if (n.fill && A.isFill(n.fill) && typeof n.user === 'string') return keep(n.user, n.fill, 'obj');
+    for (const k in n) walk(n[k], d + 1);
+  };
   const onLine = s => {
-    if (!s.trim()) return; lines++;
+    if (!s.trim()) return; lines++; if (sample == null) sample = s.slice(0, 400);
     let j; try { j = JSON.parse(s); } catch (e) { return; }
-    const ev = Array.isArray(j) ? j : (j && Array.isArray(j.events) ? j.events : null); if (!ev) return;
-    for (const e of ev) { if (!Array.isArray(e) || e.length !== 2 || typeof e[0] !== 'string' || !e[1] || typeof e[1] !== 'object') continue;
-      const sh = SHARD(e[0]); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } arr.push(JSON.stringify(e)); fills++; }
+    walk(j, 0);
   };
   // the same line splitter as extractFillsFromObject, over the streaming decoder
   let rest = '';
@@ -56,7 +68,7 @@ async function splitHour(src, key) {
   if (rest) onLine(rest);
   const members = {};
   for (const [sh, arr] of parts) members[sh] = zlib.gzipSync(arr.join('\n') + '\n', { level: 6 });
-  return { key, lines, fills, bytes: buf.length, members };
+  return { key, lines, fills, bytes: buf.length, members, shapes, sample };
 }
 if (!isMainThread) {
   const src = A.s3Client({ bucket: SOURCE_BUCKET, region: REGION, credentials: A.roleCredentials() });
@@ -99,29 +111,37 @@ async function main() {
   const idle = workers.slice(); const waiting = [];
   const run = key => new Promise((resolve, reject) => { const go = w => { const onMsg = m => { w.off('message', onMsg); idle.push(w); if (waiting.length) waiting.shift()(idle.pop()); m.ok ? resolve(m.r) : reject(new Error(m.error)); }; w.on('message', onMsg); w.postMessage(key); };
     idle.length ? go(idle.pop()) : waiting.push(go); });
-  let total = { days: 0, hours: 0, fills: 0, bytes: 0 }; const t0 = Date.now();
+  let total = { days: 0, hours: 0, fills: 0, bytes: 0 }, emptyDays = 0; const t0 = Date.now();
   try {
     for (const day of days) {
-      if (await idx.head(o.prefix + 'd/' + day + '/_done')) { log(day + ' already indexed'); continue; }
+      const done = await doneSummary(idx, o.prefix + 'd/' + day + '/_done');
+      if (done && isIndexed(done)) { log(day + ' already indexed'); continue; }
+      if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
       const hours = (await src.list(sourcePrefix(day))).keys.filter(k => /\/\d{1,2}(\.lz4)?$/.test(k.key)).sort((a, b) => +(/\/(\d+)/.exec(a.key.slice(-7))[1]) - +(/\/(\d+)/.exec(b.key.slice(-7))[1]));
       if (!hours.length) { log(day + ': no files in the archive'); continue; }
       const dir = path.join(o.work, day); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
-      const sum = { day, hours: 0, fills: 0, bytes: 0, lines: 0, failed: [] }; const td = Date.now();
+      const sum = { day, hours: 0, fills: 0, bytes: 0, lines: 0, failed: [], shapes: {}, sample: null }; const td = Date.now();
       // every hour of the day through the workers; each result is appended to the day's shard files as it lands
       await Promise.all(hours.map(async h => {
         let r = null; for (let attempt = 0; attempt < 3 && !r; attempt++) { try { r = await run(h.key); } catch (e) { if (attempt === 2) { sum.failed.push(h.key + ': ' + e.message); log('  ' + h.key + ' failed: ' + e.message); } } }
         if (!r) return;
         for (const sh in r.members) fs.appendFileSync(path.join(dir, sh + '.jsonl.gz'), Buffer.from(r.members[sh]));
-        sum.hours++; sum.fills += r.fills; sum.bytes += r.bytes; sum.lines += r.lines;
+        sum.hours++; sum.fills += r.fills; sum.bytes += r.bytes; sum.lines += r.lines; for (const k in r.shapes) sum.shapes[k] = (sum.shapes[k] || 0) + r.shapes[k]; if (!sum.sample && r.sample) sum.sample = r.sample;
       }));
       if (sum.failed.length) { log(day + ': ' + sum.failed.length + ' hour(s) failed — the day is left unmarked, run again'); continue; }
+      // a day of the archive always has fills; none found means the lines have a shape the walk
+      // doesn't know — say what a line looks like, leave the day unmarked, and give up after a few
+      if (sum.lines && !sum.fills) { emptyDays++; log(day + ': ' + sum.hours + ' hours, ' + sum.lines + ' lines, but no fills recognised in them — the day is left unmarked. A line looks like: ' + (sum.sample || '(empty)'));
+        if (emptyDays >= 3) throw new Error('three days in a row with no recognisable fills — stopping instead of reading the whole archive for nothing; the sample lines above show the format');
+        continue; }
+      emptyDays = 0;
       // upload the day's shards, then the marker
       const files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl.gz')); let up = 0, upBytes = 0;
       const queue = files.slice(); const uploader = async () => { for (;;) { const f = queue.shift(); if (!f) return; const body = fs.readFileSync(path.join(dir, f));
         for (let attempt = 0; attempt < 4; attempt++) { try { await idx.put(o.prefix + 'd/' + day + '/' + f, body, 'application/gzip'); break; } catch (e) { if (attempt === 3) throw e; await new Promise(r => setTimeout(r, 500 * (attempt + 1))); } }
         up++; upBytes += body.length; } };
       await Promise.all(Array.from({ length: 24 }, uploader));
-      sum.shards = up; sum.indexBytes = upBytes; sum.seconds = Math.round((Date.now() - td) / 1000); sum.at = new Date().toISOString();
+      delete sum.sample; sum.shards = up; sum.indexBytes = upBytes; sum.seconds = Math.round((Date.now() - td) / 1000); sum.at = new Date().toISOString();
       await idx.put(o.prefix + 'd/' + day + '/_done', Buffer.from(JSON.stringify(sum)), 'application/json');
       total.days++; total.hours += sum.hours; total.fills += sum.fills; total.bytes += sum.bytes;
       await idx.put(o.prefix + 'progress.json', Buffer.from(JSON.stringify({ lastDay: day, lastSummary: sum, run: total, startedAt: new Date(t0).toISOString(), at: sum.at })), 'application/json');
@@ -132,4 +152,7 @@ async function main() {
   log('done: ' + total.days + ' day(s), ' + total.hours + ' hours, ' + total.fills.toLocaleString('en-US') + ' fills, ' + (total.bytes / 1073741824).toFixed(1) + ' GB read in ' + Math.round((Date.now() - t0) / 60000) + ' min');
 }
 if (isMainThread) { if (require.main === module) main().catch(e => { console.error(e.message || e); process.exit(1); }); }
-module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs };
+// the day's _done summary, or null when there is none; and whether it counts as indexed
+async function doneSummary(idx, key) { try { return JSON.parse((await idx.get(key)).toString('utf8')); } catch (e) { if (e.status === 404 || e.code === 'NoSuchKey') return null; return {}; } }
+const isIndexed = sum => !!(sum && sum.fills > 0);
+module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed };

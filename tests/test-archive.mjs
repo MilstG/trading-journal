@@ -309,6 +309,16 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const lines = zlib.gunzipSync(Buffer.concat([r.members['c84'], r.members['c84']])).toString().trim().split('\n'); eq(lines.length, 24, 'members concatenate into one gzip stream');
   eq(JSON.parse(lines[0])[0], ADDR);
   eq(I.SHARD('0xC846E513F1FB448E744D5C8E911E87BCCC0DFB20'), 'c84'); eq([I.sourcePrefix('20250726'), I.sourcePrefix('20250727')], ['node_fills/hourly/20250726/', 'node_fills_by_block/hourly/20250727/']);
+  // the older dataset's shapes: [time, [address, fill]] lines, {user, fill} objects, fills carrying their user — all land as [address, fill]
+  const fill = { coin: 'ETH', px: '1', sz: '2', side: 'B', time: T0, tid: 5, oid: 6 };
+  const oldText = [JSON.stringify(['2025-05-25T10:00:00.1', [ADDR, fill]]), JSON.stringify({ user: ADDR, fill }), JSON.stringify(Object.assign({ user: '0x' + 'a'.repeat(40) }, fill)), JSON.stringify({ time: '2025-05-25T10:00:01', events: [[ADDR, fill]] })].join('\n') + '\n';
+  const r2 = await I.splitHour({ get: async () => Buffer.from(oldText) }, 'node_fills/hourly/20250525/10');
+  eq([r2.lines, r2.fills, Object.keys(r2.members).sort(), r2.shapes], [4, 4, ['aaa', 'c84'], { pair: 2, obj: 1, user: 1 }]);
+  const c84 = zlib.gunzipSync(r2.members['c84']).toString().trim().split('\n').map(l => JSON.parse(l)); eq(c84.length, 3); ok(c84.every(x => x[0] === ADDR && x[1].coin === 'ETH' && !('user' in x[1])));
+  eq(JSON.parse(zlib.gunzipSync(r2.members['aaa']).toString())[1].tid, 5);
+  ok(typeof r2.sample === 'string' && r2.sample.startsWith('["2025-05-25'), 'the first line is kept as a sample');
+  // a day marked done with no fills in it is not indexed
+  eq([I.isIndexed({ fills: 0, hours: 24 }), I.isIndexed({ fills: 3 }), I.isIndexed(null)], [false, true, false]);
   const o = I.parseArgs(['build', '--bucket', 'b', '--from', '20250801', '--to', '20250802', '--workers', '2']); eq([o.cmd, o.bucket, o.from, o.to, o.workers, o.prefix], ['build', 'b', '20250801', '20250802', 2, 'index/v1/']);
 });
 await t('role credentials: the environment’s key wins, and a session token is signed as a header', async () => {
