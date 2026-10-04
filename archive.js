@@ -116,6 +116,20 @@ async function callerIdentity(cfg, fetchImpl, now) {
   } catch (e) { return { error: e.message }; }
 }
 
+// ListAllMyBuckets, signed for us-east-1 at the service endpoint: allowed by any S3 read-only
+// policy and refused by no bucket policy, so a denial here is the account itself (an AWS account
+// still pending activation answers AccessDenied to every S3 call while IAM and STS already work).
+async function listOwnBuckets(cfg, fetchImpl, now) {
+  const fetchFn = fetchImpl || ((...a) => globalThis.fetch(...a)), host = 's3.amazonaws.com', date = new Date((now || Date.now)()), payloadHash = sha256('');
+  const headers = { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) };
+  const s = signV4({ method: 'GET', host, path: '/', query: {}, headers, payloadHash, region: 'us-east-1', keyId: cfg.keyId, secret: cfg.secret, date });
+  try {
+    const res = await fetchFn('https://' + host + '/', { method: 'GET', headers: Object.assign({ Authorization: s.authorization }, headers), signal: AbortSignal.timeout(30000) });
+    const text = await res.text().catch(() => '');
+    return { status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'), buckets: xmlAll(text, 'Name').length };
+  } catch (e) { return { error: e.message }; }
+}
+
 /* ============================ LZ4 frames ============================ */
 // A plain decoder for the LZ4 frame format (magic 0x184D2204): the descriptor, then blocks of
 // (size, data), each either stored or LZ4-compressed, to the end mark. Blocks are decoded into one
@@ -405,7 +419,8 @@ function createArchive(deps) {
       let p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}); if (!p.ok && p.bucketRegion) p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}, p.bucketRegion);
       known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = p; } catch (e) { known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = { error: e.message }; }
     out.steps.knownObjects = known;
-    const kn = known[cfg.bucket + '/' + KNOWN_NODE], kd = known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key];
+    out.steps.ownBuckets = await listOwnBuckets(cfg, deps.fetchImpl, deps.now);
+    const kn = known[cfg.bucket + '/' + KNOWN_NODE], kd = known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key], ob = out.steps.ownBuckets;
     const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset, rn = byName[cfg.prefix], ra = byName[alt];
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
       : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
@@ -414,6 +429,8 @@ function createArchive(deps) {
       : ra.ok ? 'listing is not allowed, and ' + cfg.prefix + ' has no file for yesterday noon, but ' + alt + ' has (' + ra.key + '): set ARCHIVE_PREFIX=' + alt + ' on the server'
       : kn.ok ? 'listing is not allowed and yesterday’s file isn’t there yet, but a known file reads fine (' + KNOWN_NODE + ', ' + kn.size + ' bytes): the archive lags a few days; the check finds its last day by probing — nothing to change'
       : kd.ok ? 'this key can read requester-pays data (the docs’ example in ' + KNOWN_DOCS.bucket + ' answers), but ' + cfg.bucket + ' refuses every read and listing: that bucket’s own policy does not allow this account, or it moved — nothing on the key’s side will change it'
+      : ld.code === 'AccessDenied' && id.arn && ob && !ob.ok && !ob.error ? 'the key is ' + id.arn + ', AWS accepts it, and S3 refuses it everything — even listing the account’s own buckets (' + (ob.code || ob.status) + '), which no outside policy can refuse. That is the AWS account itself, not a permission: a new account is not served by S3 until AWS finishes activating it (payment verification, up to 24 hours; the console shows a banner meanwhile). Nothing to change here; try again later'
+      : ld.code === 'AccessDenied' && id.arn && ob && ob.ok ? 'the key is ' + id.arn + ' and S3 serves it (its own buckets list fine), but every read in ' + cfg.bucket + ' and in ' + KNOWN_DOCS.bucket + ' is refused: the identity lacks s3:GetObject on other accounts’ buckets — in IAM → Users → ledger-archive → Permissions, make sure AmazonS3ReadOnlyAccess (or the custom policy) is attached, and that no permissions boundary or deny policy sits on the user'
       : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses every read for it, in ' + cfg.bucket + ' and in ' + KNOWN_DOCS.bucket + ' alike: that identity has no effective policy allowing s3:GetObject (and s3:ListBucket). In IAM → Users → ledger-archive → Permissions, attach AmazonS3ReadOnlyAccess and wait a minute'
       : ld.bucketRegion && ld.bucketRegion !== ld.signedFor ? 'the bucket is in ' + ld.bucketRegion + ' but the request was signed for ' + ld.signedFor + ': set ARCHIVE_REGION=' + ld.bucketRegion
       : 'S3 answered ' + (ld.code || ld.status || ld.error) + (ld.message ? ': ' + ld.message : '');
@@ -424,4 +441,4 @@ function createArchive(deps) {
   return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d) => { need(); return plan(addr, fills, d); } };
 }
 
-module.exports = { signV4, s3Client, callerIdentity, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
+module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
