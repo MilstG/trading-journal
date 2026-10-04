@@ -130,6 +130,11 @@ async function loadWallet(w,fresh,spotP){
   // everything that doesn't need the fills starts now
   const fundP=fetchFunding(a,fdc?fdc.last:0), ledP=fetchLedgerUpdates(a,lgc?lgc.last:0), spotStP=fetchSpotState(a), portP=fetchPortfolio(a);
   const fr=await fetchAllFills(a,fcache&&fcache.last?fcache.last:0); // resume AT the watermark — the merge dedupes, boundary-ms fills are never skipped
+  // A cache from before TWAP slices were paged holds only the newest 2,000 of them: the first load
+  // after that fetches the whole slice history once (older than the watermark, so the resume above
+  // never sees it) and marks the cache, so every load after is incremental again.
+  let twapFull=!fcache||!!fcache.twapFull;
+  if(fcache&&!twapFull){ try{ const tw=await fetchTwapFills(a,0); fr.fills.push(...tw.fills); twapFull=!tw.partial; }catch(e){} }
   let fills, added=0, truncNote=null;
   if(fcache){
     const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time));
@@ -142,7 +147,7 @@ async function loadWallet(w,fresh,spotP){
   } else { fills=fr.fills; added=fills.length; if(fr.truncated)truncNote=labelFor(w); }
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
   // nothing new: the stored copy is already current, so skip re-compressing it
-  if(!fcache||added>0||fcache.seeded){ try{ await idbSet(fcKey,await packFillCache(fills,lastT)); }catch(e){} }
+  if(!fcache||added>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);

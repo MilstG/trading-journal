@@ -65,8 +65,8 @@ try {
     // the ?ref= capture and the join form's invite card (pulse-social.js, both screens) and the Recruiter badges:
     // Daruma 1605 raw / 541 gzipped, the journal 1951 raw / 662 gzipped.
     // +10 KB raw / +4 KB gzipped: seams in the fill history (TWAP paging, off-record trades, fill coverage, the verified headline)
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1968, 668],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1622, 546],
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1972, 670],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1626, 549],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
