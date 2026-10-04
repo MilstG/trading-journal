@@ -1286,6 +1286,10 @@ function lastSessionLine(ctx){
   const when=dayLabel(d.key);
   if(d.score>=70&&d.net>=0)return `${when}: ${money}, ${sc}. Earned the right way — do it again.`;
   if(d.score>=70)return `${when}: ${money}, ${sc}. A good loss: you did your part and the market said no.`;
+  // nothing journaled yet, ever: the score is low because the journal is empty, and saying "process 0,
+  // that's the thing to fix" to someone on their first visit reads as a verdict on their trading
+  const everJournaled=typeof allTrades!=='undefined'&&allTrades.some(t=>isJournaled(journal[t.id]));
+  if(miss===PART_MISS.journal&&!everJournaled)return `${when}: ${money}. Nothing journaled yet — open a trade below and write one line about it; the process score starts there.`;
   if(d.net>=0)return `${when}: ${money}, but ${sc}${miss?' — '+miss:''}. Green for the wrong reasons; review it like a loss.`;
   return `${when}: ${money}, ${sc}${miss?' — '+miss:''}. That’s the thing to fix today.`;
 }

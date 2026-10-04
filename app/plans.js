@@ -251,7 +251,12 @@ function planPzRpHtml(t){
   const i=Math.max(-1,Math.min(st.length-1,(pzS.rp||{})[t.id]!=null?pzS.rp[t.id]:-1)), s=st[i];
   const j=journal[t.id]||{}, p=nfPlan(j), sz=v=>(+(+v).toPrecision(5)).toLocaleString('en-US'), px=typeof pzPx==='function'?pzPx:planPzPx, short=t.dir==='Short';
   const verb=s?(s.what==='entry'?(short?'Sold short':'Bought'):s.what==='add'?'Added':s.what==='exit'?(short?'Covered':'Sold'):'Took off'):'';
-  const dots=st.map((x,n)=>`<button type="button" class="pz-rp-dot${n===i?' on':''}" style="--c:${x.k>0?PZ_COL.mid:t.net>=0?PZ_COL.good:PZ_COL.low}" data-pz-rpi="${n}" aria-pressed="${n===i}" aria-label="Fill ${n+1} of ${st.length}: ${x.k>0?'buy':'sell'} ${sz(x.sz)} at ${px(x.px)}"></button>`).join('');
+  // a dot per fill up to 14; beyond that (a TWAP's 99 slices used to run far off the screen) the first,
+  // the last and a window of five either side of the current one, with gaps marked — the arrows still
+  // step through every fill
+  const N=st.length, win=N>14, keep=n=>!win||n===0||n===N-1||Math.abs(n-(i<0?0:i))<=5;
+  let gap=false; const dots=st.map((x,n)=>{ if(!keep(n)){ if(gap)return ''; gap=true; return '<span class="pz-rp-gap" aria-hidden="true">…</span>'; } gap=false;
+    return `<button type="button" class="pz-rp-dot${n===i?' on':''}" style="--c:${x.k>0?PZ_COL.mid:t.net>=0?PZ_COL.good:PZ_COL.low}" data-pz-rpi="${n}" aria-pressed="${n===i}" aria-label="Fill ${n+1} of ${N}: ${x.k>0?'buy':'sell'} ${sz(x.sz)} at ${px(x.px)}"></button>`; }).join('');
   const say=!s?`${st.length} fills. Step through them to see the trade the way it happened.`
     :(s.pos>0?`Holding ${sz(s.pos)} at an average of ${px(s.avg)} · open ${signedPlain(s.open)}`:'Flat')+` · banked ${signedPlain(s.real)}`+(p&&i===st.length-1?' · plan: stop '+px(p.stop)+(p.target?', target '+px(p.target):''):'');
   return `<div class="pz-rp" role="group" aria-label="Step through the fills" data-pz-rpg="${esc(t.id)}" aria-keyshortcuts="ArrowLeft ArrowRight">

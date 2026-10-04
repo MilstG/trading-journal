@@ -866,10 +866,13 @@ function pzTrendsHtml(D){
   let stats;
   if(!st) stats=`<section class="pz-card pz-span"><p class="pz-sub">No closed trades in this range.</p></section>`;
   else { const s=st.s, col=v=>v>0?PZ_COL.good:v<0?PZ_COL.low:'var(--pz-text)';
-    const tile=(label,val,sub,c,full)=>`<div class="pz-tile"${full?` title="${esc(label+': '+full)}"`:''}><span class="pz-t">${esc(label)}</span><span class="pz-n" style="color:${c||'var(--pz-text)'}">${esc(val)}</span>${sub?`<span class="pz-t">${esc(sub)}</span>`:''}</div>`;
-    const maxAbs=Math.max(1,...st.days.map(x=>Math.abs(x.net)));
+    // a long amount ("−$32,860") shrinks to fit its tile; it used to break after the minus sign
+    const tile=(label,val,sub,c,full)=>`<div class="pz-tile"${full?` title="${esc(label+': '+full)}"`:''}><span class="pz-t">${esc(label)}</span><span class="pz-n${String(val).length>=9?' pz-n-xl':String(val).length>=7?' pz-n-l':''}" style="color:${c||'var(--pz-text)'}">${esc(val)}</span>${sub?`<span class="pz-t">${esc(sub)}</span>`:''}</div>`;
     const days=st.days.slice(-60);
-    const bars=days.map(x=>`<i style="height:${Math.max(3,Math.round(Math.abs(x.net)/maxAbs*100))}px;background:${x.net>=0?PZ_COL.good:PZ_COL.low};opacity:.9" data-pz-tip="${esc(dayLabel(x.k)+'\nNet '+signedPlain(x.net)+'\n'+x.n+' trade'+(x.n===1?'':'s')+' · '+x.w+' W · '+x.l+' L'+(x.n?'\nAverage trade '+signedPlain(x.net/x.n):''))}"></i>`).join('');
+    // the scale is a typical big day (the 95th percentile), not the single biggest: one outsized day
+    // used to flatten every other bar to a pixel. Days past the scale are drawn full height and say so.
+    const abs=days.map(x=>Math.abs(x.net)).sort((a,b)=>a-b), cap=Math.max(1,abs[Math.min(abs.length-1,Math.floor((abs.length-1)*0.95))]||1);
+    const bars=days.map(x=>{ const over=Math.abs(x.net)>cap*1.001; return `<i style="height:${Math.max(3,Math.round(Math.min(1,Math.abs(x.net)/cap)*100))}px;background:${x.net>=0?PZ_COL.good:PZ_COL.low};opacity:.9${over?';box-shadow:0 -2px 0 var(--pz-text)':''}" data-pz-tip="${esc(dayLabel(x.k)+'\nNet '+signedPlain(x.net)+(over?' (off the scale)':'')+'\n'+x.n+' trade'+(x.n===1?'':'s')+' · '+x.w+' W · '+x.l+' L'+(x.n?'\nAverage trade '+signedPlain(x.net/x.n):''))}"></i>`; }).join('');
     const mk=st.markets, best=mk.slice(0,3).filter(x=>x.net>0), worst=mk.slice(-3).reverse().filter(x=>x.net<0);
     const hr=h=>String(h).padStart(2,'0')+':00';
     const hrs=st.hours.length>=2?[['Best hour',st.hours[0]],['Worst hour',st.hours[st.hours.length-1]]]:[];

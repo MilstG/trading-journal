@@ -541,6 +541,8 @@ async function saveJournal(id){
   const r=jReadDrawer(id,true);
   if(r&&r.changed){ markJEdit(id); await Store.set(J_KEY,journal); }
   if(!r||!r.err)jSavedTag(id);
+  // the autosave usually got there first (leaving the field saves at once), so the entry is saved either way: say so
+  if(r&&!r.err){ const t=allTrades.find(x=>x.id===id); setStatus('Journal saved'+(t?' · '+dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase():'')+(typeof SRV!=='undefined'&&SRV&&SRV.enabled?' · synced to the server':'')); }
   _jStale=false; render();
 }
 // Pending autosaves by key ('t|<trade id>', 'day', 'week'): a pause in typing fires one; leaving the
