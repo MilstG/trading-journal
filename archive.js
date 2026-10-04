@@ -244,7 +244,7 @@ function createArchive(deps) {
   const env = deps.env || process.env, log = deps.log || (() => {});
   const cfg = { keyId: String(env.ARCHIVE_AWS_KEY_ID || '').trim(), secret: String(env.ARCHIVE_AWS_SECRET || '').trim(),
     bucket: String(env.ARCHIVE_BUCKET || 'hl-mainnet-node-data').trim(), region: String(env.ARCHIVE_REGION || '').trim() || null,
-    prefix: String(env.ARCHIVE_PREFIX || 'node_fills/hourly/').replace(/^\/+/, '').replace(/\/*$/, '/'),
+    prefix: String(env.ARCHIVE_PREFIX || 'node_fills_by_block/hourly/').replace(/^\/+/, '').replace(/\/*$/, '/'),
     costPerGB: Math.max(0, parseFloat(env.ARCHIVE_COST_PER_GB) || 0.09), maxDays: Math.max(1, parseInt(env.ARCHIVE_MAX_WINDOW_DAYS, 10) || 14) };
   const configured = !!(cfg.keyId && cfg.secret);
   const s3 = configured ? s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: cfg.bucket, region: cfg.region, fetchImpl: deps.fetchImpl, now: deps.now }) : null;
@@ -257,7 +257,7 @@ function createArchive(deps) {
   // learned from the first file that answers and kept. Without ListBucket, S3 answers 403 for a key
   // that doesn't exist, so "not 200" is read as "not there".
   let noList = false, naming = null;
-  const NAMINGS = [{ pad: false, ext: '' }, { pad: false, ext: '.lz4' }, { pad: true, ext: '' }, { pad: true, ext: '.lz4' }];
+  const NAMINGS = [{ pad: false, ext: '.lz4' }, { pad: false, ext: '' }, { pad: true, ext: '.lz4' }, { pad: true, ext: '' }]; // node_fills_by_block/hourly/20260918/9.lz4 is the documented shape
   const keyFor = (prefix, day, hour, nm) => prefix + day + '/' + (nm.pad ? String(hour).padStart(2, '0') : String(hour)) + nm.ext;
   const headCache = new Map(); // key -> {key,size,hour} | null
   async function headHour(day, hour, prefix) {
@@ -292,8 +292,9 @@ function createArchive(deps) {
         return { days: ds, first: ds[0] || null, last: ds[ds.length - 1] || null, truncated: r.truncated, listed: true }; }
       catch (e) { if (!denied(e)) throw e; noList = true; }
     }
-    const now = (deps.now || Date.now)(), yesterday = dayStr(now - 86400e3);
-    if (!(await headHour(yesterday, 12))) { const e = new Error('S3 refuses both to list ' + cfg.bucket + '/' + cfg.prefix + ' and to read yesterday’s file by name (' + keyFor(cfg.prefix, yesterday, 12, NAMINGS[0]) + '): the key’s policy, or the bucket’s, allows neither'); e.code = 403; throw e; }
+    const now = (deps.now || Date.now)(); let last = null;
+    for (const back of [1, 2, 3, 5, 8, 14, 30, 60]) { const ds = dayStr(now - back * 86400e3); if (await headHour(ds, 12)) { last = ds; break; } } // the archive can lag by days
+    if (!last) { const e = new Error('S3 refuses both to list ' + cfg.bucket + '/' + cfg.prefix + ' and to read any recent file by name (tried ' + keyFor(cfg.prefix, dayStr(now - 86400e3), 12, NAMINGS[0]) + ' and older): the key’s policy, or the bucket’s, allows neither'); e.code = 403; throw e; }
     const d0 = new Date(now); let firstMonth = null, prevMonth = null;
     for (let i = 0; i < 36; i++) { const m = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - i, 1)), ds = dayStr(m.getTime());
       if (await headHour(ds, 12)) firstMonth = m; else { prevMonth = m; if (firstMonth) break; } }
@@ -303,7 +304,7 @@ function createArchive(deps) {
       while (hi - lo > 86400e3) { const mid = lo + Math.floor((hi - lo) / 86400e3 / 2) * 86400e3; if (await headHour(dayStr(mid), 12)) hi = mid; else lo = mid; }
       first = dayStr(hi);
     }
-    return { days: null, first, last: yesterday, truncated: false, listed: false, note: 'listing is not allowed on this bucket; files are read by name, so the first day is found by probing and may be a day off' };
+    return { days: null, first, last, truncated: false, listed: false, note: 'listing is not allowed on this bucket; files are read by name, so the first and last day are found by probing and may be a day off' };
   }
   const haveDay = (d, day) => d.days ? d.days.includes(day) : (d.first ? day >= d.first && day <= d.last : false);
   // the hours a wallet's seams need, which of them the archive has, their bytes and cost
@@ -389,18 +390,31 @@ function createArchive(deps) {
     const day = out.steps.listDataset.prefixes && out.steps.listDataset.prefixes[0];
     if (day) { const hours = await s3.probe('GET', '/', { 'list-type': '2', prefix: day, 'max-keys': '3' }); out.steps.listDay = hours;
       const key = hours.keys && hours.keys[0]; if (key) out.steps.headObject = await s3.probe('HEAD', '/' + key, {}); }
-    // by name: yesterday at noon, under both datasets, every naming variant
-    const yesterday = dayStr((deps.now || Date.now)() - 86400e3); const byName = {};
-    for (const pfx of [cfg.prefix, alt]) { headCache.clear(); const was = naming; naming = null; const k = await headHour(yesterday, 12, pfx); if (pfx !== cfg.prefix) naming = was;
-      byName[pfx] = k ? { ok: true, key: k.key, size: k.size } : { ok: false, tried: NAMINGS.map(nm => keyFor(pfx, yesterday, 12, nm)) }; }
+    // by name: noon files of the last days (the archive can lag), under both datasets, every naming variant
+    const nowMs = (deps.now || Date.now)(), yesterday = dayStr(nowMs - 86400e3), byName = {};
+    for (const pfx of [cfg.prefix, alt]) { headCache.clear(); const was = naming; naming = null; let k = null;
+      for (const back of [1, 2, 3, 5, 8, 14, 30]) { k = await headHour(dayStr(nowMs - back * 86400e3), 12, pfx); if (k) break; }
+      if (pfx !== cfg.prefix) naming = was;
+      byName[pfx] = k ? { ok: true, key: k.key, size: k.size } : { ok: false, tried: NAMINGS.map(nm => keyFor(pfx, yesterday, 12, nm)).concat(['… and the same for 2, 3, 5, 8, 14 and 30 days ago']) }; }
     out.steps.readByName = byName;
+    // files that are known to exist: a documented node-data file, and the docs' own example in the market-data bucket.
+    // GetObject answering here while the reads above don't means the archive lags, not a permission
+    const known = {}; const KNOWN_NODE = 'node_fills_by_block/hourly/20260918/9.lz4', KNOWN_DOCS = { bucket: 'hyperliquid-archive', key: 'market_data/20230916/9/l2Book/SOL.lz4' };
+    known[cfg.bucket + '/' + KNOWN_NODE] = await s3.probe('HEAD', '/' + KNOWN_NODE, {});
+    try { const other = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: KNOWN_DOCS.bucket, fetchImpl: deps.fetchImpl, now: deps.now });
+      let p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}); if (!p.ok && p.bucketRegion) p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}, p.bucketRegion);
+      known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = p; } catch (e) { known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = { error: e.message }; }
+    out.steps.knownObjects = known;
+    const kn = known[cfg.bucket + '/' + KNOWN_NODE], kd = known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key];
     const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset, rn = byName[cfg.prefix], ra = byName[alt];
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
       : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
       : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
       : rn.ok ? 'listing is not allowed on this bucket, but its files can be read by name (' + rn.key + ', ' + rn.size + ' bytes): the check and the backfill work that way, nothing to change'
       : ra.ok ? 'listing is not allowed, and ' + cfg.prefix + ' has no file for yesterday noon, but ' + alt + ' has (' + ra.key + '): set ARCHIVE_PREFIX=' + alt + ' on the server'
-      : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses both to list ' + cfg.bucket + ' and to read ' + keyFor(cfg.prefix, yesterday, 12, NAMINGS[0]) + ' by name for it: either that identity has no policy allowing s3:GetObject and s3:ListBucket on this bucket, or the bucket’s own policy does not allow it. Check IAM → Users → the user named in that ARN → Permissions'
+      : kn.ok ? 'listing is not allowed and yesterday’s file isn’t there yet, but a known file reads fine (' + KNOWN_NODE + ', ' + kn.size + ' bytes): the archive lags a few days; the check finds its last day by probing — nothing to change'
+      : kd.ok ? 'this key can read requester-pays data (the docs’ example in ' + KNOWN_DOCS.bucket + ' answers), but ' + cfg.bucket + ' refuses every read and listing: that bucket’s own policy does not allow this account, or it moved — nothing on the key’s side will change it'
+      : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses every read for it, in ' + cfg.bucket + ' and in ' + KNOWN_DOCS.bucket + ' alike: that identity has no effective policy allowing s3:GetObject (and s3:ListBucket). In IAM → Users → ledger-archive → Permissions, attach AmazonS3ReadOnlyAccess and wait a minute'
       : ld.bucketRegion && ld.bucketRegion !== ld.signedFor ? 'the bucket is in ' + ld.bucketRegion + ' but the request was signed for ' + ld.signedFor + ': set ARCHIVE_REGION=' + ld.bucketRegion
       : 'S3 answered ' + (ld.code || ld.status || ld.error) + (ld.message ? ': ' + ld.message : '');
     return out;
