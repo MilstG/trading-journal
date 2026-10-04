@@ -141,6 +141,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ARCHIVE_COST_PER_GB`  | `0.09`                           | The egress price used in the archive's estimates |
 | `ARCHIVE_MAX_WINDOW_DAYS` | `14`                          | A seam wider than this (days between a coin's last served fill and the fill that revealed the gap) is skipped by the backfill and reported instead |
 | `ARCHIVE_BUCKET` / `ARCHIVE_PREFIX` / `ARCHIVE_REGION` | `hl-mainnet-node-data` / `node_fills_by_block/hourly/` / *(learned)* | Where the archive is; only for a mirror or a format change |
+| `ARCHIVE_INDEX_BUCKET` / `ARCHIVE_INDEX_PREFIX` / `ARCHIVE_INDEX_REGION` | *(unset)* / `index/v1/` / *(learned)* | The index by wallet built by `archive-indexer.js` (see "An index by wallet"). With it set, Backfill reads a wallet's whole history from the index instead of hunting hours |
 | `DEFAULT_THEME`        | *(unset = `ts9`)*                | The colorway the app opens in for anyone who hasn't picked one: `ts9` (acid green on black), `ink` (midnight) or `bb` (black & amber). Flip it and restart to re-theme every screen without a code change; a user's own pick always wins |
 | `HOME_VIEW`            | *(unset = journal)*              | `daruma` (or `keel`, its earlier name) makes the site's root (`/`) redirect to Daruma (`/daruma`), for a site that's mainly Daruma. The full journal stays at `/ledger.html`, and the installed journal app opens there |
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
@@ -207,7 +208,71 @@ node software streams every fill of every address into a requester-pays S3 bucke
 
 Hours before the archive's first day stay unrecoverable; the exchange's own figure covers them. The
 same endpoints work from scripts: `POST /api/v1/archive/check`, `/sample`, `/backfill`
-(`{address, maxGB}`), `/stop`, all with the owner token.
+(`{address, maxGB, scope}`), `/stop`, all with the owner token.
+
+### An index by wallet (for many wallets, or for good)
+
+Hunting hours works for one wallet. For every member's wallet, forever, build the index once:
+`archive-indexer.js` rewrites each hour of the archive into 4,096 files by the first three hex
+characters of the wallet address, one set per day (`index/v1/d/{YYYYMMDD}/{shard}.jsonl.gz`, each
+line `[address, fill]`), so one wallet's whole history is its shard's file for every day — about
+1/4096 of the archive, a few MB a month. It runs on a machine **inside AWS, in the archive's
+region (`ap-northeast-1`)**, where reading S3 costs no transfer: the whole archive (300 GB and
+growing 0.7 GB a day) is read for the price of the instance hours; the index is kept in a bucket of
+yours in the same region (~$0.023/GB-month) and read by the server with the same key.
+
+1. **Bucket**: S3 → Create bucket, in **Asia Pacific (Tokyo)**, e.g. `hl-fills-index-<yourname>`,
+   defaults otherwise.
+2. **Role for the machine**: IAM → Roles → Create role → AWS service → EC2 → attach
+   `AmazonS3ReadOnlyAccess` plus an inline policy allowing `s3:PutObject`, `s3:GetObject`,
+   `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::hl-fills-index-<yourname>` and `/*`. Name it
+   `ledger-indexer`.
+3. **Machine**: EC2 (region Tokyo) → Launch instance: Amazon Linux 2023 (64-bit **Arm**),
+   `t4g.medium` (2 vCPU, 4 GB; the whole archive takes a few hours), 30 GB disk, IAM instance
+   profile `ledger-indexer`, no inbound ports needed. In **Advanced details → User data**, paste the
+   script below with your bucket and your Ledger server's address. It installs Node, fetches the two
+   files from your server, builds the index, and installs a daily timer that indexes yesterday.
+4. Watch: Data health → Recover from the archive → **Check coverage** shows the index's days as
+   they land (`progress.json`); or EC2 → the instance → Monitor and troubleshoot → Get system log.
+5. **Railway → Variables**: `ARCHIVE_INDEX_BUCKET=hl-fills-index-<yourname>`,
+   `ARCHIVE_INDEX_REGION=ap-northeast-1`. From then on **Backfill** reads a wallet's whole history
+   from the index (every day it has, a few MB) instead of hunting hours; `source: "hours"` on the
+   endpoint still takes the old path.
+6. When the build is done, change the instance type to `t4g.nano` (stop → Actions → Instance
+   settings → Change instance type → start): the daily run needs almost nothing.
+
+```bash
+#!/bin/bash
+# user data for the indexer machine (Amazon Linux 2023, arm64). Fill in the two lines below.
+INDEX_BUCKET=hl-fills-index-yourname
+LEDGER=https://your-app.up.railway.app
+dnf install -y nodejs20 >/var/log/indexer-install.log 2>&1 || dnf install -y nodejs >>/var/log/indexer-install.log 2>&1
+mkdir -p /opt/hl-index && cd /opt/hl-index
+curl -fsSL -o archive.js "$LEDGER/archive/archive.js" && curl -fsSL -o archive-indexer.js "$LEDGER/archive/archive-indexer.js"
+cat >/etc/systemd/system/hl-index-daily.service <<EOF
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hl-index
+Environment=INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index
+ExecStart=/usr/bin/node /opt/hl-index/archive-indexer.js daily
+EOF
+cat >/etc/systemd/system/hl-index-daily.timer <<EOF
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload && systemctl enable --now hl-index-daily.timer
+# the one-time build, in the background; its log is /var/log/hl-index-build.log
+INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index nohup node /opt/hl-index/archive-indexer.js build --workers 2 >/var/log/hl-index-build.log 2>&1 &
+```
+
+The build is resumable: each finished day carries a `_done` marker, and a rerun (or the daily timer)
+skips them. `node archive-indexer.js status --bucket …` prints the index's days and the last
+summary. Costs: a `t4g.medium` for the build (~$0.03/h, a few hours), a `t4g.nano` after (~$3/month),
+the index's storage (~$4–6/month for everything), S3 requests (~$9 once for the 1.8M files). No
+transfer, because the machine and both buckets share a region.
 
 ## Off-site backups
 

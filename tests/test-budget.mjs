@@ -67,8 +67,8 @@ try {
     // +10 KB raw / +4 KB gzipped: seams in the fill history (TWAP paging, off-record trades, fill coverage, the verified headline)
     // Oct 2026 (audit 5): the verified figure judged against the open book, the seam opened from flat, the
     // TWAP content key and the partial-portfolio guard — about 3 KB raw, mostly comments, on both screens.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1990, 676],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1640, 554],
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2000, 680],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1655, 558],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

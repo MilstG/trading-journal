@@ -136,10 +136,23 @@ objects['node_fills/hourly/' + day0 + '/12'] = Buffer.from(hourLine(T0 + 2 * H, 
 objects['node_fills/hourly/20260614/5'] = Buffer.from(LINKED, 'base64');
 objects['node_fills/hourly/20260601/12'] = Buffer.from(hourLine(Date.UTC(2026, 5, 1, 12), []) + '\n');
 let DENY_LIST = false; // a bucket policy that allows GetObject but not ListBucket
+const INDEX = {}; // the index by wallet, filled in below once the fixtures exist
 const s3Calls = [];
 const xmlEsc = s => s.replace(/&/g, '&amp;');
 function fakeS3(url, init) {
-  const u = new URL(url); s3Calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization, payer: init.headers['x-amz-request-payer'] });
+  const u = new URL(url); s3Calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization, payer: init.headers['x-amz-request-payer'], token: init.headers['x-amz-security-token'] });
+  if (/^my-hl-index\./.test(u.hostname)) { // the index bucket (no requester pays)
+    if (u.pathname === '/') { const prefix = u.searchParams.get('prefix') || '', delim = u.searchParams.get('delimiter'); const keys = Object.keys(INDEX).filter(k => k.startsWith(prefix)).sort();
+      let body = '<ListBucketResult><IsTruncated>false</IsTruncated>';
+      if (delim) { const ps = [...new Set(keys.map(k => prefix + k.slice(prefix.length).split(delim)[0] + delim))]; for (const p of ps) body += '<CommonPrefixes><Prefix>' + xmlEsc(p) + '</Prefix></CommonPrefixes>'; }
+      else for (const k of keys) body += '<Contents><Key>' + xmlEsc(k) + '</Key><Size>' + INDEX[k].length + '</Size></Contents>';
+      return new Response(body + '</ListBucketResult>', { status: 200 }); }
+    const key = decodeURIComponent(u.pathname.slice(1)); const b = INDEX[key];
+    if (init.method === 'PUT') { INDEX[key] = Buffer.from(init.body || ''); return new Response('', { status: 200 }); }
+    if (!b) return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
+    if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(b.length) } });
+    return new Response(b, { status: 200, headers: { 'content-length': String(b.length) } });
+  }
   if (!/^AWS4-HMAC-SHA256 Credential=AKIATEST\//.test(init.headers.Authorization || '')) return new Response('<Error><Code>AccessDenied</Code><Message>bad key</Message></Error>', { status: 403 });
   if (u.pathname === '/') { // ListObjectsV2
     if (DENY_LIST && init.method !== 'HEAD') return new Response('<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>', { status: 403 });
@@ -167,6 +180,15 @@ const FULL = { Authorization: 'Bearer owner', 'Content-Type': 'application/json'
 const call = async (base, p, body, h) => { const r = await fetch(base + p, { method: body === undefined ? 'GET' : 'POST', headers: h || FULL, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 // the wallet's server cache: the open, then the fresh entry — the close between them is missing
 const seamFills = [F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'B', 2, 1200, SEAM_AT, 0), F('ETH', 'A', 2, 1300, SEAM_AT + 60e3, 2, 200)];
+// the index by wallet, as archive-indexer.js writes it: the wallet's shard for two days, one day empty for it, markers and progress
+const shard = ADDR.slice(2, 5);
+const idxLine = f => JSON.stringify([ADDR, f]) + '\n';
+INDEX['index/v1/d/20260615/' + shard + '.jsonl.gz'] = Buffer.concat([zlib.gzipSync(idxLine(seamFills[0])), zlib.gzipSync(idxLine(lostFill))]); // two gzip members, as appended hour by hour
+INDEX['index/v1/d/20260615/_done'] = Buffer.from('{"day":"20260615","hours":24}');
+INDEX['index/v1/d/20260616/' + shard + '.jsonl.gz'] = zlib.gzipSync(idxLine(seamFills[1]) + idxLine(seamFills[2]) + JSON.stringify(['0x' + '9'.repeat(40), lostFill]) + '\n');
+INDEX['index/v1/d/20260616/_done'] = Buffer.from('{"day":"20260616","hours":24}');
+INDEX['index/v1/d/20260617/_done'] = Buffer.from('{"day":"20260617","hours":24}'); // the wallet had no fills that day: no shard file
+INDEX['index/v1/progress.json'] = Buffer.from(JSON.stringify({ lastDay: '20260617', lastSummary: { fills: 123456 } }));
 await t('without the key the endpoints say what is missing; the owner token is required', async () => {
   const app = mk({}); const base = await listen(app);
   try {
@@ -236,6 +258,45 @@ try {
     eq(again.body.total, 0, 'no seams left, nothing to download');
   });
 } finally { app.close(); }
+
+console.log('\nWith an index by wallet');
+await t('backfill reads the wallet’s shard for every day of the index and merges its whole history; check reports the index', async () => {
+  const dir3 = mkdtempSync(join(tmpdir(), 'ledger-archive3-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir3, 'fills'), { recursive: true });
+  writeFileSync(join(dir3, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  const app3 = createApp({ dataDir: dir3, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'my-hl-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' } });
+  const b3 = await listen(app3);
+  try {
+    const st = await call(b3, '/api/v1/archive'); eq(st.body.index, { bucket: 'my-hl-index', prefix: 'index/v1/' });
+    const c = await call(b3, '/api/v1/archive/check', { wallets: [ADDR] }); eq([c.body.index.days.length, c.body.index.first, c.body.index.last, c.body.index.progress.lastDay], [3, '20260615', '20260617', '20260617']);
+    s3Calls.length = 0;
+    const bf = await call(b3, '/api/v1/archive/backfill', { address: ADDR }); eq(bf.status, 202); eq(bf.body.source, 'index');
+    let s; for (let i = 0; i < 100; i++) { s = (await call(b3, '/api/v1/archive')).body; if (s.job.state !== 'running') break; await new Promise(x => setTimeout(x, 30)); }
+    eq([s.job.state, s.job.total, s.job.indexFiles, s.job.fills, s.job.added, s.job.cacheCount], ['done', 3, 2, 4, 1, 4], JSON.stringify(s.job));
+    ok(!s3Calls.some(c => c.payer && /my-hl-index/.test(c.path + '')), 'no requester-pays header to our own bucket');
+    const full = await call(b3, '/api/v1/cache/' + ADDR); ok(full.body.fills.fills.some(f => f.tid === 7777), 'the lost close came back from the index');
+    const tr = E.reconstructTrades(full.body.fills.fills, ADDR, 'perp'); ok(tr.every(x => !x.offRecord && !x.gaps));
+    // the hours path is still there when asked for
+    const h = await call(b3, '/api/v1/archive/backfill', { address: ADDR, source: 'hours', maxGB: 1 }); eq(h.body.total, 0, 'no seams left to hunt');
+  } finally { app3.close(); }
+});
+await t('the indexer splits an hour into shards as gzip members; its arguments and day arithmetic', async () => {
+  const I = (await import('../archive-indexer.js')).default || createRequire(import.meta.url)('../archive-indexer.js');
+  const r = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4');
+  eq([r.lines, r.fills, Object.keys(r.members).sort()], [12, 24, ['111', 'c84']]);
+  const lines = zlib.gunzipSync(Buffer.concat([r.members['c84'], r.members['c84']])).toString().trim().split('\n'); eq(lines.length, 24, 'members concatenate into one gzip stream');
+  eq(JSON.parse(lines[0])[0], ADDR);
+  eq(I.SHARD('0xC846E513F1FB448E744D5C8E911E87BCCC0DFB20'), 'c84'); eq([I.sourcePrefix('20250726'), I.sourcePrefix('20250727')], ['node_fills/hourly/20250726/', 'node_fills_by_block/hourly/20250727/']);
+  const o = I.parseArgs(['build', '--bucket', 'b', '--from', '20250801', '--to', '20250802', '--workers', '2']); eq([o.cmd, o.bucket, o.from, o.to, o.workers, o.prefix], ['build', 'b', '20250801', '20250802', 2, 'index/v1/']);
+});
+await t('role credentials: the environment’s key wins, and a session token is signed as a header', async () => {
+  const creds = A.roleCredentials(null, { AWS_ACCESS_KEY_ID: 'AKIAENV', AWS_SECRET_ACCESS_KEY: 's', AWS_SESSION_TOKEN: 'tok' });
+  eq(await creds(), { keyId: 'AKIAENV', secret: 's', token: 'tok' });
+  const seen = []; const c = A.s3Client({ bucket: 'b', region: 'us-east-1', credentials: creds, fetchImpl: async (url, init) => { seen.push(init.headers); return new Response('', { status: 200 }); } });
+  await c.probe('HEAD', '/x', {}); eq(seen[0]['x-amz-security-token'], 'tok'); ok(/SignedHeaders=[^,]*x-amz-security-token/.test(seen[0].Authorization));
+});
 
 console.log('\nWhen the bucket refuses to be listed');
 await t('the archive is read by name: the first day is found by probing, the seam’s hours are read, the backfill works', async () => {
