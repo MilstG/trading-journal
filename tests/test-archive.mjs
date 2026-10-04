@@ -82,6 +82,18 @@ t('other shapes: {user, fill} objects and fills carrying a user field; times in 
   ok(String(x.fills[1].tid).startsWith('ar:0xabc:'), 'no tid: keyed by hash, time, coin, size and side'); eq(x.fills[1].oid, 0);
 });
 
+t('the streaming reader finds the same fills as the whole-text one, from lz4, gzip and plain, with a preview', () => {
+  const whole = A.extractFills(TEXT, ADDR);
+  for (const [name, buf] of [['lz4 linked', Buffer.from(LINKED, 'base64')], ['lz4 indep', Buffer.from(INDEP, 'base64')], ['gzip', zlib.gzipSync(Buffer.from(TEXT))], ['plain', Buffer.from(TEXT)]]) {
+    const s = A.extractFillsFromObject(buf, ADDR, { preview: 40 });
+    eq([s.lines, s.parsed, s.seen, s.fills.length], [whole.lines, whole.parsed, whole.seen, whole.fills.length], name);
+    eq(s.fills.map(f => f.tid), whole.fills.map(f => f.tid), name + ' order'); eq(s.preview, TEXT.slice(0, 40), name + ' preview');
+  }
+  // a line cut across chunks: the streaming decoder hands blocks of a few bytes here
+  const chunks = []; A.lz4Stream(Buffer.from(LINKED, 'base64'), c => chunks.push(Buffer.from(c)));
+  eq(sha(Buffer.concat(chunks)), TEXT_SHA, 'the blocks concatenate to the original');
+});
+
 console.log('\nWhat to download');
 const ectx = { Math, Object, Array, String, Number, JSON, isFinite, Date, Set, Map, parseFloat };
 vm.createContext(ectx);
