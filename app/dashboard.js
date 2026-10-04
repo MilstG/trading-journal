@@ -137,7 +137,7 @@ function renderRiskPanel(){
     shockHtml=`<div style="margin-top:10px;font-size:11.5px;color:var(--muted)" data-tip="First-order stress test: shift every mark by the chosen % (longs and shorts signed correctly), sum the PnL impact, and check which positions cross their liquidation price at the shocked mark. Ignores funding, fees, and margin-tier interactions \u2014 real liquidation comes a touch earlier. Click a % again to clear.">scenario shock: ${btns}</div>${out}`;
   }
   el.innerHTML=`<h3 data-tip="The open book summarized as RISK rather than a list: per-position distance to liquidation (nearest first), net directional exposure by coin netted across wallets (HIP-3 dexs included), and concentration. Live from Hyperliquid \u2014 refreshes with each load.">Open-position risk <span class="hint">${m.positions} position${m.positions===1?'':'s'} \u00b7 gross ${fmtUsd(m.gross)} \u00b7 net ${m.skew>=0?'long':'short'} ${fmtUsd(Math.abs(m.skew))} \u00b7 largest market ${(m.largestShare*100).toFixed(0)}% of book</span></h3>
-    ${head}${rows}
+    <div style="overflow-x:auto"><div style="min-width:560px">${head}${rows}</div></div>
     <div style="margin-top:8px;font-size:11.5px;color:var(--muted)">net by coin: ${coinBits||'\u2014'}</div>
     ${danger}${concHtml}${clusterHtml}${shockHtml}`;
   const cb=$('riskCorrBtn'); if(cb)cb.onclick=computeRiskClusters;
@@ -161,6 +161,10 @@ function renderStats(s){
   // with the exchange's figure leading, its own curve gives the drawdown too — the fill-based one measures a history with its exits missing
   const vc=vh?verifiedCurve(view):null, vdd=vc?curveDrawdown(vc):null;
   const cov=dataCoverage, exVol=cov&&(view==='perp'?cov.exchPerpVlm:cov.exchVlm), fillVol=cov&&(view==='perp'?cov.perpVol:cov.perpVol+cov.spotVol);
+  // nothing in this view: one line instead of a wall of $0.00 and 0.0% cards
+  if(!s.n&&!openN&&!posList.length){ const what=view==='combined'?'trades':view+' trades', when=rangeActive()?' in this date range':period?' in the last '+period+' days':'';
+    $('stats').innerHTML=`<div class="stat" style="grid-column:1/-1"><div class="k">Net PnL</div><div class="v" style="font-size:15px;font-weight:500;color:var(--muted)">No ${esc(what)}${esc(when)}${when?' — pick a longer period or All':view==='spot'?' — this wallet has only traded perps':''}.</div></div>`;
+    $('statsMore').innerHTML=''; return; }
   const cards=[
     vh?{pri:1,k:'Net PnL',v:fmtUsd(vh.ver),sign:vh.ver,sub:'Hyperliquid’s figure, unrealized incl. · closed fills '+fmtUsd(vh.rec),
         tip:'Hyperliquid’s own all-time P&L for this view — the figure its app and trackers such as Hyperdash show, unrealized included. It leads here because the fills the exchange still serves don’t tell the whole story'+(vh.gaps?': '+vh.gaps+' position change'+(vh.gaps===1?' has':'s have')+' no fill behind '+(vh.gaps===1?'it':'them'):'')+(vh.share!=null?' (the fills explain '+Math.round(vh.share*100)+'% of your volume)':'')+'. The fill-based sum, '+fmtUsd(vh.rec)+' over '+vh.n+' trades, is what every other statistic is built on. Pick a period to see the fill-based figure for that window.'}

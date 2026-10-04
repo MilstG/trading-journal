@@ -158,6 +158,7 @@ function isDustOpen(t){
   return rem*(t.avgEntry||0)<10 || (t.maxSize>0&&rem/t.maxSize<0.01);
 }
 let _excM={}; // trade id → measured excursion row; feeds the journal rows and the miner's excursion families
+let _excQuiet=false; // the auto-ratchet's runs write nothing to the status line (they used to overwrite the load summary within seconds)
 let _excCache={key:null,rows:null,openRows:null,skippedCoins:null,skippedN:0};
 async function runExcursions(closed,openTrades){
   const now=Date.now();
@@ -200,7 +201,7 @@ async function runExcursions(closed,openTrades){
     for(const j of jobs){
       for(const u of j.missing){
         req++; grandReq++;
-        setStatus(`Fetching candles… ${req}/${reqTotal}${pass?` (retry pass ${pass})`:''} (${j.e.coin} ${j.e.itv.name})`,true);
+        if(!_excQuiet)setStatus(`Fetching candles… ${req}/${reqTotal}${pass?` (retry pass ${pass})`:''} (${j.e.coin} ${j.e.itv.name})`,true);
         try{ const c=await venueFetchCandles(j.e.venue,j.e.coin,j.e.itv.name,u[0],u[1]);
           j.cache.candles=mergeCandles(j.cache.candles,c.rows);
           if(c.coveredTo>u[0]) j.cache.ranges=mergeRanges([...j.cache.ranges,[u[0],c.coveredTo]],1);
@@ -316,15 +317,14 @@ async function autoRatchet(){
     if(!recent.length)return;
     // the newest 25 per run: the rest follow on the next refresh instead of queueing a hundred candle requests at start
     recent.sort((a,b)=>b.closeTime-a.closeTime); recent.length=Math.min(recent.length,25);
-    setStatus('Locking in MAE/MFE for '+recent.length+' recent trade'+(recent.length===1?'':'s')+'…',true);
+    _excQuiet=true;
     const out=await runExcursions(recent,[]);
     const got=new Set(out.rows.map(r=>r.id));
     for(const t of recent)if(!got.has(t.id))_ratchetTried.add(t.id);
     for(const r of out.rows)_excM[r.id]=r;
     schedulePersist();
-    setStatus('MAE/MFE locked in for '+out.rows.length+' recent trade'+(out.rows.length===1?'':'s')+'.');
   }catch(e){ /* budget guard or transient — the manual button still works */ }
-  finally{ _excBusy=false; }
+  finally{ _excBusy=false; _excQuiet=false; }
 }
 let _autoTimer=null;
 function setupAutoRefresh(){

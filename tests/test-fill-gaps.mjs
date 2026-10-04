@@ -106,6 +106,21 @@ t('spot balances move without fills, so a jump there is not a seam', () => {
   ok(tr.every(x => !x.gaps && !x.offRecord));
 });
 
+console.log('\nWhose liquidation');
+t('the LIQ flag lands only on the wallet that was liquidated, not on the maker who filled it', () => {
+  const liq = (f, user) => Object.assign(f, { liquidation: { liquidatedUser: user, markPx: f.px, method: 'market' } });
+  const me = '0xABCDEF0123456789abcdef0123456789ABCDEF01', other = '0x1111111111111111111111111111111111111111';
+  const mk = user => ctx.reconstructTrades([F('ETH', 'B', 1, 100, T0, 0), liq(F('ETH', 'A', 1, 90, T0 + 1e6, 1, -10), user)], me, 'perp');
+  ok(mk(me.toLowerCase())[0].liquidated, 'this wallet, any letter case: liquidated');
+  ok(!mk(other)[0].liquidated, 'someone else’s liquidation filled against us: not ours');
+  const csv = ctx.reconstructTrades([F('ETH', 'B', 1, 100, T0, 0), Object.assign(F('ETH', 'A', 1, 90, T0 + 1e6, 1, -10), { liquidation: { method: 'BustTrade' } })], me, 'perp');
+  ok(csv[0].liquidated, 'an imported fill names no user: the field alone counts');
+  ok(ctx.reconstructTrades([F('ETH', 'B', 1, 100, T0, 0), liq(F('ETH', 'A', 1, 90, T0 + 1e6, 1, -10), other)], 'paste', 'perp')[0].liquidated, 'pasted fills have no wallet to compare: the field counts');
+  // a flip fill carries the verdict to both the trade it closes and the one it opens
+  const fl = ctx.reconstructTrades([F('ETH', 'B', 1, 100, T0, 0), liq(F('ETH', 'A', 3, 90, T0 + 1e6, 1, -10), other)], me, 'perp');
+  ok(fl.every(x => !x.liquidated), 'neither side of the flip is ours');
+});
+
 console.log('\nCoverage');
 t('served volume against the exchange’s own, seams by month, closed off-record trades', () => {
   const fills = [F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'B', 2, 1200, Date.UTC(2026, 6, 2), 0), F('ETH', 'A', 2, 1300, Date.UTC(2026, 6, 3), 2, 200), F('@107', 'B', 10, 2, T0, 0)];

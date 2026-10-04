@@ -1,6 +1,6 @@
 # Fifth-pass audit: data accuracy and representation after the fill-history work — October 4, 2026
 
-> **Status: addressed.** The findings F1–F9 and V1–V4 below landed in this change with regression
+> **Status: addressed.** The findings F1–F9, V1–V4 and B1–B9 below landed in this change with regression
 > tests in `tests/test-fill-gaps.mjs`; the rest are judgement calls left as they are, with the
 > reasoning. All unit suites, the size budget and the 40 browser smoke tests (`e2e/run.mjs`) green.
 
@@ -99,6 +99,48 @@ Daruma's daily bars.
 **V4 · [repro] "Max drawdown · 154% of best cumulative profit"** on a net-negative account was
 arithmetically right (the fall exceeds the best the curve ever reached) but read as a slip. Past
 100% it now reads as a multiple: "1.5× your best cumulative profit".
+
+## Beta walk-through (third pass, a real wallet in Chromium, desktop and phone)
+
+A fresh browser, a real Hyperliquid wallet (3,473 fills, 270 trades) added by hand, every tab,
+filter, sort, period, range, export and setting on a 1366 px desktop and a 390 px phone, a journal
+entry saved and checked after a reload, then every Daruma screen on the phone. No console errors.
+
+**B1 · [live] Liquidation badges landed on the maker's trades too.** Hyperliquid writes the
+`liquidation` field on both sides of a liquidation. Of 27 flagged fills on the test wallet, 15 were
+this wallet's resting orders filling someone else's liquidation; the account's biggest winner wore
+"⚠ LIQ". `reconstructTrades` now compares `liquidatedUser` with the wallet; an imported fill that
+names no user (Bybit, Binance CSVs) and pasted data still count the field alone.
+
+**B2 · [repro] The phone page scrolled sideways once a position was open.** The open-position
+risk panel's seven-column grid overflowed a 390 px screen by 151 px. The rows now scroll inside
+the card.
+
+**B3 · [live] Daruma's journal overflowed on a trade with many fills.** 99 replay dots in one row
+ran 693 px past the edge. Past 14 fills it draws the first, the last and a window of five either
+side of the current one, with the gaps marked; the arrows still step through every fill.
+
+**B4 · [live] Daruma's Stats tiles.** A long amount broke after its minus sign; it shrinks to fit
+instead. The Daily P&L strip scaled to the single biggest day, so 59 of 60 bars were a pixel tall;
+the scale is now a typical big day (the 95th percentile) and days past it are drawn full height
+with "off the scale" in their tip.
+
+**B5 · [repro] An empty market view showed a wall of zeros.** Spot on a perps-only wallet, or a
+period with nothing in it, now says so in one line in place of the cards.
+
+**B6 · [repro] The phone table hid the result.** Entry, exit, size and hold step aside under 640 px
+so Net PnL, return, R and the journal column are in view; the expanded row still has everything.
+
+**B7 · [live] The load summary vanished within seconds** under the auto-ratchet's "Fetching
+candles…" status. The ratchet is silent now, as its own comment always said.
+
+**B8 · [live] The coach's first words to a new user** were "process 0 — trades left unjournaled".
+When nothing has ever been journaled it now invites the first line instead of scoring its absence.
+Daruma's "Discipline 0" (read from the fills) and the badge case (earned retroactively, by design)
+were left as they are.
+
+**B9 · [live] Saving a journal entry gave no confirmation** beyond the sync bar. The status line
+now says it was saved, naming the trade.
 
 ## Checked and left as is
 

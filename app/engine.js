@@ -12,13 +12,15 @@ function newTrade(coin,f,dir,openSz,openNotional,fills){
     events:[]}; }   // events: compact [time,px,sz,k] per fill (k=+1 open/add, -1 close) — powers the replay chart's fill markers
 // portion: the part of the fill's size that belongs to THIS trade (a flip fill is split
 // between the trade it closes and the one it opens); defaults to the whole fill.
-function tallyFill(t,f,fee,portion){ const notl=(portion!=null?portion:Math.abs(parseFloat(f.sz||0)))*parseFloat(f.px||0);
+// liq: whether this fill liquidated THIS wallet (reconstructTrades decides, see liqOf); left out, the
+// bare presence of a liquidation field counts, as it did before.
+function tallyFill(t,f,fee,portion,liq){ const notl=(portion!=null?portion:Math.abs(parseFloat(f.sz||0)))*parseFloat(f.px||0);
   // crossed is tri-state: true=taker, false=maker, undefined=unknown (CSV imports carry
   // no execution style — fabricating either side would feed the miner a fake signal)
   if(f.crossed===true){ t.takerFills++; t.takerFee+=fee; t.takerNotional+=notl; }
   else if(f.crossed===false){ t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
   else { t.unkFills=(t.unkFills||0)+1; t.unkNotional=(t.unkNotional||0)+notl; }
-  if(f.liquidation || /liquidat/i.test(f.dir||'')) t.liquidated=true; }
+  if(liq!=null?liq:(f.liquidation || /liquidat/i.test(f.dir||''))) t.liquidated=true; }
 function reconstructTrades(fills, addr, market){
   // Spot fees paid in a stable quote are dollars; anything else (a buy's fee comes out of the
   // token bought) is in the base token and is converted at the fill price.
@@ -47,6 +49,13 @@ function reconstructTrades(fills, addr, market){
       i=j; }
     return arr; };
   const sorted=chainSameTime(fills.filter(f=>pred(f.coin)).sort((a,b)=>a.time-b.time));
+  // Hyperliquid writes the liquidation field on BOTH sides of a liquidation: the user whose position
+  // was force-closed and the maker whose resting order filled it. Only the former was liquidated;
+  // the latter's trade (often a winner) used to wear the LIQ badge too. A field without the user
+  // (imported CSVs: Bybit's BustTrade, Binance's liquidation type) still counts.
+  const me=addr&&/^0x[0-9a-f]{40}$/i.test(String(addr))?String(addr).toLowerCase():null;
+  const liqOf=f=>{ const l=f.liquidation; if(l&&typeof l==='object'&&l.liquidatedUser&&me)return String(l.liquidatedUser).toLowerCase()===me;
+    return !!(l||/liquidat/i.test(f.dir||'')); };
   const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={};
   // Spot only: a sell run followed by more buying (or the end of the history) is a realized
   // trade for the amount sold, at the position's average cost; what's still held carries on.
@@ -111,7 +120,8 @@ function reconstructTrades(fills, addr, market){
     // a flip fill's notional and fee are split by size between the closing and opening trade —
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
     const feeHere=flipped&&sz>0?fee*Math.abs(before)/sz:fee;
-    t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null);
+    const liq=liqOf(f);
+    t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null,liq);
     if(f.time>rzSince)(t.rz||(t.rz=[])).push([f.time,pnl-(fee-feeBasis)]); // the whole fill once (a flip's opening fee included; a spot buy's token fee is already in closedPnl's basis)
     if(flipped){
       // one fill that closes the whole |before| position AND opens |after| the other way:
@@ -130,7 +140,7 @@ function reconstructTrades(fills, addr, market){
       t.durationMs=t.closeTime-t.openTime;
       trades.push(t); delete open[coin];
       if(Math.abs(after)>EPS){ const nt=newTrade(coin,f,after>0?'Long':'Short',Math.abs(after),Math.abs(after)*px,0);
-        nt.maxSize=Math.abs(after); nt.fills++; nt.fees+=fee-feeHere; tallyFill(nt,f,fee-feeHere,Math.abs(after)); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
+        nt.maxSize=Math.abs(after); nt.fills++; nt.fees+=fee-feeHere; tallyFill(nt,f,fee-feeHere,Math.abs(after),liq); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
     }
   }
   for(const c in open){ let t=open[c];

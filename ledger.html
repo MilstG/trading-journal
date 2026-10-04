@@ -497,6 +497,10 @@ body.bb .tip{border-color:#3A3A32}
   select{max-width:100%}
   .wrap{padding:10px 12px 40px}
   .toolbar>*{padding:8px 10px}
+  /* the trades table on a phone: entry, exit, size and hold step aside so the result and the journal
+     column are in view without scrolling the table sideways (the expanded row still has them all) */
+  .trades th:nth-child(4),.trades td:nth-child(4),.trades th:nth-child(5),.trades td:nth-child(5),
+  .trades th:nth-child(6),.trades td:nth-child(6),.trades th:nth-child(10),.trades td:nth-child(10){display:none}
 }
 @media(max-width:460px){
   .stats{grid-template-columns:1fr}
@@ -1092,7 +1096,7 @@ body.light .pz-nudge.warn .pz-ico{background:#F6E7BF;color:#9A5A00}
 .pz-snap-ax{font:10px var(--pz-num);fill:var(--pz-muted)}.pz-snap-pill{font:700 9px var(--pz-num);fill:#0E1216}
 .pz-snapph{display:flex;align-items:center;justify-content:center;gap:8px;aspect-ratio:360/200;border-radius:12px;background:#0E1216;font-size:12px;color:var(--pz-muted)}
 .pz-rp-row{display:flex;gap:8px;align-items:center}.pz-rp-btn{flex:0 0 auto;width:36px;height:36px}.pz-rp-mid{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:6px}
-.pz-rp-dots{display:flex;gap:7px}.pz-rp-dot{width:11px;height:11px;border-radius:999px;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .12s}.pz-rp-dot.on{background:var(--c);transform:scale(1.2);box-shadow:0 0 0 2px var(--pz-card),0 0 0 3.5px var(--pz-text)}
+.pz-rp-dots{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;max-width:100%}.pz-rp-gap{color:var(--pz-muted);font-size:12px;line-height:11px}.pz-rp-dot{width:11px;height:11px;border-radius:999px;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .12s}.pz-rp-dot.on{background:var(--c);transform:scale(1.2);box-shadow:0 0 0 2px var(--pz-card),0 0 0 3.5px var(--pz-text)}
 .pz-rp-lbl{font-size:13px;text-align:center}.pz-rp-say{font-size:12px;color:var(--pz-muted);margin:6px 0 0;text-align:center;line-height:1.45}
 .pz-goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
 .pz-goal{display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--pz-line);border-radius:14px!important}
@@ -1161,6 +1165,7 @@ body.pz-quiet-on{overflow:hidden}
 .pz-rules[open]>summary::after{transform:rotate(-90deg)}
 .pz-tile{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);min-width:0}
 .pz-tile .pz-n{font-family:var(--pz-num);font-size:28px;font-weight:600;line-height:1.05;overflow-wrap:anywhere}
+.pz-tile .pz-n.pz-n-l{font-size:24px}.pz-tile .pz-n.pz-n-xl{font-size:20px;letter-spacing:-.02em}
 .pz-tile .pz-t{font-size:12px;color:var(--pz-soft)}
 .pz-tile.good{background:#10201A;border-color:#1D3A2E}
 .pz-tile.warm{background:#1A1510;border-color:#3A2C18}
