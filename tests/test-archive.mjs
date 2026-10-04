@@ -154,7 +154,7 @@ await t('without the key the endpoints say what is missing; the owner token is r
     eq((await call(base, '/api/v1/archive', undefined, { Authorization: 'Bearer nope' })).status, 401);
   } finally { app.close(); }
 });
-const app = mk({ ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_COST_PER_GB: '1' });
+const app = mk({ ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_COST_PER_GB: '1', ARCHIVE_PREFIX: 'node_fills/hourly/' });
 const base = await listen(app);
 try {
   // put the wallet and its fills in place: a snapshot with the wallet, and the cache file the refresh would have written
@@ -214,7 +214,7 @@ await t('the archive is read by name: the first day is found by probing, the sea
   mkdirSync(join(dir2, 'fills'), { recursive: true });
   writeFileSync(join(dir2, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
   const app2 = createApp({ dataDir: dir2, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
-    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit' }, now: () => Date.UTC(2026, 5, 16, 9) }); // "yesterday" is the day with the seam
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/' }, now: () => Date.UTC(2026, 5, 18, 9) }); // the archive lags: the newest file is three days old
   const b2 = await listen(app2);
   try {
     const d = await call(b2, '/api/v1/archive/diagnose', {});
@@ -228,7 +228,7 @@ await t('the archive is read by name: the first day is found by probing, the sea
     eq(bf.status, 202);
     let st; for (let i = 0; i < 100; i++) { st = (await call(b2, '/api/v1/archive')).body; if (st.job.state !== 'running') break; await new Promise(x => setTimeout(x, 30)); }
     eq([st.job.state, st.job.done, st.job.fills, st.job.added], ['done', 4, 1, 1]);
-    eq(st.naming, { pad: false, ext: '' });
+    eq(st.naming, { pad: false, ext: '' }); ok(r.body.archive.note, 'says the days were probed');
   } finally { app2.close(); DENY_LIST = false; }
 });
 
