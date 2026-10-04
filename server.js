@@ -1750,6 +1750,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model and money-weighted xirr; account-wide — ignores filters; wallet= optional' },
     { method: 'GET', path: '/api/v1/cache/:addr', auth: 'full', desc: 'one wallet\'s server caches (fills, funding, capital flows) as JSON, gzipped when accepted — how a new device seeds its browser caches' },
     { method: 'DELETE', path: '/api/v1/cache/:addr', auth: 'full', desc: 'evict one wallet\'s server caches (fills/funding/ledger) — cleans up body.wallets experiments and removed wallets' },
+    { method: 'PUT',  path: '/api/v1/cache/:addr', auth: 'full', desc: 'merge fills into one wallet\'s server cache; body {fills:[…], twapFull?} — how the browser hands the server a history it never fetched itself (the archive plans from the server\'s copy)' },
     { method: 'GET',  path: '/api/v1/archive', auth: 'full', desc: 'Hyperliquid\'s node-data archive on S3 (fills the public API no longer serves): configuration, last coverage check, the running backfill. Needs ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET' },
     { method: 'POST', path: '/api/v1/archive/check', auth: 'full', desc: 'coverage check: the archive\'s first and last day, one day\'s size, and per wallet the hours its seams need with their bytes and cost; body {wallets?}' },
     { method: 'POST', path: '/api/v1/archive/sample', auth: 'full', desc: 'download one hour and show its format and the wallets\' fills in it; body {day?, hour?, key?, wallets?}' },
@@ -1880,6 +1881,22 @@ function createApp(opts) {
         const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
         res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
         return res.end(gz ? zlib.gzipSync(body) : body);
+      }
+      // PUT: the browser's fills into the server's cache (merged, keyed like every fill) — the archive
+      // plans from the server's copy, and a server that never refreshed this wallet has none. Sent in
+      // chunks of a few thousand fills, so a long history stays under the body limit.
+      if (req.method === 'PUT') {
+        if (!authOk(req)) return send(401, { error: 'unauthorized' });
+        let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return send(e.message === 'payload too large' ? 413 : 400, { error: e.message === 'payload too large' ? 'too many fills in one request — send fewer at a time' : 'body must be valid JSON' }); }
+        const rows = body && Array.isArray(body.fills) ? body.fills.filter(f => f && f.tid != null && f.oid != null && isFinite(+f.time) && typeof f.coin === 'string') : null;
+        if (!rows) return send(400, { error: 'body.fills must be an array of fills' });
+        const a = cacheM[1].toLowerCase(), c = readFillCache(a) || { v: 1, fills: [], truncated: false };
+        const seen = new Set(c.fills.map(fillId)), fills = c.fills.slice(); let added = 0;
+        for (const f of rows) { const id = fillId(f); if (!seen.has(id)) { seen.add(id); fills.push(f); added++; } }
+        if (added || !c.savedAt) { fills.sort((x, y) => x.time - y.time);
+          gzWrite(fillsFile(a), Object.assign({}, c, { last: fills.reduce((m, f) => f.time > m ? f.time : m, 0), count: fills.length, savedAt: Date.now(), fills, twapFull: !!(c.twapFull || body.twapFull) }));
+          _tradesMemo = null; fillMetaMemo.delete(a); }
+        return send(200, { ok: true, added, count: fills.length });
       }
       if (req.method !== 'DELETE') return send(405, { error: 'method not allowed' });
       if (!authOk(req)) return send(401, { error: 'unauthorized' });
