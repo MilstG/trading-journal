@@ -222,7 +222,15 @@ growing 0.7 GB a day) is read for the price of the instance hours; the index is 
 yours in the same region (~$0.023/GB-month) and read by the server with the same key.
 
 1. **Bucket**: S3 → Create bucket, in **Asia Pacific (Tokyo)**, e.g. `hl-fills-index-<yourname>`,
-   defaults otherwise.
+   defaults otherwise. Create it **in the same AWS account as the `ledger-archive` user** (in the
+   new project-based AWS experience each project can be its own account: the user and the bucket
+   must be in the same one). If Check coverage then says `AccessDenied … because no
+   resource-based policy allows`, the bucket landed in another account: either re-create it next to
+   the user, or give the user access from the bucket's side (S3 → the bucket → Permissions → Bucket
+   policy) with a statement allowing `arn:aws:iam::<account>:user/ledger-archive` the actions
+   `s3:ListBucket` on `arn:aws:s3:::hl-fills-index-<yourname>` and `s3:GetObject` on
+   `arn:aws:s3:::hl-fills-index-<yourname>/*`. Until the index is readable (or while it has no
+   finished day yet) Backfill falls back to the hours plan on its own and says so.
 2. **Role for the machine**: IAM → Roles → Create role → AWS service → EC2 → attach
    `AmazonS3ReadOnlyAccess` plus an inline policy allowing `s3:PutObject`, `s3:GetObject`,
    `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::hl-fills-index-<yourname>` and `/*`. Name it

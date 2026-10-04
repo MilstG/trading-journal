@@ -141,6 +141,8 @@ const s3Calls = [];
 const xmlEsc = s => s.replace(/&/g, '&amp;');
 function fakeS3(url, init) {
   const u = new URL(url); s3Calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization, payer: init.headers['x-amz-request-payer'], token: init.headers['x-amz-security-token'] });
+  if (/^other-account-index\./.test(u.hostname)) return new Response('<Error><Code>AccessDenied</Code><Message>User: arn:aws:iam::233207006248:user/ledger-archive is not authorized to perform: s3:ListBucket on resource: "arn:aws:s3:::other-account-index" because no resource-based policy allows the s3:ListBucket action</Message></Error>', { status: 403 });
+  if (/^missing-index\./.test(u.hostname)) return new Response('<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message></Error>', { status: 404 }); // an index bucket not created yet
   if (/^my-hl-index\./.test(u.hostname)) { // the index bucket (no requester pays)
     if (u.pathname === '/') { const prefix = u.searchParams.get('prefix') || '', delim = u.searchParams.get('delimiter'); const keys = Object.keys(INDEX).filter(k => k.startsWith(prefix)).sort();
       let body = '<ListBucketResult><IsTruncated>false</IsTruncated>';
@@ -281,6 +283,24 @@ await t('backfill reads the wallet’s shard for every day of the index and merg
     // the hours path is still there when asked for
     const h = await call(b3, '/api/v1/archive/backfill', { address: ADDR, source: 'hours', maxGB: 1 }); eq(h.body.total, 0, 'no seams left to hunt');
   } finally { app3.close(); }
+});
+await t('an index bucket that does not exist yet: check says so, and backfill falls back to the hours plan', async () => {
+  const dir4 = mkdtempSync(join(tmpdir(), 'ledger-archive4-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir4, 'fills'), { recursive: true });
+  writeFileSync(join(dir4, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  const app4 = createApp({ dataDir: dir4, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'missing-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' } });
+  const b4 = await listen(app4);
+  try {
+    const c = await call(b4, '/api/v1/archive/check', { wallets: [ADDR] }); ok(/NoSuchBucket/.test(c.body.index.error), 'check names the missing bucket: ' + JSON.stringify(c.body.index)); eq(c.body.wallets[0].seams, 1, 'the hours plan is still computed');
+    const x = A.s3Client({ keyId: 'AKIATEST', secret: 'sekrit', bucket: 'other-account-index', region: 'ap-northeast-1', fetchImpl: hlFetch, noPayer: true });
+    const err = await x.list('index/v1/d/', '/', 1).then(() => null, e => e.message); ok(/different AWS account.*bucket policy/.test(err), 'cross-account denial names the bucket policy: ' + err);
+    const bf = await call(b4, '/api/v1/archive/backfill', { address: ADDR, maxGB: 1 }); eq(bf.status, 202, JSON.stringify(bf.body));
+    eq(bf.body.source, 'hours'); ok(/missing-index.*NoSuchBucket/.test(bf.body.indexSkipped), 'the job says why the index was skipped: ' + bf.body.indexSkipped); eq(bf.body.total, 4, 'the seam window’s hours');
+    let s; for (let i = 0; i < 100; i++) { s = (await call(b4, '/api/v1/archive')).body; if (s.job.state !== 'running') break; await new Promise(x => setTimeout(x, 30)); }
+    eq([s.job.state, s.job.done, s.job.fills, s.job.added], ['done', 4, 1, 1], JSON.stringify(s.job));
+  } finally { app4.close(); }
 });
 await t('the indexer splits an hour into shards as gzip members; its arguments and day arithmetic', async () => {
   const I = (await import('../archive-indexer.js')).default || createRequire(import.meta.url)('../archive-indexer.js');
