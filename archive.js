@@ -184,6 +184,87 @@ function lz4Frame(buf, pos, chunks) {
   chunks.push(out.subarray(0, op));
   return pos;
 }
+// The same decoder, streaming: each block is decoded and handed on, and only the last 64 KB of output
+// is kept as history for the next block's matches (LZ4 offsets never reach further back). An hour of
+// the archive is 20–50 MB compressed and several times that decoded; this reads it in a few MB.
+function lz4Stream(buf, onChunk) {
+  const WINDOW = 65536; let pos = 0;
+  while (pos + 4 <= buf.length) {
+    const magic = buf.readUInt32LE(pos);
+    if ((magic & 0xFFFFFFF0) === 0x184D2A50) { pos += 8 + buf.readUInt32LE(pos + 4); continue; }
+    if (magic !== 0x184D2204) throw new Error('lz4: not a frame at byte ' + pos);
+    pos += 4;
+    const flg = buf[pos], bd = buf[pos + 1]; pos += 2;
+    if ((flg >> 6) !== 1) throw new Error('lz4: unsupported frame version');
+    const blockChecksum = !!(flg & 0x10), contentSize = !!(flg & 0x08), contentChecksum = !!(flg & 0x04), dictId = !!(flg & 0x01);
+    if (contentSize) pos += 8; if (dictId) pos += 4; pos += 1;
+    const maxBlock = [0, 0, 0, 0, 64 << 10, 256 << 10, 1 << 20, 4 << 20][(bd >> 4) & 7] || (4 << 20);
+    let out = Buffer.allocUnsafe(WINDOW + maxBlock * 2), op = 0; // history + this block
+    const ensure = n => { if (op + n > out.length) { const nb = Buffer.allocUnsafe(Math.max(out.length * 2, op + n)); out.copy(nb, 0, 0, op); out = nb; } };
+    for (;;) {
+      if (pos + 4 > buf.length) throw new Error('lz4: truncated frame');
+      const sz = buf.readUInt32LE(pos); pos += 4;
+      if (sz === 0) break;
+      const len = sz & 0x7FFFFFFF, end = pos + len; if (end > buf.length) throw new Error('lz4: truncated block');
+      const start = op;
+      if (sz & 0x80000000) { ensure(len); buf.copy(out, op, pos, end); op += len; }
+      else {
+        let ip = pos;
+        while (ip < end) {
+          const token = buf[ip++]; let lit = token >> 4;
+          if (lit === 15) { let b; do { b = buf[ip++]; lit += b; } while (b === 255); }
+          ensure(lit); buf.copy(out, op, ip, ip + lit); op += lit; ip += lit;
+          if (ip >= end) break;
+          const offset = buf[ip] | (buf[ip + 1] << 8); ip += 2;
+          let ml = (token & 15) + 4;
+          if ((token & 15) === 15) { let b; do { b = buf[ip++]; ml += b; } while (b === 255); }
+          if (!offset || offset > op) throw new Error('lz4: bad match offset');
+          ensure(ml); let ref = op - offset;
+          if (offset >= ml) { out.copy(out, op, ref, ref + ml); op += ml; }
+          else for (let i = 0; i < ml; i++) out[op++] = out[ref++];
+        }
+      }
+      onChunk(out.subarray(start, op));
+      // keep only the window: the next block may reach back at most 64 KB
+      if (op > WINDOW) { out.copy(out, 0, op - WINDOW, op); op = WINDOW; }
+      pos = end; if (blockChecksum) pos += 4;
+    }
+    if (contentChecksum) pos += 4;
+  }
+}
+// One address's fills straight out of a downloaded object, line by line, without holding the decoded
+// text: the same walk as extractFills, over a line buffer fed by the streaming decoder (lz4), by
+// zlib's streaming inflate (gzip) or by the bytes themselves. Returns extractFills' shape plus the
+// encoding and the first bytes of text (for a preview).
+function extractFillsFromObject(buf, addr, opts) {
+  opts = opts || {}; const previewMax = opts.preview || 0;
+  const want = String(addr || '').toLowerCase(), out = [], shapes = {}; let lines = 0, parsed = 0, seen = 0, preview = '';
+  const walk = (n, d) => {
+    if (!n || typeof n !== 'object' || d > 10) return;
+    if (Array.isArray(n)) {
+      if (n.length === 2 && typeof n[0] === 'string' && isFill(n[1])) { seen++; shapes.pair = (shapes.pair || 0) + 1; if (n[0].toLowerCase() === want) out.push(normFill(n[1])); return; }
+      for (const x of n) walk(x, d + 1); return;
+    }
+    if (isFill(n)) { const u = n.user || n.address; if (typeof u === 'string') { seen++; shapes.user = (shapes.user || 0) + 1; if (u.toLowerCase() === want) out.push(normFill(n)); return; } }
+    if (n.fill && isFill(n.fill) && typeof n.user === 'string') { seen++; shapes.obj = (shapes.obj || 0) + 1; if (n.user.toLowerCase() === want) out.push(normFill(n.fill)); return; }
+    for (const k in n) walk(n[k], d + 1);
+  };
+  const line = s => { if (!s.trim()) return; lines++; let j; try { j = JSON.parse(s); } catch (e) { return; } parsed++; walk(j, 0); };
+  let rest = ''; // the partial line at the end of the previous chunk
+  const feed = chunk => {
+    if (preview.length < previewMax) preview += chunk.toString('utf8', 0, Math.min(chunk.length, previewMax - preview.length));
+    // split on newlines in the bytes; a UTF-8 sequence never contains 0x0A, so cutting there is safe
+    let s = 0;
+    for (let i = 0; i < chunk.length; i++) if (chunk[i] === 10) { line(rest + chunk.toString('utf8', s, i)); rest = ''; s = i + 1; }
+    if (s < chunk.length) rest += chunk.toString('utf8', s);
+  };
+  let encoding;
+  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x184D2204) { encoding = 'lz4'; lz4Stream(buf, feed); }
+  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { encoding = 'gzip'; feed(zlib.gunzipSync(buf)); }
+  else { encoding = 'plain'; feed(buf); }
+  if (rest) { line(rest); rest = ''; }
+  return { fills: out, lines, parsed, seen, shapes, encoding, preview };
+}
 // a downloaded object as text, whatever it was compressed with
 function decodeObject(buf) {
   if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return { text: zlib.gunzipSync(buf).toString('utf8'), encoding: 'gzip' };
@@ -323,19 +404,34 @@ function createArchive(deps) {
     return { days: null, first, last, truncated: false, listed: false, note: 'listing is not allowed on this bucket; files are read by name, so the first and last day are found by probing and may be a day off' };
   }
   const haveDay = (d, day) => d.days ? d.days.includes(day) : (d.first ? day >= d.first && day <= d.last : false);
+  // before node_fills_by_block began (2025-07-27) the older node_fills dataset holds the same fills in the
+  // same format: a day the main dataset lacks is looked up there (listing only; its days are known)
+  const OLD_PREFIX = String(env.ARCHIVE_PREFIX_OLD || 'node_fills/hourly/').replace(/^\/+/, '').replace(/\/*$/, '/');
+  const oldDayCache = new Map();
+  async function oldDayKeys(day) {
+    if (noList || OLD_PREFIX === cfg.prefix) return [];
+    if (oldDayCache.has(day)) return oldDayCache.get(day);
+    let rows = [];
+    try { const r = await s3.list(OLD_PREFIX + day + '/'); rows = r.keys.map(k => ({ key: k.key, size: k.size, hour: hourNum(k.key), old: true })).filter(k => k.hour != null); } catch (e) {}
+    oldDayCache.set(day, rows); return rows;
+  }
   // the hours a wallet's seams need, which of them the archive has, their bytes and cost
   async function plan(addr, fills, d) {
     const sw = seamWindows(fills, deps.engine, { maxDays: cfg.maxDays });
     const items = [], missing = [], byDay = {};
     for (const h of sw.hours) (byDay[dayKeyOf(h)] = byDay[dayKeyOf(h)] || []).push(hourInDay(h));
     let listedDays = 0;
+    let fromOld = 0;
     for (const day of Object.keys(byDay).sort()) {
-      if (!haveDay(d, day)) { for (const hr of byDay[day]) missing.push(day + '/' + hr); continue; }
+      if (!haveDay(d, day)) {
+        const rows = await oldDayKeys(day); // the older dataset, if it has the day
+        for (const hr of byDay[day]) { const k = rows.find(x => x.hour === hr); if (k) { items.push(k); fromOld++; } else missing.push(day + '/' + hr); }
+        continue; }
       const rows = await dayKeys(day, byDay[day]); listedDays++;
       for (const hr of byDay[day]) { const k = rows.find(x => x.hour === hr); if (k) items.push(k); else missing.push(day + '/' + hr); }
     }
     const bytes = items.reduce((s, k) => s + k.size, 0);
-    return { address: addr, seams: sw.seams.length, skippedLong: sw.skipped, hours: sw.hours.length, items, missing, bytes, estGB: +gb(bytes).toFixed(3), estCost: cost(bytes), listedDays };
+    return { address: addr, seams: sw.seams.length, skippedLong: sw.skipped, hours: sw.hours.length, items, missing, fromOld, bytes, estGB: +gb(bytes).toFixed(3), estCost: cost(bytes), listedDays };
   }
   async function check(wallets) {
     need();
@@ -355,10 +451,11 @@ function createArchive(deps) {
     if (!key) { const d = o.day || (await days()).last; if (!d) throw Object.assign(new Error('the archive has no days under ' + cfg.prefix), { code: 404 });
       const hr = o.hour != null ? +o.hour : 12, rows = await dayKeys(d, [hr]); const k = rows.find(x => x.hour === hr) || rows[0];
       if (!k) throw Object.assign(new Error('no file for ' + d + '/' + hr), { code: 404 }); key = k.key; }
-    const buf = await s3.get(key, { maxBytes: 512 * 1024 * 1024 }), dec = decodeObject(buf);
-    const res = { key, bytes: buf.length, encoding: dec.encoding, textBytes: Buffer.byteLength(dec.text), preview: dec.text.slice(0, 1500), wallets: {} };
-    for (const a of (o.addresses || [])) { const x = extractFills(dec.text, a); res.wallets[a] = { fills: x.fills.length, first: x.fills[0] || null }; res.lines = x.lines; res.parsed = x.parsed; res.fillsSeen = x.seen; res.shapes = x.shapes; }
-    if (!o.addresses || !o.addresses.length) { const x = extractFills(dec.text, '0x'); res.lines = x.lines; res.parsed = x.parsed; res.fillsSeen = x.seen; res.shapes = x.shapes; }
+    const buf = await s3.get(key, { maxBytes: 512 * 1024 * 1024 });
+    const res = { key, bytes: buf.length, wallets: {} };
+    for (const a of ((o.addresses && o.addresses.length) ? o.addresses : ['0x'])) { const x = extractFillsFromObject(buf, a, { preview: 1500 });
+      if (a !== '0x') res.wallets[a] = { fills: x.fills.length, first: x.fills[0] || null };
+      Object.assign(res, { encoding: x.encoding, preview: x.preview, lines: x.lines, parsed: x.parsed, fillsSeen: x.seen, shapes: x.shapes }); }
     return res;
   }
   // the backfill: plan, refuse past the budget, then download hour by hour in the background
@@ -377,8 +474,8 @@ function createArchive(deps) {
     (async () => {
       for (const it of items) {
         if (cur !== job || cur.state !== 'running') return;
-        try { const buf = await s3.get(it.key, { maxBytes: 1024 * 1024 * 1024 }); cur.bytes += buf.length; const dec = decodeObject(buf);
-          const x = extractFills(dec.text, addr); found.push(...x.fills); cur.fills += x.fills.length; }
+        try { const buf = await s3.get(it.key, { maxBytes: 1024 * 1024 * 1024 }); cur.bytes += buf.length;
+          const x = extractFillsFromObject(buf, addr); found.push(...x.fills); cur.fills += x.fills.length; }
         catch (e) { cur.errors++; cur.lastError = e.message; log('archive: ' + it.key + ': ' + e.message); }
         cur.done++; cur.lastKey = it.key;
       }
@@ -473,4 +570,4 @@ function createArchive(deps) {
   return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d) => { need(); return plan(addr, fills, d); } };
 }
 
-module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
+module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
