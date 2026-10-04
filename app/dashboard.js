@@ -156,8 +156,12 @@ function renderStats(s){
   const payoff=s.payoff===Infinity?'∞':s.payoff.toFixed(2);
   const streak=s.curStreak?`${s.curStreak}${s.curSign>0?'W':'L'} streak`:'no streak';
   const gd=s.totalDays?(s.greenDays/s.totalDays*100):0;
+  // fills that can't tell the whole story (journal.js: verifiedHeadline): the exchange's own all-time figure leads
+  const vh=typeof verifiedHeadline==='function'?verifiedHeadline():null;
   const cards=[
-    {pri:1,k:'Net PnL',v:fmtUsd(s.net),sign:s.net,sub:s.n+' trades'+(openN?' · '+openN+' open':''),tip:'All-in realized PnL (fees and funding included) for closed trades in this view and period.'},
+    vh?{pri:1,k:'Net PnL',v:fmtUsd(vh.ver),sign:vh.ver,sub:'Hyperliquid’s figure · from fills '+fmtUsd(vh.rec),
+        tip:'Hyperliquid’s own all-time P&L for this view — the figure its app and trackers such as Hyperdash show, unrealized included. It leads here because the fills the exchange still serves don’t tell the whole story'+(vh.gaps?': '+vh.gaps+' position change'+(vh.gaps===1?' has':'s have')+' no fill behind '+(vh.gaps===1?'it':'them'):'')+(vh.share!=null?' (the fills explain '+Math.round(vh.share*100)+'% of your volume)':'')+'. The fill-based sum, '+fmtUsd(vh.rec)+' over '+vh.n+' trades, is what every other statistic is built on. Pick a period to see the fill-based figure for that window.'}
+      :{pri:1,k:'Net PnL',v:fmtUsd(s.net),sign:s.net,sub:s.n+' trades'+(openN?' · '+openN+' open':''),tip:'All-in realized PnL (fees and funding included) for closed trades in this view and period.'},
     {pri:1,k:'Volume',v:fmtUsd(s.volume),sign:0,sub:s.n?'≈'+fmtUsd(s.volume/s.n)+'/trade':'total traded',tip:'Total notional traded in this view — every fill\'s size × price summed across entries and exits (maker + taker). A read on turnover and the fee-generating flow you push.'},
     {pri:1,k:'Unrealized',v:posList.length?fmtUsd(uPnl):'—',sign:uPnl,sub:posList.length+(view==='spot'?' holding':' position')+(posList.length===1?'':'s'),tip:'Mark-to-market PnL on your open positions. Live from Hyperliquid; not part of realized stats.'},
     {pri:1,k:'Win rate',v:(s.winRate*100).toFixed(1)+'%',sign:s.winRate>=0.5?1:-1,sub:s.wins+'W / '+s.losses+'L'+(s.breakeven?' / '+s.breakeven+' B/E':''),tip:'Winning trades ÷ (winners + losers). Trades landing inside ±'+fmtUsd(_be)+' of zero'+(beFixedOf(settings)==null?' (the automatic band: 5% of your median trade\'s net, $0.50–$50)':'')+' are break-even scratches, excluded from both sides. Change the band under ⚙ Settings.'},

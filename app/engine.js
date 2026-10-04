@@ -72,12 +72,37 @@ function reconstructTrades(fills, addr, market){
     let after=before+signed;
     // spot exits leave dust (fees come out of the token bought): under $1 or 1/10,000 of the position counts as flat
     if(spot&&Math.abs(after)>EPS&&Math.abs(after)<Math.abs(before)&&(Math.abs(after)*px<1||Math.abs(after)<=1e-4*Math.abs(before)))after=0;
+    // Perps: a fill that starts from a position the fills so far don't reach is a seam — fills the
+    // exchange no longer serves (TWAP slices older than ~3 months, history past its retention)
+    // moved the position in between. startPosition is the exchange's own, so the position is
+    // trusted as is; the open trade is told what it missed instead of being silently welded to
+    // whatever comes next (a fresh entry used to be filed as an add to a trade that had in fact
+    // already closed off the record). Spot balances move without fills (transfers, staking,
+    // borrowing), so there a jump proves nothing and the check stays off.
+    if(!spot&&open[coin]&&lastAfter[coin]!=null){
+      const prev=lastAfter[coin], jump=before-prev;
+      if(Math.abs(jump)>Math.max(EPS,1e-6*Math.max(Math.abs(prev),Math.abs(before)))){
+        const t0=open[coin];
+        t0.gaps=(t0.gaps||0)+1; t0.gapSz=(t0.gapSz||0)+Math.abs(jump); t0.gapNotional=(t0.gapNotional||0)+Math.abs(jump)*px; // valued at the nearest known price
+        (t0.gapTimes=t0.gapTimes||[]).push(f.time); // the seam is somewhere before this fill
+        const closedOff=Math.abs(before)<EPS||(prev>0)!==(before>0);
+        // shrunk, closed or flipped in fills we never saw: that P&L is gone for good — the trade's
+        // result is incomplete and it stays out of the stats. Grown off the record: only the entry
+        // is unknown; what closes later still carries the exchange's own closedPnl.
+        if(closedOff||Math.abs(before)<Math.abs(prev))t0.offRecord=true; else t0.partialHistory=true;
+        if(closedOff){ // ends where its last known fill left it; what this fill does starts a fresh trade
+          if(!(t0.openSz>0))t0.partialHistory=true;
+          t0.avgEntry=t0.openSz>0?t0.openNotional/t0.openSz:t0.firstEntryPx; t0.avgExit=t0.closeSz>0?t0.closeNotional/t0.closeSz:null;
+          t0.durationMs=t0.closeTime-t0.openTime; trades.push(t0); delete open[coin]; }
+      }
+    }
     lastAfter[coin]=after;
     let t=open[coin];
     if(spot&&t&&signed>0&&t.closeSz>0&&Math.abs(before)>EPS)t=open[coin]=realize(t,coin,f,Math.abs(before));
     // a fill acting on a position held before the history began (closing it, or flipping through it)
     // belongs to the side that was held; a fresh position takes the side it opens
-    if(!t){ t=open[coin]=newTrade(coin,f,(Math.abs(before)>EPS?before>0:after>0)?'Long':'Short',0,0,0); }
+    if(!t){ t=open[coin]=newTrade(coin,f,(Math.abs(before)>EPS?before>0:after>0)?'Long':'Short',0,0,0);
+      if(!spot&&Math.abs(before)>EPS)t.partialHistory=true; } // held before its first served fill: the entry is unknown, adds or not
     const flipped=Math.abs(before)>EPS&&Math.abs(after)>EPS&&(before>0)!==(after>0);
     // a flip fill's notional and fee are split by size between the closing and opening trade —
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
@@ -119,6 +144,30 @@ function reconstructTrades(fills, addr, market){
     t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.isOpen&&t.carried&&t.bagOpen?t.bagOpen+':held':t.openTime); });
   return trades.sort((a,b)=>b.openTime-a.openTime);
 }
+// How much of a wallet's history the fills the exchange still serves explain. Volume: the served
+// fills' notional per market against the exchange's own all-time volume (the portfolio endpoint's
+// vlm). Seams: the position changes reconstructTrades found no fill for, their notional at the
+// nearest known price and the months they fall in; offRecord: the trades whose result those seams
+// took. Hyperliquid serves TWAP slice fills for about three months and ordinary fills for a long
+// but finite time, so a wallet followed from day one keeps everything in its cache, while one added
+// later can never get the older fills back — this is what tells the two apart. Pure.
+function coverageOf(fills, trades, port){
+  let perpVol=0, spotVol=0;
+  for(const f of (fills||[])){ const v=Math.abs(parseFloat(f.sz)*parseFloat(f.px))||0; if(isPerp(String(f.coin||'')))perpVol+=v; else spotVol+=v; }
+  let gaps=0, gapNotional=0, offRecord=0, gapFirst=null, gapLast=null; const months={};
+  for(const t of (trades||[])){
+    if(t.offRecord&&!t.isOpen)offRecord++;
+    if(!t.gaps)continue;
+    gaps+=t.gaps; gapNotional+=t.gapNotional||0;
+    const times=t.gapTimes||[]; const per=times.length?(t.gapNotional||0)/times.length:0;
+    for(const ms of times){ if(gapFirst==null||ms<gapFirst)gapFirst=ms; if(gapLast==null||ms>gapLast)gapLast=ms;
+      const k=new Date(ms).toISOString().slice(0,7); months[k]=(months[k]||0)+per; }
+  }
+  const exchPerpVlm=port&&isFinite(port.perpVlm)&&port.perpVlm>0?port.perpVlm:null, exchVlm=port&&isFinite(port.vlm)&&port.vlm>0?port.vlm:null;
+  return {perpVol, spotVol, exchPerpVlm, exchVlm,
+    perpShare:exchPerpVlm?Math.min(1,perpVol/exchPerpVlm):null, allShare:exchVlm?Math.min(1,(perpVol+spotVol)/exchVlm):null,
+    gaps, gapNotional, offRecord, gapFirst, gapLast, months};
+}
 function attributeFunding(trades,fundingRows){
   // Per coin: sorted rows + prefix sums, then two binary searches per trade. The old full
   // scan per trade was O(trades × rows) per coin — ~35M row visits for a 2-year account,
@@ -146,7 +195,9 @@ function attributeFunding(trades,fundingRows){
 /* ============================ state ============================ */
 let allTrades=[], fundingRows=[], fundingTotal=0, openPositions=[], accountValue=null;
 let ledFlows=[], ledSkipped=0; // classified capital flows (deposits/withdrawals/transfers) across loaded wallets
-let _fetchHealth={funding:false,ledger:false}; // partial-fetch flags for the persistent data-health line
+let _fetchHealth={funding:false,ledger:false,twap:false}; // partial-fetch flags for the persistent data-health line
+// how much of the account's history the fills the exchange still serves explain (data-io.js: coverageOf), across loaded wallets
+let dataCoverage=null;
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
 // portfolio-margin wallets' balances (one pool for spot and perps): counted in both accountValue and
 // spotAccountValue, so a combined total takes this off to count them once
@@ -1208,7 +1259,11 @@ function knownDexes(){ const s=new Set();
   for(const p of openPositions){ if(p.dex)s.add(p.dex); }
   return [...s].sort(); }
 function dexPositions(){ return dexView==='all'?openPositions:openPositions.filter(p=>dexOk(p.dex||'')); }
-function viewFilter(t){ return !t.orphan && (view==='combined' ? true : t.market===view) && dexFilter(t); }
+// A trade whose result the fills can't give is out of every statistic: an orphan (open here, but the exchange
+// no longer holds it) or one a seam in the fills shrank or closed off the record (offRecord) once it has closed —
+// while still open it stays in view, its result isn't final anyway. The same test is inlined wherever orphans
+// were already left out (coach, progress, pulse, fee tier, reconcile): those run in bare contexts in the tests.
+function viewFilter(t){ return !(t.orphan||(t.offRecord&&!t.isOpen)) && (view==='combined' ? true : t.market===view) && dexFilter(t); }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
 function inRange(t){ if(customRange.from!=null&&t.closeTime<customRange.from)return false; if(customRange.to!=null&&t.closeTime>customRange.to)return false; return true; }

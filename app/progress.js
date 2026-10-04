@@ -383,7 +383,7 @@ function gameContext(){
   const g={ctx,days,streak,level:lv,xp:led,weekXp,xpBase,weekXpBase,mult:multOf(dayKey(now)),achievements,challenges,current:cur,pbs,saved,stopsBest,journalBest:jBest,nowWeek,bonuses,catalog,pa};
   // first-time awards join the ledger, read from the whole account only: a per-market or per-dex view
   // leaves trades out, and could find a clean day the account as a whole didn't have
-  let whole=0; for(const t of allTrades)if(!t.orphan)whole++;
+  let whole=0; for(const t of allTrades)if(!(t.orphan||(t.offRecord&&!t.isOpen)))whole++;
   if(Object.keys(add).length&&ctx.trades.length===whole)pzEarnedRecord(add);
   _gameMemo={key:keyOf(),g}; return g;
 }

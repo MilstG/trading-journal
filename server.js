@@ -121,7 +121,7 @@ const ENGINE_FNS = [
   // the anonymous summary a seed wallet contributes to the "traders like you" benchmarks
   'peerSummary',
   // Hyperliquid client (retry/backoff/pagination identical to the browser's)
-  'hlPost', 'fetchAllFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio', 'unifiedAccountOf',
+  'hlPost', 'fetchAllFills', 'fetchTwapFills', 'fetchFunding', 'fetchSpotMaps', 'fetchSpotState', 'fetchPortfolio', 'unifiedAccountOf',
 ];
 // Trivial one-line consts the extracted functions lean on. Consts aren't brace-extractable,
 // so — exactly like the test suites — they are re-declared here. Keep in sync with ledger.html.

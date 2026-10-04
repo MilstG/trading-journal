@@ -705,10 +705,38 @@ async function fetchAllFills(addr, since=0){
   if(all.length>=10000) truncated=true;
   // TWAP slice fills live in a separate endpoint and are NOT in userFills — merge them in so
   // TWAP-executed trades reconstruct correctly instead of silently going missing.
-  try{ const tw=await hlPost({type:'userTwapSliceFills',user:addr});
-    if(Array.isArray(tw)) for(const r of tw){ const f=r&&r.fill; if(f&&f.time>=since) add(f); }
-  }catch(e){}
+  const tw=await fetchTwapFills(addr,since);
+  for(const f of tw.fills) add(f);
+  if(tw.partial&&typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.twap=true;
   return {fills:all, truncated};
+}
+// Every TWAP slice fill the exchange still serves, from `since` on. userTwapSliceFills returns
+// only the newest 2,000 slices: a wallet that TWAPs out of its positions had everything older
+// vanish — the exit of a trade and its whole P&L with it — which is where most of the gap to
+// Hyperliquid's own P&L figure came from. userTwapSliceFillsByTime pages by time, 2,000 per
+// response, resumed AT the boundary millisecond like fetchAllFills (dupes are keyed out by the
+// caller). The exchange keeps slices for about three months, so each load caches what it can
+// still get; the newest-2,000 call stays as a fallback if the by-time call is ever refused.
+async function fetchTwapFills(addr, since=0){
+  const out=[]; const seen=new Set();
+  const add=f=>{ if(!f||!(f.time>=since))return; const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); out.push(f); } };
+  let start=since>0?since:0, pages=0, partial=false;
+  try{
+    while(pages<60){
+      const batch=await hlPost({type:'userTwapSliceFillsByTime',user:addr,startTime:start});
+      if(!Array.isArray(batch)||batch.length===0) break;
+      for(const r of batch) add(r&&r.fill);
+      if(batch.length<2000) break;
+      const mx=Math.max(...batch.map(r=>(r&&r.fill&&r.fill.time)||0));
+      start=mx>start?mx:mx+1; pages++; await sleep(40);
+    }
+    if(pages>=60) partial=true;
+  }catch(e){ partial=true;
+    try{ const tw=await hlPost({type:'userTwapSliceFills',user:addr});
+      if(Array.isArray(tw)){ for(const r of tw) add(r&&r.fill); partial=tw.length>=2000; } // 2,000 served = there may be older ones
+    }catch(e2){}
+  }
+  return {fills:out, partial};
 }
 async function fetchFunding(addr, since){
   // userFunding caps each response (~500 rows). One call with startTime:0 silently drops
@@ -935,8 +963,11 @@ async function fetchPortfolio(addr){
   try{ const res=await hlPost({type:'portfolio',user:addr});
     const last=(label,field)=>{ const e=(res||[]).find(x=>x[0]===label); if(!e||!e[1])return null;
       const h=e[1][field]||[]; const v=h.length?parseFloat(h[h.length-1][1]):NaN; return isFinite(v)?v:null; };
-    return {all:last('allTime','pnlHistory'), perp:last('perpAllTime','pnlHistory'), accountValue:last('allTime','accountValueHistory')};
-  }catch(e){ return {all:null,perp:null,accountValue:null}; }
+    // all-time volume too: the fills the exchange still serves are measured against it (fill coverage)
+    const vlm=label=>{ const e=(res||[]).find(x=>x[0]===label); const v=e&&e[1]?parseFloat(e[1].vlm):NaN; return isFinite(v)?v:null; };
+    return {all:last('allTime','pnlHistory'), perp:last('perpAllTime','pnlHistory'), accountValue:last('allTime','accountValueHistory'),
+      vlm:vlm('allTime'), perpVlm:vlm('perpAllTime')};
+  }catch(e){ return {all:null,perp:null,accountValue:null,vlm:null,perpVlm:null}; }
 }
 // A portfolio-margin account's balance: the exchange's own account value (spot and perps as one), or
 // the spot balances valued at mark when that isn't readable. null for an ordinary account, whose perp
