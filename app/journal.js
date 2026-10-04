@@ -1480,7 +1480,7 @@ async function toggleArchivePanel(){
   const draw=st=>{ const j=st.job, lc=st.lastCheck;
     p.innerHTML=`<b>Hyperliquid’s archive</b> — ${st.configured?`bucket ${esc(st.bucket)}${st.region?' ('+esc(st.region)+')':''}, $${st.costPerGB}/GB billed to your AWS account`:'not set up: add <code>ARCHIVE_AWS_KEY_ID</code> and <code>ARCHIVE_AWS_SECRET</code> to the server (Railway → Variables) and redeploy'}.
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
-        <button class="df-btn" id="arcCheck" ${st.configured?'':'disabled'}>Check coverage</button><button class="df-btn" id="arcSample" ${st.configured?'':'disabled'}>Fetch a sample hour</button>
+        <button class="df-btn" id="arcCheck" ${st.configured?'':'disabled'}>Check coverage</button><button class="df-btn" id="arcDiag" ${st.configured?'':'disabled'}>Diagnose</button><button class="df-btn" id="arcSample" ${st.configured?'':'disabled'}>Fetch a sample hour</button>
         <select id="arcWallet">${hl.map(w=>`<option value="${esc(w.address)}">${esc(labelFor(w))}</option>`).join('')}</select>
         <label>cap <input id="arcGB" type="number" min="0.01" step="0.5" value="2" style="width:64px"> GB</label>
         <button class="df-btn" id="arcGo" ${st.configured?'':'disabled'}>Backfill</button>${j&&j.state==='running'?'<button class="df-btn" id="arcStop">Stop</button>':''}<button class="df-btn" id="arcClose">Close</button></div>
@@ -1491,6 +1491,10 @@ async function toggleArchivePanel(){
       out(`Archive: <b>${esc(a.first||'nothing')}</b> → ${esc(a.last||'')} (${a.days.length} days)${sd?`; ${sd.day} has ${sd.hours} hours, ${mb(sd.bytes)} (${mb(sd.perHour)}/hour)`:''}.<br>`+
         c.wallets.map(w=>w.error?`${esc(w.address.slice(0,8))}…: ${esc(w.error)}`:`${esc(w.address.slice(0,8))}…: ${w.seams} seams → ${w.hours} hours; the archive has ${w.hours-w.missing.length} of them, ${gbOf(w.bytes)} ≈ ${usd(w.estCost)}${w.missing.length?` — ${w.missing.length} hour${w.missing.length===1?'':'s'} fall outside the archive (${esc(w.missing[0])}…)`:''}${w.skippedLong.length?`; ${w.skippedLong.length} seam${w.skippedLong.length===1?'':'s'} wider than ${c.maxWindowDays||14} days skipped`:''}`).join('<br>')); }
       catch(e){ out('Check failed: '+esc(e.message)); } };
+    $('arcDiag').onclick=async()=>{ out('Asking AWS…'); try{ const d=await call('/diagnose',{});
+      const line=(k,s)=>`<b>${k}</b>: ${esc(s.error?('no answer — '+s.error):s.arn?(s.arn+' (account '+s.account+')'):(s.status+(s.code?' '+s.code:'')+(s.message?' — '+s.message:'')+(s.bucketRegion?' · region '+s.bucketRegion:'')+(s.prefixes&&s.prefixes.length?' · '+s.prefixes.join(' '):'')+(s.keys&&s.keys.length?' · '+s.keys.join(' '):'')))}`;
+      out(`<b>Verdict:</b> ${esc(d.verdict)}<br>key ${esc(d.keyId)} · bucket ${esc(d.bucket)} · region ${esc(d.regionSetting)}<br>`+Object.entries(d.steps).map(([k,s])=>line(k,s)).join('<br>')); }
+      catch(e){ out('Diagnose failed: '+esc(e.message)); } };
     $('arcSample').onclick=async()=>{ out('Downloading one hour…'); try{ const s=await call('/sample',{});
       const w=Object.entries(s.wallets||{}).map(([a,x])=>`${esc(a.slice(0,8))}…: ${x.fills} fills`).join(', ');
       out(`${esc(s.key)}: ${mb(s.bytes)} ${esc(s.encoding)}, ${s.lines} lines, ${s.fillsSeen} fills in it (${esc(JSON.stringify(s.shapes))})${w?'; '+w:''}.<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px">${esc(s.preview)}</pre>`); }
