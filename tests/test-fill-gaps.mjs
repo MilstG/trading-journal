@@ -189,6 +189,23 @@ await t('fetchAllFills merges the slices with the ordinary fills and keys out du
   const r = await ctx.fetchAllFills('0xw', 0);
   eq(r.fills.length, 3); ok(!r.truncated); ok(!ctx._fetchHealth.twap); ok(r.twapPartial === false);
 });
+await t('a slice served again under another trade id is one execution, not two', async () => {
+  const f = F('ETH', 'A', 1, 100, T0 + 5, 1), again = Object.assign({}, f, { tid: 99991, oid: 99992 }); // same coin, time, side, size, price, start
+  ctx.hlPost = async b => {
+    if (b.type === 'userFillsByTime') return [f];
+    if (b.type === 'userTwapSliceFillsByTime') return [{ fill: again, twapId: 1 }, slice(T0 + 9, 2)];
+    throw new Error('unexpected ' + b.type); };
+  const r = await ctx.fetchAllFills('0xw', 0);
+  eq(r.fills.length, 2, 'the duplicate is keyed out by content; the genuinely new slice stays');
+});
+t('a wallet the exchange didn’t answer for keeps the verified figure from leading', () => {
+  const closed = (market, net, extra) => Object.assign({ market, net, isOpen: false, closeTime: T0 }, extra);
+  ctx.allTrades = [closed('perp', 100)]; ctx.openPositions = []; ctx.spotHoldings = []; ctx.dataCoverage = { gaps: 2, perpShare: 0.5, allShare: 0.5 };
+  ctx.hlPnl = { all: 5000, perp: 5000, partial: true };
+  eq(ctx.verifiedFigure('perp'), null, 'the sum understates: it must not lead'); eq(ctx.verifiedFigure('combined'), null);
+  ctx.hlPnl = { all: 5000, perp: 5000, partial: false };
+  ok(ctx.verifiedFigure('perp'), 'every wallet answered: it leads as before');
+});
 await t('a TWAP fetch that comes back partial is flagged on the data-health state', async () => {
   ctx.hlPost = async b => { if (b.type === 'userFillsByTime') return []; throw new Error('API 500'); };
   const r = await ctx.fetchAllFills('0xw', 0);

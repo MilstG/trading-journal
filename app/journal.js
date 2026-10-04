@@ -1537,7 +1537,7 @@ function renderReconcile(){
     // routine (funding attribution timing, fills near the pagination boundary) and are
     // already shown quietly by the per-line "recon" tag — the banner is reserved for the
     // case where enough trades are missing/mis-attributed to actually distort analytics.
-    const material=pd!=null && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05);
+    const material=pd!=null && !hlPnl.partial && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05); // a wallet the exchange didn't answer for isn't a gap in the fills
     // seams explain the gap and the data-health line says so: no second banner for the same thing
     const seams=!!(dataCoverage&&dataCoverage.gaps>0);
     if(material&&!seams){
@@ -1551,5 +1551,6 @@ function renderReconcile(){
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;
   el.classList.remove('hide');
   el.innerHTML=`<span class="rlab" data-tip="Hyperliquid's own account P&L figures, as its app reports them — always all time, whatever period or filter is picked above. “recon” is how far the fill-based sum is from each; a large gap means fills are missing, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic.">Verified · Hyperliquid all-time · doesn’t follow the period</span>`+
-    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot));
+    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot))+
+    (hlPnl.partial?`<span class="ritem" style="color:var(--gold)" data-tip="Hyperliquid didn’t answer the portfolio request for at least one wallet this load, so these sums cover only the wallets it did. Load all again.">⚠ a wallet is missing from these</span>`:'');
 }

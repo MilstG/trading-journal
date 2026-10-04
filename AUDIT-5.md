@@ -86,11 +86,32 @@ cards are not read as additive.
 - **Hyperliquid's curve has roughly one point a week**, so the drawdown it gives can be
   shallower than the trade-by-trade one; the tip says so.
 
-## Not verifiable offline
+**F8 · [read] A wallet the exchange didn't answer for made the verified figure understate, and lead.**
+With several wallets, `hlPnl` summed only the portfolio answers that arrived; a failed call for
+one wallet left the others' sum as "Hyperliquid's figure", which then differed materially from
+the fills and took over the card. `hlPnl.partial` now marks a load where a Hyperliquid wallet
+got no portfolio answer: the figure never leads, the reconstruction banner stays quiet, and the
+Verified strip says a wallet is missing.
 
-- Whether `userFillsByTime` ever includes TWAP slice fills under a different `tid`. The code
-  assumes it does not (the dedupe key would then miss them and every TWAP would double-count,
-  which would have shown as seams on every TWAPed coin). The wallet that motivated PR 74 moved
-  toward Hyperliquid's own figure after the slices were paged, which is consistent with the
-  assumption. Worth one check against a live wallet with recent TWAPs: the fill count in the
-  status line should equal the exchange's, not exceed it.
+**F9 · [live] TWAP slice fills are not in `userFills`, and the merge is now immune either way.**
+Checked on 26 leaderboard wallets (4 with slices, 458–2,000 each): no slice matched an ordinary
+fill by trade id or by content. `fetchAllFills` still keys a slice out when an ordinary fill with
+the same coin, time, side, size, price and starting position is already there, so a change on the
+exchange's side could never double-count an execution and read as a seam on every TWAP.
+
+## Verified against the live exchange (October 4, 2026)
+
+Picked 26 small, active wallets from Hyperliquid's leaderboard and pulled their whole history
+(`userFillsByTime`, `userTwapSliceFillsByTime`, `userFunding`, `clearinghouseState`, `portfolio`).
+
+- **`pnlHistory` is realized plus unrealized.** On every wallet with an open position, the
+  portfolio endpoint's last perp P&L point matched closedPnl − fees + funding **+ unrealized**
+  (within $1–$40 on most, within ~1.5% on the rest, mark prices moving); realized alone was off by
+  exactly the unrealized. This is the basis of F1. Hyperdash reads the same endpoint, so the
+  headline agrees with it by construction; its trader page is a JavaScript shell to a fetch, so
+  its figures could not be read directly.
+- **Fill notional equals the exchange's `vlm`** to within $70 on $20M–$104M, perps and spot
+  alike, so the coverage share is exact where the fills are whole.
+- **The curve is current and roughly weekly**: the last point was 0 minutes old on every wallet,
+  45–104 points over 6–20 months.
+- **TWAP slices**: see F9.

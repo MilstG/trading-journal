@@ -684,9 +684,15 @@ async function hlPost(body){
     throw new Error('API '+res.status);
   }
 }
+// One execution, whatever endpoint served it: the same coin, time, side, size, price and starting
+// position can't be two fills (a fill of any size moves the position, so the next one starts
+// elsewhere). The key the TWAP merge below falls back on, should the exchange ever serve a slice
+// under one trade id in userFills and another in userTwapSliceFills — counted twice, it would
+// move the position off every later fill's startPosition and read as a seam on every TWAP.
 async function fetchAllFills(addr, since=0){
-  let start=since, all=[], pages=0, truncated=false; const seen=new Set();
-  const add=f=>{ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); all.push(f);} };
+  const fillSame=f=>[f.coin,f.time,f.side,f.sz,f.px,f.startPosition].join('|'); // local: the tests and the server lift this function out on its own
+  let start=since, all=[], pages=0, truncated=false; const seen=new Set(), same=new Set();
+  const add=f=>{ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); same.add(fillSame(f)); all.push(f);} };
   while(pages<60){
     const batch=await hlPost({type:'userFillsByTime',user:addr,startTime:start,aggregateByTime:true});
     if(!Array.isArray(batch)||batch.length===0) break;
@@ -706,7 +712,7 @@ async function fetchAllFills(addr, since=0){
   // TWAP slice fills live in a separate endpoint and are NOT in userFills — merge them in so
   // TWAP-executed trades reconstruct correctly instead of silently going missing.
   const tw=await fetchTwapFills(addr,since);
-  for(const f of tw.fills) add(f);
+  for(const f of tw.fills) if(!same.has(fillSame(f))) add(f);
   if(tw.partial&&typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.twap=true;
   return {fills:all, truncated, twapPartial:!!tw.partial};
 }

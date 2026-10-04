@@ -1303,7 +1303,7 @@ function verifiedFigure(mkt){
   // never had — a perp seam says nothing about the spot history.
   if(mkt==='spot')return null;
   const ver=mkt==='perp'?hlPnl.perp:hlPnl.all;
-  if(ver==null)return null;
+  if(ver==null||hlPnl.partial)return null; // a wallet the exchange didn't answer for: the sum understates and must not lead
   const hlOf=t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&(mkt==='combined'||mkt==='all'||t.market===mkt);
   const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen);
   const rec=hl.reduce((s,t)=>s+t.net,0);

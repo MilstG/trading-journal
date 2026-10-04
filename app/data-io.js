@@ -210,7 +210,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   if(typeof socWalletsSeen==='function')try{ socWalletsSeen(); }catch(e){} // the league's admin sees every wallet entered (pulse-social.js)
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
-  let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false; const histAll=[], histPerp=[];
+  let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[];
   let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null;
   _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
   try{
@@ -229,6 +229,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       if(r.accountValue!=null)accVals.push(r.accountValue);
       if(r.port.all!=null){portAll+=r.port.all;portAllHas=true;}
       if(r.port.perp!=null){portPerp+=r.port.perp;portPerpHas=true;}
+      if(venueOf(w)==='hyperliquid'&&r.port.all==null&&r.port.perp==null)portMissing++; // the exchange didn't answer for this wallet: the sums below understate
       if(r.port.hist){ if(r.port.hist.all&&r.port.hist.all.length)histAll.push(r.port.hist.all); if(r.port.hist.perp&&r.port.hist.perp.length)histPerp.push(r.port.hist.perp); }
       spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
       if(r.coverage)covAcc=mergeCoverage(covAcc,r.coverage);
@@ -251,7 +252,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     // re-measures them entry-to-exit on its next pass
     { const closedIds=new Set(allTrades.filter(t=>!t.isOpen).map(t=>t.id));
       for(const id in _excM) if(_excM[id]&&_excM[id].openMeas&&closedIds.has(id)) delete _excM[id]; }
-    hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null, hist:(histAll.length||histPerp.length)?{all:sumSeries(histAll),perp:sumSeries(histPerp)}:null};
+    hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null, hist:(histAll.length||histPerp.length)?{all:sumSeries(histAll),perp:sumSeries(histPerp)}:null, partial:portMissing>0};
     dataCoverage=covAcc;
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
