@@ -140,7 +140,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ARCHIVE_AWS_KEY_ID` / `ARCHIVE_AWS_SECRET` | *(unset)* | An AWS access key that can read Hyperliquid's node-data archive (`s3:GetObject` and `s3:ListBucket` on `hl-mainnet-node-data`, a requester-pays bucket — the transfer is billed to that AWS account). Turns on Data health → **Recover from the archive**, which pulls the fills the public API no longer serves (TWAP slices older than ~3 months) for the hours a wallet's seams need. See "Recovering fills from Hyperliquid's archive" |
 | `ARCHIVE_COST_PER_GB`  | `0.09`                           | The egress price used in the archive's estimates |
 | `ARCHIVE_MAX_WINDOW_DAYS` | `14`                          | A seam wider than this (days between a coin's last served fill and the fill that revealed the gap) is skipped by the backfill and reported instead |
-| `ARCHIVE_BUCKET` / `ARCHIVE_PREFIX` / `ARCHIVE_REGION` | `hl-mainnet-node-data` / `node_fills/hourly/` / *(learned)* | Where the archive is; only for a mirror or a format change |
+| `ARCHIVE_BUCKET` / `ARCHIVE_PREFIX` / `ARCHIVE_REGION` | `hl-mainnet-node-data` / `node_fills_by_block/hourly/` / *(learned)* | Where the archive is; only for a mirror or a format change |
 | `DEFAULT_THEME`        | *(unset = `ts9`)*                | The colorway the app opens in for anyone who hasn't picked one: `ts9` (acid green on black), `ink` (midnight) or `bb` (black & amber). Flip it and restart to re-theme every screen without a code change; a user's own pick always wins |
 | `HOME_VIEW`            | *(unset = journal)*              | `daruma` (or `keel`, its earlier name) makes the site's root (`/`) redirect to Daruma (`/daruma`), for a site that's mainly Daruma. The full journal stays at `/ledger.html`, and the installed journal app opens there |
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
@@ -189,7 +189,7 @@ wallet added to Ledger later has **seams**: a perp fill that starts from a posit
 reaches. The data-health strip counts them, keeps the affected trades out of the stats, and leads the
 all-time headline with Hyperliquid's own P&L figure. The fills themselves still exist: Hyperliquid's
 node software streams every fill of every address into a requester-pays S3 bucket
-(`hl-mainnet-node-data`, `node_fills/hourly/{YYYYMMDD}/{hour}`), and the server can read it.
+(`hl-mainnet-node-data`, `node_fills_by_block/hourly/{YYYYMMDD}/{hour}.lz4`), and the server can read it.
 
 1. In AWS, create an IAM user with this policy and an access key:
    `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::hl-mainnet-node-data","arn:aws:s3:::hl-mainnet-node-data/*"]}]}`
