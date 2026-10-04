@@ -1516,7 +1516,7 @@ async function toggleArchivePanel(){
       const line=(k,s)=>!s||typeof s!=='object'?`<b>${esc(k)}</b>: ${esc(String(s))}`:('status' in s||'arn' in s||'error' in s||'ok' in s)?`<b>${esc(k)}</b>: ${esc(one(s))}`:Object.entries(s).map(([k2,s2])=>`<b>${esc(k)} ${esc(k2)}</b>: ${esc(one(s2))}`).join('<br>');
       out(`<b>Verdict:</b> ${esc(d.verdict)}<br>key ${esc(d.keyId)} · bucket ${esc(d.bucket)} · region ${esc(d.regionSetting)}<br>`+Object.entries(d.steps).map(([k,s])=>line(k,s)).join('<br>')); }
       catch(e){ out('Diagnose failed: '+esc(e.message)); } };
-    $('arcSample').onclick=async()=>{ out('Downloading one hour…'); try{ const s=await call('/sample',{});
+    $('arcSample').onclick=async()=>{ const k=prompt('Which hour? Leave empty for the newest hour of the archive, or paste a file path such as node_fills/hourly/20250601/12 or node_fills_by_block/hourly/20260101/5.lz4',''); if(k===null)return; out('Downloading one hour…'); try{ const s=await call('/sample',k&&k.trim()?{key:k.trim()}:{});
       const w=Object.entries(s.wallets||{}).map(([a,x])=>`${esc(a.slice(0,8))}…: ${x.fills} fills`).join(', ');
       out(`${esc(s.key)}: ${mb(s.bytes)} ${esc(s.encoding)}, ${s.lines} lines, ${s.fillsSeen} fills in it (${esc(JSON.stringify(s.shapes))})${w?'; '+w:''}.<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px">${esc(s.preview)}</pre>`); }
       catch(e){ out('Sample failed: '+esc(e.message)); } };
