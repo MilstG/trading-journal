@@ -1191,7 +1191,7 @@ function wireFindingCards(root, findings){
 // follows the view, for the dashboard's own coach card, findings and habits. Memoized separately.
 let _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};
 function coachContext(all){
-  const trades=all?allTrades.filter(t=>!t.orphan):allTrades.filter(viewFilter);
+  const trades=all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter);
   let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; net+=t.net; } }
   const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
     JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),_be].join('|');

@@ -60,7 +60,7 @@ await t('a fetch that reaches the exchange’s 10,000-fill window is flagged as 
   let page = 0;
   ctx.hlPost = async (req) => { if (req.type !== 'userFillsByTime') return [];
     const n = page < 5 ? 2000 : 0; const b = Array.from({ length: n }, (_, i) => ({ tid: page * 2000 + i, oid: 1, time: 1000 + page * 2000 + i })); page++; return b; };
-  vm.createContext(ctx); vm.runInContext(grabFn('fetchAllFills'), ctx);
+  vm.createContext(ctx); vm.runInContext(grabFn('fetchAllFills') + '\n' + grabFn('fetchTwapFills'), ctx); // the TWAP slices ride along with the fills
   const r = await ctx.fetchAllFills('0xabc', 0);
   eq(r.fills.length, 10000); eq(r.truncated, true);
   page = 4; const small = await ctx.fetchAllFills('0xabc', 0);

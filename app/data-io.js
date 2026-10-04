@@ -36,7 +36,7 @@ async function removeWallet(i){
   allTrades=allTrades.filter(t=>!t.wallet||t.wallet.address!==w.address);
   openPositions=openPositions.filter(p=>!p.wallet||p.wallet.address!==w.address);
   spotHoldings=spotHoldings.filter(p=>!p.wallet||p.wallet.address!==w.address);
-  hlPnl={all:null,perp:null};
+  hlPnl={all:null,perp:null}; dataCoverage=null;
   // per-wallet equity isn't tracked, so the aggregates are unknowable until the next load —
   // null beats keeping the removed wallet's money in the capital card's equity
   accountValue=null; spotAccountValue=null; unifiedAccountValue=null;
@@ -45,7 +45,7 @@ async function removeWallet(i){
   // a suffix); partial-fetch flags are load-scoped, so clear and let the next load re-flag
   const lbl=labelFor(w);
   fillsTruncated=(Array.isArray(fillsTruncated)?fillsTruncated:[]).filter(x=>x!==lbl&&!String(x).startsWith(lbl+' ('));
-  _fetchHealth={funding:false,ledger:false};
+  _fetchHealth={funding:false,ledger:false,twap:false};
   if(allTrades.length||openPositions.length||spotHoldings.length){ render(); } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); }
   setStatus('Removed '+labelFor(w)+(settings.wallets.length?'':' · list empty'));
 }
@@ -62,7 +62,7 @@ async function srvSeed(a){
   }catch(e){ return null; } }
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
-function saveLastView(){ try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:Date.now(),positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,ledFlows,ledSkipped}); }catch(e){} }
+function saveLastView(){ try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:Date.now(),positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
 // Opening the app shows your saved data at once — trades rebuilt from the cached fills and funding,
 // positions as they were last time — and the refresh runs quietly behind it.
 async function bootFromCache(){
@@ -82,7 +82,7 @@ async function bootFromCache(){
     if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
     allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm;
     if(view&&view.v===1&&view.key===walletsSig()){ openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
-      spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
+      spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
     $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
     try{ render(); }catch(e){ console.warn('cached render',e); }
     // the saved positions are hours or days old: the intraday open-P&L baseline waits for live ones
@@ -101,6 +101,20 @@ function mergeRows(cached,fresh,keyOf){ const rows=(cached||[]).slice(), seen=ne
   for(const r of (fresh||[])){ const k=keyOf(r); if(!seen.has(k)){ seen.add(k); rows.push(r); added++; } }
   return {rows,added,last:rows.reduce((m,r)=>r.time>m?r.time:m,0)}; }
 const fundKey=r=>r.time+'|'+r.coin;
+// the loaded wallets' fill coverage as one (engine.js: coverageOf): volumes and seams add up, the
+// shares are re-derived from the sums, and the wallets with seams are named
+function mergeCoverage(acc,c){
+  if(!c)return acc; if(!acc)acc={perpVol:0,spotVol:0,exchPerpVlm:0,exchVlm:0,perpShare:null,allShare:null,gaps:0,gapNotional:0,offRecord:0,gapFirst:null,gapLast:null,months:{},wallets:[]};
+  acc.perpVol+=c.perpVol||0; acc.spotVol+=c.spotVol||0;
+  if(c.exchPerpVlm!=null)acc.exchPerpVlm+=c.exchPerpVlm; if(c.exchVlm!=null)acc.exchVlm+=c.exchVlm;
+  acc.perpShare=acc.exchPerpVlm>0?Math.min(1,acc.perpVol/acc.exchPerpVlm):null; acc.allShare=acc.exchVlm>0?Math.min(1,(acc.perpVol+acc.spotVol)/acc.exchVlm):null;
+  acc.gaps+=c.gaps||0; acc.gapNotional+=c.gapNotional||0; acc.offRecord+=c.offRecord||0;
+  if(c.gapFirst!=null&&(acc.gapFirst==null||c.gapFirst<acc.gapFirst))acc.gapFirst=c.gapFirst;
+  if(c.gapLast!=null&&(acc.gapLast==null||c.gapLast>acc.gapLast))acc.gapLast=c.gapLast;
+  for(const k in (c.months||{}))acc.months[k]=(acc.months[k]||0)+c.months[k];
+  if(c.gaps&&c.label&&!acc.wallets.includes(c.label))acc.wallets.push(c.label);
+  return acc;
+}
 // rebuilding trades is skipped when a wallet's fills and funding haven't changed since the last rebuild
 var _recMemo={};
 const recSig=(fills,lastF,frows,lastR)=>fills.length+'|'+lastF+'|'+frows.length+'|'+lastR;
@@ -160,8 +174,11 @@ async function loadWallet(w,fresh,spotP){
     if(b.coin!=='USDC' && b.total>1e-9 && (value>=1 || b.entry>=1)){ spotHold.push({coin:b.coin,total:b.total,entry:b.entry,mark,value,uPnl:value-b.entry,wallet:{address:a,label:w.label}}); } });
   // portfolio margin: one balance for spot and perps, so it's the account value in every view
   const unified=unifiedAccountOf(sbal,port,spotVal);
+  // how much of this wallet's history the fills explain: served volume against the exchange's own, and
+  // the seams the reconstruction found (position changes with no fill behind them)
+  const coverage=coverageOf(fills,perpTr,port); coverage.label=labelFor(w);
   return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
-    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified};
+    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage};
 }
 // one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
 function loadFailNote(w,err){ err=String(err||'');
@@ -175,8 +192,8 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false;
-  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0;
-  _fetchHealth={funding:false,ledger:false}; // fresh load, fresh health
+  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null;
+  _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
   try{
     // spot metadata and every wallet load side by side — two wallets at a time, so a long list
     // stays inside the exchange's rate limit
@@ -194,6 +211,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       if(r.port.all!=null){portAll+=r.port.all;portAllHas=true;}
       if(r.port.perp!=null){portPerp+=r.port.perp;portPerpHas=true;}
       spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
+      if(r.coverage)covAcc=mergeCoverage(covAcc,r.coverage);
     });
     if(!trades.length && !positions.length && !spotHold.length){
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
@@ -214,6 +232,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     { const closedIds=new Set(allTrades.filter(t=>!t.isOpen).map(t=>t.id));
       for(const id in _excM) if(_excM[id]&&_excM[id].openMeas&&closedIds.has(id)) delete _excM[id]; }
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null};
+    dataCoverage=covAcc;
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
     saveLastView();
@@ -454,7 +473,7 @@ async function loadFromPaste(fills,opts){
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   if(opts.sample)sampleEnter(); else sampleLeave(); // pasted fills are the user's own
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
-  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null};
+  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null;
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[];
   // a big history: let the browser breathe between taking in the worker's trades and the first full

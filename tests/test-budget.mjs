@@ -64,8 +64,9 @@ try {
     // Oct 2026: referrals — Daruma's Invite screen (app/features/referrals.js, Daruma only, ~11 KB raw / ~4 KB gzipped),
     // the ?ref= capture and the join form's invite card (pulse-social.js, both screens) and the Recruiter badges:
     // Daruma 1605 raw / 541 gzipped, the journal 1951 raw / 662 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1953, 663],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1608, 542],
+    // +10 KB raw / +4 KB gzipped: seams in the fill history (TWAP paging, off-record trades, fill coverage, the verified headline)
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 1968, 668],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1622, 546],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

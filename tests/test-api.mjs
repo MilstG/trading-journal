@@ -57,6 +57,7 @@ function mockFetch(url, opts){
   switch (body.type) {
     case 'userFillsByTime':   return reply(FILLS.filter(f => f.time >= (body.startTime || 0)));
     case 'userTwapSliceFills':return reply([]);
+    case 'userTwapSliceFillsByTime':return reply([]);
     case 'userFunding':       return reply(FUNDING);
     case 'userNonFundingLedgerUpdates': return reply(LEDGER.filter(r => r.time >= (body.startTime || 0)));
     case 'clearinghouseState':
