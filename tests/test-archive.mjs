@@ -141,6 +141,8 @@ const s3Calls = [];
 const xmlEsc = s => s.replace(/&/g, '&amp;');
 function fakeS3(url, init) {
   const u = new URL(url); s3Calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization, payer: init.headers['x-amz-request-payer'], token: init.headers['x-amz-security-token'] });
+  if (/^other-account-index\./.test(u.hostname)) return new Response('<Error><Code>AccessDenied</Code><Message>User: arn:aws:iam::233207006248:user/ledger-archive is not authorized to perform: s3:ListBucket on resource: "arn:aws:s3:::other-account-index" because no resource-based policy allows the s3:ListBucket action</Message></Error>', { status: 403 });
+  if (/^missing-index\./.test(u.hostname)) return new Response('<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message></Error>', { status: 404 }); // an index bucket not created yet
   if (/^my-hl-index\./.test(u.hostname)) { // the index bucket (no requester pays)
     if (u.pathname === '/') { const prefix = u.searchParams.get('prefix') || '', delim = u.searchParams.get('delimiter'); const keys = Object.keys(INDEX).filter(k => k.startsWith(prefix)).sort();
       let body = '<ListBucketResult><IsTruncated>false</IsTruncated>';
@@ -282,6 +284,24 @@ await t('backfill reads the wallet’s shard for every day of the index and merg
     const h = await call(b3, '/api/v1/archive/backfill', { address: ADDR, source: 'hours', maxGB: 1 }); eq(h.body.total, 0, 'no seams left to hunt');
   } finally { app3.close(); }
 });
+await t('an index bucket that does not exist yet: check says so, and backfill falls back to the hours plan', async () => {
+  const dir4 = mkdtempSync(join(tmpdir(), 'ledger-archive4-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir4, 'fills'), { recursive: true });
+  writeFileSync(join(dir4, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  const app4 = createApp({ dataDir: dir4, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'missing-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' } });
+  const b4 = await listen(app4);
+  try {
+    const c = await call(b4, '/api/v1/archive/check', { wallets: [ADDR] }); ok(/NoSuchBucket/.test(c.body.index.error), 'check names the missing bucket: ' + JSON.stringify(c.body.index)); eq(c.body.wallets[0].seams, 1, 'the hours plan is still computed');
+    const x = A.s3Client({ keyId: 'AKIATEST', secret: 'sekrit', bucket: 'other-account-index', region: 'ap-northeast-1', fetchImpl: hlFetch, noPayer: true });
+    const err = await x.list('index/v1/d/', '/', 1).then(() => null, e => e.message); ok(/different AWS account.*bucket policy/.test(err), 'cross-account denial names the bucket policy: ' + err);
+    const bf = await call(b4, '/api/v1/archive/backfill', { address: ADDR, maxGB: 1 }); eq(bf.status, 202, JSON.stringify(bf.body));
+    eq(bf.body.source, 'hours'); ok(/missing-index.*NoSuchBucket/.test(bf.body.indexSkipped), 'the job says why the index was skipped: ' + bf.body.indexSkipped); eq(bf.body.total, 4, 'the seam window’s hours');
+    let s; for (let i = 0; i < 100; i++) { s = (await call(b4, '/api/v1/archive')).body; if (s.job.state !== 'running') break; await new Promise(x => setTimeout(x, 30)); }
+    eq([s.job.state, s.job.done, s.job.fills, s.job.added], ['done', 4, 1, 1], JSON.stringify(s.job));
+  } finally { app4.close(); }
+});
 await t('the indexer splits an hour into shards as gzip members; its arguments and day arithmetic', async () => {
   const I = (await import('../archive-indexer.js')).default || createRequire(import.meta.url)('../archive-indexer.js');
   const r = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4');
@@ -289,6 +309,16 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const lines = zlib.gunzipSync(Buffer.concat([r.members['c84'], r.members['c84']])).toString().trim().split('\n'); eq(lines.length, 24, 'members concatenate into one gzip stream');
   eq(JSON.parse(lines[0])[0], ADDR);
   eq(I.SHARD('0xC846E513F1FB448E744D5C8E911E87BCCC0DFB20'), 'c84'); eq([I.sourcePrefix('20250726'), I.sourcePrefix('20250727')], ['node_fills/hourly/20250726/', 'node_fills_by_block/hourly/20250727/']);
+  // the older dataset's shapes: [time, [address, fill]] lines, {user, fill} objects, fills carrying their user — all land as [address, fill]
+  const fill = { coin: 'ETH', px: '1', sz: '2', side: 'B', time: T0, tid: 5, oid: 6 };
+  const oldText = [JSON.stringify(['2025-05-25T10:00:00.1', [ADDR, fill]]), JSON.stringify({ user: ADDR, fill }), JSON.stringify(Object.assign({ user: '0x' + 'a'.repeat(40) }, fill)), JSON.stringify({ time: '2025-05-25T10:00:01', events: [[ADDR, fill]] })].join('\n') + '\n';
+  const r2 = await I.splitHour({ get: async () => Buffer.from(oldText) }, 'node_fills/hourly/20250525/10');
+  eq([r2.lines, r2.fills, Object.keys(r2.members).sort(), r2.shapes], [4, 4, ['aaa', 'c84'], { pair: 2, obj: 1, user: 1 }]);
+  const c84 = zlib.gunzipSync(r2.members['c84']).toString().trim().split('\n').map(l => JSON.parse(l)); eq(c84.length, 3); ok(c84.every(x => x[0] === ADDR && x[1].coin === 'ETH' && !('user' in x[1])));
+  eq(JSON.parse(zlib.gunzipSync(r2.members['aaa']).toString())[1].tid, 5);
+  ok(typeof r2.sample === 'string' && r2.sample.startsWith('["2025-05-25'), 'the first line is kept as a sample');
+  // a day marked done with no fills in it is not indexed
+  eq([I.isIndexed({ fills: 0, hours: 24 }), I.isIndexed({ fills: 3 }), I.isIndexed(null)], [false, true, false]);
   const o = I.parseArgs(['build', '--bucket', 'b', '--from', '20250801', '--to', '20250802', '--workers', '2']); eq([o.cmd, o.bucket, o.from, o.to, o.workers, o.prefix], ['build', 'b', '20250801', '20250802', 2, 'index/v1/']);
 });
 await t('role credentials: the environment’s key wins, and a session token is signed as a header', async () => {

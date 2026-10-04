@@ -222,7 +222,15 @@ growing 0.7 GB a day) is read for the price of the instance hours; the index is 
 yours in the same region (~$0.023/GB-month) and read by the server with the same key.
 
 1. **Bucket**: S3 → Create bucket, in **Asia Pacific (Tokyo)**, e.g. `hl-fills-index-<yourname>`,
-   defaults otherwise.
+   defaults otherwise. Create it **in the same AWS account as the `ledger-archive` user** (in the
+   new project-based AWS experience each project can be its own account: the user and the bucket
+   must be in the same one). If Check coverage then says `AccessDenied … because no
+   resource-based policy allows`, the bucket landed in another account: either re-create it next to
+   the user, or give the user access from the bucket's side (S3 → the bucket → Permissions → Bucket
+   policy) with a statement allowing `arn:aws:iam::<account>:user/ledger-archive` the actions
+   `s3:ListBucket` on `arn:aws:s3:::hl-fills-index-<yourname>` and `s3:GetObject` on
+   `arn:aws:s3:::hl-fills-index-<yourname>/*`. Until the index is readable (or while it has no
+   finished day yet) Backfill falls back to the hours plan on its own and says so.
 2. **Role for the machine**: IAM → Roles → Create role → AWS service → EC2 → attach
    `AmazonS3ReadOnlyAccess` plus an inline policy allowing `s3:PutObject`, `s3:GetObject`,
    `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::hl-fills-index-<yourname>` and `/*`. Name it
@@ -244,17 +252,22 @@ yours in the same region (~$0.023/GB-month) and read by the server with the same
 ```bash
 #!/bin/bash
 # user data for the indexer machine (Amazon Linux 2023, arm64). Fill in the two lines below.
+# Every step reports to the system log (EC2 → Actions → Monitor and troubleshoot → Get system log).
 INDEX_BUCKET=hl-fills-index-yourname
 LEDGER=https://your-app.up.railway.app
+say() { echo "hl-index: $*" | tee /dev/console; }
 dnf install -y nodejs20 >/var/log/indexer-install.log 2>&1 || dnf install -y nodejs >>/var/log/indexer-install.log 2>&1
+NODE=$(command -v node || ls /usr/bin/node-* 2>/dev/null | head -1); say "node is ${NODE:-MISSING} $($NODE -v 2>/dev/null)"
 mkdir -p /opt/hl-index && cd /opt/hl-index
-curl -fsSL -o archive.js "$LEDGER/archive/archive.js" && curl -fsSL -o archive-indexer.js "$LEDGER/archive/archive-indexer.js"
+for f in archive.js archive-indexer.js; do
+  if curl -fSL -o "$f" "$LEDGER/archive/$f" 2>/tmp/curl.err; then say "fetched $f ($(wc -c <"$f") bytes)"; else say "FAILED to fetch $LEDGER/archive/$f: $(cat /tmp/curl.err)"; fi
+done
 cat >/etc/systemd/system/hl-index-daily.service <<EOF
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/hl-index
 Environment=INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index
-ExecStart=/usr/bin/node /opt/hl-index/archive-indexer.js daily
+ExecStart=$NODE /opt/hl-index/archive-indexer.js daily
 EOF
 cat >/etc/systemd/system/hl-index-daily.timer <<EOF
 [Timer]
@@ -265,7 +278,10 @@ WantedBy=timers.target
 EOF
 systemctl daemon-reload && systemctl enable --now hl-index-daily.timer
 # the one-time build, in the background; its log is /var/log/hl-index-build.log
-INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index nohup node /opt/hl-index/archive-indexer.js build --workers 2 >/var/log/hl-index-build.log 2>&1 &
+INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index nohup $NODE /opt/hl-index/archive-indexer.js build --workers 2 >/var/log/hl-index-build.log 2>&1 &
+say "build started (pid $!) into s3://$INDEX_BUCKET"
+# two minutes in, copy the build log's tail to the system log, so progress or the error shows there
+(sleep 120; echo "hl-index: build log after 2 min:"; tail -n 15 /var/log/hl-index-build.log) >/dev/console 2>&1 &
 ```
 
 The build is resumable: each finished day carries a `_done` marker, and a rerun (or the daily timer)

@@ -65,6 +65,7 @@ function s3Client(cfg) {
       // say which of the three things it is: the key id, the secret, or what the key is allowed to do
       const hint = code === 'InvalidAccessKeyId' ? ' — ARCHIVE_AWS_KEY_ID isn’t a key AWS knows; copy the Access key ID again'
         : code === 'SignatureDoesNotMatch' ? ' — the key is known but ARCHIVE_AWS_SECRET doesn’t match it; copy the secret again (or make a new access key)'
+        : code === 'AccessDenied' && /no resource-based policy allows/.test(msg) ? ' — the key is accepted, but ' + cfg.bucket + ' belongs to a different AWS account than this IAM user (AWS says “resource-based” only across accounts): add a bucket policy on ' + cfg.bucket + ' (S3 → the bucket → Permissions → Bucket policy) that allows that user’s ARN s3:ListBucket on arn:aws:s3:::' + cfg.bucket + ' and s3:GetObject on arn:aws:s3:::' + cfg.bucket + '/*, or re-create the bucket in the user’s own account'
         : code === 'AccessDenied' ? ' — the key and secret are accepted, but this IAM user isn’t allowed to read the bucket: in IAM → Users → the user → Permissions, attach a policy with s3:ListBucket and s3:GetObject on arn:aws:s3:::' + cfg.bucket + ' and arn:aws:s3:::' + cfg.bucket + '/* (or the AWS-managed AmazonS3ReadOnlyAccess)'
         : res.status === 403 ? ' — check ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET and the key’s policy' : '';
       const e = new Error('S3 ' + code + (msg ? ': ' + msg : '') + hint);
@@ -523,7 +524,15 @@ function createArchive(deps) {
     if (!fills.length) throw Object.assign(new Error('no server fill cache for ' + addr + ' — refresh it first'), { code: 404 });
     // with an index: the wallet's shard files, every day the index has — its complete history there,
     // a few MB, no hour-hunting and no budget to speak of
+    // — unless the index isn't usable yet (its bucket missing, unreadable, or still empty): then the
+    // hours plan below runs as if no index were configured, and the job says why
+    let indexSkipped = null;
     if (ix && o.source !== 'hours') {
+      try { const d = await indexDays(); if (!d.days.length) indexSkipped = 'the index at ' + cfg.indexBucket + '/' + cfg.indexPrefix + ' has no finished days yet'; }
+      catch (e) { indexSkipped = 'the index bucket ' + cfg.indexBucket + ' is not usable: ' + e.message; }
+      if (indexSkipped) log('archive: ' + indexSkipped + ' — using the hours plan');
+    }
+    if (ix && o.source !== 'hours' && !indexSkipped) {
       job = { state: 'running', address: addr, source: 'index', startedAt: Date.now(), total: 0, done: 0, bytes: 0, fills: 0, errors: 0 };
       const cur = job;
       (async () => {
@@ -540,7 +549,7 @@ function createArchive(deps) {
     const maxGB = parseFloat(o.maxGB) > 0 ? parseFloat(o.maxGB) : 2; // GB; the caller's cap, however small
     if (gb(p.bytes) > maxGB) throw Object.assign(new Error('the plan is ' + p.estGB + ' GB (about $' + p.estCost + ') — over the ' + maxGB + ' GB budget; raise maxGB to go ahead'), { code: 413, plan: Object.assign({}, p, { items: undefined }) });
     const items = p.items.slice();
-    job = { state: 'running', address: addr, startedAt: Date.now(), total: items.length, done: 0, bytes: 0, fills: 0, errors: 0, lastKey: null, plan: Object.assign({}, p, { items: undefined }), dryRun: !!o.dryRun };
+    job = { state: 'running', address: addr, source: 'hours', indexSkipped, startedAt: Date.now(), total: items.length, done: 0, bytes: 0, fills: 0, errors: 0, lastKey: null, plan: Object.assign({}, p, { items: undefined }), dryRun: !!o.dryRun };
     if (o.dryRun) { job.state = 'done'; job.finishedAt = Date.now(); return job; }
     const found = [], cur = job;
     (async () => {
@@ -617,7 +626,7 @@ function createArchive(deps) {
     const sigBad = [refPublic, refNoPayer, kn, kd].some(x => x && x.code === 'SignatureDoesNotMatch');
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
       : sigBad ? 'S3 rejects the signature of object reads (SignatureDoesNotMatch) while the service endpoint accepts it: a signing fault in Ledger’s S3 client for this request shape — report this output'
-      : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
+      : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)') + (out.steps.ownBuckets && !out.steps.ownBuckets.ok ? '; the denials below on other buckets are expected: this key is scoped to the archive, which is the right setup' : '')
       : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
       : rn.ok ? 'listing is not allowed on this bucket, but its files can be read by name (' + rn.key + ', ' + rn.size + ' bytes): the check and the backfill work that way, nothing to change'
       : ra.ok ? 'listing is not allowed, and ' + cfg.prefix + ' has no file for yesterday noon, but ' + alt + ' has (' + ra.key + '): set ARCHIVE_PREFIX=' + alt + ' on the server'
@@ -642,4 +651,4 @@ function createArchive(deps) {
   return { configured, cfg, check, sample, backfill, stop, status, diagnose, indexDays, indexFetch, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
 }
 
-module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
+module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc, isFill };
