@@ -47,13 +47,16 @@ function s3Client(cfg) {
   const fetchFn = cfg.fetchImpl || ((...a) => globalThis.fetch(...a)), now = cfg.now || Date.now;
   let region = cfg.region || null;
   const hostFor = r => cfg.bucket + '.s3.' + (r && r !== 'us-east-1' ? r + '.' : '') + 'amazonaws.com';
+  // credentials may be a function (an EC2 role's, renewed by the caller) or fixed
+  const creds = async () => typeof cfg.credentials === 'function' ? await cfg.credentials() : (cfg.credentials || { keyId: cfg.keyId, secret: cfg.secret, token: cfg.token });
   async function request(method, path, query, opts, retried) {
     opts = opts || {};
-    const r = region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = sha256('');
-    const headers = { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date), 'x-amz-request-payer': 'requester' };
-    const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: cfg.keyId, secret: cfg.secret, date });
+    const c = await creds();
+    const r = region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = opts.body ? sha256(opts.body) : sha256('');
+    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, cfg.noPayer ? {} : { 'x-amz-request-payer': 'requester' }, c.token ? { 'x-amz-security-token': c.token } : {}, opts.headers || {});
+    const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: c.keyId, secret: c.secret, date });
     const url = 'https://' + host + enc(path, true) + (s.query ? '?' + s.query : '');
-    const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), redirect: 'manual', signal: AbortSignal.timeout(opts.timeout || 180000) });
+    const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), body: opts.body, redirect: 'manual', signal: AbortSignal.timeout(opts.timeout || 180000) });
     const text = res.ok && opts.binary ? null : await res.text().catch(() => '');
     if (!res.ok) {
       const br = (res.headers && res.headers.get && res.headers.get('x-amz-bucket-region')) || xmlText(text || '', 'Region');
@@ -84,12 +87,17 @@ function s3Client(cfg) {
     return { keys, prefixes, truncated: !!token };
   }
   const get = (key, opts) => request('GET', '/' + key, {}, Object.assign({ binary: true }, opts || {}));
+  const put = (key, body, contentType) => request('PUT', '/' + key, {}, { body, headers: { 'content-type': contentType || 'application/octet-stream', 'content-length': String(body.length) } });
+  const del = (key) => request('DELETE', '/' + key, {}, {});
+  // exists? (a HEAD that reports instead of throwing)
+  const head = async key => { const p = await probe('HEAD', '/' + key, {}); return p.ok ? { size: p.size || 0 } : null; };
   // one request, reported rather than thrown: status, S3's error code and message, the region it names
   async function probe(method, path, query, regionOverride, opts) {
     opts = opts || {};
+    const c = await creds();
     const r = regionOverride || region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = sha256('');
-    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, opts.noPayer ? {} : { 'x-amz-request-payer': 'requester' }, opts.range ? { range: opts.range } : {});
-    const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: cfg.keyId, secret: cfg.secret, date });
+    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, opts.noPayer || cfg.noPayer ? {} : { 'x-amz-request-payer': 'requester' }, opts.range ? { range: opts.range } : {}, c.token ? { 'x-amz-security-token': c.token } : {});
+    const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: c.keyId, secret: c.secret, date });
     const url = 'https://' + host + enc(path, true) + (s.query ? '?' + s.query : '');
     try {
       const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), redirect: 'manual', signal: AbortSignal.timeout(30000) });
@@ -100,7 +108,7 @@ function s3Client(cfg) {
         prefixes: xmlAll(text, 'CommonPrefixes').map(p => xmlText(p, 'Prefix')).slice(0, 5), keys: xmlAll(text, 'Contents').map(c => xmlText(c, 'Key')).slice(0, 5), bytes: method === 'HEAD' ? null : text.length };
     } catch (e) { return { url, signedFor: r, error: e.message }; }
   }
-  return { list, get, probe, region: () => region, host: () => hostFor(region || 'us-east-1'), setRegion: r => { region = r; } };
+  return { list, get, put, del, head, probe, region: () => region, host: () => hostFor(region || 'us-east-1'), setRegion: r => { region = r; } };
 }
 
 // AWS's own answer to "who is this key": the account and the user or role it belongs to (STS
@@ -130,6 +138,25 @@ async function listOwnBuckets(cfg, fetchImpl, now) {
     const text = await res.text().catch(() => '');
     return { status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'), buckets: xmlAll(text, 'Name').length };
   } catch (e) { return { error: e.message }; }
+}
+
+// Credentials for a machine inside AWS: an EC2 instance role, read from the instance metadata service
+// (IMDSv2) and renewed a few minutes before they expire. Env variables win when set (a laptop, a test).
+function roleCredentials(fetchImpl, env) {
+  env = env || process.env; const fetchFn = fetchImpl || ((...a) => globalThis.fetch(...a));
+  if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) return async () => ({ keyId: env.AWS_ACCESS_KEY_ID, secret: env.AWS_SECRET_ACCESS_KEY, token: env.AWS_SESSION_TOKEN || null });
+  let cur = null;
+  return async () => {
+    if (cur && cur.expires - Date.now() > 5 * 60e3) return cur;
+    const base = 'http://169.254.169.254/latest/';
+    const tok = await (await fetchFn(base + 'api/token', { method: 'PUT', headers: { 'x-aws-ec2-metadata-token-ttl-seconds': '21600' }, signal: AbortSignal.timeout(5000) })).text();
+    const h = { 'x-aws-ec2-metadata-token': tok };
+    const role = (await (await fetchFn(base + 'meta-data/iam/security-credentials/', { headers: h, signal: AbortSignal.timeout(5000) })).text()).trim().split('\n')[0];
+    if (!role) throw new Error('no IAM role is attached to this instance');
+    const j = await (await fetchFn(base + 'meta-data/iam/security-credentials/' + role, { headers: h, signal: AbortSignal.timeout(5000) })).json();
+    cur = { keyId: j.AccessKeyId, secret: j.SecretAccessKey, token: j.Token, expires: Date.parse(j.Expiration) || (Date.now() + 3600e3), role };
+    return cur;
+  };
 }
 
 /* ============================ LZ4 frames ============================ */
@@ -346,8 +373,34 @@ function createArchive(deps) {
     bucket: String(env.ARCHIVE_BUCKET || 'hl-mainnet-node-data').trim(), region: String(env.ARCHIVE_REGION || '').trim() || null,
     prefix: String(env.ARCHIVE_PREFIX || 'node_fills_by_block/hourly/').replace(/^\/+/, '').replace(/\/*$/, '/'),
     costPerGB: Math.max(0, parseFloat(env.ARCHIVE_COST_PER_GB) || 0.09), maxDays: Math.max(1, parseInt(env.ARCHIVE_MAX_WINDOW_DAYS, 10) || 14) };
+  // the index by wallet (archive-indexer.js), when one has been built: the same key reads it
+  cfg.indexBucket = String(env.ARCHIVE_INDEX_BUCKET || '').trim(); cfg.indexPrefix = String(env.ARCHIVE_INDEX_PREFIX || 'index/v1/').replace(/^\/+/, '').replace(/\/*$/, '/');
+  cfg.indexRegion = String(env.ARCHIVE_INDEX_REGION || '').trim() || null;
   const configured = !!(cfg.keyId && cfg.secret);
   const s3 = configured ? s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: cfg.bucket, region: cfg.region, fetchImpl: deps.fetchImpl, now: deps.now }) : null;
+  const ix = configured && cfg.indexBucket ? s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: cfg.indexBucket, region: cfg.indexRegion, fetchImpl: deps.fetchImpl, now: deps.now, noPayer: true }) : null;
+  const shardOf = a => String(a).slice(2, 5).toLowerCase();
+  // the index's days (each a finished day: its _done marker exists) and its progress note
+  async function indexDays() {
+    if (!ix) return null;
+    const r = await ix.list(cfg.indexPrefix + 'd/', '/', 20);
+    const days = r.prefixes.map(p => p.slice((cfg.indexPrefix + 'd/').length).replace(/\/$/, '')).filter(d => /^\d{8}$/.test(d)).sort();
+    let progress = null; try { progress = JSON.parse((await ix.get(cfg.indexPrefix + 'progress.json')).toString('utf8')); } catch (e) {}
+    return { bucket: cfg.indexBucket, prefix: cfg.indexPrefix, days, first: days[0] || null, last: days[days.length - 1] || null, progress };
+  }
+  // one wallet's fills out of the index: its shard's file for every day (from `fromDay` on), a few at a time
+  async function indexFetch(addr, fromDay, onProgress) {
+    const d = await indexDays(); if (!d) throw Object.assign(new Error('no index bucket is configured (ARCHIVE_INDEX_BUCKET)'), { code: 503 });
+    const days = d.days.filter(x => !fromDay || x >= fromDay), sh = shardOf(addr), fills = []; let bytes = 0, files = 0, missing = 0;
+    const queue = days.slice();
+    const worker = async () => { for (;;) { const day = queue.shift(); if (!day) return;
+      let buf = null; try { buf = await ix.get(cfg.indexPrefix + 'd/' + day + '/' + sh + '.jsonl.gz'); } catch (e) { if (e.status === 404 || e.code === 'NoSuchKey') { missing++; continue; } throw e; }
+      bytes += buf.length; files++;
+      const x = extractFillsFromObject(buf, addr); fills.push(...x.fills);
+      if (onProgress) onProgress({ done: files + missing, total: days.length, fills: fills.length, bytes }); } };
+    await Promise.all(Array.from({ length: 8 }, worker));
+    return { fills, days: days.length, files, missing, bytes, first: d.first, last: d.last };
+  }
   const need = () => { if (!configured) { const e = new Error('the archive isn’t configured: set ARCHIVE_AWS_KEY_ID and ARCHIVE_AWS_SECRET on the server (an AWS key with s3:GetObject and s3:ListBucket on ' + cfg.bucket + ')'); e.code = 503; throw e; } };
   const gb = b => b / 1073741824, cost = b => +(gb(b) * cfg.costPerGB).toFixed(2);
   let lastCheck = null, job = null;
@@ -438,7 +491,8 @@ function createArchive(deps) {
   }
   async function check(wallets, scope) {
     need();
-    const d = await days(); const out = { bucket: cfg.bucket, prefix: cfg.prefix, region: s3.region(), costPerGB: cfg.costPerGB, archive: d, noList, sampleDay: null, wallets: [] };
+    const d = await days(); const out = { bucket: cfg.bucket, prefix: cfg.prefix, region: s3.region(), costPerGB: cfg.costPerGB, archive: d, noList, sampleDay: null, wallets: [], index: null };
+    if (ix) { try { out.index = await indexDays(); } catch (e) { out.index = { bucket: cfg.indexBucket, error: e.message }; } }
     if (d.last) { const rows = await dayKeys(d.last, noList ? [0, 6, 12, 18] : null); const bytes = rows.reduce((s, k) => s + k.size, 0);
       out.sampleDay = { day: d.last, hours: rows.length, bytes, perHour: rows.length ? Math.round(bytes / rows.length) : 0, firstKey: rows[0] && rows[0].key, sampled: noList }; }
     for (const w of wallets || []) {
@@ -467,6 +521,21 @@ function createArchive(deps) {
     if (job && job.state === 'running') throw Object.assign(new Error('a backfill is already running'), { code: 409 });
     const addr = String(o.address || '').toLowerCase(), fills = deps.readFills(addr) || [];
     if (!fills.length) throw Object.assign(new Error('no server fill cache for ' + addr + ' — refresh it first'), { code: 404 });
+    // with an index: the wallet's shard files, every day the index has — its complete history there,
+    // a few MB, no hour-hunting and no budget to speak of
+    if (ix && o.source !== 'hours') {
+      job = { state: 'running', address: addr, source: 'index', startedAt: Date.now(), total: 0, done: 0, bytes: 0, fills: 0, errors: 0 };
+      const cur = job;
+      (async () => {
+        try { const r = await indexFetch(addr, o.fromDay, p => { cur.total = p.total; cur.done = p.done; cur.fills = p.fills; cur.bytes = p.bytes; });
+          cur.total = r.days; cur.done = r.days; cur.fills = r.fills.length; cur.bytes = r.bytes; cur.indexFiles = r.files; cur.indexFirst = r.first; cur.indexLast = r.last;
+          const w = deps.writeFills(addr, r.fills, { hours: 0, bytes: r.bytes, index: true }); cur.added = w.added; cur.cacheCount = w.count; cur.state = 'done'; }
+        catch (e) { cur.errors++; cur.lastError = e.message; cur.state = 'failed'; }
+        cur.finishedAt = Date.now(); cur.cost = 0;
+        log('archive: index backfill ' + addr + ' ' + cur.state + ' — ' + cur.fills + ' fills in the index, ' + (cur.added || 0) + ' new, ' + (cur.bytes / 1048576).toFixed(1) + ' MB');
+      })();
+      return job;
+    }
     const d = await days(), p = await plan(addr, fills, d, o.scope);
     const maxGB = parseFloat(o.maxGB) > 0 ? parseFloat(o.maxGB) : 2; // GB; the caller's cap, however small
     if (gb(p.bytes) > maxGB) throw Object.assign(new Error('the plan is ' + p.estGB + ' GB (about $' + p.estCost + ') — over the ' + maxGB + ' GB budget; raise maxGB to go ahead'), { code: 413, plan: Object.assign({}, p, { items: undefined }) });
@@ -569,8 +638,8 @@ function createArchive(deps) {
     return out;
   }
   function stop() { if (job && job.state === 'running') { job.state = 'stopped'; job.finishedAt = Date.now(); } return job; }
-  const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, noList, naming, lastCheck, job });
-  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
+  const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, noList, naming, index: ix ? { bucket: cfg.indexBucket, prefix: cfg.indexPrefix } : null, lastCheck, job });
+  return { configured, cfg, check, sample, backfill, stop, status, diagnose, indexDays, indexFetch, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
 }
 
-module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };
+module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };

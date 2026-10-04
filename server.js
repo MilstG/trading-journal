@@ -1754,7 +1754,7 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/archive', auth: 'full', desc: 'Hyperliquid\'s node-data archive on S3 (fills the public API no longer serves): configuration, last coverage check, the running backfill. Needs ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET' },
     { method: 'POST', path: '/api/v1/archive/check', auth: 'full', desc: 'coverage check: the archive\'s first and last day, one day\'s size, and per wallet the hours its seams need with their bytes and cost; body {wallets?, scope?: "exits" (default: seams that took a trade\'s P&L) | "all" (entries too)}' },
     { method: 'POST', path: '/api/v1/archive/sample', auth: 'full', desc: 'download one hour and show its format and the wallets\' fills in it; body {day?, hour?, key?, wallets?}' },
-    { method: 'POST', path: '/api/v1/archive/backfill', auth: 'full', desc: 'download the hours a wallet\'s seams need and merge the fills found into its cache; body {address, maxGB (default 2), dryRun?, scope?: "exits" | "all"}; 413 with the plan when over budget; progress at GET /api/v1/archive' },
+    { method: 'POST', path: '/api/v1/archive/backfill', auth: 'full', desc: 'merge the wallet\'s archived fills into its cache: from the index by wallet when ARCHIVE_INDEX_BUCKET is set (its whole history there), else the hours its seams need; body {address, maxGB (default 2), dryRun?, scope?: "exits" | "all", source?: "hours" to skip the index}; 413 with the plan when over budget; progress at GET /api/v1/archive' },
     { method: 'POST', path: '/api/v1/archive/stop', auth: 'full', desc: 'stop the running backfill' },
     { method: 'POST', path: '/api/v1/archive/diagnose', auth: 'full', desc: 'when a check fails: who AWS says the key is, the bucket\'s region, a root listing, the dataset listing and one object read, with their raw answers and a one-line verdict' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
@@ -1856,7 +1856,7 @@ function createApp(opts) {
         if (act === 'check') return send(200, await archive.check(addrs.filter(a => ADDR_RE.test(a)).map(address => ({ address })), body.scope));
         if (act === 'sample') return send(200, await archive.sample({ day: body.day, hour: body.hour, key: body.key, addresses: addrs.filter(a => ADDR_RE.test(a)) }));
         if (act === 'backfill') { if (!ADDR_RE.test(String(body.address || ''))) return send(400, { error: 'address required' });
-          return send(202, await archive.backfill({ address: body.address, maxGB: body.maxGB, dryRun: !!body.dryRun, scope: body.scope })); }
+          return send(202, await archive.backfill({ address: body.address, maxGB: body.maxGB, dryRun: !!body.dryRun, scope: body.scope, source: body.source, fromDay: body.fromDay })); }
         if (act === 'stop') return send(200, archive.stop() || {});
         if (act === 'diagnose') return send(200, await archive.diagnose());
         return send(404, { error: 'unknown archive action' });
@@ -2627,6 +2627,11 @@ function createApp(opts) {
       return;
     }
 
+    // the archive indexer (archive-indexer.js + archive.js), for a machine inside AWS to fetch: code only, no secrets
+    if (req.method === 'GET' && (url === '/archive/archive.js' || url === '/archive/archive-indexer.js')) {
+      let src; try { src = fs.readFileSync(path.join(__dirname, url.slice('/archive/'.length))); } catch (e) { return json(res, 404, { error: 'not found' }); }
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(src);
+    }
     // --- PWA assets (tiny, inline — no extra files to deploy) ---
     if (req.method === 'GET' && url === '/sw.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' });
