@@ -56,10 +56,22 @@ async function srvSeed(a){
   try{ const r=await srvFetch('/api/v1/cache/'+a); if(!r.ok)return null; const j=await r.json();
     const lastOf=rows=>rows.reduce((m,x)=>x.time>m?x.time:m,0);
     if(!j||!j.fills||!Array.isArray(j.fills.fills)||!j.fills.fills.length)return null;
-    return {truncated:!!j.fills.truncated,fills:{v:2,fills:j.fills.fills,last:j.fills.last||lastOf(j.fills.fills),seeded:true},
+    return {truncated:!!j.fills.truncated,fills:{v:2,fills:j.fills.fills,last:j.fills.last||lastOf(j.fills.fills),seeded:true,twapFull:!!j.fills.twapFull,archivedAt:(j.fills.archived&&j.fills.archived.at)||0},
       funding:j.funding&&Array.isArray(j.funding.rows)?{v:1,rows:j.funding.rows,last:lastOf(j.funding.rows),seeded:true}:null,
       ledger:j.ledger&&Array.isArray(j.ledger.rows)?{v:1,rows:j.ledger.rows,last:lastOf(j.ledger.rows),seeded:true}:null};
   }catch(e){ return null; } }
+// Fills the server recovered from Hyperliquid's archive (archive.js, Data health → Recover) reach this
+// browser here: when the server's cache took archived fills in after this cache last did, the server's
+// copy is merged in (keyed like every fill, so nothing lands twice). One small request per load.
+async function srvArchived(a, fcache){
+  if(!(typeof SRV!=='undefined'&&SRV.enabled&&(SRV.token||!SRV.needsAuth)&&!SRV.badAuth))return 0;
+  try{ const m=await srvFetch('/api/v1/cache/'+a+'?meta=1'); if(!m.ok)return 0; const j=await m.json();
+    const at=(j&&j.fills&&j.fills.archived&&j.fills.archived.at)||0; if(!(at>(fcache.archivedAt||0)))return 0;
+    const r=await srvFetch('/api/v1/cache/'+a); if(!r.ok)return 0; const s=await r.json(); const rows=s&&s.fills&&s.fills.fills; if(!Array.isArray(rows))return 0;
+    const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time)); let n=0;
+    for(const f of rows){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fcache.fills.push(f); n++; } }
+    fcache.archivedAt=at; return n;
+  }catch(e){ return 0; } }
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
 function saveLastView(){ try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:Date.now(),positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
@@ -135,6 +147,7 @@ async function loadWallet(w,fresh,spotP){
   // never sees it) and marks the cache, so every load after is incremental again.
   let twapFull=!fcache||!!fcache.twapFull;
   if(fcache&&!twapFull){ try{ const tw=await fetchTwapFills(a,0); fr.fills.push(...tw.fills); twapFull=!tw.partial; }catch(e){} }
+  const archivedNew=fcache&&!fcache.seeded?await srvArchived(a,fcache):0; // fills recovered from the archive on the server
   let fills, added=0, truncNote=null;
   if(fcache){
     const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time));
@@ -147,7 +160,8 @@ async function loadWallet(w,fresh,spotP){
   } else { fills=fr.fills; added=fills.length; if(fr.truncated)truncNote=labelFor(w); }
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
   // nothing new: the stored copy is already current, so skip re-compressing it
-  if(!fcache||added>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull})); }catch(e){} }
+  if(archivedNew)added+=archivedNew;
+  if(!fcache||added>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);

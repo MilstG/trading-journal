@@ -79,6 +79,7 @@ const Push = require('./push.js');
 const Wear = require('./wear.js');
 const Offsite = require('./offsite.js');
 const CexRelay = require('./cex-relay.js');
+const Archive = require('./archive.js'); // Hyperliquid's node-data archive on S3: fills the public API no longer serves
 const Admin2fa = require('./admin2fa.js');
 const { readAppSource, appScripts } = require('./app-source.js');
 
@@ -775,9 +776,26 @@ function createApp(opts) {
   const fillMetaMemo = new Map();
   const fillCacheMeta = a => { let st; try { st = fs.statSync(fillsFile(a)); } catch (e) { return null; }
     const m = fillMetaMemo.get(a); if (m && m.mtime === st.mtimeMs && m.size === st.size) return m.meta;
-    const c = readFillCache(a), meta = c ? { count: c.count != null ? c.count : c.fills.length, last: c.last, savedAt: c.savedAt, truncated: !!c.truncated } : null;
+    const c = readFillCache(a), meta = c ? { count: c.count != null ? c.count : c.fills.length, last: c.last, savedAt: c.savedAt, truncated: !!c.truncated, twapFull: !!c.twapFull, archived: c.archived || null } : null;
     fillMetaMemo.set(a, { mtime: st.mtimeMs, size: st.size, meta }); return meta; };
   const readFundingCache = a => { const c = gzRead(fundingFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
+  // Fills recovered from Hyperliquid's archive (archive.js) go into the same fill cache, keyed like
+  // every other fill, with a note of when and how much; the browser merges them in on its next load
+  // (the cache endpoint's ?meta=1 says when the cache was last archived into).
+  const archive = Archive.createArchive({ env: opts.archiveEnv || process.env, fetchImpl: opts.archiveFetch || opts.fetchImpl, now: opts.now, engine: E || {},
+    log: m => console.log('[ledger] ' + m),
+    readFills: a => { const c = readFillCache(a); return c ? c.fills : null; },
+    writeFills: (a, found, info) => {
+      const c = readFillCache(a); if (!c) throw new Error('no server fill cache for ' + a);
+      const seen = new Set(c.fills.map(fillId)), fills = c.fills.slice(); let added = 0;
+      for (const f of found) { const id = fillId(f); if (!seen.has(id)) { seen.add(id); fills.push(f); added++; } }
+      fills.sort((x, y) => x.time - y.time);
+      const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
+      gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: Date.now(), fills,
+        archived: { at: Date.now(), n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
+      _tradesMemo = null; fillMetaMemo.delete(a);
+      return { added, count: fills.length };
+    } });
   const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
 
@@ -1732,6 +1750,11 @@ function createApp(opts) {
     { method: 'GET',  path: '/api/v1/capital', auth: 'read', desc: 'capital flows (deposits/withdrawals/transfers) + time-weighted return-on-capital model and money-weighted xirr; account-wide — ignores filters; wallet= optional' },
     { method: 'GET', path: '/api/v1/cache/:addr', auth: 'full', desc: 'one wallet\'s server caches (fills, funding, capital flows) as JSON, gzipped when accepted — how a new device seeds its browser caches' },
     { method: 'DELETE', path: '/api/v1/cache/:addr', auth: 'full', desc: 'evict one wallet\'s server caches (fills/funding/ledger) — cleans up body.wallets experiments and removed wallets' },
+    { method: 'GET',  path: '/api/v1/archive', auth: 'full', desc: 'Hyperliquid\'s node-data archive on S3 (fills the public API no longer serves): configuration, last coverage check, the running backfill. Needs ARCHIVE_AWS_KEY_ID / ARCHIVE_AWS_SECRET' },
+    { method: 'POST', path: '/api/v1/archive/check', auth: 'full', desc: 'coverage check: the archive\'s first and last day, one day\'s size, and per wallet the hours its seams need with their bytes and cost; body {wallets?}' },
+    { method: 'POST', path: '/api/v1/archive/sample', auth: 'full', desc: 'download one hour and show its format and the wallets\' fills in it; body {day?, hour?, key?, wallets?}' },
+    { method: 'POST', path: '/api/v1/archive/backfill', auth: 'full', desc: 'download the hours a wallet\'s seams need and merge the fills found into its cache; body {address, maxGB (default 2), dryRun?}; 413 with the plan when over budget; progress at GET /api/v1/archive' },
+    { method: 'POST', path: '/api/v1/archive/stop', auth: 'full', desc: 'stop the running backfill' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
     { method: 'GET',  path: '/api/v1/positions', auth: 'read', desc: 'cached positions/spot/account snapshot; ?live=1 (full auth) refetches' },
@@ -1815,6 +1838,28 @@ function createApp(opts) {
       finally { clearTimeout(watchdog); _refreshing = false; }
     }
 
+    // Hyperliquid's archive on S3 (archive.js): a coverage check, a sample hour, and the backfill
+    // that recovers the fills behind a wallet's seams. Owner token, like the caches it writes.
+    if (url === '/api/v1/archive' || url.startsWith('/api/v1/archive/')) {
+      if (!authOk(req)) return send(401, { error: 'unauthorized' });
+      const act = url.slice('/api/v1/archive'.length).replace(/^\//, '');
+      if (!act) return req.method === 'GET' ? send(200, archive.status()) : send(405, { error: 'method not allowed' });
+      if (req.method !== 'POST') return send(405, { error: 'method not allowed' });
+      if (!engine.ok) return send(503, { error: 'analytics engine unavailable — missing: ' + engine.missing.join(', ') });
+      let body = {};
+      try { const raw = await readBody(req); if (raw && raw.trim()) body = JSON.parse(raw); if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('object'); }
+      catch (e) { return send(400, { error: 'body must be a JSON object' }); }
+      const addrs = Array.isArray(body.wallets) && body.wallets.length ? body.wallets.map(a => String(a).toLowerCase()) : snapWallets(currentSnapshot()).map(w => w.address.toLowerCase());
+      try {
+        if (act === 'check') return send(200, await archive.check(addrs.filter(a => ADDR_RE.test(a)).map(address => ({ address }))));
+        if (act === 'sample') return send(200, await archive.sample({ day: body.day, hour: body.hour, key: body.key, addresses: addrs.filter(a => ADDR_RE.test(a)) }));
+        if (act === 'backfill') { if (!ADDR_RE.test(String(body.address || ''))) return send(400, { error: 'address required' });
+          return send(202, await archive.backfill({ address: body.address, maxGB: body.maxGB, dryRun: !!body.dryRun })); }
+        if (act === 'stop') return send(200, archive.stop() || {});
+        return send(404, { error: 'unknown archive action' });
+      } catch (e) { return send(e.code >= 400 && e.code < 600 ? e.code : 502, Object.assign({ error: e.message }, e.plan ? { plan: e.plan } : {})); }
+    }
+
     // evict one wallet's server-side caches (fills/funding/ledger) — the cure for a
     // body.wallets experiment or a removed wallet haunting capital/alert aggregates
     const cacheM = url.match(/^\/api\/v1\/cache\/(0x[0-9a-fA-F]{40})$/);
@@ -1823,10 +1868,13 @@ function createApp(opts) {
         // a new device seeds its browser caches from these in one gzip download instead of
         // paging the wallet's whole history from Hyperliquid (owner token: these are the journal's wallets)
         if (!authOk(req)) return send(401, { error: 'unauthorized' });
+        // ?meta=1: just the cache's state (count, watermark, when archived fills last went in) — the
+        // browser asks this on every load to know whether the server holds fills it doesn't
+        if (query && (query.meta === '1' || query.meta === 'true')) { const m = fillCacheMeta(cacheM[1]); return m ? send(200, { fills: m }) : send(404, { error: 'no server cache for that wallet' }); }
         const fc = readFillCache(cacheM[1]);
         if (!fc) return send(404, { error: 'no server cache for that wallet' });
         const fu = readFundingCache(cacheM[1]), le = readLedgerCache(cacheM[1]);
-        const body = JSON.stringify({ fills: { last: fc.last || 0, truncated: !!fc.truncated, fills: fc.fills }, funding: fu ? { rows: fu.rows } : null, ledger: le ? { rows: le.rows } : null });
+        const body = JSON.stringify({ fills: { last: fc.last || 0, truncated: !!fc.truncated, twapFull: !!fc.twapFull, archived: fc.archived || null, fills: fc.fills }, funding: fu ? { rows: fu.rows } : null, ledger: le ? { rows: le.rows } : null });
         const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
         res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
         return res.end(gz ? zlib.gzipSync(body) : body);

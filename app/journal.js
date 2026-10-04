@@ -1458,7 +1458,53 @@ function renderDataHealth(){
   if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
   if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
   el.classList.remove('hide');
-  el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ');
+  // seams, and a server to do it from: the fills behind them may still be in Hyperliquid's archive (archive.js)
+  const canArc=cov&&cov.gaps&&typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
+  el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+(canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">Recover from the archive…</button>':'');
+  const b=$('arcOpen'); if(b)b.onclick=toggleArchivePanel;
+}
+// Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server
+// (archive.js): a coverage check (what the archive holds, what the seams need, what it would cost), a
+// sample hour, then the backfill with a spending cap. The server merges what it finds into its fill
+// cache; the next load merges that into this browser's (data-io.js: srvArchived) and reconstructs.
+let _arcTimer=null;
+async function toggleArchivePanel(){
+  let p=$('arcPanel'); if(p){ p.remove(); clearTimeout(_arcTimer); return; }
+  const host=$('dataHealth'); if(!host)return;
+  p=document.createElement('div'); p.id='arcPanel'; p.className='reconwarn'; p.style.cssText='margin-top:-6px;margin-bottom:12px';
+  host.insertAdjacentElement('afterend',p);
+  const usd=n=>'$'+(+n||0).toFixed(2), mb=b=>(b/1048576).toFixed(1)+' MB', gbOf=b=>(b/1073741824).toFixed(2)+' GB';
+  const hl=settings.wallets.filter(w=>venueOf(w)==='hyperliquid');
+  const call=async(path,body)=>{ const r=await srvFetch('/api/v1/archive'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined); const j=await r.json().catch(()=>({})); if(!r.ok)throw Object.assign(new Error(j.error||('HTTP '+r.status)),{plan:j.plan}); return j; };
+  const out=msg=>{ const o=$('arcOut'); if(o)o.innerHTML=msg; };
+  const draw=st=>{ const j=st.job, lc=st.lastCheck;
+    p.innerHTML=`<b>Hyperliquid’s archive</b> — ${st.configured?`bucket ${esc(st.bucket)}${st.region?' ('+esc(st.region)+')':''}, $${st.costPerGB}/GB billed to your AWS account`:'not set up: add <code>ARCHIVE_AWS_KEY_ID</code> and <code>ARCHIVE_AWS_SECRET</code> to the server (Railway → Variables) and redeploy'}.
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+        <button class="df-btn" id="arcCheck" ${st.configured?'':'disabled'}>Check coverage</button><button class="df-btn" id="arcSample" ${st.configured?'':'disabled'}>Fetch a sample hour</button>
+        <select id="arcWallet">${hl.map(w=>`<option value="${esc(w.address)}">${esc(labelFor(w))}</option>`).join('')}</select>
+        <label>cap <input id="arcGB" type="number" min="0.01" step="0.5" value="2" style="width:64px"> GB</label>
+        <button class="df-btn" id="arcGo" ${st.configured?'':'disabled'}>Backfill</button>${j&&j.state==='running'?'<button class="df-btn" id="arcStop">Stop</button>':''}<button class="df-btn" id="arcClose">Close</button></div>
+      <div id="arcOut" style="font-size:12.5px;line-height:1.5">${j?esc(`Backfill ${j.address.slice(0,8)}…: ${j.state} · ${j.done}/${j.total} hours · ${j.fills} fills found${j.added!=null?' · '+j.added+' new in the cache':''} · ${mb(j.bytes)}${j.cost!=null?' ≈ $'+j.cost:''}${j.lastError?' · last error: '+j.lastError:''}`):lc?esc(`Last check: archive ${lc.archive.first||'—'} → ${lc.archive.last||'—'} (${lc.archive.days.length} days)`):''}</div>`;
+    $('arcClose').onclick=toggleArchivePanel;
+    $('arcCheck').onclick=async()=>{ out('Listing the archive…'); try{ const c=await call('/check',{});
+      const a=c.archive, sd=c.sampleDay;
+      out(`Archive: <b>${esc(a.first||'nothing')}</b> → ${esc(a.last||'')} (${a.days.length} days)${sd?`; ${sd.day} has ${sd.hours} hours, ${mb(sd.bytes)} (${mb(sd.perHour)}/hour)`:''}.<br>`+
+        c.wallets.map(w=>w.error?`${esc(w.address.slice(0,8))}…: ${esc(w.error)}`:`${esc(w.address.slice(0,8))}…: ${w.seams} seams → ${w.hours} hours; the archive has ${w.hours-w.missing.length} of them, ${gbOf(w.bytes)} ≈ ${usd(w.estCost)}${w.missing.length?` — ${w.missing.length} hour${w.missing.length===1?'':'s'} fall outside the archive (${esc(w.missing[0])}…)`:''}${w.skippedLong.length?`; ${w.skippedLong.length} seam${w.skippedLong.length===1?'':'s'} wider than ${c.maxWindowDays||14} days skipped`:''}`).join('<br>')); }
+      catch(e){ out('Check failed: '+esc(e.message)); } };
+    $('arcSample').onclick=async()=>{ out('Downloading one hour…'); try{ const s=await call('/sample',{});
+      const w=Object.entries(s.wallets||{}).map(([a,x])=>`${esc(a.slice(0,8))}…: ${x.fills} fills`).join(', ');
+      out(`${esc(s.key)}: ${mb(s.bytes)} ${esc(s.encoding)}, ${s.lines} lines, ${s.fillsSeen} fills in it (${esc(JSON.stringify(s.shapes))})${w?'; '+w:''}.<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px">${esc(s.preview)}</pre>`); }
+      catch(e){ out('Sample failed: '+esc(e.message)); } };
+    $('arcGo').onclick=async()=>{ const address=$('arcWallet').value, maxGB=parseFloat($('arcGB').value)||2;
+      out('Planning…'); try{ const j=await call('/backfill',{address,maxGB}); out(`Started: ${j.total} hours, ${gbOf(j.plan.bytes)} ≈ ${usd(j.plan.estCost)}.`); poll(); }
+      catch(e){ out('Not started: '+esc(e.message)); } };
+    const sb=$('arcStop'); if(sb)sb.onclick=async()=>{ try{ await call('/stop',{}); }catch(e){} poll(); };
+  };
+  const poll=async()=>{ clearTimeout(_arcTimer); try{ const st=await call(''); draw(st);
+      if(st.job&&st.job.state==='running')_arcTimer=setTimeout(poll,3000);
+      else if(st.job&&st.job.state==='done'&&!st.job.applied){ st.job.applied=true; if(st.job.added){ out(`Done: ${st.job.added} fills recovered — loading them…`); loadAll(); } } }
+    catch(e){ p.innerHTML='<b>Hyperliquid’s archive</b> — '+esc(e.message)+' <button class="df-btn" id="arcClose">Close</button>'; $('arcClose').onclick=toggleArchivePanel; } };
+  poll();
 }
 // The Net PnL card's all-time headline (engine.js: verifiedFigure), only when nothing narrows the
 // stats cards: all time (no period, no custom range) with every dex in view. A 30-day period, a
