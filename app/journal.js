@@ -1481,6 +1481,18 @@ async function toggleArchivePanel(){
   const hl=settings.wallets.filter(w=>venueOf(w)==='hyperliquid');
   const call=async(path,body)=>{ const r=await srvFetch('/api/v1/archive'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined); const j=await r.json().catch(()=>({})); if(!r.ok)throw Object.assign(new Error(j.error||('HTTP '+r.status)),{plan:j.plan}); return j; };
   const out=msg=>{ const o=$('arcOut'); if(o)o.innerHTML=msg; };
+  // the archive plans from the server's copy of the fills; a server that never refreshed a wallet has a
+  // thin one or none, so this browser's cache goes up first (merged there, a few thousand fills a request)
+  const sync=async()=>{ let note=[];
+    for(const w of hl){ const a=w.address.toLowerCase(); let local=null; try{ local=await unpackFillCache(await idbGet('flc:'+a)); }catch(e){}
+      if(!local||!local.fills||!local.fills.length)continue;
+      let srvCount=-1; try{ const m=await srvFetch('/api/v1/cache/'+a+'?meta=1'); if(m.ok)srvCount=((await m.json()).fills||{}).count||0; }catch(e){}
+      if(srvCount>=local.fills.length)continue;
+      out(`Sending ${labelFor(w)}’s ${local.fills.length} fills to the server…`);
+      let added=0; for(let i=0;i<local.fills.length;i+=4000){ const r=await srvFetch('/api/v1/cache/'+a,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({fills:local.fills.slice(i,i+4000),twapFull:!!local.twapFull})});
+        if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error('sending fills to the server: '+(j.error||('HTTP '+r.status))); } added+=((await r.json()).added||0); }
+      note.push(`${labelFor(w)}: ${added} fills sent`); }
+    return note; };
   const draw=st=>{ const j=st.job, lc=st.lastCheck;
     p.innerHTML=`<b>Hyperliquid’s archive</b> — ${st.configured?`bucket ${esc(st.bucket)}${st.region?' ('+esc(st.region)+')':''}, $${st.costPerGB}/GB billed to your AWS account`:'not set up: add <code>ARCHIVE_AWS_KEY_ID</code> and <code>ARCHIVE_AWS_SECRET</code> to the server (Railway → Variables) and redeploy'}.
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
@@ -1490,9 +1502,9 @@ async function toggleArchivePanel(){
         <button class="df-btn" id="arcGo" ${st.configured?'':'disabled'}>Backfill</button>${j&&j.state==='running'?'<button class="df-btn" id="arcStop">Stop</button>':''}<button class="df-btn" id="arcClose">Close</button></div>
       <div id="arcOut" style="font-size:12.5px;line-height:1.5">${j?esc(`Backfill ${j.address.slice(0,8)}…: ${j.state} · ${j.done}/${j.total} hours · ${j.fills} fills found${j.added!=null?' · '+j.added+' new in the cache':''} · ${mb(j.bytes)}${j.cost!=null?' ≈ $'+j.cost:''}${j.lastError?' · last error: '+j.lastError:''}`):lc?esc(`Last check: archive ${lc.archive.first||'—'} → ${lc.archive.last||'—'} (${lc.archive.days.length} days)`):''}</div>`;
     $('arcClose').onclick=toggleArchivePanel;
-    $('arcCheck').onclick=async()=>{ out('Listing the archive…'); try{ const c=await call('/check',{});
+    $('arcCheck').onclick=async()=>{ out('Listing the archive…'); try{ const synced=await sync(); const c=await call('/check',{});
       const a=c.archive, sd=c.sampleDay;
-      out(`Archive: <b>${esc(a.first||'nothing')}</b> → ${esc(a.last||'')} (${a.days.length} days)${sd?`; ${sd.day} has ${sd.hours} hours, ${mb(sd.bytes)} (${mb(sd.perHour)}/hour)`:''}.<br>`+
+      out((synced.length?esc(synced.join(' · '))+'<br>':'')+`Archive: <b>${esc(a.first||'nothing')}</b> → ${esc(a.last||'')} (${a.days?a.days.length+' days':'probed'})${sd?`; ${sd.day} has ${sd.hours} hours, ${mb(sd.bytes)} (${mb(sd.perHour)}/hour)`:''}.<br>`+
         c.wallets.map(w=>w.error?`${esc(w.address.slice(0,8))}…: ${esc(w.error)}`:`${esc(w.address.slice(0,8))}…: ${w.seams} seams → ${w.hours} hours; the archive has ${w.hours-w.missing.length} of them${w.fromOld?' ('+w.fromOld+' from the older dataset)':''}, ${gbOf(w.bytes)} ≈ ${usd(w.estCost)}${w.missing.length?` — ${w.missing.length} hour${w.missing.length===1?'':'s'} fall outside the archive (${esc(w.missing[0])}…)`:''}${w.skippedLong.length?`; ${w.skippedLong.length} seam${w.skippedLong.length===1?'':'s'} wider than ${c.maxWindowDays||14} days skipped`:''}`).join('<br>')); }
       catch(e){ out('Check failed: '+esc(e.message)); } };
     $('arcDiag').onclick=async()=>{ out('Asking AWS…'); try{ const d=await call('/diagnose',{});
@@ -1505,7 +1517,7 @@ async function toggleArchivePanel(){
       out(`${esc(s.key)}: ${mb(s.bytes)} ${esc(s.encoding)}, ${s.lines} lines, ${s.fillsSeen} fills in it (${esc(JSON.stringify(s.shapes))})${w?'; '+w:''}.<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px">${esc(s.preview)}</pre>`); }
       catch(e){ out('Sample failed: '+esc(e.message)); } };
     $('arcGo').onclick=async()=>{ const address=$('arcWallet').value, maxGB=parseFloat($('arcGB').value)||25;
-      out('Planning…'); try{ const j=await call('/backfill',{address,maxGB}); out(`Started: ${j.total} hours, ${gbOf(j.plan.bytes)} ≈ ${usd(j.plan.estCost)}.`); poll(); }
+      out('Planning…'); try{ await sync(); const j=await call('/backfill',{address,maxGB}); out(`Started: ${j.total} hours, ${gbOf(j.plan.bytes)} ≈ ${usd(j.plan.estCost)}.`); poll(); }
       catch(e){ out('Not started: '+esc(e.message)); } };
     const sb=$('arcStop'); if(sb)sb.onclick=async()=>{ try{ await call('/stop',{}); }catch(e){} poll(); };
   };

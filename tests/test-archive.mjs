@@ -176,6 +176,16 @@ try {
   const { writeFileSync, mkdirSync } = await import('node:fs');
   mkdirSync(join(dataDir, 'fills'), { recursive: true });
   writeFileSync(join(dataDir, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  await t('PUT /api/v1/cache/:addr merges the browser’s fills into the server’s copy (and creates it)', async () => {
+    const other = '0x' + 'a'.repeat(40);
+    const r = await fetch(base + '/api/v1/cache/' + other, { method: 'PUT', headers: FULL, body: JSON.stringify({ fills: seamFills.slice(0, 2), twapFull: true }) });
+    eq(r.status, 200); eq(await r.json(), { ok: true, added: 2, count: 2 });
+    const r2 = await fetch(base + '/api/v1/cache/' + other, { method: 'PUT', headers: FULL, body: JSON.stringify({ fills: seamFills }) });
+    eq(await r2.json(), { ok: true, added: 1, count: 3 }, 'only the new one is added');
+    const m = await call(base, '/api/v1/cache/' + other + '?meta=1'); eq([m.body.fills.count, m.body.fills.twapFull], [3, true]);
+    eq((await fetch(base + '/api/v1/cache/' + other, { method: 'PUT', headers: FULL, body: JSON.stringify({ fills: 'no' }) })).status, 400);
+    eq((await fetch(base + '/api/v1/cache/' + other, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+  });
   await t('check: the archive’s days, a day’s size, and the wallet’s seam plan with bytes and cost', async () => {
     const r = await call(base, '/api/v1/archive/check', { wallets: [ADDR] });
     eq(r.status, 200, JSON.stringify(r.body));
