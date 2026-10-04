@@ -86,7 +86,7 @@ function guardrailSignals(){
     if(unplanned.length)
       out.push({type:'unplanned',txt:`<b>${unplanned.length}</b> open position${unplanned.length===1?' has':'s have'} no written stop (${unplanned.slice(0,3).map(t=>esc(dispMarket(dcoin(t))))
         .join(', ')}${unplanned.length>3?', \u2026':''}). Open the trade row and fill <b>entry / stop / target</b> now \u2014 a plan written while the trade is live counts; one written after the close is hindsight.`}); }
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>b.closeTime-a.closeTime);
+  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // a result the fills can't give is no evidence
   if(closed.length<20)return out;
   const now=Date.now();
   // sizing creep vs capital
@@ -210,7 +210,7 @@ function wireExtraDiag(closed,allv,s){
 }
 const MISTAKES=['FOMO entry','No stop','Oversized','Revenge trade','Moved stop','Early exit','Chased','Broke plan'];
 function filteredTrades(){
-  const closed=periodTradesAll();
+  const closed=periodTradesAll(true); // off-record trades stay listed here (badged), out of every statistic
   const fc=$('fCoin').value,fs=$('fSide').value,fo=$('fOut').value,ft=$('fTag').value,fw=$('fWallet').value,q=$('fSearch').value.toLowerCase().trim();
   const fRating=+$('fRating').value, fFlag=$('fFlag').value;
   const fromMs=dateBound($('fFrom').value,false);
@@ -259,11 +259,15 @@ function renderTable(){
       (j.mistakes&&j.mistakes.length)?`<span class="tagchip" style="color:var(--loss)">⚑${j.mistakes.length}</span>`:'',
       j.notes?`<span class="tagchip">📝</span>`:''].join('');
     const liqBadge=t.liquidated?` <span class="pill short" data-tip="This trade contains at least one liquidation fill — the position was force-closed by the exchange.">⚠ LIQ</span>`:'';
-    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction (or emptied via a transfer/withdrawal). Net shown is realized so far.">OPEN</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge;
+    // a seam in the fills: the result shown is what the served fills give, not the whole trade
+    const gapBadge=t.offRecord?` <span class="pill be" data-tip="Incomplete: ${esc(fmtNum(t.gapSz||0))} of this position was ${t.isOpen?'moved':'closed'} in fills Hyperliquid no longer serves (TWAP slices older than ~3 months, or history past its retention). The net shown is only what the served fills realized, so this trade is left out of every statistic. See Data health.">INCOMPLETE</span>`
+      :t.gaps?` <span class="pill be" data-tip="${esc(fmtNum(t.gapSz||0))} of this position was ${t.openSz>0?'added':'opened'} in fills Hyperliquid no longer serves, so the entry price and size are partial; the result is the exchange’s own and counts.">PARTIAL</span>`
+      :t.partialHistory?` <span class="pill be" data-tip="This position was ${t.openSz>0?'partly ':''}opened before the fill history begins, so the entry is ${t.openSz>0?'only the part that was served':'unknown'} and no return % is shown; the result is the exchange’s own and counts.">PARTIAL</span>`:'';
+    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction (or emptied via a transfer/withdrawal). Net shown is realized so far.">OPEN</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge+gapBadge;
     return `<tr class="trow ${expandedId===t.id?'expanded':''}" data-id="${esc(t.id)}" tabindex="0" role="button" aria-expanded="${expandedId===t.id?'true':'false'}" aria-label="${esc(dispMarket(dcoin(t)))} ${t.dir}${t.isOpen?' open':''}, net ${fmtUsd(t.net)}. Activate to ${expandedId===t.id?'collapse':'expand'} journal.">
       <td class="l num">${fmtDate(t.openTime)}</td>
       <td class="l" style="font-weight:600">${esc(dispMarket(dcoin(t)))}${(multi&&t.wallet)||candleVenue(t)?`<div style="margin-top:3px">${candleVenue(t)&&!(t.wallet&&!t.wallet.label&&multi)?`<span class="tagchip">${esc(VENUE_NAMES[t.venue])}</span>`:''}${multi&&t.wallet?`<span class="tagchip">${esc(labelFor(t.wallet))}</span>`:''}</div>`:''}</td><td class="l">${side}</td>
-      <td class="num">${fmtNum(t.avgEntry)}</td><td class="num">${fmtNum(t.avgExit)}</td>
+      <td class="num">${t.partialHistory&&!(t.openSz>0)?'<span style="color:var(--faint)" data-tip="Entry unknown: every opening fill predates the history (the exit price stood in for it in older versions).">—</span>':fmtNum(t.avgEntry)}</td><td class="num">${fmtNum(t.avgExit)}</td>
       <td class="num">${fmtNum(t.maxSize)}</td>
       <td class="num ${outClass(t.net)}" style="font-weight:600">${fmtUsd(t.net)}</td>
       <td class="num ${ret!=null?cls(ret):''}">${ret!=null?(ret>=0?'+':'')+ret.toFixed(2)+'%':'—'}</td>
@@ -645,7 +649,7 @@ function renderHeaderSummary(){
 }
 function renderTape(){
   const el=$('tape'); if(!el)return;
-  const closedAll=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>b.closeTime-a.closeTime);
+  const closedAll=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // off-record results would misstate today's total
   if(!closedAll.length){ el.classList.add('hide'); return; }
   const day0=tzMidnight(Date.now()); // same "today" as the tripwire and daily analytics
   const today=closedAll.filter(t=>t.closeTime>=day0);
@@ -1536,7 +1540,7 @@ function renderReconcile(){
     // routine (funding attribution timing, fills near the pagination boundary) and are
     // already shown quietly by the per-line "recon" tag — the banner is reserved for the
     // case where enough trades are missing/mis-attributed to actually distort analytics.
-    const material=pd!=null && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05);
+    const material=pd!=null && !hlPnl.partial && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05); // a wallet the exchange didn't answer for isn't a gap in the fills
     // seams explain the gap and the data-health line says so: no second banner for the same thing
     const seams=!!(dataCoverage&&dataCoverage.gaps>0);
     if(material&&!seams){
@@ -1550,5 +1554,6 @@ function renderReconcile(){
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;
   el.classList.remove('hide');
   el.innerHTML=`<span class="rlab" data-tip="Hyperliquid's own account P&L figures, as its app reports them — always all time, whatever period or filter is picked above. “recon” is how far the fill-based sum is from each; a large gap means fills are missing, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic.">Verified · Hyperliquid all-time · doesn’t follow the period</span>`+
-    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot));
+    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot))+
+    (hlPnl.partial?`<span class="ritem" style="color:var(--gold)" data-tip="Hyperliquid didn’t answer the portfolio request for at least one wallet this load, so these sums cover only the wallets it did. Load all again.">⚠ a wallet is missing from these</span>`:'');
 }

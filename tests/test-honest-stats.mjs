@@ -127,6 +127,8 @@ console.log('\nDrawdown % and the Verified strip');
 t('max drawdown % is labeled as a share of best cumulative profit, not "off peak"', () => {
   eq(ENG.ddPctOfBest(0.838), '84% of best cumulative profit');
   eq(ENG.ddPctOfBest(0.042), '4.2% of best cumulative profit');
+  eq(ENG.ddPctOfBest(1.54), '1.5× your best cumulative profit', 'a fall deeper than the best ever reached reads as a multiple');
+  eq(ENG.ddPctOfBest(1), '1× your best cumulative profit');
   ok(!html.includes("% off peak'"), 'dashboard tile');
   ok(grabFn('computeStats').includes('const maxDDpct = peak>0 ? Math.abs(maxDD)/peak : null;'), 'computation unchanged');
   ok(html.includes("ddPctOfBest(s.maxDDpct):'peak to trough'") && html.includes("' · '+ddPctOfBest(s.maxDDpct)"), 'dashboard + Diagnostic use it');

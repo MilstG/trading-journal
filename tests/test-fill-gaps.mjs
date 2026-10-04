@@ -77,6 +77,19 @@ t('a history that simply starts mid-position is not a seam', () => {
   const tr = perp([F('ETH', 'A', 5, 1000, T0, 5, 50)]);
   eq(tr.length, 1); ok(tr[0].partialHistory && !tr[0].offRecord && !tr[0].gaps);
 });
+t('a position opened off the record after the fills saw the coin go flat is a seam: partial history, result kept', () => {
+  const tr = perp([
+    F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'A', 10, 1100, T0 + 1e6, 10, 1000), // whole: +1000
+    // 5 ETH bought here in fills we never got
+    F('ETH', 'A', 5, 1200, T0 + 2e6, 5, 500),                                     // its close is served
+  ]).sort((a, b) => a.openTime - b.openTime);
+  eq(tr.length, 2); ok(!tr[0].gaps && !tr[0].partialHistory, 'the whole trade is untouched');
+  const x = tr[1]; ok(x.partialHistory && !x.offRecord, 'entry unknown, the exchange’s closedPnl counts');
+  eq([x.gaps, x.gapSz, x.gapNotional, x.gapTimes], [1, 5, 6000, [T0 + 2e6]]); near(x.net, 500);
+  eq(ctx.coverageOf([], tr, null).gaps, 1, 'coverage counts it');
+  // the same fill with no earlier history for the coin stays a plain mid-position start
+  ok(!perp([F('ETH', 'A', 5, 1200, T0 + 2e6, 5, 500)])[0].gaps);
+});
 t('unbroken chains, same-millisecond groups and flips never trip it', () => {
   const tr = perp([
     F('ETH', 'B', 1, 100, T0, 0), F('ETH', 'B', 1, 101, T0 + 1, 1),
@@ -105,19 +118,32 @@ t('served volume against the exchange’s own, seams by month, closed off-record
 });
 
 console.log('\nThe verified figure (journal card and Daruma tile)');
-t('leads only with seams, or a material perp gap; spot and combined keep whole fills on their own', () => {
+t('leads only with seams, or a material perp gap; spot never; combined keeps whole fills on its own', () => {
   vm.runInContext(grabFn('verifiedFigure') + '\nconst candleVenue=t=>t.venue&&t.venue!=="hyperliquid"?t.venue:"";', ctx);
   const closed = (market, net, extra) => Object.assign({ market, net, isOpen: false, closeTime: T0 }, extra);
   ctx.allTrades = [closed('perp', 100), closed('perp', 50, { offRecord: true }), closed('spot', 10), closed('perp', 999, { venue: 'lighter' })];
+  ctx.openPositions = []; ctx.spotHoldings = [];
   ctx.hlPnl = { all: 10000, perp: 150 }; ctx.dataCoverage = null;
   eq(ctx.verifiedFigure('perp'), null, 'perp within tolerance: fills stand');
   eq(ctx.verifiedFigure('spot'), null, 'spot always differs, never on its own'); eq(ctx.verifiedFigure('combined'), null);
   ctx.hlPnl = { all: 10000, perp: 50000 };
-  const v = ctx.verifiedFigure('perp'); eq([v.ver, v.rec, v.n, v.seams], [50000, 100, 1, false], 'a material perp gap: the exchange’s figure, off-record and other venues’ trades out of the fill sum');
+  const v = ctx.verifiedFigure('perp'); eq([v.ver, v.rec, v.live, v.n, v.seams], [50000, 100, 100, 1, false], 'a material perp gap: the exchange’s figure, off-record and other venues’ trades out of the fill sum');
   ctx.dataCoverage = { gaps: 3, perpShare: 0.4, allShare: 0.3 };
-  const c = ctx.verifiedFigure('combined'); eq([c.ver, c.rec, c.gaps, c.share], [10000, 110, 3, 0.3], 'with seams every market leads with the verified figure');
-  eq(ctx.verifiedFigure('spot').ver, 10000 - 50000);
+  const c = ctx.verifiedFigure('combined'); eq([c.ver, c.rec, c.gaps, c.share], [10000, 110, 3, 0.3], 'with seams perp and combined lead with the verified figure');
+  eq(ctx.verifiedFigure('spot'), null, 'a perp seam says nothing about the spot fills');
   ctx.hlPnl = { all: null, perp: null }; eq(ctx.verifiedFigure('perp'), null, 'nothing verified, nothing to lead with');
+});
+t('the gap is judged like with like: open trades’ realized and the positions’ unrealized count on the fills’ side', () => {
+  const closed = (market, net, extra) => Object.assign({ market, net, isOpen: false, closeTime: T0 }, extra);
+  ctx.dataCoverage = null;
+  // whole fills: +100 closed, +20 realized on an open trade, and an open position marked +40,000 up
+  ctx.allTrades = [closed('perp', 100), { market: 'perp', net: 20, isOpen: true }, { market: 'perp', net: 5000, isOpen: true, venue: 'lighter' }];
+  ctx.openPositions = [{ coin: 'ETH', uPnl: 40000 }, { coin: 'BTC', uPnl: 777, venue: 'lighter' }]; ctx.spotHoldings = [{ coin: 'HYPE', uPnl: 9 }];
+  ctx.hlPnl = { all: 40200, perp: 40120 };
+  eq(ctx.verifiedFigure('perp'), null, 'the exchange’s unrealized-inclusive figure matches the fills plus the open book: no gap, the fills stand');
+  ctx.hlPnl = { all: 90000, perp: 90000 };
+  const v = ctx.verifiedFigure('perp'); ok(v && v.live === 40120 && v.rec === 100, 'a real gap still leads, with the live basis beside the closed sum');
+  ctx.openPositions = []; ctx.spotHoldings = [];
 });
 
 t('the exchange’s curves: summed across wallets as a step series, per market, with their drawdown', () => {
@@ -161,12 +187,29 @@ await t('fetchAllFills merges the slices with the ordinary fills and keys out du
     if (b.type === 'userTwapSliceFillsByTime') return [{ fill: shared, twapId: 1 }, slice(T0 + 9, 2)];
     throw new Error('unexpected ' + b.type); };
   const r = await ctx.fetchAllFills('0xw', 0);
-  eq(r.fills.length, 3); ok(!r.truncated); ok(!ctx._fetchHealth.twap);
+  eq(r.fills.length, 3); ok(!r.truncated); ok(!ctx._fetchHealth.twap); ok(r.twapPartial === false);
+});
+await t('a slice served again under another trade id is one execution, not two', async () => {
+  const f = F('ETH', 'A', 1, 100, T0 + 5, 1), again = Object.assign({}, f, { tid: 99991, oid: 99992 }); // same coin, time, side, size, price, start
+  ctx.hlPost = async b => {
+    if (b.type === 'userFillsByTime') return [f];
+    if (b.type === 'userTwapSliceFillsByTime') return [{ fill: again, twapId: 1 }, slice(T0 + 9, 2)];
+    throw new Error('unexpected ' + b.type); };
+  const r = await ctx.fetchAllFills('0xw', 0);
+  eq(r.fills.length, 2, 'the duplicate is keyed out by content; the genuinely new slice stays');
+});
+t('a wallet the exchange didn’t answer for keeps the verified figure from leading', () => {
+  const closed = (market, net, extra) => Object.assign({ market, net, isOpen: false, closeTime: T0 }, extra);
+  ctx.allTrades = [closed('perp', 100)]; ctx.openPositions = []; ctx.spotHoldings = []; ctx.dataCoverage = { gaps: 2, perpShare: 0.5, allShare: 0.5 };
+  ctx.hlPnl = { all: 5000, perp: 5000, partial: true };
+  eq(ctx.verifiedFigure('perp'), null, 'the sum understates: it must not lead'); eq(ctx.verifiedFigure('combined'), null);
+  ctx.hlPnl = { all: 5000, perp: 5000, partial: false };
+  ok(ctx.verifiedFigure('perp'), 'every wallet answered: it leads as before');
 });
 await t('a TWAP fetch that comes back partial is flagged on the data-health state', async () => {
   ctx.hlPost = async b => { if (b.type === 'userFillsByTime') return []; throw new Error('API 500'); };
-  await ctx.fetchAllFills('0xw', 0);
-  ok(ctx._fetchHealth.twap);
+  const r = await ctx.fetchAllFills('0xw', 0);
+  ok(ctx._fetchHealth.twap); ok(r.twapPartial, 'so a first cache is not marked as holding every slice');
 });
 
 report();

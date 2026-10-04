@@ -367,7 +367,8 @@ $('exportTax').onclick=()=>{
   dlBlob(blob,'ledger-tax-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();
   const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} trade${byYear[y].n===1?'':'s'})`).join(' · ');
-  setStatus(`Exported ${rows.length} realized trades → ${summary}. Realized PnL only (no unrealized or transferred cost basis) — not tax advice.`);
+  const offN=rows.filter(t=>t.offRecord).length; // their rows carry only what the served fills realized
+  setStatus(`Exported ${rows.length} realized trades → ${summary}. Realized PnL only (no unrealized or transferred cost basis)${offN?` · ${offN} trade${offN===1?'':'s'} closed partly in fills Hyperliquid no longer serves, so ${offN===1?'its':'their'} figures are incomplete`:''} — not tax advice.`);
 };
 /* ---- tax export by country (presets in engine.js: TAX_PRESETS, taxReport) ---- */
 const TAX_UI={preset:null,cur:null,rates:''};
