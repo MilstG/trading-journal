@@ -965,9 +965,12 @@ async function fetchPortfolio(addr){
       const h=e[1][field]||[]; const v=h.length?parseFloat(h[h.length-1][1]):NaN; return isFinite(v)?v:null; };
     // all-time volume too: the fills the exchange still serves are measured against it (fill coverage)
     const vlm=label=>{ const e=(res||[]).find(x=>x[0]===label); const v=e&&e[1]?parseFloat(e[1].vlm):NaN; return isFinite(v)?v:null; };
+    // the whole curve too (weekly points over all time): the equity curve and drawdown when the fills can't give them
+    const hist=label=>{ const e=(res||[]).find(x=>x[0]===label); const h=(e&&e[1]&&e[1].pnlHistory)||[]; const out=[];
+      for(const p of h){ const t=+p[0], v=parseFloat(p[1]); if(isFinite(t)&&isFinite(v))out.push([t,v]); } return out; };
     return {all:last('allTime','pnlHistory'), perp:last('perpAllTime','pnlHistory'), accountValue:last('allTime','accountValueHistory'),
-      vlm:vlm('allTime'), perpVlm:vlm('perpAllTime')};
-  }catch(e){ return {all:null,perp:null,accountValue:null,vlm:null,perpVlm:null}; }
+      vlm:vlm('allTime'), perpVlm:vlm('perpAllTime'), hist:{all:hist('allTime'),perp:hist('perpAllTime')}};
+  }catch(e){ return {all:null,perp:null,accountValue:null,vlm:null,perpVlm:null,hist:null}; }
 }
 // A portfolio-margin account's balance: the exchange's own account value (spot and perps as one), or
 // the spot balances valued at mark when that isn't readable. null for an ordinary account, whose perp
