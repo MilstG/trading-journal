@@ -873,7 +873,11 @@ function pzTrendsHtml(D){
     const mk=st.markets, best=mk.slice(0,3).filter(x=>x.net>0), worst=mk.slice(-3).reverse().filter(x=>x.net<0);
     const hr=h=>String(h).padStart(2,'0')+':00';
     const hrs=st.hours.length>=2?[['Best hour',st.hours[0]],['Worst hour',st.hours[st.hours.length-1]]]:[];
-    stats=`<div class="pz-grid3 pz-span" data-sec="stats:tiles">${tile('Net P&L',money(s.net),s.n+' trade'+(s.n===1?'':'s'),col(s.net),exact(s.net))}${tile('Win rate',pzPct(s.winRate),s.wins+' W · '+s.losses+' L')}${tile('Average trade',money(s.expectancy),'',col(s.expectancy),exact(s.expectancy))}
+    // all time: the same headline as the journal's Net PnL card — Hyperliquid's own figure when the fills can't give it (engine.js: verifiedFigure)
+    const vf=R==='all'?verifiedFigure(pzMk()==='all'?'combined':pzMk()):null;
+    const netTile=vf?tile('Net P&L',money(vf.ver),'Hyperliquid’s figure · fills '+money(vf.rec),col(vf.ver),'Hyperliquid’s own all-time P&L (unrealized included). The fills the exchange still serves don’t tell the whole story'+(vf.gaps?': '+vf.gaps+' position changes have no fill behind them':'')+'; the fill-based sum is '+signedPlain(vf.rec)+' over '+vf.n+' trades, which every other figure here is built on.')
+      :tile('Net P&L',money(s.net),s.n+' trade'+(s.n===1?'':'s'),col(s.net),exact(s.net));
+    stats=`<div class="pz-grid3 pz-span" data-sec="stats:tiles">${netTile}${tile('Win rate',pzPct(s.winRate),s.wins+' W · '+s.losses+' L')}${tile('Average trade',money(s.expectancy),'',col(s.expectancy),exact(s.expectancy))}
       ${tile('Profit factor',isFinite(s.profitFactor)?s.profitFactor.toFixed(2):'no losses','')}${tile('Average win',pzShort(s.avgWin),'avg loss '+pzShort(s.avgLoss)+' · payoff '+(isFinite(s.payoff)?s.payoff.toFixed(2):'no losses'),null,usdPlain(s.avgWin)+' win / '+usdPlain(s.avgLoss)+' loss')}${tile('Fees + funding',money(-(s.fees)+(s.fund||0)),'fees '+pzShort(s.fees),null,exact(-(s.fees)+(s.fund||0)))}</div>
       <a class="pz-ghost pz-span pz-deepbtn" href="#deep">${pzLocked('deep',g.level.level)?pzI('lock',16)+'In-depth stats · '+pzLockWord(pzLocked('deep',g.level.level)):'See in-depth stats'}${pzI('chev',18)}</a>
       <section class="pz-card pz-span" data-sec="stats:daily" style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:15px">Daily P&L</b><span class="pz-sub" style="font-size:12px">${days.length} trading day${days.length===1?'':'s'}${st.days.length>60?' (last 60)':''}</span></div>
