@@ -316,13 +316,16 @@ const hourInDay = h => new Date(h * HOUR).getUTCHours();
 // served fill before the seam to the fill that revealed it — and the UTC hours they cover. Windows
 // longer than maxDays are kept out of the hours (and reported), so one unexplained month doesn't
 // turn into a month of downloads.
+// scope 'exits' (the default): only the seams on trades that closed or shrank off the record — the fills
+// that carry P&L; 'all' adds the seams where a position opened off the record, which cost only an entry.
 function seamWindows(fills, E, opts) {
-  opts = opts || {}; const maxDays = opts.maxDays || 14;
+  opts = opts || {}; const maxDays = opts.maxDays || 14, all = opts.scope === 'all';
   const perp = (fills || []).filter(f => f && typeof f.coin === 'string' && !f.coin.includes('/') && !f.coin.startsWith('@')).sort((a, b) => a.time - b.time);
   const trades = E.reconstructTrades(perp, 'x', 'perp');
   const times = {}; for (const f of perp) (times[f.coin] = times[f.coin] || []).push(f.time);
   const seams = [], skipped = [], hours = new Set();
   for (const t of trades) for (const g of (t.gapTimes || [])) {
+    if (!all && !t.offRecord) continue;
     const T = times[t.coin] || []; let lo = 0, hi = T.length;
     while (lo < hi) { const m = (lo + hi) >> 1; if (T[m] < g) lo = m + 1; else hi = m; }
     if (!lo) continue;
@@ -416,8 +419,8 @@ function createArchive(deps) {
     oldDayCache.set(day, rows); return rows;
   }
   // the hours a wallet's seams need, which of them the archive has, their bytes and cost
-  async function plan(addr, fills, d) {
-    const sw = seamWindows(fills, deps.engine, { maxDays: cfg.maxDays });
+  async function plan(addr, fills, d, scope) {
+    const sw = seamWindows(fills, deps.engine, { maxDays: cfg.maxDays, scope: scope === 'all' ? 'all' : 'exits' });
     const items = [], missing = [], byDay = {};
     for (const h of sw.hours) (byDay[dayKeyOf(h)] = byDay[dayKeyOf(h)] || []).push(hourInDay(h));
     let listedDays = 0;
@@ -431,15 +434,15 @@ function createArchive(deps) {
       for (const hr of byDay[day]) { const k = rows.find(x => x.hour === hr); if (k) items.push(k); else missing.push(day + '/' + hr); }
     }
     const bytes = items.reduce((s, k) => s + k.size, 0);
-    return { address: addr, seams: sw.seams.length, skippedLong: sw.skipped, hours: sw.hours.length, items, missing, fromOld, bytes, estGB: +gb(bytes).toFixed(3), estCost: cost(bytes), listedDays };
+    return { address: addr, scope: scope === 'all' ? 'all' : 'exits', seams: sw.seams.length, skippedLong: sw.skipped, hours: sw.hours.length, items, missing, fromOld, bytes, estGB: +gb(bytes).toFixed(3), estCost: cost(bytes), listedDays };
   }
-  async function check(wallets) {
+  async function check(wallets, scope) {
     need();
     const d = await days(); const out = { bucket: cfg.bucket, prefix: cfg.prefix, region: s3.region(), costPerGB: cfg.costPerGB, archive: d, noList, sampleDay: null, wallets: [] };
     if (d.last) { const rows = await dayKeys(d.last, noList ? [0, 6, 12, 18] : null); const bytes = rows.reduce((s, k) => s + k.size, 0);
       out.sampleDay = { day: d.last, hours: rows.length, bytes, perHour: rows.length ? Math.round(bytes / rows.length) : 0, firstKey: rows[0] && rows[0].key, sampled: noList }; }
     for (const w of wallets || []) {
-      try { const p = await plan(w.address, w.fills || deps.readFills(w.address) || [], d); delete p.items; out.wallets.push(p); }
+      try { const p = await plan(w.address, w.fills || deps.readFills(w.address) || [], d, scope); delete p.items; out.wallets.push(p); }
       catch (e) { out.wallets.push({ address: w.address, error: e.message }); }
     }
     lastCheck = Object.assign({ at: Date.now() }, out); return out;
@@ -464,7 +467,7 @@ function createArchive(deps) {
     if (job && job.state === 'running') throw Object.assign(new Error('a backfill is already running'), { code: 409 });
     const addr = String(o.address || '').toLowerCase(), fills = deps.readFills(addr) || [];
     if (!fills.length) throw Object.assign(new Error('no server fill cache for ' + addr + ' — refresh it first'), { code: 404 });
-    const d = await days(), p = await plan(addr, fills, d);
+    const d = await days(), p = await plan(addr, fills, d, o.scope);
     const maxGB = parseFloat(o.maxGB) > 0 ? parseFloat(o.maxGB) : 2; // GB; the caller's cap, however small
     if (gb(p.bytes) > maxGB) throw Object.assign(new Error('the plan is ' + p.estGB + ' GB (about $' + p.estCost + ') — over the ' + maxGB + ' GB budget; raise maxGB to go ahead'), { code: 413, plan: Object.assign({}, p, { items: undefined }) });
     const items = p.items.slice();
@@ -567,7 +570,7 @@ function createArchive(deps) {
   }
   function stop() { if (job && job.state === 'running') { job.state = 'stopped'; job.finishedAt = Date.now(); } return job; }
   const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, noList, naming, lastCheck, job });
-  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d) => { need(); return plan(addr, fills, d); } };
+  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
 }
 
 module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };

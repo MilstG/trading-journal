@@ -112,6 +112,13 @@ t('a seam wider than the window limit is skipped and reported, not downloaded', 
   const w = A.seamWindows([F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'B', 2, 1200, T0 + 20 * 86400e3, 0)], E, { maxDays: 14 });
   eq([w.seams.length, w.skipped.length, w.hours.length], [0, 1, 0]); near(w.skipped[0].days, 20);
 });
+t('scope: exits (the default) keeps only seams on trades that lost their exits; all adds the entry seams', () => {
+  // ETH: closed off the record (an exit seam). BTC: went flat in the fills, then a later fill starts from a held position (an entry seam)
+  const fills = [F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'B', 2, 1200, T0 + 2 * 3600e3, 0),
+    F('BTC', 'B', 1, 1, T0, 0), F('BTC', 'A', 1, 1, T0 + 60e3, 1, 0), F('BTC', 'A', 1, 1, T0 + 5 * 3600e3, 3, 0)];
+  const ex = A.seamWindows(fills, E), all = A.seamWindows(fills, E, { scope: 'all' });
+  eq(ex.seams.map(w => w.coin), ['ETH']); ok(all.seams.length >= ex.seams.length && all.seams.some(w => w.coin === 'BTC'), JSON.stringify(all.seams));
+});
 t('no seams, no hours; spot never counts', () => {
   eq(A.seamWindows([F('ETH', 'B', 1, 1, T0, 0), F('@107', 'A', 1, 1, T0 + 1, 50)], E).hours.length, 0);
 });
