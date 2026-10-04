@@ -88,13 +88,14 @@ function s3Client(cfg) {
   async function probe(method, path, query, regionOverride, opts) {
     opts = opts || {};
     const r = regionOverride || region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = sha256('');
-    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, opts.noPayer ? {} : { 'x-amz-request-payer': 'requester' });
+    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, opts.noPayer ? {} : { 'x-amz-request-payer': 'requester' }, opts.range ? { range: opts.range } : {});
     const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: cfg.keyId, secret: cfg.secret, date });
     const url = 'https://' + host + enc(path, true) + (s.query ? '?' + s.query : '');
     try {
       const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), redirect: 'manual', signal: AbortSignal.timeout(30000) });
       const text = method === 'HEAD' ? '' : await res.text().catch(() => '');
-      return { url, signedFor: r, status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'), size: +(res.headers.get && res.headers.get('content-length')) || null,
+      const total = /\/(\d+)$/.exec((res.headers.get && res.headers.get('content-range')) || ''); // a ranged GET: the object's whole size
+      return { url, signedFor: r, status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'), size: total ? +total[1] : (+(res.headers.get && res.headers.get('content-length')) || null),
         bucketRegion: (res.headers.get && res.headers.get('x-amz-bucket-region')) || xmlText(text, 'Region') || null,
         prefixes: xmlAll(text, 'CommonPrefixes').map(p => xmlText(p, 'Prefix')).slice(0, 5), keys: xmlAll(text, 'Contents').map(c => xmlText(c, 'Key')).slice(0, 5), bytes: method === 'HEAD' ? null : text.length };
     } catch (e) { return { url, signedFor: r, error: e.message }; }
@@ -415,9 +416,10 @@ function createArchive(deps) {
     // files that are known to exist: a documented node-data file, and the docs' own example in the market-data bucket.
     // GetObject answering here while the reads above don't means the archive lags, not a permission
     const known = {}; const KNOWN_NODE = 'node_fills_by_block/hourly/20260918/9.lz4', KNOWN_DOCS = { bucket: 'hyperliquid-archive', key: 'market_data/20230916/9/l2Book/SOL.lz4' };
-    known[cfg.bucket + '/' + KNOWN_NODE] = await s3.probe('HEAD', '/' + KNOWN_NODE, {});
+    const R = { range: 'bytes=0-63' }; // a few bytes: enough to see the answer and its error code
+    known[cfg.bucket + '/' + KNOWN_NODE] = await s3.probe('GET', '/' + KNOWN_NODE, {}, null, R);
     try { const other = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: KNOWN_DOCS.bucket, fetchImpl: deps.fetchImpl, now: deps.now });
-      let p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}); if (!p.ok && p.bucketRegion) p = await other.probe('HEAD', '/' + KNOWN_DOCS.key, {}, p.bucketRegion);
+      let p = await other.probe('GET', '/' + KNOWN_DOCS.key, {}, null, R); if (!p.ok && p.bucketRegion) p = await other.probe('GET', '/' + KNOWN_DOCS.key, {}, p.bucketRegion, R);
       known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = p; } catch (e) { known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key] = { error: e.message }; }
     out.steps.knownObjects = known;
     out.steps.ownBuckets = await listOwnBuckets(cfg, deps.fetchImpl, deps.now);
@@ -425,20 +427,22 @@ function createArchive(deps) {
     // requester-pays file from another owner (arXiv). Cross-account reads in general vs requester pays in particular.
     const refs = {}; const REFS = [{ bucket: 'noaa-ghcn-pds', key: 'readme.txt', rp: false }, { bucket: 'arxiv', key: 'pdf/arXiv_pdf_manifest.xml', rp: true }];
     for (const r of REFS) { try { const c = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: r.bucket, fetchImpl: deps.fetchImpl, now: deps.now });
-        let p = await c.probe('HEAD', '/' + r.key, {}); if (!p.ok && p.bucketRegion) p = await c.probe('HEAD', '/' + r.key, {}, p.bucketRegion);
+        let p = await c.probe('GET', '/' + r.key, {}, null, R); if (!p.ok && p.bucketRegion) p = await c.probe('GET', '/' + r.key, {}, p.bucketRegion, R);
         refs[r.bucket + '/' + r.key + (r.rp ? ' (requester pays)' : ' (public)')] = p; } catch (e) { refs[r.bucket + '/' + r.key] = { error: e.message }; } }
     // the public file two more ways: with no signature at all (the network and the bucket), and signed
     // without the requester-pays header (whether that header is what gets refused)
     try { const fetchFn = deps.fetchImpl || ((...a) => globalThis.fetch(...a)); const res = await fetchFn('https://' + REFS[0].bucket + '.s3.amazonaws.com/' + REFS[0].key, { method: 'HEAD', signal: AbortSignal.timeout(30000) });
       refs['the same, unsigned'] = { status: res.status, ok: res.ok }; } catch (e) { refs['the same, unsigned'] = { error: e.message }; }
     try { const c = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: REFS[0].bucket, fetchImpl: deps.fetchImpl, now: deps.now });
-      refs['the same, signed without the requester-pays header'] = await c.probe('HEAD', '/' + REFS[0].key, {}, null, { noPayer: true }); } catch (e) { refs['the same, signed without the requester-pays header'] = { error: e.message }; }
+      refs['the same, signed without the requester-pays header'] = await c.probe('GET', '/' + REFS[0].key, {}, null, { noPayer: true, range: R.range }); } catch (e) { refs['the same, signed without the requester-pays header'] = { error: e.message }; }
     out.steps.referenceReads = refs;
     const refPublic = refs[REFS[0].bucket + '/' + REFS[0].key + ' (public)'], refRP = refs[REFS[1].bucket + '/' + REFS[1].key + ' (requester pays)'];
     const refAnon = refs['the same, unsigned'], refNoPayer = refs['the same, signed without the requester-pays header'];
     const kn = known[cfg.bucket + '/' + KNOWN_NODE], kd = known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key], ob = out.steps.ownBuckets;
     const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset, rn = byName[cfg.prefix], ra = byName[alt];
+    const sigBad = [refPublic, refNoPayer, kn, kd].some(x => x && x.code === 'SignatureDoesNotMatch');
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
+      : sigBad ? 'S3 rejects the signature of object reads (SignatureDoesNotMatch) while the service endpoint accepts it: a signing fault in Ledger’s S3 client for this request shape — report this output'
       : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
       : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
       : rn.ok ? 'listing is not allowed on this bucket, but its files can be read by name (' + rn.key + ', ' + rn.size + ' bytes): the check and the backfill work that way, nothing to change'
