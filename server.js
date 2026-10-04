@@ -848,6 +848,10 @@ function createApp(opts) {
         const old = readFillCache(w.address), cache = body.full ? null : old;
         const since = (cache && cache.last) ? cache.last : 0; // resume AT the watermark — dedupe below handles the overlap, boundary-ms fills are never skipped
         const fr = await E.fetchAllFills(w.address, since);
+        // a cache from before TWAP slices were paged: fetch the whole slice history once (it is older than
+        // the watermark) and mark the file, so later refreshes stay incremental
+        let twapFull = !cache || !!cache.twapFull;
+        if (cache && !twapFull) { try { const tw = await E.fetchTwapFills(w.address, 0); fr.fills.push(...tw.fills); twapFull = !tw.partial; } catch (e) {} }
         let fills;
         if (body.full && old && old.fills && old.fills.length) {
           const got = new Map(fr.fills.map(f => [fillId(f), f])), oldest = fr.fills.reduce((m, f) => f.time < m ? f.time : m, Infinity);
@@ -865,7 +869,7 @@ function createApp(opts) {
         } else { fills = fr.fills; res.newFills = fills.length; res.truncated = !!fr.truncated; }
         const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
         // nothing new: leave the file alone (re-gzipping a big history on every refresh blocks the server)
-        if (!cache || body.full || res.newFills || res.truncated !== !!cache.truncated) { fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, fills }); }
+        if (!cache || body.full || res.newFills || res.truncated !== !!cache.truncated || twapFull !== !!cache.twapFull) { fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, twapFull, fills }); }
         res.fills = fills.length;
 
         // funding and capital flows: only what's new since the cached watermark (unless a full

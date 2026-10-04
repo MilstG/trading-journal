@@ -1486,12 +1486,11 @@ function renderReconcile(){
     // already shown quietly by the per-line "recon" tag — the banner is reserved for the
     // case where enough trades are missing/mis-attributed to actually distort analytics.
     const material=pd!=null && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05);
-    if(material){
+    // seams explain the gap and the data-health line says so: no second banner for the same thing
+    const seams=!!(dataCoverage&&dataCoverage.gaps>0);
+    if(material&&!seams){
       wEl.classList.remove('hide');
-      const seams=dataCoverage&&dataCoverage.gaps>0;
-      wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. `+
-        (seams?`The exchange no longer serves the fills behind ${dataCoverage.gaps} position change${dataCoverage.gaps===1?'':'s'} (see Data health), so the gap can’t be closed: the all-time Net PnL card shows the verified figure; every other number is built from the fills that remain.`
-          :`Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`);
+      wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`;
     } else wEl.classList.add('hide');
   }
   if(activeTab==='diag' || (hlPnl.all==null && hlPnl.perp==null)){ el.classList.add('hide'); return; }
@@ -1499,7 +1498,6 @@ function renderReconcile(){
     return `<span style="font-size:10.5px;color:${mat?'var(--gold)':'var(--faint)'}" data-tip="Reconstructed-from-fills total minus Hyperliquid's figure. Small gaps are normal for spot (cost basis on transferred/airdropped tokens can't be rebuilt from fills). A large gap means some trades' PnL isn't captured — trust the Verified number.">recon ${d>=0?'+':''}${fmtUsd(d)}</span>`; };
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;
   el.classList.remove('hide');
-  el.innerHTML=`<span class="rlab">Verified · Hyperliquid all-time</span>`+
-    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot))+
-    `<span class="rnote">These are Hyperliquid's own account PnL figures, as its app reports them. "recon" is how far the fill-based reconstruction below is from each one; a large recon gap means the per-trade analytics are missing PnL, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic (measured against cumulative PnL, so deposits and withdrawals don't distort it).</span>`;
+  el.innerHTML=`<span class="rlab" data-tip="Hyperliquid's own account P&L figures, as its app reports them — always all time, whatever period or filter is picked above. “recon” is how far the fill-based sum is from each; a large gap means fills are missing, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic.">Verified · Hyperliquid all-time · doesn’t follow the period</span>`+
+    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot));
 }

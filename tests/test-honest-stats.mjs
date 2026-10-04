@@ -134,7 +134,8 @@ t('max drawdown % is labeled as a share of best cumulative profit, not "off peak
 t('the Verified strip says the number is Hyperliquid’s and recon is the gap to it', () => {
   ok(!html.includes('matches the app exactly'));
   const src = grabFn('renderReconcile');
-  ok(src.includes("These are Hyperliquid's own account PnL figures") && src.includes('"recon" is how far the fill-based reconstruction below is from each one'));
+  ok(src.includes("Hyperliquid's own account P&L figures") && src.includes('“recon” is how far the fill-based sum is from each'));
+  ok(src.includes('doesn’t follow the period'), 'the strip says it is all time, whatever period is picked');
 });
 
 console.log('\nBreak-even band');
