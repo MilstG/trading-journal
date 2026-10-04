@@ -626,7 +626,7 @@ function createArchive(deps) {
     const sigBad = [refPublic, refNoPayer, kn, kd].some(x => x && x.code === 'SignatureDoesNotMatch');
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
       : sigBad ? 'S3 rejects the signature of object reads (SignatureDoesNotMatch) while the service endpoint accepts it: a signing fault in Ledger’s S3 client for this request shape — report this output'
-      : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
+      : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)') + (out.steps.ownBuckets && !out.steps.ownBuckets.ok ? '; the denials below on other buckets are expected: this key is scoped to the archive, which is the right setup' : '')
       : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
       : rn.ok ? 'listing is not allowed on this bucket, but its files can be read by name (' + rn.key + ', ' + rn.size + ' bytes): the check and the backfill work that way, nothing to change'
       : ra.ok ? 'listing is not allowed, and ' + cfg.prefix + ' has no file for yesterday noon, but ' + alt + ' has (' + ra.key + '): set ARCHIVE_PREFIX=' + alt + ' on the server'
