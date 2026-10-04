@@ -93,7 +93,7 @@ function s3Client(cfg) {
     try {
       const res = await fetchFn(url, { method, headers: Object.assign({ Authorization: s.authorization }, headers), redirect: 'manual', signal: AbortSignal.timeout(30000) });
       const text = method === 'HEAD' ? '' : await res.text().catch(() => '');
-      return { url, signedFor: r, status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'),
+      return { url, signedFor: r, status: res.status, ok: res.ok, code: xmlText(text, 'Code'), message: xmlText(text, 'Message'), size: +(res.headers.get && res.headers.get('content-length')) || null,
         bucketRegion: (res.headers.get && res.headers.get('x-amz-bucket-region')) || xmlText(text, 'Region') || null,
         prefixes: xmlAll(text, 'CommonPrefixes').map(p => xmlText(p, 'Prefix')).slice(0, 5), keys: xmlAll(text, 'Contents').map(c => xmlText(c, 'Key')).slice(0, 5), bytes: method === 'HEAD' ? null : text.length };
     } catch (e) { return { url, signedFor: r, error: e.message }; }
@@ -251,29 +251,70 @@ function createArchive(deps) {
   const need = () => { if (!configured) { const e = new Error('the archive isn’t configured: set ARCHIVE_AWS_KEY_ID and ARCHIVE_AWS_SECRET on the server (an AWS key with s3:GetObject and s3:ListBucket on ' + cfg.bucket + ')'); e.code = 503; throw e; } };
   const gb = b => b / 1073741824, cost = b => +(gb(b) * cfg.costPerGB).toFixed(2);
   let lastCheck = null, job = null;
-  const dayCache = new Map(); // day -> [{key,size,hour}]
+  // Reading by name when listing is refused. The archive's keys are predictable
+  // ({prefix}{YYYYMMDD}/{hour}), so a bucket policy that allows GetObject but not ListBucket still
+  // lets the exact hours be read: the naming variant (hour padded or not, an .lz4 suffix or not) is
+  // learned from the first file that answers and kept. Without ListBucket, S3 answers 403 for a key
+  // that doesn't exist, so "not 200" is read as "not there".
+  let noList = false, naming = null;
+  const NAMINGS = [{ pad: false, ext: '' }, { pad: false, ext: '.lz4' }, { pad: true, ext: '' }, { pad: true, ext: '.lz4' }];
+  const keyFor = (prefix, day, hour, nm) => prefix + day + '/' + (nm.pad ? String(hour).padStart(2, '0') : String(hour)) + nm.ext;
+  const headCache = new Map(); // key -> {key,size,hour} | null
+  async function headHour(day, hour, prefix) {
+    prefix = prefix || cfg.prefix; const ck = prefix + day + '/' + hour;
+    if (headCache.has(ck)) return headCache.get(ck);
+    let found = null;
+    for (const nm of (naming ? [naming] : NAMINGS)) {
+      const key = keyFor(prefix, day, hour, nm), r = await s3.probe('HEAD', '/' + key, {});
+      if (r.ok) { if (prefix === cfg.prefix) naming = nm; found = { key, size: r.size || 0, hour }; break; }
+    }
+    headCache.set(ck, found); return found;
+  }
+  const dayCache = new Map(); // day -> [{key,size,hour}] (listing mode)
   const hourNum = key => { const m = /\/(\d{1,2})(?:\.[A-Za-z0-9]+)?$/.exec(key); return m ? +m[1] : null; };
-  async function dayKeys(day) {
-    if (dayCache.has(day)) return dayCache.get(day);
-    const r = await s3.list(cfg.prefix + day + '/');
-    const rows = r.keys.map(k => ({ key: k.key, size: k.size, hour: hourNum(k.key) })).filter(k => k.hour != null);
-    dayCache.set(day, rows); return rows;
+  const denied = e => e && (e.code === 'AccessDenied' || e.status === 403);
+  // the objects for a day's hours (all of them, or the ones wanted): listed when the bucket allows it, read by name when it doesn't
+  async function dayKeys(day, hoursWanted) {
+    if (!noList) {
+      if (dayCache.has(day)) return dayCache.get(day);
+      try { const r = await s3.list(cfg.prefix + day + '/'); const rows = r.keys.map(k => ({ key: k.key, size: k.size, hour: hourNum(k.key) })).filter(k => k.hour != null); dayCache.set(day, rows); return rows; }
+      catch (e) { if (!denied(e)) throw e; noList = true; }
+    }
+    const rows = []; for (const h of (hoursWanted || Array.from({ length: 24 }, (_, i) => i))) { const k = await headHour(day, h); if (k) rows.push(k); }
+    return rows;
   }
-  // the archive's days, oldest and newest
+  const dayStr = ms => dayKeyOf(hourOf(ms));
+  // the archive's days: first and last from a listing, or — reading by name — the first day found by
+  // probing noon files month by month back from today (36 months at most), then day by day
   async function days() {
-    const r = await s3.list(cfg.prefix, '/', 20);
-    const ds = r.prefixes.map(p => p.slice(cfg.prefix.length).replace(/\/$/, '')).filter(d => /^\d{8}$/.test(d)).sort();
-    return { days: ds, first: ds[0] || null, last: ds[ds.length - 1] || null, truncated: r.truncated };
+    if (!noList) {
+      try { const r = await s3.list(cfg.prefix, '/', 20); const ds = r.prefixes.map(p => p.slice(cfg.prefix.length).replace(/\/$/, '')).filter(d => /^\d{8}$/.test(d)).sort();
+        return { days: ds, first: ds[0] || null, last: ds[ds.length - 1] || null, truncated: r.truncated, listed: true }; }
+      catch (e) { if (!denied(e)) throw e; noList = true; }
+    }
+    const now = (deps.now || Date.now)(), yesterday = dayStr(now - 86400e3);
+    if (!(await headHour(yesterday, 12))) { const e = new Error('S3 refuses both to list ' + cfg.bucket + '/' + cfg.prefix + ' and to read yesterday’s file by name (' + keyFor(cfg.prefix, yesterday, 12, NAMINGS[0]) + '): the key’s policy, or the bucket’s, allows neither'); e.code = 403; throw e; }
+    const d0 = new Date(now); let firstMonth = null, prevMonth = null;
+    for (let i = 0; i < 36; i++) { const m = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - i, 1)), ds = dayStr(m.getTime());
+      if (await headHour(ds, 12)) firstMonth = m; else { prevMonth = m; if (firstMonth) break; } }
+    let first = firstMonth ? dayStr(firstMonth.getTime()) : null;
+    if (firstMonth && prevMonth) { // the start is somewhere in the month before the first full one: find the day
+      let lo = prevMonth.getTime(), hi = firstMonth.getTime(); // lo: missing, hi: present
+      while (hi - lo > 86400e3) { const mid = lo + Math.floor((hi - lo) / 86400e3 / 2) * 86400e3; if (await headHour(dayStr(mid), 12)) hi = mid; else lo = mid; }
+      first = dayStr(hi);
+    }
+    return { days: null, first, last: yesterday, truncated: false, listed: false, note: 'listing is not allowed on this bucket; files are read by name, so the first day is found by probing and may be a day off' };
   }
+  const haveDay = (d, day) => d.days ? d.days.includes(day) : (d.first ? day >= d.first && day <= d.last : false);
   // the hours a wallet's seams need, which of them the archive has, their bytes and cost
-  async function plan(addr, fills, archiveDays) {
+  async function plan(addr, fills, d) {
     const sw = seamWindows(fills, deps.engine, { maxDays: cfg.maxDays });
-    const have = new Set(archiveDays), items = [], missing = [], byDay = {};
+    const items = [], missing = [], byDay = {};
     for (const h of sw.hours) (byDay[dayKeyOf(h)] = byDay[dayKeyOf(h)] || []).push(hourInDay(h));
     let listedDays = 0;
     for (const day of Object.keys(byDay).sort()) {
-      if (!have.has(day)) { for (const hr of byDay[day]) missing.push(day + '/' + hr); continue; }
-      const rows = await dayKeys(day); listedDays++;
+      if (!haveDay(d, day)) { for (const hr of byDay[day]) missing.push(day + '/' + hr); continue; }
+      const rows = await dayKeys(day, byDay[day]); listedDays++;
       for (const hr of byDay[day]) { const k = rows.find(x => x.hour === hr); if (k) items.push(k); else missing.push(day + '/' + hr); }
     }
     const bytes = items.reduce((s, k) => s + k.size, 0);
@@ -281,10 +322,11 @@ function createArchive(deps) {
   }
   async function check(wallets) {
     need();
-    const d = await days(); const out = { bucket: cfg.bucket, prefix: cfg.prefix, region: s3.region(), costPerGB: cfg.costPerGB, archive: d, sampleDay: null, wallets: [] };
-    if (d.last) { const rows = await dayKeys(d.last); const bytes = rows.reduce((s, k) => s + k.size, 0); out.sampleDay = { day: d.last, hours: rows.length, bytes, perHour: rows.length ? Math.round(bytes / rows.length) : 0, firstKey: rows[0] && rows[0].key }; }
+    const d = await days(); const out = { bucket: cfg.bucket, prefix: cfg.prefix, region: s3.region(), costPerGB: cfg.costPerGB, archive: d, noList, sampleDay: null, wallets: [] };
+    if (d.last) { const rows = await dayKeys(d.last, noList ? [0, 6, 12, 18] : null); const bytes = rows.reduce((s, k) => s + k.size, 0);
+      out.sampleDay = { day: d.last, hours: rows.length, bytes, perHour: rows.length ? Math.round(bytes / rows.length) : 0, firstKey: rows[0] && rows[0].key, sampled: noList }; }
     for (const w of wallets || []) {
-      try { const p = await plan(w.address, w.fills || deps.readFills(w.address) || [], d.days); delete p.items; out.wallets.push(p); }
+      try { const p = await plan(w.address, w.fills || deps.readFills(w.address) || [], d); delete p.items; out.wallets.push(p); }
       catch (e) { out.wallets.push({ address: w.address, error: e.message }); }
     }
     lastCheck = Object.assign({ at: Date.now() }, out); return out;
@@ -294,7 +336,8 @@ function createArchive(deps) {
     need(); o = o || {};
     let key = o.key;
     if (!key) { const d = o.day || (await days()).last; if (!d) throw Object.assign(new Error('the archive has no days under ' + cfg.prefix), { code: 404 });
-      const rows = await dayKeys(d); const k = o.hour != null ? rows.find(x => x.hour === +o.hour) : rows[0]; if (!k) throw Object.assign(new Error('no file for ' + d + '/' + (o.hour != null ? o.hour : '*')), { code: 404 }); key = k.key; }
+      const hr = o.hour != null ? +o.hour : 12, rows = await dayKeys(d, [hr]); const k = rows.find(x => x.hour === hr) || rows[0];
+      if (!k) throw Object.assign(new Error('no file for ' + d + '/' + hr), { code: 404 }); key = k.key; }
     const buf = await s3.get(key, { maxBytes: 512 * 1024 * 1024 }), dec = decodeObject(buf);
     const res = { key, bytes: buf.length, encoding: dec.encoding, textBytes: Buffer.byteLength(dec.text), preview: dec.text.slice(0, 1500), wallets: {} };
     for (const a of (o.addresses || [])) { const x = extractFills(dec.text, a); res.wallets[a] = { fills: x.fills.length, first: x.fills[0] || null }; res.lines = x.lines; res.parsed = x.parsed; res.fillsSeen = x.seen; res.shapes = x.shapes; }
@@ -307,7 +350,7 @@ function createArchive(deps) {
     if (job && job.state === 'running') throw Object.assign(new Error('a backfill is already running'), { code: 409 });
     const addr = String(o.address || '').toLowerCase(), fills = deps.readFills(addr) || [];
     if (!fills.length) throw Object.assign(new Error('no server fill cache for ' + addr + ' — refresh it first'), { code: 404 });
-    const d = await days(), p = await plan(addr, fills, d.days);
+    const d = await days(), p = await plan(addr, fills, d);
     const maxGB = parseFloat(o.maxGB) > 0 ? parseFloat(o.maxGB) : 2; // GB; the caller's cap, however small
     if (gb(p.bytes) > maxGB) throw Object.assign(new Error('the plan is ' + p.estGB + ' GB (about $' + p.estCost + ') — over the ' + maxGB + ' GB budget; raise maxGB to go ahead'), { code: 413, plan: Object.assign({}, p, { items: undefined }) });
     const items = p.items.slice();
@@ -329,8 +372,10 @@ function createArchive(deps) {
     })().catch(e => { cur.state = 'failed'; cur.lastError = e.message; cur.finishedAt = Date.now(); });
     return job;
   }
-  // Five probes with their raw answers, for when a check fails and the reason isn't on the error: who
-  // the key is, the bucket's region, a listing of the bucket root, of the dataset, and one object read.
+  // The probes with their raw answers, for when a check fails and the reason isn't on the error: who
+  // the key is, the bucket's region, a listing of the bucket root, of the dataset and of the other
+  // one, and a read by name of yesterday's noon file under each — the case where the bucket's policy
+  // allows GetObject but not ListBucket.
   async function diagnose() {
     need();
     const out = { keyId: cfg.keyId.slice(0, 4) + '…' + cfg.keyId.slice(-4), bucket: cfg.bucket, prefix: cfg.prefix, regionSetting: cfg.region || '(learned)', steps: {} };
@@ -339,25 +384,30 @@ function createArchive(deps) {
     const learned = out.steps.headBucket.bucketRegion; if (learned && !cfg.region) s3.setRegion(learned);
     out.steps.listRoot = await s3.probe('GET', '/', { 'list-type': '2', delimiter: '/', 'max-keys': '5' });
     out.steps.listDataset = await s3.probe('GET', '/', { 'list-type': '2', prefix: cfg.prefix, delimiter: '/', 'max-keys': '5' });
-    // the other dataset too: a bucket policy that allows one prefix and not the other shows up here
     const alt = /node_fills_by_block/.test(cfg.prefix) ? 'node_fills/hourly/' : 'node_fills_by_block/hourly/';
     out.steps['list:' + alt] = await s3.probe('GET', '/', { 'list-type': '2', prefix: alt, delimiter: '/', 'max-keys': '5' });
     const day = out.steps.listDataset.prefixes && out.steps.listDataset.prefixes[0];
     if (day) { const hours = await s3.probe('GET', '/', { 'list-type': '2', prefix: day, 'max-keys': '3' }); out.steps.listDay = hours;
-      const key = hours.keys && hours.keys[0]; if (key) { const g = await s3.probe('HEAD', '/' + key, {}); out.steps.headObject = g; } }
-    // a one-line reading of it
-    const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset;
+      const key = hours.keys && hours.keys[0]; if (key) out.steps.headObject = await s3.probe('HEAD', '/' + key, {}); }
+    // by name: yesterday at noon, under both datasets, every naming variant
+    const yesterday = dayStr((deps.now || Date.now)() - 86400e3); const byName = {};
+    for (const pfx of [cfg.prefix, alt]) { headCache.clear(); const was = naming; naming = null; const k = await headHour(yesterday, 12, pfx); if (pfx !== cfg.prefix) naming = was;
+      byName[pfx] = k ? { ok: true, key: k.key, size: k.size } : { ok: false, tried: NAMINGS.map(nm => keyFor(pfx, yesterday, 12, nm)) }; }
+    out.steps.readByName = byName;
+    const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset, rn = byName[cfg.prefix], ra = byName[alt];
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
       : ld.ok ? 'everything answers: the archive is readable with this key' + (lr.ok ? '' : ' (the bucket root alone is not listable, which is fine)')
       : ld.code === 'AccessDenied' && out.steps['list:' + alt].ok ? 'this key can read the archive, but not under ' + cfg.prefix + ' — the bucket allows ' + alt + ': set ARCHIVE_PREFIX=' + alt + ' on the server'
-      : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses to list ' + cfg.bucket + '/' + cfg.prefix + ' for it: either that identity has no policy allowing s3:ListBucket on this bucket, or the bucket’s own policy does not allow it. Check IAM → Users → the user named in that ARN → Permissions'
+      : rn.ok ? 'listing is not allowed on this bucket, but its files can be read by name (' + rn.key + ', ' + rn.size + ' bytes): the check and the backfill work that way, nothing to change'
+      : ra.ok ? 'listing is not allowed, and ' + cfg.prefix + ' has no file for yesterday noon, but ' + alt + ' has (' + ra.key + '): set ARCHIVE_PREFIX=' + alt + ' on the server'
+      : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses both to list ' + cfg.bucket + ' and to read ' + keyFor(cfg.prefix, yesterday, 12, NAMINGS[0]) + ' by name for it: either that identity has no policy allowing s3:GetObject and s3:ListBucket on this bucket, or the bucket’s own policy does not allow it. Check IAM → Users → the user named in that ARN → Permissions'
       : ld.bucketRegion && ld.bucketRegion !== ld.signedFor ? 'the bucket is in ' + ld.bucketRegion + ' but the request was signed for ' + ld.signedFor + ': set ARCHIVE_REGION=' + ld.bucketRegion
       : 'S3 answered ' + (ld.code || ld.status || ld.error) + (ld.message ? ': ' + ld.message : '');
     return out;
   }
   function stop() { if (job && job.state === 'running') { job.state = 'stopped'; job.finishedAt = Date.now(); } return job; }
-  const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, lastCheck, job });
-  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, archiveDays) => { need(); return plan(addr, fills, archiveDays); } };
+  const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, noList, naming, lastCheck, job });
+  return { configured, cfg, check, sample, backfill, stop, status, diagnose, plan: (addr, fills, d) => { need(); return plan(addr, fills, d); } };
 }
 
 module.exports = { signV4, s3Client, callerIdentity, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc };

@@ -115,12 +115,15 @@ const day0 = DAY(T0), hours0 = [8, 9, 10, 11, 12, 13, 14];
 for (const h of hours0) objects['node_fills/hourly/' + day0 + '/' + h] = Buffer.from(hourLine(Date.UTC(2026, 5, 15, h), [['0x' + '3'.repeat(40), { coin: 'SOL', px: '1', sz: '1', side: 'B', time: Date.UTC(2026, 5, 15, h), tid: 1, oid: 1 }]]) + '\n');
 objects['node_fills/hourly/' + day0 + '/12'] = Buffer.from(hourLine(T0 + 2 * H, [[ADDR, lostFill], ['0x' + '3'.repeat(40), { coin: 'SOL', px: '1', sz: '1', side: 'B', time: T0 + 2 * H, tid: 1, oid: 1 }]]) + '\n');
 objects['node_fills/hourly/20260614/5'] = Buffer.from(LINKED, 'base64');
+objects['node_fills/hourly/20260601/12'] = Buffer.from(hourLine(Date.UTC(2026, 5, 1, 12), []) + '\n');
+let DENY_LIST = false; // a bucket policy that allows GetObject but not ListBucket
 const s3Calls = [];
 const xmlEsc = s => s.replace(/&/g, '&amp;');
 function fakeS3(url, init) {
   const u = new URL(url); s3Calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers.Authorization, payer: init.headers['x-amz-request-payer'] });
   if (!/^AWS4-HMAC-SHA256 Credential=AKIATEST\//.test(init.headers.Authorization || '')) return new Response('<Error><Code>AccessDenied</Code><Message>bad key</Message></Error>', { status: 403 });
   if (u.pathname === '/') { // ListObjectsV2
+    if (DENY_LIST && init.method !== 'HEAD') return new Response('<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>', { status: 403 });
     const prefix = u.searchParams.get('prefix') || '', delim = u.searchParams.get('delimiter');
     const keys = Object.keys(objects).filter(k => k.startsWith(prefix)).sort();
     let body = '<ListBucketResult><IsTruncated>false</IsTruncated>';
@@ -129,7 +132,7 @@ function fakeS3(url, init) {
     return new Response(body + '</ListBucketResult>', { status: 200 });
   }
   const key = decodeURIComponent(u.pathname.slice(1)); const b = objects[key];
-  if (!b) return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
+  if (!b) return new Response('<Error><Code>' + (DENY_LIST ? 'AccessDenied' : 'NoSuchKey') + '</Code></Error>', { status: DENY_LIST ? 403 : 404 }); // without ListBucket, S3 hides a missing key behind 403
   if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(b.length) } });
   return new Response(b, { status: 200, headers: { 'content-length': String(b.length) } });
 }
@@ -162,7 +165,7 @@ try {
   await t('check: the archive’s days, a day’s size, and the wallet’s seam plan with bytes and cost', async () => {
     const r = await call(base, '/api/v1/archive/check', { wallets: [ADDR] });
     eq(r.status, 200, JSON.stringify(r.body));
-    eq([r.body.archive.first, r.body.archive.last], ['20260614', day0]);
+    eq([r.body.archive.first, r.body.archive.last], ['20260601', day0]);
     eq(r.body.sampleDay.hours, 7);
     const w = r.body.wallets[0]; eq(w.address, ADDR); eq([w.seams, w.hours], [1, 4]); eq(w.missing, []);
     ok(w.bytes > 0 && w.estCost === +((w.bytes / 1073741824) * 1).toFixed(2));
@@ -182,7 +185,7 @@ try {
   await t('diagnose: each probe reports, and the verdict reads the archive as readable', async () => {
     const r = await call(base, '/api/v1/archive/diagnose', {});
     eq(r.status, 200, JSON.stringify(r.body)); ok(/readable/.test(r.body.verdict), r.body.verdict);
-    ok(r.body.steps.listDataset.ok && r.body.steps.listDataset.prefixes.length === 2, JSON.stringify(r.body.steps.listDataset));
+    ok(r.body.steps.listDataset.ok && r.body.steps.listDataset.prefixes.length === 3, JSON.stringify(r.body.steps.listDataset));
     ok(r.body.steps.identity && (r.body.steps.identity.status || r.body.steps.identity.error), 'STS was asked');
     eq(r.body.steps.headObject.status, 200);
   });
@@ -202,5 +205,31 @@ try {
     eq(again.body.total, 0, 'no seams left, nothing to download');
   });
 } finally { app.close(); }
+
+console.log('\nWhen the bucket refuses to be listed');
+await t('the archive is read by name: the first day is found by probing, the seam’s hours are read, the backfill works', async () => {
+  DENY_LIST = true; s3Calls.length = 0;
+  const dir2 = mkdtempSync(join(tmpdir(), 'ledger-archive2-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir2, 'fills'), { recursive: true });
+  writeFileSync(join(dir2, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  const app2 = createApp({ dataDir: dir2, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit' }, now: () => Date.UTC(2026, 5, 16, 9) }); // "yesterday" is the day with the seam
+  const b2 = await listen(app2);
+  try {
+    const d = await call(b2, '/api/v1/archive/diagnose', {});
+    ok(/read by name/.test(d.body.verdict), d.body.verdict); ok(d.body.steps.readByName['node_fills/hourly/'].ok);
+    const r = await call(b2, '/api/v1/archive/check', { wallets: [ADDR] });
+    eq(r.status, 200, JSON.stringify(r.body)); eq(r.body.noList, true);
+    eq([r.body.archive.first, r.body.archive.last, r.body.archive.days], ['20260601', day0, null]);
+    const w = r.body.wallets[0]; eq([w.seams, w.hours, w.missing.length], [1, 4, 0]); ok(w.bytes > 0);
+    ok(s3Calls.filter(c => c.path === '/' && c.q['list-type']).length >= 1, 'listing was tried once'); ok(!s3Calls.some(c => c.q.prefix && c.q.prefix.includes('2026061') && c.q['list-type'] && s3Calls.indexOf(c) > 3), 'then never again');
+    const bf = await call(b2, '/api/v1/archive/backfill', { address: ADDR, maxGB: 1 });
+    eq(bf.status, 202);
+    let st; for (let i = 0; i < 100; i++) { st = (await call(b2, '/api/v1/archive')).body; if (st.job.state !== 'running') break; await new Promise(x => setTimeout(x, 30)); }
+    eq([st.job.state, st.job.done, st.job.fills, st.job.added], ['done', 4, 1, 1]);
+    eq(st.naming, { pad: false, ext: '' });
+  } finally { app2.close(); DENY_LIST = false; }
+});
 
 report();
