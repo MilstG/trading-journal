@@ -1449,9 +1449,8 @@ function renderDataHealth(){
   if(cov&&cov.gaps){
     const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const when=Object.entries(cov.months||{}).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k])=>MON[+k.slice(5,7)-1]+' '+k.slice(0,4));
-    items.push('Hyperliquid no longer serves every fill'+(cov.wallets&&cov.wallets.length?' for '+cov.wallets.map(esc).join(', '):'')+': '+cov.gaps+' position change'+(cov.gaps===1?'':'s')+' (≈'+fmtUsd(cov.gapNotional,0)+' of size) happened in fills it doesn’t return'+(when.length?', mostly '+when.join(', '):'')+
-      (cov.perpShare!=null?' — the fills it serves explain '+Math.round(cov.perpShare*100)+'% of your perp volume':'')+'. TWAP slice fills are kept for about three months and older history ages out, so a refetch can’t bring them back; every load from now on caches what is still served. '+
-      cov.offRecord+' trade'+(cov.offRecord===1?'':'s')+' closed or shrank off the record and '+(cov.offRecord===1?'is':'are')+' kept out of the stats; the Verified figures are the exchange’s own and complete');
+    items.push('<span data-tip="Hyperliquid keeps TWAP slice fills for about three months and older fills for a finite time. A perp fill that starts from a position no earlier fill reaches proves fills are missing in between. Their P&L can’t be rebuilt and no refetch brings them back; from now on every load caches what is still served. See Help → Data health.">fills missing'+(cov.wallets&&cov.wallets.length?' for '+cov.wallets.map(esc).join(', '):'')+': '+cov.gaps+' position change'+(cov.gaps===1?'':'s')+(when.length?' (mostly '+when.join(', ')+')':'')+
+      (cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+' · '+cov.offRecord+' trade'+(cov.offRecord===1?'':'s')+' with an unknown result kept out of the stats</span>');
   }
   if(_fetchHealth.ledger)items.push('capital-flow history partial — return-on-capital may be incomplete');
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
@@ -1461,23 +1460,12 @@ function renderDataHealth(){
   el.classList.remove('hide');
   el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ');
 }
-// The all-time Net PnL headline when the fills can't tell the whole story: Hyperliquid's own P&L
-// for the view (what its app and trackers such as Hyperdash show; unrealized included) with the
-// fill-based sum beside it. Only for all time — the one window the exchange reports — with every
-// dex in view, and only when seams were found or, in the perp view, the two differ materially;
-// otherwise null, and the fills stand on their own. Spot's verified figure is the whole account's
-// minus perps, and it always differs from the fills (unsold holdings, airdrops, transferred tokens),
-// so a wallet with whole fills keeps its fill-based spot and combined headline.
+// The Net PnL card's all-time headline (engine.js: verifiedFigure), only when nothing narrows the
+// stats cards: all time (no period, no custom range) with every dex in view. A 30-day period, a
+// date range or a dex filter shows the fill-based figure for that window, as every other card does.
 function verifiedHeadline(){
-  if(period||dexView!=='all')return null;
-  const all=hlPnl.all, perp=hlPnl.perp;
-  const ver=view==='perp'?perp:view==='spot'?((all!=null&&perp!=null)?all-perp:null):all;
-  if(ver==null)return null;
-  const hl=allTrades.filter(t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&!t.isOpen&&(view==='combined'||t.market===view));
-  const rec=hl.reduce((s,t)=>s+t.net,0);
-  const seams=!!(dataCoverage&&dataCoverage.gaps>0);
-  if(!seams&&!(view==='perp'&&Math.abs(rec-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
-  return {ver,rec,seams,n:hl.length,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(view==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
+  if(period||rangeActive()||dexView!=='all')return null;
+  return verifiedFigure(view);
 }
 function renderReconcile(){
   renderDataHealth();
@@ -1502,7 +1490,7 @@ function renderReconcile(){
       wEl.classList.remove('hide');
       const seams=dataCoverage&&dataCoverage.gaps>0;
       wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. `+
-        (seams?`Hyperliquid no longer serves the fills behind ${dataCoverage.gaps} position change${dataCoverage.gaps===1?'':'s'} (TWAP slices older than about three months, and history past its retention), so no refetch can close this gap: the Net PnL headline shows the verified figure, and the per-trade analytics cover the fills that remain.`
+        (seams?`The exchange no longer serves the fills behind ${dataCoverage.gaps} position change${dataCoverage.gaps===1?'':'s'} (see Data health), so the gap can’t be closed: the all-time Net PnL card shows the verified figure; every other number is built from the fills that remain.`
           :`Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`);
     } else wEl.classList.add('hide');
   }

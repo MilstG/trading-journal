@@ -104,6 +104,22 @@ t('served volume against the exchange’s own, seams by month, closed off-record
   eq(ctx.coverageOf(fills, [], null).perpShare, null, 'no exchange volume, no share');
 });
 
+console.log('\nThe verified figure (journal card and Daruma tile)');
+t('leads only with seams, or a material perp gap; spot and combined keep whole fills on their own', () => {
+  vm.runInContext(grabFn('verifiedFigure') + '\nconst candleVenue=t=>t.venue&&t.venue!=="hyperliquid"?t.venue:"";', ctx);
+  const closed = (market, net, extra) => Object.assign({ market, net, isOpen: false, closeTime: T0 }, extra);
+  ctx.allTrades = [closed('perp', 100), closed('perp', 50, { offRecord: true }), closed('spot', 10), closed('perp', 999, { venue: 'lighter' })];
+  ctx.hlPnl = { all: 10000, perp: 150 }; ctx.dataCoverage = null;
+  eq(ctx.verifiedFigure('perp'), null, 'perp within tolerance: fills stand');
+  eq(ctx.verifiedFigure('spot'), null, 'spot always differs, never on its own'); eq(ctx.verifiedFigure('combined'), null);
+  ctx.hlPnl = { all: 10000, perp: 50000 };
+  const v = ctx.verifiedFigure('perp'); eq([v.ver, v.rec, v.n, v.seams], [50000, 100, 1, false], 'a material perp gap: the exchange’s figure, off-record and other venues’ trades out of the fill sum');
+  ctx.dataCoverage = { gaps: 3, perpShare: 0.4, allShare: 0.3 };
+  const c = ctx.verifiedFigure('combined'); eq([c.ver, c.rec, c.gaps, c.share], [10000, 110, 3, 0.3], 'with seams every market leads with the verified figure');
+  eq(ctx.verifiedFigure('spot').ver, 10000 - 50000);
+  ctx.hlPnl = { all: null, perp: null }; eq(ctx.verifiedFigure('perp'), null, 'nothing verified, nothing to lead with');
+});
+
 console.log('\nTWAP slice fills, paged by time');
 const slice = (time, i) => ({ fill: F('ETH', 'B', 1, 100, time, i), twapId: 1 });
 await t('pages until a short page, resumes AT the boundary, dedupes, honors since', async () => {

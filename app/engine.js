@@ -1264,6 +1264,23 @@ function dexPositions(){ return dexView==='all'?openPositions:openPositions.filt
 // while still open it stays in view, its result isn't final anyway. The same test is inlined wherever orphans
 // were already left out (coach, progress, pulse, fee tier, reconcile): those run in bare contexts in the tests.
 function viewFilter(t){ return !(t.orphan||(t.offRecord&&!t.isOpen)) && (view==='combined' ? true : t.market===view) && dexFilter(t); }
+// The all-time net the fills can't give: Hyperliquid's own P&L for a market ('perp', 'spot' or
+// 'combined' — what its app and trackers such as Hyperdash show, unrealized included) with the
+// fill-based sum beside it, when seams were found or, for perps, the two differ materially.
+// Otherwise null and the fills stand on their own: spot's verified figure is the whole account's
+// minus perps and always differs from the fills (unsold holdings, airdrops, transferred tokens).
+// Shared by the journal's Net PnL card and Daruma's Stats tile, so the two say the same thing;
+// each caller decides when the all-time, every-dex figure applies to what it shows.
+function verifiedFigure(mkt){
+  const all=hlPnl.all, perp=hlPnl.perp;
+  const ver=mkt==='perp'?perp:mkt==='spot'?((all!=null&&perp!=null)?all-perp:null):all;
+  if(ver==null)return null;
+  const hl=allTrades.filter(t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&!t.isOpen&&(mkt==='combined'||mkt==='all'||t.market===mkt));
+  const rec=hl.reduce((s,t)=>s+t.net,0);
+  const seams=!!(dataCoverage&&dataCoverage.gaps>0);
+  if(!seams&&!(mkt==='perp'&&Math.abs(rec-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
+  return {ver,rec,seams,n:hl.length,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
+}
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
 function inRange(t){ if(customRange.from!=null&&t.closeTime<customRange.from)return false; if(customRange.to!=null&&t.closeTime>customRange.to)return false; return true; }
