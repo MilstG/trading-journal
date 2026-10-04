@@ -85,9 +85,10 @@ function s3Client(cfg) {
   }
   const get = (key, opts) => request('GET', '/' + key, {}, Object.assign({ binary: true }, opts || {}));
   // one request, reported rather than thrown: status, S3's error code and message, the region it names
-  async function probe(method, path, query, regionOverride) {
+  async function probe(method, path, query, regionOverride, opts) {
+    opts = opts || {};
     const r = regionOverride || region || 'us-east-1', host = hostFor(r), date = new Date(now()), payloadHash = sha256('');
-    const headers = { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date), 'x-amz-request-payer': 'requester' };
+    const headers = Object.assign({ 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate(date) }, opts.noPayer ? {} : { 'x-amz-request-payer': 'requester' });
     const s = signV4({ method, host, path, query, headers, payloadHash, region: r, keyId: cfg.keyId, secret: cfg.secret, date });
     const url = 'https://' + host + enc(path, true) + (s.query ? '?' + s.query : '');
     try {
@@ -426,8 +427,15 @@ function createArchive(deps) {
     for (const r of REFS) { try { const c = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: r.bucket, fetchImpl: deps.fetchImpl, now: deps.now });
         let p = await c.probe('HEAD', '/' + r.key, {}); if (!p.ok && p.bucketRegion) p = await c.probe('HEAD', '/' + r.key, {}, p.bucketRegion);
         refs[r.bucket + '/' + r.key + (r.rp ? ' (requester pays)' : ' (public)')] = p; } catch (e) { refs[r.bucket + '/' + r.key] = { error: e.message }; } }
+    // the public file two more ways: with no signature at all (the network and the bucket), and signed
+    // without the requester-pays header (whether that header is what gets refused)
+    try { const fetchFn = deps.fetchImpl || ((...a) => globalThis.fetch(...a)); const res = await fetchFn('https://' + REFS[0].bucket + '.s3.amazonaws.com/' + REFS[0].key, { method: 'HEAD', signal: AbortSignal.timeout(30000) });
+      refs['the same, unsigned'] = { status: res.status, ok: res.ok }; } catch (e) { refs['the same, unsigned'] = { error: e.message }; }
+    try { const c = s3Client({ keyId: cfg.keyId, secret: cfg.secret, bucket: REFS[0].bucket, fetchImpl: deps.fetchImpl, now: deps.now });
+      refs['the same, signed without the requester-pays header'] = await c.probe('HEAD', '/' + REFS[0].key, {}, null, { noPayer: true }); } catch (e) { refs['the same, signed without the requester-pays header'] = { error: e.message }; }
     out.steps.referenceReads = refs;
     const refPublic = refs[REFS[0].bucket + '/' + REFS[0].key + ' (public)'], refRP = refs[REFS[1].bucket + '/' + REFS[1].key + ' (requester pays)'];
+    const refAnon = refs['the same, unsigned'], refNoPayer = refs['the same, signed without the requester-pays header'];
     const kn = known[cfg.bucket + '/' + KNOWN_NODE], kd = known[KNOWN_DOCS.bucket + '/' + KNOWN_DOCS.key], ob = out.steps.ownBuckets;
     const id = out.steps.identity, lr = out.steps.listRoot, ld = out.steps.listDataset, rn = byName[cfg.prefix], ra = byName[alt];
     out.verdict = id.code ? 'AWS does not accept this key at all (' + id.code + '): the key id or secret is wrong'
@@ -440,6 +448,9 @@ function createArchive(deps) {
       : ld.code === 'AccessDenied' && id.arn && ob && !ob.ok && !ob.error ? 'the key is ' + id.arn + ', AWS accepts it, and S3 refuses it everything — even listing the account’s own buckets (' + (ob.code || ob.status) + '), which no outside policy can refuse. That is the AWS account itself, not a permission: a new account is not served by S3 until AWS finishes activating it (payment verification, up to 24 hours; the console shows a banner meanwhile). Nothing to change here; try again later'
       : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && refPublic.ok && refRP && refRP.ok ? 'the key reads other accounts’ public and requester-pays data fine (' + REFS[0].bucket + ' and ' + REFS[1].bucket + ' answer), but both Hyperliquid buckets refuse it: their bucket policy does not allow this account — nothing on the key’s side will change it. The fallback is the estimate from Hyperliquid’s P&L curve'
       : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && refPublic.ok && refRP && !refRP.ok ? 'the key reads a public bucket (' + REFS[0].bucket + ') but no requester-pays bucket (' + REFS[1].bucket + ' is refused like Hyperliquid’s): AWS is not letting this account be billed for requester-pays downloads yet. That clears when the payment method is verified (Billing → Payment preferences; a new account can take up to 24 hours). Nothing to change here; try again later'
+      : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && !refPublic.ok && refNoPayer && refNoPayer.ok ? 'the key reads a public file when the request carries no requester-pays header, and is refused the moment it does: AWS is not letting this account pay for requester-pays transfers yet — that is the payment method, not a permission. In the AWS console open Billing → Payment preferences and look for a verification step (a new account can take up to 24 hours); try again afterwards. Nothing to change in Ledger'
+      : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && !refPublic.ok && refAnon && refAnon.ok ? 'the public file is reachable unsigned, and refused as soon as this key signs the request, with or without the requester-pays header: this identity is denied every cross-account read — an AWS Organizations service control policy or a permissions boundary on the user. In IAM → Users → ledger-archive, look at the Permissions boundary section at the bottom; in AWS Organizations, whether the account is a member'
+      : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && !refPublic.ok && refAnon && !refAnon.ok ? 'even an unsigned read of a public file fails from this server (' + (refAnon.status || refAnon.error) + '): the server cannot reach S3 object endpoints at all — a network or egress restriction on the host, not a permission'
       : ld.code === 'AccessDenied' && id.arn && ob && ob.ok && refPublic && !refPublic.ok ? 'the key lists its own buckets but cannot read even a public bucket (' + REFS[0].bucket + '): something on the user denies cross-account reads — in IAM → Users → ledger-archive, check Permissions for a deny statement and the Permissions boundary section'
       : ld.code === 'AccessDenied' && id.arn && ob && ob.ok ? 'the key is ' + id.arn + ' and S3 serves it (its own buckets list fine), but every read in ' + cfg.bucket + ' and in ' + KNOWN_DOCS.bucket + ' is refused: the identity lacks s3:GetObject on other accounts’ buckets — in IAM → Users → ledger-archive → Permissions, make sure AmazonS3ReadOnlyAccess (or the custom policy) is attached, and that no permissions boundary or deny policy sits on the user'
       : ld.code === 'AccessDenied' && id.arn ? 'the key is ' + id.arn + ' and AWS accepts it, but S3 refuses every read for it, in ' + cfg.bucket + ' and in ' + KNOWN_DOCS.bucket + ' alike: that identity has no effective policy allowing s3:GetObject (and s3:ListBucket). In IAM → Users → ledger-archive → Permissions, attach AmazonS3ReadOnlyAccess and wait a minute'
