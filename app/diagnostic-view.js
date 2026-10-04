@@ -782,7 +782,7 @@ function renderDiagnostic(closed, allv){
   // --- monthly PnL decomposition: price vs funding vs fees ---
   _diagChartLater($('diagDecomp'),function(){ const el=$('diagDecomp'); if(!el)return;
     const by={}; for(const t of closed){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0');
-      const o=by[k]=by[k]||{price:0,fund:0,fees:0}; o.price+=t.pnl; o.fund+=t.funding||0; o.fees-=t.fees; }
+      const o=by[k]=by[k]||{price:0,fund:0,fees:0}; o.price+=t.pnl; o.fund+=t.funding||0; o.fees-=t.fees-(t.feesInBasis||0); } // a spot buy's token fee is already inside closedPnl's basis: net here equals the trades' net
     const keys=Object.keys(by).sort(); if(!keys.length)return;
     _diagCharts.decomp=new Chart(el,{type:'bar',data:{labels:keys,datasets:[
       {label:'price PnL',data:keys.map(k=>by[k].price),backgroundColor:'rgba(139,147,255,.75)',stack:'s'},

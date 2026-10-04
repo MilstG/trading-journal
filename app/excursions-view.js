@@ -182,7 +182,7 @@ async function openReplay(id,btn){
   const dsets=[
     {type:'bar',data:wick,backgroundColor:wickBg,grouped:false,barThickness:1,borderWidth:0,minBarLength:1,order:4},
     {type:'bar',data:body,backgroundColor:bodyBg,grouped:false,barPercentage:0.82,categoryPercentage:1,maxBarThickness:14,borderWidth:0,minBarLength:2,order:3},
-    hline(t.avgEntry,'rgba(230,180,80,.8)',[4,3]),
+    hline(t.partialHistory&&!(t.openSz>0)?null:t.avgEntry,'rgba(230,180,80,.8)',[4,3]), // no entry line when every opening fill predates the history: the stand-in was the exit price
   ];
   const XDS=!t.isOpen&&t.avgExit>0?dsets.length:-1; // the avg-exit line: hidden while replaying, until the close
   if(!t.isOpen&&t.avgExit>0)dsets.push(hline(t.avgExit,'rgba(47,208,140,.8)',[4,3]));

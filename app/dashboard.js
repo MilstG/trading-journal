@@ -426,7 +426,7 @@ function renderOtherCharts(closed, allv){
   const mons=Object.keys(byMon).sort().slice(-12);
   const MONL=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const gMon=grpStats(allv,t=>{ const p=tzParts(t.closeTime); return p.y+'-'+String(p.mo+1).padStart(2,'0'); });
-  charts.month=bar('byMonth',mons.map(k=>MONL[+k.slice(5)-1]+' '+k.slice(2,4)),mons.map(k=>byMon[k]),{groups:mons.map(k=>gMon[k]),explain:'Net P&L per calendar month (the last 12). How many months are green, and how lumpy the good ones are.'});
+  charts.month=bar('byMonth',mons.map(k=>MONL[+k.slice(5)-1]+' ’'+k.slice(2,4)),mons.map(k=>byMon[k]),{groups:mons.map(k=>gMon[k]),explain:'Net P&L per calendar month (the last 12). How many months are green, and how lumpy the good ones are.'});
   const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const dow=Array(7).fill(0);
   allv.forEach(t=>dow[tzDow(t.closeTime)]+=t.net);
   const gDow=grpStats(allv,t=>tzDow(t.closeTime));

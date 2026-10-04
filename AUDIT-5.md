@@ -1,6 +1,6 @@
 # Fifth-pass audit: data accuracy and representation after the fill-history work — October 4, 2026
 
-> **Status: addressed.** The findings marked fixed below landed in this change with regression
+> **Status: addressed.** The findings F1–F9 and V1–V3 below landed in this change with regression
 > tests in `tests/test-fill-gaps.mjs`; the rest are judgement calls left as they are, with the
 > reasoning. All unit suites, the size budget and the 40 browser smoke tests (`e2e/run.mjs`) green.
 
@@ -68,6 +68,35 @@ every statistic still leaves them out. Orphans stay hidden as before.
 **F7 · [read] Representation: the Net PnL card led with an unrealized-inclusive figure beside an Unrealized card.**
 The card's sub-line now says "unrealized incl." (journal card and Daruma's tile), so the two
 cards are not read as additive.
+
+## Charts, heatmaps and tables (second pass, rendered in Chromium on the sample data)
+
+Every dashboard chart, both heatmaps, the Diagnostic's charts, the Review's, the Project fan and
+the trades table were rendered at 1366 px (all time and a 30-day period) and read against the
+numbers behind them. The figures agree across surfaces: the 30-day pulse strip, the Net PnL card
+and the table count all said the same trades and the same net. No console errors on any tab.
+
+**V1 · [repro] The month chart labelled bars "May 26", which reads as a day.** Now "May ’26".
+
+**V2 · [repro] A trade whose every opening fill predates the history showed its exit price as its
+entry.** The reconstruction stands the exit price in for the unknown entry (so P&L stays right)
+and only the return % was blanked. The table's ENTRY column showed the stand-in with nothing to
+say so, and the replay chart drew an "entry" line at the exit. The column now shows a dash with
+the reason, the replay chart draws no entry line, and every partial-history trade carries a
+**PARTIAL** badge whose tip says which part is missing (opened before the history, grown off the
+record, or opened off the record).
+
+**V3 · [read] The Diagnostic's "price vs funding vs fees" decomposition double-counted a spot buy's
+token fee**, which is already inside the exchange's closedPnl basis, so its "net" footer could
+differ from the trades' own net in the spot and combined views. The fee bar is now net of it.
+
+Checked and left as is: the equity curve's deposit and withdrawal markers; the calendar's colour
+scale over the visible weeks only; sessions pinned to UTC while the hour chart follows the clock
+toggle (both say so); the R-multiple and win/loss distributions; the Diagnostic's equity-vs-high-
+water, rolling expectancy, walk-forward and result-distribution charts; the Project fan's bands;
+Daruma's daily bars. "Max drawdown · 154% of best cumulative profit" on a net-negative account is
+arithmetically right (the fall exceeds the peak it fell from) and the tip explains the base; it
+reads oddly but was not changed.
 
 ## Checked and left as is
 
