@@ -1345,7 +1345,9 @@ function periodTradesAll(forTable){ const inv=allTrades.filter(forTable?tableFil
   if(rangeActive())return inv.filter(inRange);
   if(!period)return inv; const cut=Date.now()-period*86400000; return inv.filter(t=>t.closeTime>=cut); }
 // maxDDpct's label: |maxDD| ÷ the all-time high of cumulative PnL, which is not "% off the peak it fell from"
-function ddPctOfBest(x){ return (x*100).toFixed(x<0.1?1:0)+'% of best cumulative profit'; }
+// Past 100% the fall is deeper than the best the curve ever reached: say it as a multiple ("1.5× your
+// best cumulative profit"), which reads as what it is, where "154% of best cumulative profit" read as a slip.
+function ddPctOfBest(x){ return x>=1?(x).toFixed(1).replace(/\.0$/,'')+'× your best cumulative profit':(x*100).toFixed(x<0.1?1:0)+'% of best cumulative profit'; }
 function computeStats(closed, allv){
   allv=allv||closed;
   const wins=closed.filter(t=>isWin(t.net)), losses=closed.filter(t=>isLoss(t.net)), scratches=closed.filter(t=>isBE(t.net));

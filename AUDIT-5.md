@@ -1,6 +1,6 @@
 # Fifth-pass audit: data accuracy and representation after the fill-history work — October 4, 2026
 
-> **Status: addressed.** The findings F1–F9 and V1–V3 below landed in this change with regression
+> **Status: addressed.** The findings F1–F9 and V1–V4 below landed in this change with regression
 > tests in `tests/test-fill-gaps.mjs`; the rest are judgement calls left as they are, with the
 > reasoning. All unit suites, the size budget and the 40 browser smoke tests (`e2e/run.mjs`) green.
 
@@ -94,9 +94,11 @@ Checked and left as is: the equity curve's deposit and withdrawal markers; the c
 scale over the visible weeks only; sessions pinned to UTC while the hour chart follows the clock
 toggle (both say so); the R-multiple and win/loss distributions; the Diagnostic's equity-vs-high-
 water, rolling expectancy, walk-forward and result-distribution charts; the Project fan's bands;
-Daruma's daily bars. "Max drawdown · 154% of best cumulative profit" on a net-negative account is
-arithmetically right (the fall exceeds the peak it fell from) and the tip explains the base; it
-reads oddly but was not changed.
+Daruma's daily bars.
+
+**V4 · [repro] "Max drawdown · 154% of best cumulative profit"** on a net-negative account was
+arithmetically right (the fall exceeds the best the curve ever reached) but read as a slip. Past
+100% it now reads as a multiple: "1.5× your best cumulative profit".
 
 ## Checked and left as is
 
