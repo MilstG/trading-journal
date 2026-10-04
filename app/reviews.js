@@ -53,7 +53,7 @@ function mrListHtml(D){
   const a=SOC.me.admin&&pzS.mrAll?socGet('admreviews','/admin/reviews',20000):null;
   return `${back}${pzHead('Mentor','Trade reviews')}<div class="pz-wide"><div class="pz-col">
     ${d.toReview?sec('Trades to review',d.toReview.slice().sort((x,y)=>(y.waiting-x.waiting)||(y.last-x.last)),false,'No one has sent a trade yet.'):''}
-    ${d.toReview&&!d.mine.length?'':sec('Your trades with mentors',d.mine,false,d.mentorsOn?'Send one from a trade in your journal: “Ask my mentor”.':'Switch on “Let mentors see my days” under What you share, then send a trade from your journal.')}</div>
+    ${d.toReview&&!d.mine.length?'':sec('Your trades with mentors',d.mine,false,d.mentorsOn?'Send one from a trade in your journal: “Ask mentor”.':'Switch on “Let mentors see my days” under What you share, then send a trade from your journal.')}</div>
     <div class="pz-col">${d.mentorsOn&&!SOC.me.mentor||(d.to&&d.to.length)?`<section class="pz-card pz-kv"><b class="pz-kvh">Your mentors</b>
       ${d.to&&d.to.length?d.to.map(x=>`<a class="pz-row-t" href="#mentors/${esc(x.handle)}" style="text-decoration:none;color:var(--pz-text)"><span>@${esc(x.handle)}</span><b>${!x.rate||x.sameOwner?'free':x.firstFree?'first trade free, then '+x.rate+' XP':x.rate+' XP a trade'}</b></a>`).join('')
         :'<span class="pz-sub" style="font-size:13px">You haven’t picked any, so a trade goes to every mentor here, free.</span>'}

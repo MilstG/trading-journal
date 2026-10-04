@@ -727,7 +727,8 @@ function socNotesHtml(){
 function socMentorHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
-  if(!SOC.me.mentor)return `${back}${pzHead('Mentor','Mentees')}<section class="pz-card"><p class="pz-sub">Only mentors the league owner appointed see this.</p></section>`;
+  if(!SOC.me.mentor){ if(typeof socMeRefresh==='function'&&Date.now()-_socMeAt>3000)socMeRefresh(); // an appointment made a moment ago shows on the next render
+    return `${back}${pzHead('Mentor','Mentees')}<section class="pz-card"><p class="pz-sub">Only mentors the league owner appointed see this.</p></section>`; }
   const c=socGet('mentees','/mentor',30000), L=c&&c.d?c.d.mentees:null;
   if(!L)return `${back}${pzHead('Mentor','Mentees')}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const pg=pzPage('mentees',L);

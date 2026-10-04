@@ -1,6 +1,6 @@
 # Fifth-pass audit: data accuracy and representation after the fill-history work — October 4, 2026
 
-> **Status: addressed.** The findings F1–F9, V1–V4 and B1–B9 below landed in this change with regression
+> **Status: addressed.** The findings F1–F9, V1–V4, B1–B9, S1, S2 and S4 below landed in this change with regression
 > tests in `tests/test-fill-gaps.mjs`; the rest are judgement calls left as they are, with the
 > reasoning. All unit suites, the size budget and the 40 browser smoke tests (`e2e/run.mjs`) green.
 
@@ -141,6 +141,54 @@ were left as they are.
 
 **B9 · [live] Saving a journal entry gave no confirmation** beyond the sync bar. The status line
 now says it was saved, naming the trade.
+
+## Social beta (fourth pass: an owner and a member on two phones, with the access token set)
+
+Profiles, the league board, a duel challenged and accepted, the admin panel, mentoring end to end,
+accountability partners, the feed, sharing and the coach surfaces. No console errors. What held up
+is listed at the end of this section.
+
+**S1 · [repro] Social screens showed stale data right when it mattered.** Lists were served from a
+30-second in-memory cache and never re-read while a screen was open. Two seconds after being
+challenged, the member's Duels screen said "No duels yet" and stayed that way; after the mentor
+replied, the mentee's open thread kept showing one comment; after the member accepted, the
+challenger's Duels still said "Waiting for @bravo"; after the owner appointed a mentor, that member's
+Mentees screen said "Only mentors the league owner appointed see this" until the two-minute /me
+re-read. Today's "New for you" announced each event correctly, so the user was told one thing and
+shown another. Now a screen that has just been opened always asks the server again (showing the cache
+meanwhile), the duel, review, mentor and mentee screens re-read every 12 seconds while open and in
+view (between keystrokes only), and opening a screen re-reads /me unless it was read in the last
+three seconds. Measured after the fix: the incoming duel and the mentor's reply appear within a
+quarter of a second of opening the screen.
+
+**S2 · [live] +925,528% thirty-day return, 38,682% drawdown, in the admin panel.** The return divides
+P&L by the account value at the window's first point, with no floor beyond "greater than zero"; a
+wallet that held a dollar or two when the window opened exploded, and these figures feed the Return /
+drawdown boards and the % return duel and competition rules. Under $100 of starting equity the
+percentages are now null (the dollar P&L is kept): the boards skip the member, a competition row says
+"starting equity under $100: no % return", and the admin table shows "n/a · thin start".
+
+**S3 · [live] "Verify your wallet within 14 days to keep duels, competitions, the leaderboards and the
+coach's full allowance"** appeared for a member of a league whose owner had switched off the claimed-
+wallet requirement. Read as a contradiction at first; the standing spec (step 6) and its test make it
+deliberate: the perks need a verified wallet whatever the claim rule, and the owner can switch
+standing off. Left as it is.
+
+**S4 · [read] Copy:** the Reviews screen said to send a trade via "Ask my mentor"; the button says
+"Ask mentor". Fixed.
+
+Also checked: People offers "Ask to partner" only for members marked as looking for one or under the
+"Looking for a partner" filter, which is why the member's card showed Challenge alone; Follow and the
+partner request live on the profile page and on the Feed's "Ask someone by name". Works as designed.
+
+What held up: joining, the league board and promotion wording, the challenge form (terms, stakes,
+verified-from-fills, a plain summary line), accepting, the 48-hour expiry and Withdraw; the admin
+member panel (appointing a mentor with "Save access", XP boosts, wallet mapping, sign-in codes);
+mentoring end to end (the mentor list, "Pick @alpha as my mentor", sending a trade, the reply, "Mark
+reviewed ✓", the mentee's notification with the reply text); partners (ask by name, accept, nudge,
+the partner card on Today); the coach ("Write plan →" lands in the day journal's bias field, "Pick
+one →" on Habits, hiding the coach is reversible from Settings, Daruma says plainly when the AI coach
+is not switched on). The AI chat itself needs an API key this environment doesn't have.
 
 ## Checked and left as is
 
