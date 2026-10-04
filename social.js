@@ -258,6 +258,10 @@ function portfolioStats(res, label, fromMs, toMs) {
   const startAv = (av.filter(p => p[0] <= P[0][0]).pop() || av.find(inWin) || [0, 0])[1];
   if (!(startAv > 0)) return null;
   const base = P[0][1];
+  // A ratio needs real starting equity: an account that stood at a dollar or two when the window opened
+  // read as +925,528% (and a 38,682% drawdown) on the boards. Under $100 the dollar figure is kept and the
+  // percentages are not meaningful.
+  if (startAv < 100) return { ret: null, dd: null, usd: P[P.length - 1][1] - base, start: startAv, thin: true };
   let peak = startAv, dd = 0;
   for (const [, v] of P) { const eq = startAv + (v - base); if (eq > peak) peak = eq; if (peak > 0) dd = Math.max(dd, (peak - eq) / peak); }
   const usd = P[P.length - 1][1] - base;
@@ -402,6 +406,7 @@ function compStandings(c, members, todayKey, requireClaim, walletGate, final) {
       // trading days: verified ones only (days an app reports can be made up, and sitting flat mustn't win)
       const td = m.share && m.share.verify && Array.isArray(m.vdays) ? m.vdays.filter(d => d.k >= c.start && d.k <= c.end && d.k <= todayKey).length : 0;
       if (!r) note = 'waiting for data';
+      else if (r.ret == null) note = 'starting equity under $100: no % return';
       else if (c.tradeDays && td < c.tradeDays) note = td + ' of ' + c.tradeDays + ' trading days so far';
       else { score = r.ret; note = (r.ret >= 0 ? '+' : '') + (r.ret * 100).toFixed(1) + '% · DD ' + (r.dd * 100).toFixed(1) + '%'; }
     }

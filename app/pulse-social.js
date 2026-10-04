@@ -216,13 +216,28 @@ async function socMeRefresh(){
 // the league's levels, titles and XP weights reach the game layer (both views)
 function pzApplyCfg(c){ if(!c)return; PZ_CFG={rev:PZ_CFG.rev+1,levels:c.levels||null,xp:c.xp||null}; }
 // Cached GET: returns what's cached (possibly stale) and refreshes in the background.
+// A list is served from the cache while it is fresh, but a screen that has just been opened (SOC.nav moved:
+// a hash change, or the revalidation tick below) always asks the server again, showing the cache meanwhile.
+// Before this a member challenged ten seconds after their last look at Duels saw "No duels yet" for the
+// rest of the cache's life, and a thread open while the mentor answered never showed the reply.
 function socGet(name, p, maxAge){
-  const c=SOC.cache[name], fresh=c&&Date.now()-c.at<(maxAge||30000);
-  if(!fresh&&!SOC.busy[name]){ SOC.busy[name]=true;
-    socFetch(p).then(d=>{ socKeepOlder(name,c); SOC.cache[name]={at:Date.now(),d,err:null}; },e=>{ SOC.cache[name]={at:Date.now(),d:c?c.d:null,err:e.message}; })
+  const c=SOC.cache[name], fresh=c&&c.nav===SOC.nav&&Date.now()-c.at<(maxAge||30000);
+  if(!fresh&&!SOC.busy[name]){ SOC.busy[name]=true; const nav=SOC.nav;
+    socFetch(p).then(d=>{ socKeepOlder(name,c); SOC.cache[name]={at:Date.now(),nav,d,err:null}; },e=>{ SOC.cache[name]={at:Date.now(),nav,d:c?c.d:null,err:e.message}; })
       .finally(()=>{ SOC.busy[name]=false; if(PZ)pzRender(); }); }
   return c||null;
 }
+SOC.nav=0;
+// Screens where the other side acts (a challenge, an answer, a mentor's reply, an appointment): opening one
+// re-reads it, and while it stays open and in view it is re-read every 12 seconds, between keystrokes only.
+const SOC_LIVE=/^(duels?|reviews?|mentors?|mentee)$/;
+function socLiveTick(){
+  if(document.visibilityState==='hidden'||!SOC.key)return;
+  if(!SOC_LIVE.test(location.hash.replace(/^#/,'').split('/')[0]))return;
+  const a=document.activeElement; if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return;
+  SOC.nav++; if(typeof socMeRefresh==='function'&&Date.now()-_socMeAt>10000)socMeRefresh(); if(PZ)pzRender(); }
+// opening a screen also re-reads /me (what the owner changed: a mentor appointment, an unlock, admin rights), unless it was read in the last 3 seconds
+try{ window.addEventListener('hashchange',()=>{ SOC.nav++; if(typeof socMeRefresh==='function'&&Date.now()-_socMeAt>3000)socMeRefresh(); }); setInterval(socLiveTick,12000); }catch(e){}
 function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;

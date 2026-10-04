@@ -582,7 +582,7 @@ details>summary{list-style-position:inside}
         <td class="nw">Lv ${m.level} <span class="muted small">· ${fmt(m.xp)} XP</span></td><td class="hide-sm n">${m.streak}</td>
         <td class="hide-sm">${m.leagues.map(l=>`<span class="pill">${esc(leagueName(l.id))}</span>`).join(' ')||'<span class="muted">—</span>'}</td>
         <td class="hide-sm n nw">${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td>
-        <td class="hide-sm n nw">${m.money?`<span style="color:${m.money.ret>=0?'var(--good)':'var(--low)'}">${(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)}%</span><div class="muted small">DD ${(m.money.dd*100).toFixed(1)}%</div>`:'<span class="muted">—</span>'}</td>
+        <td class="hide-sm n nw">${m.money&&m.money.ret!=null?`<span style="color:${m.money.ret>=0?'var(--good)':'var(--low)'}">${(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)}%</span><div class="muted small">DD ${(m.money.dd*100).toFixed(1)}%</div>`:m.money&&m.money.thin?'<span class="muted" title="The account held under $100 when the 30-day window opened, so a percentage would mislead; the dollar P&L still counts.">n/a · thin start</span>':'<span class="muted">—</span>'}</td>
         <td class="small n nw">${esc(ago(m.lastSeen))}</td></tr>`).join('')
         ||`<tr><td colspan="9" class="muted">${D.members.length?(UI.q||UI.filter!=='all'?'Nobody matches.':''):'No members yet. Add one above, or share your /daruma link and people join from the Social tab.'}</td></tr>`}`;
   }

@@ -86,6 +86,8 @@ t('return and drawdown come from the P&L series, so deposits count as neither', 
   const r = S.portfolioStats(port([[1, '1000'], [2, '1200'], [3, '1150'], [4, '1300']], [[1, '0'], [2, '0'], [3, '-50'], [4, '100']]), 'month');
   near(r.ret, 0.1, 1e-9); near(r.dd, 0.05, 1e-9); eq(r.usd, 100);
   eq(S.portfolioStats(port([[1, '0']], [[1, '0'], [2, '5']]), 'month'), null, 'no starting equity, no ratio');
+  const thin = S.portfolioStats(port([[1, '1.4']], [[1, '0'], [2, '9255']]), 'month');
+  eq([thin.ret, thin.dd, thin.usd, thin.thin], [null, null, 9255, true], 'a dollar or two at the start: the dollars count, the percentages are not meaningful');
   eq(S.portfolioStats([], 'month'), null);
 });
 t('a competition window clips the series', () => {
