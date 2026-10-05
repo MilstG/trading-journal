@@ -69,6 +69,10 @@ const MIGRATIONS = [
    CREATE INDEX playbooks_updated ON playbooks (updated);
    CREATE TABLE playbook_adopts (playbook TEXT NOT NULL, member TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (playbook, member)) WITHOUT ROWID;
    CREATE INDEX playbook_adopts_member ON playbook_adopts (member);`,
+  // a shared playbook's target reward-to-risk (rr, null when the author set none), and an adopter's anonymous
+  // answer to "does it pay for you?" (pays: 1 yes, 0 no, null unanswered): members see a count, never who
+  `ALTER TABLE playbooks ADD COLUMN rr REAL;
+   ALTER TABLE playbook_adopts ADD COLUMN pays INTEGER;`,
 ];
 
 function open(dataDir) {

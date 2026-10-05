@@ -91,8 +91,29 @@ try {
     eq([r.d.changed, r.d.playbook.version, r.d.playbook.updated], [true, 2, clock]);
     for (const k of [LEO, NED]) eq((await inbox(k)).filter(x => x.title === 'A playbook you use changed').length, 1);
     const m = (await call('/playbooks/mine?have=' + boId + ',0123456789ab,zz', { key: LEO })).d;
-    eq(m.have, { [boId]: { version: 2, name: 'Breakout retest', handle: 'mia' } }, 'only the ones still shared');
+    eq(m.have, { [boId]: { version: 2, name: 'Breakout retest', handle: 'mia', myPays: null } }, 'only the ones still shared');
     eq((await call('/playbooks/mine', { key: MIA })).d.mine.map(x => [x.name, x.version, x.adopts]), [['Breakout retest', 2, 2]]);
+  });
+  await t('a target reward-to-risk rides the shared playbook (a new version when it changes); junk is dropped', async () => {
+    let r = await share(MIA, Object.assign({}, BO, { rules: [...BO.rules.slice(0, 3), { id: 're', text: 'Out if it closes back inside' }], rr: '2.5' }));
+    eq([r.d.changed, r.d.playbook.version, r.d.playbook.rr], [true, 3, 2.5]);
+    eq((await call('/playbooks/' + boId, { key: LEO })).d.playbook.rr, 2.5);
+    eq((await call('/playbooks?q=retest', { key: LEO })).d.playbooks[0].rr, 2.5, 'on the card too');
+    r = await share(MIA, Object.assign({}, BO, { rules: [...BO.rules.slice(0, 3), { id: 're', text: 'Out if it closes back inside' }], rr: 'lots' }));
+    eq([r.d.changed, r.d.playbook.version, r.d.playbook.rr], [true, 4, null], 'taking it away is a change adopters would take');
+  });
+  await t('an adopter says, anonymously, whether it pays: a count for everyone, their own answer for them, never a name', async () => {
+    const pays = (k, v) => call('/playbooks/' + boId + '/adopt', { method: 'POST', key: k, body: { pays: v } });
+    let r = await pays(LEO, true); eq([r.status, r.d.playbook.pays, r.d.playbook.myPays], [200, { n: 1, yes: 1 }, true]);
+    eq((await call('/playbooks/' + boId, { key: NED })).d.playbook.myPays, null, 'ned hasn’t answered');
+    await pays(NED, false); eq((await call('/playbooks/' + boId, { key: KAI })).d.playbook.pays, { n: 2, yes: 1 });
+    eq((await call('/playbooks/mine?have=' + boId, { key: LEO })).d.have[boId].myPays, true, 'the adopter sees their own answer');
+    r = await pays(LEO, null); eq([r.d.playbook.pays, r.d.playbook.myPays], [{ n: 1, yes: 0 }, null], 'taken back');
+    eq((await pays(MIA, true)).status, 400, 'not on your own');
+    const m = (await call('/playbooks/mine', { key: MIA })).d.mine[0]; eq(m.pays, { n: 1, yes: 0 }); ok(!('myPays' in m) || m.myPays === null);
+    ok(!JSON.stringify((await call('/playbooks/' + boId, { key: KAI })).d).includes('ned'), 'no handle travels with the count');
+    await adopt(NED, boId, false); eq((await call('/playbooks/' + boId, { key: KAI })).d.playbook.pays, { n: 0, yes: 0 }, 'dropping the copy drops the answer');
+    await adopt(NED, boId);
   });
   await t('only the author stops sharing; the adoptions and the feed line go with it', async () => {
     eq((await call('/playbooks/' + boId, { method: 'DELETE', key: LEO })).status, 403);
@@ -135,7 +156,7 @@ try {
 
 console.log('\nIn the app: copies, updates and the journal’s playbooks');
 const src = readAppSource(htmlPath), { evalModule, grabFn } = makeExtractor(src);
-const P = await evalModule(['pbNorm', 'pbKey', 'pbsCopyId', 'pbsAdoptCopy', 'pbsApplyUpdate', 'pbsRuleDiff', 'pbsSharedFrom', 'pbsDiffers', '_syncMerge']);
+const P = await evalModule(['pbNorm', 'pbKey', 'pbNames', 'pbAliasesFromText', 'pbRR', 'pbsCopyId', 'pbsAdoptCopy', 'pbsApplyUpdate', 'pbsRuleDiff', 'pbsSharedFrom', 'pbsDiffers', '_syncMerge'], null, 'const PB_ALIAS_MAX = 6;');
 // pbUnadopt against a stubbed server call: what it would send, and when it stays quiet
 const U = await evalModule(['pbUnadopt'], ['pbUnadopt', 'env'], `const env = { calls: [], pzS: { demo: false } }; const SOC = { key: 'k' }, pzS = env.pzS, location = { protocol: 'https:' };
   const socFetch = (p, o) => { env.calls.push([p, o.method, o.body]); return Promise.resolve({ ok: true }); };`);
@@ -148,6 +169,7 @@ t('a playbook’s source survives normalizing (so sync and backups keep it); jun
 t('adopting copies the name and rules with their ids and records where it came from', () => {
   const r = P.pbsAdoptCopy(SH, [], 1000, mk);
   eq(r.pb, { id: 'pbnew1', name: 'Breakout retest', rules: SH.rules, at: 1000, createdAt: 1000, src: { id: SH.id, h: 'mia', v: 3, at: 1000 } }); eq(r.renamed, false);
+  eq(P.pbsAdoptCopy({ ...SH, rr: 2 }, [], 1000, mk).pb.rr, 2, 'the target reward-to-risk comes along');
 });
 t('a copy’s id comes from the shared one, so two devices adopting it before they sync end up with one playbook', () => {
   const a = P.pbsAdoptCopy(SH, [], 1000).pb, b = P.pbsAdoptCopy(SH, [{ id: 'p1', name: 'Range fade', rules: [] }], 2000).pb;
@@ -180,6 +202,9 @@ t('taking an update keeps your name, replaces the rules (unchanged ones keep the
   const local = { id: 'p3', name: 'My breakout', rules: SH.rules, at: 1000, createdAt: 900, src: { id: SH.id, h: 'mia', v: 3, at: 1000 } };
   const next = Object.assign({}, SH, { version: 4, rules: [SH.rules[0], { id: 'rc', text: 'Risk 1R or less' }] });
   eq(P.pbsApplyUpdate(local, next, 5000), { id: 'p3', name: 'My breakout', rules: next.rules, at: 5000, createdAt: 900, src: { id: SH.id, h: 'mia', v: 4, at: 5000 } });
+  const al = { ...local, aliases: ['bo'], rr: 1.5 };
+  eq(P.pbsApplyUpdate(al, { ...next, rr: 3 }, 5000).rr, 3, 'the author’s target replaces yours'); eq(P.pbsApplyUpdate(al, next, 5000).rr, undefined, 'or goes when they dropped it');
+  eq(P.pbsApplyUpdate(al, next, 5000).aliases, ['bo'], 'your aliases stay');
   eq(P.pbsRuleDiff(local.rules, next.rules), { added: ['Risk 1R or less'], removed: ['Stop under the range'], kept: 1 });
 });
 t('your own playbook differs from what you shared when its name or rules do', () => {
@@ -187,6 +212,8 @@ t('your own playbook differs from what you shared when its name or rules do', ()
   eq(P.pbsDiffers(pb, { name: 'A', rules: [{ id: 'a', text: 'one' }] }), false);
   eq(P.pbsDiffers(pb, { name: 'B', rules: [{ id: 'a', text: 'one' }] }), true);
   eq(P.pbsDiffers(pb, { name: 'A', rules: [{ id: 'a', text: 'one!' }] }), true);
+  eq(P.pbsDiffers({ ...pb, rr: 2 }, { name: 'A', rules: [{ id: 'a', text: 'one' }], rr: null }), true, 'a new target is a change to share');
+  eq(P.pbsDiffers({ ...pb, aliases: ['x'] }, { name: 'A', rules: [{ id: 'a', text: 'one' }] }), false, 'aliases are yours, not shared');
   eq(P.pbsDiffers(pb, null), false);
 });
 t('the screen is a Daruma feature (#playbooks), and the journal keeps the source when a playbook is edited', () => {

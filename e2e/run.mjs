@@ -149,6 +149,28 @@ try {
     await page.click('#topnav [data-tab="review"]');
     const card = await page.locator('.diag-card', { has: page.locator('[data-pbedit]') }).innerText();
     ok(/Broke a rule\s*1 trade/.test(card), card);
+    ok(/Rule you break most\s*Stop under the range/.test(card), card);
+    ok(/Ticked before the close\s*0 of 1/.test(card), 'ticked after the close: ' + card);
+    eq(errors, [], 'no uncaught errors');
+  });
+  await t('n/a takes a rule out of that trade’s grading; the editor keeps aliases and a target reward-to-risk', async () => {
+    await page.click('#topnav [data-tab="dash"]');
+    const id = await page.locator('#tbody tr.trow').nth(1).getAttribute('data-id');
+    if (!(await page.locator(`.pbrules[data-id="${id}"]`).count())) await page.click(`#tbody tr.trow[data-id="${id}"]`); // still open from the test above
+    await page.locator(`.pbrules[data-id="${id}"] [data-pbna]`).nth(1).click();
+    await page.waitForFunction(i => journal[i].pb && journal[i].pb.na && journal[i].pb.na.length === 1 && journal[i].pb.ok.length === 1, id);
+    ok(/1\/1 kept/.test(await page.locator(`.pbrules[data-id="${id}"]`).locator('xpath=preceding-sibling::label').innerText()), 'the label counts only the rules that apply');
+    await page.click('#topnav [data-tab="review"]');
+    let card = await page.locator('.diag-card', { has: page.locator('[data-pbedit]') }).innerText();
+    ok(/Kept every rule\s*1 trade/.test(card), 'with the other rule n/a, the trade kept every rule that applied: ' + card);
+    await page.click('[data-pbedit]');
+    await page.fill('#pbAliases', 'breakout, bo retest');
+    await page.fill('#pbRR', '2');
+    await page.click('#pbSave');
+    await page.waitForSelector('[data-pbedit]');
+    card = await page.locator('.diag-card', { has: page.locator('[data-pbedit]') }).innerText();
+    ok(/Also matches: breakout, bo retest/.test(card) && /aims for 1:2/.test(card), card);
+    eq(await page.evaluate(() => [pbList()[0].aliases, pbList()[0].rr]), [['breakout', 'bo retest'], 2]);
     eq(errors, [], 'no uncaught errors');
   });
   await t('dark by default, even on a device set to light (journal and Daruma)', async () => {
@@ -435,6 +457,38 @@ try {
     await p.click('.pz-trade [data-pz-rpi="1"]');
     ok(/Fill 2 of 2/.test(await p.textContent('.pz-trade .pz-rp-lbl')), 'a dot jumps to its fill');
     eq(await p.evaluate(() => document.querySelectorAll('.pz-trade .pz-snapsvg circle[r="8"]').length), 1, 'and the chart rings it');
+    eq(errs, [], 'no uncaught errors'); await p.close();
+  });
+  await t('Plan a trade: naming a playbook brings its checklist and fills the target from its reward-to-risk; the Playbooks screen renders', async () => {
+    const { page: p, errors: errs } = await openPage({ width: 390, height: 800 }, { token: false });
+    await p.goto(BASE + '/daruma'); await p.click('#pzDemo');
+    await p.waitForFunction(() => allTrades.length > 20 && document.querySelector('.pz-rings'));
+    await p.evaluate(async () => { const now = Date.now(); settings.playbooks = [{ id: 'pbe2e', name: 'Breakout retest', rules: [{ id: 'a', text: 'Wait for the retest' }, { id: 'b', text: 'Stop under the range' }], rr: 2, at: now, createdAt: now }]; await Store.set(S_KEY, settings); location.hash = '#plan'; });
+    await p.waitForSelector('#pzPlWhy');
+    await p.fill('#pzPlWhy', 'Breakout retest');
+    await p.waitForSelector('[data-pz-plpb] [data-pz-pb="pbe2e"]');
+    // a market Daruma knows with a price, so the plan passes its sanity checks; prices around it
+    const { ck, px } = await p.evaluate(() => { const m = planKnownMarkets(); const k = Object.keys(m).find(x => m[x] > 0); return { ck: k, px: m[k] }; });
+    const en = +px.toPrecision(5), st = +(px * 0.95).toPrecision(5), tgt = String(+(en + 2 * (en - st)).toPrecision(6));
+    await p.fill('#pzPlEntry', String(en)); await p.fill('#pzPlStop', String(st));
+    eq(await p.inputValue('#pzPlTarget'), tgt, 'long, aims for 1:2: entry + 2 × the risk');
+    await p.click('[data-pz-plside="Short"]');
+    eq(await p.inputValue('#pzPlTarget'), '', 'a short with the stop below the entry has no target to fill');
+    await p.click('[data-pz-plside="Long"]');
+    eq(await p.inputValue('#pzPlTarget'), tgt);
+    const mine = String(+(en * 1.2).toPrecision(5));
+    await p.fill('#pzPlTarget', mine); await p.fill('#pzPlStop', String(+(px * 0.96).toPrecision(5)));
+    eq(await p.inputValue('#pzPlTarget'), mine, 'a target you typed yourself stays');
+    await p.locator('[data-pz-plpb] input[data-pz-pbr="a"]').check();
+    await p.click('[data-pz-plpb] [data-pz-pbna="b"]');
+    ok(await p.evaluate(() => !!document.querySelector('[data-pz-plpb] [data-pz-pb][data-touched]')), 'the box counts as touched');
+    await p.fill('#pzPlCoin', ck);
+    await p.click('[data-pz-plsave]');
+    await p.waitForFunction(() => Object.keys(journal).some(k => k.startsWith('pplan:') && journal[k].pb && journal[k].pb.ok.length === 1 && journal[k].pb.na.length === 1));
+    await p.evaluate(() => { location.hash = '#journal'; });
+    await p.waitForSelector('.pz-trade');
+    await p.evaluate(() => { location.hash = '#playbooks'; });
+    await p.waitForFunction(() => /Breakout retest/.test(document.body.innerText) && /aims 1:2/.test(document.body.innerText));
     eq(errs, [], 'no uncaught errors'); await p.close();
   });
 

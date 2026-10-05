@@ -457,7 +457,7 @@ function journalStreak(trades, journalObj, dayOf, todayK){
 // set since and leaves an unchanged old field unstamped) keeps the benefit of the doubt it always had,
 // so no honest day loses credit it already earned. Anything typed onto an old day now is stamped now:
 // it still journals, but earns nothing. credit.checkin carries the check-in's verdict to pzBonus.
-const PROCESS_W={plan:20,rules:20,planned:15,stops:15,limit:10,journal:20};
+const PROCESS_W={plan:20,rules:20,planned:15,stops:15,limit:10,journal:20,playbook:10};
 function processDays(closed, journalObj, opts){
   opts=opts||{}; const J=journalObj||{};
   const viol=opts.violIds||new Set(), dayOf=opts.dayOf;
@@ -505,6 +505,8 @@ function processDays(closed, journalObj, opts){
       breached=breachAt!=null;
       parts.limit=(breached&&lastIn[k]>breachAt)?0:1; }
     parts.journal=arr.filter(t=>isJournaled(J[t.id])).length/n;
+    // playbook rules kept: of the day's trades with a filled-in checklist, the share that kept every rule (a day without one isn't graded on it)
+    if(opts.pbChecked){ const pc=arr.filter(t=>opts.pbChecked.has(t.id)); if(pc.length)parts.playbook=1-pc.filter(t=>opts.pbBroke&&opts.pbBroke.has(t.id)).length/pc.length; }
     let sw=0, sv=0; for(const p in parts){ sw+=PROCESS_W[p]; sv+=PROCESS_W[p]*parts[p]; }
     const checkin=!!(de&&(de.sleep||de.stress||de.focus)), ckAt=checkin?setAt('checkinAt'):null;
     out.push({key:k, score:Math.round(100*sv/sw), parts, n, net:arr.reduce((s,t)=>s+t.net,0), breached, first,
@@ -762,8 +764,9 @@ function processContext(trades, rulePreds){
   for(const k in journal){ const c=k.startsWith('week:')&&journal[k]&&journal[k].challenge;
     if(c&&c.spec&&c.spec.kind==='process'&&(c.spec.part==='plan'||c.spec.part==='planned')&&c.from&&c.to)
       planWindows.push({part:c.spec.part,from:dayKey(c.from),to:dayKey(c.to)}); }
+  const pbG=typeof pbTradeGrades==='function'?pbTradeGrades(closed,journal,pbList()):{checked:new Set(),broke:new Set()};
   return {closed, days:processDays(closed,journal,{trades,violIds:viol,dayOf:dayKey,excM:_excM,dllLimit:R.dailyLossLimit,
-    rulesActive,rulesFrom,planFrom:{plan:since('plan'),planned:since('planned')},planWindows})};
+    rulesActive,rulesFrom,planFrom:{plan:since('plan'),planned:since('planned')},planWindows,pbChecked:pbG.checked,pbBroke:pbG.broke})};
 }
 
 // ---- Review UI: journal inbox, process ----
@@ -1194,7 +1197,7 @@ function coachContext(all){
   const trades=all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter);
   let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; net+=t.net; } }
   const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
-    JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),_be].join('|');
+    JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),JSON.stringify(settings.playbooks||[]),_be].join('|');
   const memo=all?_coachMemoAll:_coachMemo;
   if(memo.key===key)return memo.ctx;
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
@@ -1276,7 +1279,7 @@ function tradeQuestion(t, j, e){
 }
 
 // ---- the dashboard coach card ----
-const PART_MISS={plan:'no plan before the first trade',rules:'rules broken',planned:'no stops written while trades were open',stops:'stops not honored',limit:'kept trading past the loss limit',journal:'trades left unjournaled'};
+const PART_MISS={plan:'no plan before the first trade',rules:'rules broken',planned:'no stops written while trades were open',stops:'stops not honored',limit:'kept trading past the loss limit',journal:'trades left unjournaled',playbook:'playbook rules broken'};
 function lastSessionLine(ctx){
   const today=dayKey(Date.now());
   const d=ctx.days.filter(x=>x.key<today).slice(-1)[0]; if(!d)return null;
@@ -1432,6 +1435,8 @@ function coachLetterFacts(){
     focus:fh?prog(fh):null,
     habits:habitsList().filter(h=>!fh||h.id!==fh.id).map(prog),
     journaled:{n:inWk.filter(t=>isJournaled(journal[t.id])).length,of:inWk.length},
+    // the week's playbook checklists: how many kept every rule, and the rule broken most
+    playbooks:(()=>{ try{ return typeof pbSummary==='function'?pbSummary(inWk,journal,pbList()):null; }catch(e){ return null; } })(),
     findings:ctx.findings.filter(f=>f.tone!=='info').slice(0,3).map(f=>({title:f.title,action:f.action,confidence:confWords(f.conf)})),
     wins:coachWins(ctx,{from,to}), lessons,
     ...(()=>{ try{ const g=gameContext(); const c=g.challenges.find(x=>x.week===wkKey.slice(5));
