@@ -139,7 +139,7 @@ t('the memoized panels are keyed on everything they read', () => {
   const k = grabFn('computeStatsMemo'); for (const s of ['_be', '_oneR', '_jrev', 'settings.tz', 'settings.tzZone', 'dayKey(Date.now())']) ok(k.includes(s), 'computeStatsMemo: ' + s);
   const d = grabFn('_diagDataKey'); for (const s of ['_diagMCKey(closed)', '_oneR', '_jrev', 'settings.tz', 'settings.tzZone', 'settings.coachMode', '_excM', 'spotMaps']) ok(d.includes(s), '_diagDataKey: ' + s);
   ok(grabFn('_diagMCKey').includes('_be'));
-  ok(grabFn('behaviorSignalsMemo').includes('[s.net,s.fees,s.fund,s.expectancy]'));
+  ok(grabFn('behaviorSignalsMemo').includes('[s.net,s.fees,s.fund,s.expectancy,money?money.length:0]')); // the money rows behind the concentration figure are part of the key
 });
 
 // ---- habitProgress, memoized per coach context ----

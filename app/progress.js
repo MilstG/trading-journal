@@ -284,7 +284,7 @@ function gameContext(){
   // check-in, plan, journal, stops, a respected loss limit — adds bonus XP on top and never
   // lowers the score. The process parts ride along for achievements and the report card.
   const pmap=new Map(ctx.days.map(d=>[d.key,d]));
-  const days=pzBehaviorDays(ctx.closed,{dayOf:dayKey,isLoss:PZ_LOSS}).map(b=>{ const p=pmap.get(b.key)||null;
+  const days=pzBehaviorDays(ctx.closed,{dayOf:dayKey,isLoss:PZ_LOSS,dayNet:ctx.dayNet}).map(b=>{ const p=pmap.get(b.key)||null;
     const bonus=pzBonus(p,journal['day:'+b.key],X);
     return {key:b.key,score:b.score,n:b.n,net:b.net,behavior:b,parts:p?p.parts:{},breached:p?p.breached:false,process:p?p.score:null,bonus,checkin:!!(p&&p.credit&&p.credit.checkin)}; });
   _pzSlipDays=new Map(days.map(d=>[d.key,d.behavior])); // 'slip' habits (plugging a leak) read their days from here
@@ -581,7 +581,7 @@ function pzBehaviorDays(closed, opts){
   const tr=(closed||[]).filter(t=>!t.isOpen&&t.closeTime&&t.openTime&&!t.partialHistory).sort((a,b)=>a.openTime-b.openTime);
   const closes=[...tr].sort((a,b)=>a.closeTime-b.closeTime), ct=closes.map(t=>t.closeTime);
   const before=ms=>{ let lo=0,hi=ct.length; while(lo<hi){ const m=(lo+hi)>>1; if(ct[m]<ms)lo=m+1; else hi=m; } return lo; };
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0)), dur=t=>t.closeTime-t.openTime;
+  const size=t=>notionalOf(t)||0, dur=t=>t.closeTime-t.openTime; // measured rows only (tr is already filtered)
   const by={}; for(const t of tr){ const k=dayOf(t.closeTime); (by[k]=by[k]||[]).push(t); }
   const keys=Object.keys(by).sort(), perDay={}; for(const k of keys)perDay[k]=by[k].length;
   const out=[];
@@ -601,7 +601,7 @@ function pzBehaviorDays(closed, opts){
     const tested=(c,f,id)=>{ chances[c]++; if(tests[c])tests[c].push(id); if(!f.includes(c)){ kept[c]++; if(!f.length)keptClean[c]++; } };
     arr.forEach((t)=>{
       // a spot position carried on after a partial sale is not a new entry: only the holding checks apply
-      const entry=!t.carried, i=entry?entries++:-1;
+      const entry=measured(t), i=entry?entries++:-1;
       // closes up to and including the entry's millisecond: a stop-and-reverse closes the loser and
       // opens the next trade on the same fill, and that re-entry counts
       const top=before(t.openTime+1)-1, prev=[]; for(let q=top;q>=0&&prev.length<2;q--)if(closes[q]!==t)prev.push(closes[q]);
@@ -629,7 +629,7 @@ function pzBehaviorDays(closed, opts){
     const byClose=[...arr].sort((a,b)=>a.closeTime-b.closeTime);
     if(byClose.some((t,j)=>j>0&&loss(t.net)&&loss(byClose[j-1].net))){ chances.afterTwo=1; if(!flags.afterTwo)kept.afterTwo=keptClean.afterTwo=1; }
     if(cap!=null){ chances.overtrade=1; if(!flags.overtrade)kept.overtrade=keptClean.overtrade=1; }
-    out.push({key:k,score:Math.round(100*clean/n),n,clean,flags,chances,kept,keptClean,tests,slips,net:arr.reduce((s,t)=>s+t.net,0)});
+    out.push({key:k,score:Math.round(100*clean/n),n,clean,flags,chances,kept,keptClean,tests,slips,net:opts.dayNet?(opts.dayNet[k]||0):arr.reduce((s,t)=>s+t.net,0)}); // the day's net is money (dayNetMap) when given
   });
   return out;
 }
@@ -651,7 +651,7 @@ function peerSummary(closed, o){
   // the same style rule as Pulse's profile (pzDetectProfile)
   const hold=med(tr.map(t=>t.closeTime-t.openTime)), days=new Set(tr.map(t=>o.dayOf?o.dayOf(t.closeTime):Math.floor(t.closeTime/DAY))).size, perDay=n/Math.max(1,days);
   const style=hold<20*60000||perDay>=8?'scalper':hold<8*3600000?'day':hold<10*DAY?'swing':'position';
-  const notional=med(tr.map(t=>(t.maxSize||0)*(t.avgEntry||0)).filter(x=>x>0))||0;
+  const notional=med(tr.map(notionalOf).filter(x=>x>0))||0; // measured rows only
   const size=notional<1000?'s1':notional<10000?'s2':notional<100000?'s3':'s4';
   const firstAt=Math.min(o.firstAt||first,first), months=(now-firstAt)/(30.44*DAY);
   const exp=months<3?'e1':months<12?'e2':months<36?'e3':'e4';
@@ -713,9 +713,9 @@ function pzForm(closed, now, opts){
 // Load: today's activity against your usual trading day (median of the last 30): trades opened
 // and total size. 50 = a usual day, 100 = twice it.
 function pzLoad(trades, todayK, dayOf){
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0));
-  const opened=(trades||[]).filter(t=>t.openTime&&dayOf(t.openTime)===todayK);
-  const past={}; for(const t of (trades||[])){ if(!t.openTime)continue; const k=dayOf(t.openTime); if(k>=todayK)continue; (past[k]=past[k]||{n:0,v:0}); past[k].n++; past[k].v+=size(t); }
+  const size=t=>notionalOf(t)||0; // measured rows only: a stand-in entry is not an entry and has no size
+  const opened=(trades||[]).filter(t=>measured(t)&&t.openTime&&dayOf(t.openTime)===todayK);
+  const past={}; for(const t of (trades||[])){ if(!t.openTime||!measured(t))continue; const k=dayOf(t.openTime); if(k>=todayK)continue; (past[k]=past[k]||{n:0,v:0}); past[k].n++; past[k].v+=size(t); }
   const ks=Object.keys(past).sort().slice(-30);
   const n=opened.length, v=opened.reduce((s,t)=>s+size(t),0);
   if(ks.length<5)return {score:null,n,v,days:ks.length};
@@ -1076,17 +1076,19 @@ const pzTiltCol=b=>b==='hot'?PZ_COL.low:b==='warm'?PZ_COL.mid:PZ_COL.good;
 // trades: closed and open; o: {now, dayOf, isLoss, maxTrades, lossLimit}. Most urgent first.
 function pzTiltAlerts(trades, o){
   const now=o.now, dayOf=o.dayOf, loss=o.isLoss||(n=>n<-1), M=60000, today=dayOf(now);
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0)), mins=ms=>Math.max(1,Math.round(ms/M)), S=n=>n===1?'':'s';
+  const size=t=>notionalOf(t)||0, mins=ms=>Math.max(1,Math.round(ms/M)), S=n=>n===1?'':'s'; // measured rows only
   const tr=(trades||[]).filter(t=>t&&t.openTime&&t.openTime<=now&&!t.partialHistory);
   const closes=tr.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now).sort((a,b)=>a.closeTime-b.closeTime);
-  const entries=tr.filter(t=>!t.carried&&dayOf(t.openTime)===today).sort((a,b)=>a.openTime-b.openTime);
+  const entries=tr.filter(t=>dayOf(t.openTime)===today).sort((a,b)=>a.openTime-b.openTime);
   // the trade that closed last at or before ms (a stop-and-reverse re-enters on the same fill)
   const prevClose=(ms,self)=>{ let p=null; for(const c of closes){ if(c.closeTime>ms)break; if(c!==self)p=c; } return p; };
   const out=[], add=(k,at,title,text)=>{ if(at>now-60*M&&at<=now)out.push({k,at,title,text}); };
   // the loss limit: realized P&L today, the close that crossed 80% and the one that reached it
   const lim=+o.lossLimit||0;
   if(lim>0){ let net=0, at80=0, at100=0;
-    for(const c of closes)if(dayOf(c.closeTime)===today){ net+=+c.net||0; const used=-net/lim;
+    // today's realized P&L is money: the money rows closed today (o.money; a trade row's whole net otherwise)
+    const moneyCloses=o.money?[...o.money].filter(c=>c.closeTime&&c.closeTime<=now).sort((a,b)=>a.closeTime-b.closeTime):closes;
+    for(const c of moneyCloses)if(dayOf(c.closeTime)===today){ net+=+c.net||0; const used=-net/lim;
       if(used>=1){ if(!at100)at100=c.closeTime; } else at100=0;
       if(used>=0.8){ if(!at80)at80=c.closeTime; } else at80=0; }
     if(at100)add('limit',at100,'Today’s loss limit is reached','You’ve reached the loss limit you set for today. The best trade now is no trade. Close the app and come back fresh tomorrow?');
@@ -1146,19 +1148,25 @@ function pzStatsFor(trades, fromMs, money){
 }
 // In-depth stats for a window: the breakdowns behind the Stats tab. Pure given its inputs
 // (o: isWin, isLoss, coin, hourOf, dowOf, monthOf). trades = closed trades in the window.
-function pzDeepStats(trades, o){
+// trades: closed trade rows (counts, win rates, the per-trade breakdowns); money: the money rows (every
+// net, the curve, the drawdown — spot by the day it was realized). Without a money list the trades carry the sums.
+function pzDeepStats(trades, o, money){
   const tr=[...(trades||[])].filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
-  if(!tr.length)return null;
+  const mon=money?[...money].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime):tr;
+  if(!tr.length&&!mon.length)return null;
   const W=t=>o.isWin(t.net), L=t=>o.isLoss(t.net);
-  // counts use the break-even band; profit factor is gross over every trade (as in the main stats)
-  const agg=list=>{ let net=0,gp=0,gl=0,w=0,l=0; for(const t of list){ net+=t.net; if(t.net>0)gp+=t.net; else gl-=t.net; if(W(t))w++; else if(L(t))l++; }
-    return {n:list.length,net,avg:list.length?net/list.length:null,winRate:w+l?w/(w+l):null,pf:gl>0?gp/gl:(gp>0?Infinity:null)}; };
-  const group=(keyOf,order)=>{ const m=new Map(); for(const t of tr){ const k=keyOf(t); if(k==null)continue; if(!m.has(k))m.set(k,[]); m.get(k).push(t); }
-    const rows=[...m].map(([k,v])=>({k,...agg(v)})); if(order)rows.sort(order); return rows; };
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0)), hold=t=>t.closeTime-(t.openTime||t.closeTime);
-  // equity and drawdown, trade by trade
-  let cum=0, peak=0; const curve=tr.map(t=>{ cum+=t.net; if(cum>peak)peak=cum; return {at:t.closeTime,cum,dd:cum-peak,net:t.net,id:t.id}; });
-  let maxDD=0, ddFrom=null, ddTo=null, pk=0, pkAt=tr[0].closeTime;
+  // counts use the break-even band; profit factor is gross over every row of money (as in the main stats)
+  const agg=(list,ml)=>{ let net=0,gp=0,gl=0,w=0,l=0,tn=0; for(const t of list){ tn+=t.net; if(W(t))w++; else if(L(t))l++; }
+    for(const t of (ml||list)){ net+=t.net; if(t.net>0)gp+=t.net; else gl-=t.net; }
+    return {n:list.length,net,avg:list.length?tn/list.length:null,winRate:w+l?w/(w+l):null,pf:gl>0?gp/gl:(gp>0?Infinity:null)}; };
+  // withMoney: the key reads a field money rows share (coin, side, time), so their net joins the row
+  const group=(keyOf,order,withMoney)=>{ const m=new Map(), mm=new Map(); for(const t of tr){ const k=keyOf(t); if(k==null)continue; if(!m.has(k))m.set(k,[]); m.get(k).push(t); }
+    if(withMoney&&money)for(const t of mon){ const k=keyOf(t); if(k==null)continue; if(!mm.has(k))mm.set(k,[]); mm.get(k).push(t); if(!m.has(k))m.set(k,[]); }
+    const rows=[...m].map(([k,v])=>({k,...agg(v,withMoney&&money?(mm.get(k)||[]):null)})); if(order)rows.sort(order); return rows; };
+  const size=t=>notionalOf(t)||0, hold=t=>t.closeTime-(t.openTime||t.closeTime); // a stand-in entry has no size
+  // equity and drawdown, close by close (money)
+  let cum=0, peak=0; const curve=mon.map(t=>{ cum+=t.net; if(cum>peak)peak=cum; return {at:t.closeTime,cum,dd:cum-peak,net:t.net,id:t.id}; });
+  let maxDD=0, ddFrom=null, ddTo=null, pk=0, pkAt=(mon[0]||tr[0]).closeTime;
   for(const c of curve){ if(c.cum>=pk){ pk=c.cum; pkAt=c.at; } if(c.cum-pk<maxDD){ maxDD=c.cum-pk; ddFrom=pkAt; ddTo=c.at; } }
   // size quarters: smallest to biggest notional, so you see whether size and results line up
   // quarters by rank (ties split evenly by entry order), each labelled with the sizes it actually holds
@@ -1187,12 +1195,12 @@ function pzDeepStats(trades, o){
     {kind:'even',n:tr.filter(t=>!W(t)&&!L(t)).length},
     ...BW.map(([lo,hi])=>({kind:'win',lo:lo*absMed,hi:hi*absMed,n:tr.filter(t=>W(t)&&inB(t,lo,hi)).length}))]:[];
   const nets=tr.map(t=>t.net);
-  return {all:agg(tr),curve,maxDD,ddFrom,ddTo,
-    side:group(t=>t.dir||null,(a,b)=>b.n-a.n),
-    markets:group(o.coin,(a,b)=>b.net-a.net),
-    dow:group(t=>o.dowOf(t.openTime||t.closeTime),(a,b)=>((a.k+6)%7)-((b.k+6)%7)),
-    hours:group(t=>o.hourOf(t.openTime||t.closeTime),(a,b)=>a.k-b.k),
-    months:group(t=>o.monthOf(t.closeTime),(a,b)=>a.k<b.k?-1:1),
+  return {all:agg(tr,mon),curve,maxDD,ddFrom,ddTo,
+    side:group(t=>t.dir||null,(a,b)=>b.n-a.n,true),
+    markets:group(o.coin,(a,b)=>b.net-a.net,true),
+    dow:group(t=>o.dowOf(t.openTime||t.closeTime),(a,b)=>((a.k+6)%7)-((b.k+6)%7),true),
+    hours:group(t=>o.hourOf(t.openTime||t.closeTime),(a,b)=>a.k-b.k,true),
+    months:group(t=>o.monthOf(t.closeTime),(a,b)=>a.k<b.k?-1:1,true),
     // from the journal: what you called the setup, and how well you rated your own execution (1–5)
     setups:o.setupOf?group(t=>{ const x=o.setupOf(t); return x?x.toLowerCase():null; },(a,b)=>b.n-a.n).map(r=>Object.assign(r,{label:o.setupOf(tr.find(t=>(o.setupOf(t)||'').toLowerCase()===r.k))})):[],
     ratings:o.ratingOf?group(t=>{ const x=o.ratingOf(t); return x>=1&&x<=5?x:null; },(a,b)=>b.k-a.k):[],
@@ -1348,7 +1356,8 @@ function pzBadgeCatalog(G){
   add('greenwk',Object.keys(W).filter(w=>w!==curWeek&&W[w].reduce((a,d)=>a+d.net,0)>0).map(w=>lastKey(W[w])));
   add('greenmo',Object.keys(M).filter(m=>m!==curMonth&&M[m].reduce((a,d)=>a+d.net,0)>0).map(m=>lastKey(M[m])));
   { let cum=0, hi=0, peak=0, trough=0, deep=false; const cs=[], highs=[], backs=[];
-    for(const t of closed){ cum+=t.net; const k=dayKey(t.closeTime); cs.push([k,cum]);
+    const moneyC=[...(ctx.money||closed)].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime); // net profit, highs and comebacks run on money
+    for(const t of moneyC){ cum+=t.net; const k=dayKey(t.closeTime); cs.push([k,cum]);
       if(cum>peak&&cum>0){ highs.push(k); if(deep)backs.push(k); deep=false; peak=cum; trough=cum; }
       else { trough=Math.min(trough,cum); if(absMed&&peak-trough>=5*absMed)deep=true; }
       if(cum>hi)hi=cum; }
@@ -1457,7 +1466,7 @@ function pzHabitStreak(h, ctx, nowWeek){
 function pzGoodMoments(g, fromKey){
   const out=[], byDay=g.ctx.byDay||{}, J=journal, loss=t=>PZ_LOSS(t.net);
   for(const d of g.days){ if(d.key<fromKey)continue;
-    const a=(byDay[d.key]||[]).slice().sort((x,y)=>x.closeTime-y.closeTime), opens=[...a].sort((x,y)=>x.openTime-y.openTime), fl=d.behavior.flags||{};
+    const a=(byDay[d.key]||[]).slice().sort((x,y)=>x.closeTime-y.closeTime), opens=a.filter(measured).sort((x,y)=>x.openTime-y.openTime), fl=d.behavior.flags||{}; // a stand-in entry is not an entry
     for(const t of a)if(loss(t)){ const next=opens.find(o=>o.openTime>t.closeTime);
       if(!next){ out.push({key:d.key,kind:'pause',text:'Walked away after a loss — no more trades that day'}); break; }
       const m=Math.round((next.openTime-t.closeTime)/60000); if(m>=15){ out.push({key:d.key,kind:'pause',text:'Waited '+(m>=120?Math.round(m/60)+' hours':m+' minutes')+' after a loss before the next entry'}); break; } }
@@ -1477,7 +1486,7 @@ function pzNudges(D){
   const wr=a=>{ const w=a.filter(t=>isWin(t.net)).length, l=a.filter(t=>isLoss(t.net)).length; return w+l>=8?w/(w+l):null; };
   const ct=closed.map(t=>t.closeTime), upto=ms=>{ let lo=0,hi=ct.length; while(lo<hi){ const m=(lo+hi)>>1; if(ct[m]<=ms)lo=m+1; else hi=m; } return lo; };
   // trades whose previous (up to two) closes before their entry match fn
-  const after=fn=>{ const a=[]; for(const t of closed){ if(!t.openTime)continue; const i=upto(t.openTime); const p=closed.slice(Math.max(0,i-2),i).filter(x=>x!==t); if(fn(p,t))a.push(t); } return a; };
+  const after=fn=>{ const a=[]; for(const t of closed){ if(!t.openTime||!measured(t))continue; const i=upto(t.openTime); const p=closed.slice(Math.max(0,i-2),i).filter(x=>x!==t); if(fn(p,t))a.push(t); } return a; };
   const base=wr(closed);
   if(last&&prev&&loss(last)&&loss(prev)&&now-last.closeTime<3*3600000){
     const h=after((p,t)=>p.length===2&&p.every(loss)&&dayKey(p[0].closeTime)===dayKey(t.openTime));
@@ -1534,6 +1543,7 @@ function pzReport(g, kind, key){
   const pk=kind==='week'?isoWeekOfKey(pzAddDays(P.lo,-7)):(m=>{ const y=+key.slice(0,4), mo=+key.slice(5,7); return mo===1?(y-1)+'-12':y+'-'+String(mo-1).padStart(2,'0'); })(), prev=g.days.filter(d=>inP(d,pzPeriodOf(kind,pk)));
   const avg=a=>a.length?_avg(a.map(d=>d.score)):null, byDay=g.ctx.byDay||{};
   const trades=cur.flatMap(d=>byDay[d.key]||[]), w=trades.filter(t=>isWin(t.net)).length, l=trades.filter(t=>isLoss(t.net)).length;
+  const moneyNet=(g.ctx.money||trades).reduce((a,t)=>{ const k=t.closeTime?dayKey(t.closeTime):null; return k&&k>=P.lo&&k<=P.hi?a+t.net:a; },0); // the period's net is money (spot by the day it was realized)
   const gp=trades.filter(t=>t.net>0).reduce((a,t)=>a+t.net,0), gl=-trades.filter(t=>t.net<0).reduce((a,t)=>a+t.net,0);
   const slips=(arr)=>{ const o={}; for(const d of arr)for(const s of (d.behavior.slips||[]))for(const k of s.f){ (o[k]=o[k]||{n:0,cost:0}); o[k].n++; o[k].cost+=s.net; } return o; };
   const sc=slips(cur), sp=slips(prev);
@@ -1550,7 +1560,7 @@ function pzReport(g, kind, key){
   const ch=kind==='week'?g.challenges.find(c=>c.week===key)||null:null;
   const a=avg(cur), pa=avg(prev);
   return {kind,key,prevKey:pk||null,days:cur.length,good:cur.filter(d=>d.score>=70).length,clean:cur.filter(d=>d.score===100).length,avg:a,grade:GRADE(a/100),delta:pa!=null?a-pa:null,
-    trades:trades.length,net:cur.reduce((x,d)=>x+d.net,0),winRate:w+l?w/(w+l):null,pf:gl>0?gp/gl:gp>0?Infinity:null,
+    trades:trades.length,net:moneyNet,winRate:w+l?w/(w+l):null,pf:gl>0?gp/gl:gp>0?Infinity:null,
     greenDays:cur.filter(d=>d.net>0).length,bestDay:best,worstDay:worst,slips:sc,prevSlips:sp,leak,parts,habits:ctxH,xp,badges,challenge:ch,
     plans:cur.filter(d=>d.parts&&d.parts.plan===1).length,checkins:cur.filter(d=>{ const e=dayE(d.key); return e.sleep||e.stress||e.focus; }).length,
     reviews:cur.filter(d=>dayE(d.key).eod).length,journaled:trades.length?trades.filter(t=>isJournaled(J[t.id])).length/trades.length:null};

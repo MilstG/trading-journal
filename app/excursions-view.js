@@ -309,7 +309,7 @@ function replayWire(box,t,S){
 }
 
 let _benchToken=0; // stale-render guard: only the latest benchmark run may draw (the miner has the same guard)
-async function renderBenchmark(closed){
+async function renderBenchmark(closed, money){
   const el=$('diagBench'); if(!el||closed.length<5)return;
   const tok=++_benchToken;
   try{
@@ -336,9 +336,9 @@ async function renderBenchmark(closed){
     if(tok!==_benchToken||!el.isConnected)return;
     if(!Object.keys(series).length)return;
     // your line: cumulative net as % of average deployed notional — a stated approximation
-    const avgNotional=_avg(closed.map(t=>(t.maxSize||0)*(t.avgEntry||0)).filter(x=>x>0));
+    const avgNotional=_avg(closed.map(notionalOf).filter(x=>x>0)); // measured rows only
     if(!(avgNotional>0))return;
-    const byClose=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+    const byClose=[...(money||closed)].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime); // the realized curve is money
     let cum=0; const mine=byClose.map(t=>{ cum+=t.net; return {x:t.closeTime,y:cum/avgNotional*100}; });
     mine.unshift({x:t0,y:0});
     const px=c=>isFinite(c[3])?c[3]:(c[1]+c[2])/2;

@@ -455,7 +455,7 @@ function setupSectionHtml(closed){
 // and says so. Renders nothing when no flows were fetched (pasted data, fetch failure).
 function capitalSectionHtml(){
   if(!ledFlows.length)return '';
-  const allClosed=closedMoney(); // realized money (spot by the day it was realized); an off-record result would misstate realized and the drawdown
+  const allClosed=realizedMoney(); // realized money (spot by the day it was realized); an off-record result would misstate realized and the drawdown
   const equityNow=(accountValue!=null||spotAccountValue!=null)?((accountValue||0)+(spotAccountValue||0)):null;
   const m=capitalModel(ledFlows,allClosed,equityNow);
   if(!m)return '';
@@ -518,13 +518,15 @@ function renderDiagnostic(closed, allv){
   }
   const skew = _skew(nets);
   const acf1 = _autocorr1(chronNets);
-  const cdd = chronNets.length? currentDD(chronNets) : null;
-  const uw = underwaterStats(chronT);
+  // the realized curve is money (spot by the day it was realized): where you stand and how long underwater read it
+  const chronM=[...allv].filter(t=>t.closeTime).sort((a,b)=>a.closeTime-b.closeTime), chronNetsM=chronM.map(t=>t.net);
+  const cdd = chronNetsM.length? currentDD(chronNetsM) : null;
+  const uw = underwaterStats(chronM);
   const HZN = Math.min(200,Math.max(50,N));
   // sample adequacy
   const adeq = N<30?['no','far too few — anecdotal only']:N<100?['mid','preliminary — directional only']:N<300?['mid','moderate — trends emerging']:['ok','reasonable for stable estimates'];
   const shRel = s.sharpe==null?'—':(s.sharpeLo>1?'distinguishable from 1.0 ✓':s.sharpeLo>0?'positive, but band too wide to distinguish from ~1':'band includes 0 — not distinguishable from no edge');
-  const _sig=behaviorSignalsMemo(closed,s);
+  const _sig=behaviorSignalsMemo(closed,s,allv);
   const {grossReal,costDragPct,big,small,bigExp,smallExp,oversizing,flagged,clean,flagExp,cleanExp,mistakeCost,ratingMono,mkts,topMkt,conc,avgWHold,avgLHold,disposition,priorClose,afterLoss,afterLossExp,tilt,dayArr,hiDays,loDays,hiExp,loExp,overtrading,topShare,netNoBest,fragile}=_sig;
   // --- Kelly / optimal sizing (risk fraction per trade) ---
   const kelly=(s.payoff>0&&s.payoff!==Infinity&&s.winRate>0)?(s.winRate-(1-s.winRate)/s.payoff):null;
@@ -674,7 +676,7 @@ function renderDiagnostic(closed, allv){
        <div class="diag-card"><h3 data-tip="Your most costly conditions, same sample-weighted ranking. Cut these or redefine the setup.">Avoid / fix these — your leaks</h3><ul class="diag-list">${weakHtml}</ul></div>
      </div>
    </div>
-   ${assetAttribSection(closed)}
+   ${assetAttribSection(closed,allv)}
    ${capitalSectionHtml()}
    <div class="diag-section">
      <h2>Equity &amp; edge over time</h2>
@@ -763,7 +765,7 @@ function renderDiagnostic(closed, allv){
   const pdfBtn=$('exportDiagPdf');
   if(pdfBtn)pdfBtn.onclick=()=>{ try{ _diagLazyFlush(); exportDiagPdf(); }catch(e){ setErr('PDF export failed: '+e.message); } };
   wireWhatIf(closed,dk);
-  wireAssetAttrib(closed);
+  wireAssetAttrib(closed,allv);
   wireWalkForward(wf);
   document.querySelectorAll('#anaBasisTog button').forEach(b=>{ b.classList.toggle('on',b.dataset.b===(settings.anaBasis||'usd'));
     b.onclick=async()=>{ settings.anaBasis=b.dataset.b; await Store.set(S_KEY,settings);
@@ -778,7 +780,7 @@ function renderDiagnostic(closed, allv){
   wireExtraDiag(closed,allv,s);
   wireFindingCards($('fndGrid'),findings);
   wireExcursions(closed);
-  renderBenchmark(closed); // async; reveals its card only when candle data exists
+  renderBenchmark(closed,allv); // async; reveals its card only when candle data exists
   // --- monthly PnL decomposition: price vs funding vs fees ---
   _diagChartLater($('diagDecomp'),function(){ const el=$('diagDecomp'); if(!el)return;
     const by={}; for(const t of allv){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0'); // money rows: spot by the day it was realized

@@ -119,7 +119,7 @@ t('Project: "Simulated paths ending green", and the not-yet-proven label beside 
   const src = grabFn('renderProjection');
   ok(!html.includes('Odds you finish green'), 'old label');
   ok(src.includes("mrow('Simulated paths ending green'") && src.includes('Not a probability'));
-  ok(src.includes('If your average day holds — not yet a proven edge.') && src.includes('edgeTest(bt)'));
+  ok(src.includes('If your average day holds — not yet a proven edge.') && src.includes('edgeTest(bt,bm)')); // the daily Sharpe runs on money rows (bm)
   ok(src.includes('${ifNote}') && src.includes("${msRows}${medPerDay>0?ifNote:''}"), 'label next to the odds and the milestones');
 });
 
@@ -153,7 +153,7 @@ t('strict band: a trade exactly at the band is decided, not a scratch', () => {
 t('the server classifies exactly like the app (shims and the outcome filter)', () => {
   for (const l of BE_LINES) eq(line(serverSrc, l), line(html, l));
   ok(serverSrc.includes("outcome === 'win' && !(t.net > 0 && t.net >= be)") && serverSrc.includes("outcome === 'be' && !(Math.abs(t.net) < be || t.net === 0)"));
-  ok(serverSrc.includes("'autoBeBand', 'beFixedOf'") && serverSrc.includes('E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut))'), 'the band is taken over trade rows, as the app does');
+  ok(serverSrc.includes("'autoBeBand', 'beFixedOf'") && serverSrc.includes('E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut && !(t.offRecord && !t.isOpen)))'), 'the band is taken over trade rows, as the app does');
 });
 t('auto band: 5% of the median |net|, clamped $0.50–$50, open trades ignored', () => {
   // the beta report: a +$50 (+20%) winner was "B/E" and a −$41 loss neither win nor loss

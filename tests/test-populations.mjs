@@ -1,7 +1,7 @@
 // Two populations out of one list (engine.js: tradeRow / moneyRow). Completed trades are counted,
 // rated and listed; realized money is summed. A spot position and the day rows that carry its
 // sells are never both in a sum, and a day row is never a trade. The guards here keep it so:
-// no file builds a closed-trade list from allTrades by hand (closedTrades / closedMoney /
+// no file builds a closed-trade list from allTrades by hand (closedTrades / realizedMoney /
 // periodTrades do), the server names the population on every closed list it takes, and
 // computeStats' two inputs read the right rows.
 import { readFileSync, readdirSync } from 'node:fs';
@@ -15,16 +15,16 @@ const html = readAppSource(join(root, 'ledger.html'));
 const { evalModule } = makeExtractor(html);
 
 console.log('\nTrade rows and money rows');
-t('no app file builds a closed-trade list from allTrades by hand: closedTrades / closedMoney / periodTrades do', () => {
+t('no app file builds a closed-trade list from allTrades by hand: closedTrades / realizedMoney / periodTrades do', () => {
   const files = [...readdirSync(join(root, 'app')).filter(f => f.endsWith('.js')).map(f => 'app/' + f),
     ...readdirSync(join(root, 'app/features')).filter(f => f.endsWith('.js')).map(f => 'app/features/' + f)];
   const allowed = [ // the helpers themselves, and two bookkeeping reads that want every closed row (ids to purge, the off-record count)
-    'function closedTrades(f){', 'function closedMoney(f){', 'function periodTrades(){',
+    'function closedTrades(f){', 'function realizedMoney(f){', 'function periodTrades(){',
     'closedIds=new Set(allTrades.filter(t=>!t.isOpen).map(t=>t.id))', 'offN=allTrades.filter(t=>!t.isOpen&&t.offRecord).length'];
   const bad = [];
   for (const f of files) readFileSync(join(root, f), 'utf8').split('\n').forEach((l, i) => {
     if (/allTrades\.filter\(\s*\(?\s*[a-z]\s*\)?\s*=>\s*!\s*[a-z]\.isOpen/.test(l) && !allowed.some(a => l.includes(a))) bad.push(f + ':' + (i + 1) + ' ' + l.trim().slice(0, 100)); });
-  eq(bad, [], 'hand-built closed lists — use closedTrades(f) for trades or closedMoney(f) for money:\n' + bad.join('\n'));
+  eq(bad, [], 'hand-built closed lists — use closedTrades(f) for trades or realizedMoney(f) for money:\n' + bad.join('\n'));
 });
 t('the server names the population on every closed list it takes (E.tradeRow / E.moneyRow)', () => {
   const allowed = ['peerSummary(trades.filter(x => !x.isOpen && x.closeTime)', 'inWin = trades.filter(x => !x.isOpen && x.closeTime >= from)']; // `trades` is cut to trade rows two lines above
@@ -57,4 +57,20 @@ t('computeStats: trade rows are counted, money rows are summed; a spot position 
   const naive = S.computeStats(all.filter(x => !x.isOpen), all);
   ok(naive.n === 4 && naive.net > s.net, 'every row at once would count the balance that left as a trade and the spot sells twice (' + naive.n + ' trades, net ' + naive.net + ')');
 });
+// The measured rule (engine.js: measured / notionalOf / holdOf): a row whose entry is unknown (partialHistory)
+// carries a stand-in entry and a size that includes what was held before, so no file multiplies
+// maxSize by avgEntry on its own — notionalOf does, and answers null for such a row. (The sizing-creep
+// card once reported a "$3,817 median" built from exactly those rows.)
+t('no app file sizes a trade by hand: notionalOf does, and a stand-in entry has no size', () => {
+  const raw = /maxSize\s*(\|\|\s*0\))?\s*\*\s*\(?\+?t\.avgEntry|\(\+t\.maxSize\|\|0\)\*\(\+t\.avgEntry/;
+  const files = [...readdirSync(join(root, 'app')).filter(f => f.endsWith('.js')).map(f => 'app/' + f),
+    ...readdirSync(join(root, 'app/features')).filter(f => f.endsWith('.js')).map(f => 'app/features/' + f), 'server.js'];
+  const bad = [];
+  for (const f of files) readFileSync(join(root, f), 'utf8').split('\n').forEach((line, i) => {
+    if (raw.test(line) && !/function notionalOf\(|function retPct\(/.test(line)) bad.push(f + ':' + (i + 1));
+  });
+  eq(bad, [], 'size products outside notionalOf / retPct');
+  ok(/function notionalOf\(t\)\{ return measured\(t\)&&/.test(readFileSync(join(root, 'app/engine.js'), 'utf8')), 'notionalOf answers null for an unmeasured row');
+});
+
 report('populations');
