@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Daruma Tutorial</title>
+<meta name="description" content="How to use Daruma, the phone-first trading habit app: set up, the daily routine, the scores, Progress and Social, with a screenshot of every screen.">
+<link rel="icon" href="/pulse-icon.svg">
+<style>
+/* Self-contained like help.html: one inline stylesheet, no scripts, no fonts fetched, so the page works
+   from any deploy (GET /tutorial/ in server.js) and straight from disk. Screenshots live in img/ beside it.
+   Layout: a sticky contents rail on the left, one reading column, phone screenshots set beside the text
+   that explains them. Colors follow Daruma's own TS9 look (dark, one green), with a light theme behind it. */
+:root{
+  color-scheme:dark;
+  --bg:#0a0c0f; --card:#10141a; --card2:#151a21; --line:#1f2630; --line2:#2a3340;
+  --fg:#e9eef2; --muted:#9aa5b1; --faint:#6b7684;
+  --acc:#7dff4f; --acc-ink:#0a0c0f; --acc-soft:rgba(125,255,79,.12);
+  --warm:#f6c453; --cool:#5ec8ff; --loss:#ff6b57; --win:#7dff4f;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --shadow:0 18px 50px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
+  color-scheme:light;
+  --bg:#f5f7f4; --card:#ffffff; --card2:#eef2ea; --line:#dde3d8; --line2:#c9d2c1;
+  --fg:#15191e; --muted:#4f5a64; --faint:#7d8792;
+  --acc:#2f9e1f; --acc-ink:#ffffff; --acc-soft:rgba(47,158,31,.12);
+  --warm:#a26f00; --cool:#0a6fa8; --loss:#c53a27; --win:#2f9e1f;
+  --shadow:0 18px 50px rgba(20,30,20,.14);
+}}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f5f7f4; --card:#ffffff; --card2:#eef2ea; --line:#dde3d8; --line2:#c9d2c1;
+  --fg:#15191e; --muted:#4f5a64; --faint:#7d8792;
+  --acc:#2f9e1f; --acc-ink:#ffffff; --acc-soft:rgba(47,158,31,.12);
+  --warm:#a26f00; --cool:#0a6fa8; --loss:#c53a27; --win:#2f9e1f;
+  --shadow:0 18px 50px rgba(20,30,20,.14);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+@media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--sans);padding-block:0 80px;padding-inline:20px}
+a{color:var(--acc)} a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:4px}
+img{max-width:100%;height:auto;display:block}
+code,kbd{font:0.9em var(--mono);background:var(--card2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--fg)}
+h1,h2,h3,h4{line-height:1.2;text-wrap:balance;margin:0}
+.wrap{max-width:1120px;margin:0 auto;display:flex;gap:48px;align-items:flex-start}
+main{min-width:0;flex:1;max-width:760px}
+
+/* contents rail */
+nav.toc{position:sticky;top:0;flex:0 0 220px;padding:44px 0 24px;max-height:100vh;overflow-y:auto;font-size:13.5px}
+nav.toc .toct{font:11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:0 0 12px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 0 5px 12px;border-left:2px solid var(--line)}
+nav.toc a:hover{color:var(--fg);border-left-color:var(--acc)}
+nav.toc a.sub{padding-left:24px;font-size:12.5px}
+@media (max-width:900px){ .wrap{display:block} nav.toc{position:static;max-height:none;padding:28px 0 0;columns:2;column-gap:24px} nav.toc .toct{column-span:all} nav.toc a{break-inside:avoid} }
+
+/* hero */
+header.hero{padding:44px 0 10px}
+.kick{font:12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--acc);margin:0 0 12px}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.brand svg{flex:none}
+.brand span{font:600 15px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
+header.hero h1{font-size:clamp(32px,5vw,46px);font-weight:650;letter-spacing:-.02em}
+header.hero h1 em{font-style:normal;color:var(--acc)}
+header.hero .lede{color:var(--muted);font-size:18px;max-width:58ch;margin:16px 0 0}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+.pill{font:12px/1 var(--mono);color:var(--muted);border:1px solid var(--line);background:var(--card);padding:7px 11px;border-radius:999px}
+.links{display:flex;flex-wrap:wrap;gap:18px;margin-top:22px;font-size:14px}
+
+/* the loop */
+.loop{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:30px}
+.loop div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 12px 10px;min-width:0}
+.loop b{display:block;font-size:14px}
+.loop small{display:block;color:var(--muted);font-size:12px;line-height:1.4;margin-top:4px}
+.loop i{display:block;font:11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--acc);margin-bottom:8px}
+@media (max-width:640px){ .loop{grid-template-columns:repeat(2,1fr)} .loop div:last-child{grid-column:span 2} }
+
+/* sections */
+section{margin-top:64px;scroll-margin-top:16px}
+section h2{font-size:28px;font-weight:650;letter-spacing:-.015em;margin:0 0 6px}
+section .lead{color:var(--muted);font-size:17px;margin:0 0 22px;max-width:60ch}
+h3{font-size:19px;font-weight:650;margin:36px 0 8px}
+h4{font-size:15.5px;font-weight:650;margin:22px 0 6px}
+p{margin:0 0 12px;max-width:68ch}
+ul,ol{margin:0 0 14px;padding-left:22px;max-width:68ch}
+li{margin:4px 0}
+li::marker{color:var(--acc)}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+
+/* text beside a phone screenshot */
+.row{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:26px;align-items:start;margin:22px 0 30px}
+.row.flip{grid-template-columns:260px minmax(0,1fr)}
+.row.flip .text{order:2}
+.row .text{min-width:0}
+.row .text p:last-child{margin-bottom:0}
+@media (max-width:640px){ .row,.row.flip{grid-template-columns:minmax(0,1fr)} .row.flip .text{order:0} .row.flip figure{order:1} .phone{margin:0 auto} }
+.phone{width:100%;max-width:260px;border-radius:26px;border:1px solid var(--line2);background:#000;padding:8px;box-shadow:var(--shadow)}
+.phone img{border-radius:19px;width:100%;aspect-ratio:390/844;object-fit:cover;object-position:top}
+.phone img.free{aspect-ratio:auto;object-fit:contain}
+.cap{font-size:12.5px;color:var(--faint);line-height:1.45;margin:10px 4px 0;text-align:center;max-width:260px}
+figure{margin:0}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin:22px 0 30px;justify-items:center}
+.gallery figure{width:100%;max-width:260px}
+.wide{margin:22px 0 30px}
+.wide img{border-radius:12px;border:1px solid var(--line2);box-shadow:var(--shadow)}
+.wide .cap{text-align:left;max-width:none;margin-left:2px}
+.dials{margin:18px 0 26px;max-width:520px}
+.dials img{border-radius:12px;border:1px solid var(--line2)}
+
+/* steps */
+ol.steps{list-style:none;padding:0;margin:18px 0 26px;counter-reset:step;max-width:none}
+ol.steps>li{counter-increment:step;display:grid;grid-template-columns:40px minmax(0,1fr);gap:14px;padding:16px 0;border-top:1px solid var(--line);margin:0}
+ol.steps>li:last-child{border-bottom:1px solid var(--line)}
+ol.steps>li::before{content:counter(step);font:600 15px/40px var(--mono);text-align:center;width:40px;height:40px;border-radius:50%;background:var(--acc);color:var(--acc-ink)}
+ol.steps b{display:block;font-size:16px;margin-bottom:2px}
+ol.steps p{margin:0;color:var(--muted)}
+
+/* callouts */
+.note{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:14px 16px;margin:18px 0;max-width:68ch}
+.note.tip{border-color:color-mix(in srgb,var(--acc) 40%,var(--line));background:var(--acc-soft)}
+.note.warn{border-color:color-mix(in srgb,var(--warm) 45%,var(--line))}
+.note b.tag{font:11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;display:block;margin-bottom:6px;color:var(--acc)}
+.note.warn b.tag{color:var(--warm)}
+.note p:last-child{margin-bottom:0}
+
+/* tables */
+.tbl{overflow-x:auto;max-width:100%;margin:16px 0 24px;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+.tbl.cols3 table{min-width:520px}
+th,td{text-align:left;padding:10px 14px;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;background:var(--card2);font:600 11.5px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+td b{font-weight:650}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 8px;border-radius:999px;border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+.tag.leak{color:var(--loss);border-color:color-mix(in srgb,var(--loss) 45%,transparent)}
+.tag.edge{color:var(--win);border-color:color-mix(in srgb,var(--win) 45%,transparent)}
+.tag.watch{color:var(--warm);border-color:color-mix(in srgb,var(--warm) 45%,transparent)}
+
+/* glossary & faq */
+dl{margin:0;max-width:68ch}
+dt{font-weight:650;margin-top:16px}
+dd{margin:4px 0 0;color:var(--muted)}
+details{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:0 16px;margin:10px 0;max-width:68ch}
+summary{cursor:pointer;font-weight:650;padding:13px 0;list-style:none;display:flex;justify-content:space-between;gap:12px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--acc);font:500 20px/1 var(--mono)}
+details[open] summary::after{content:"–"}
+details p{color:var(--muted);padding-bottom:14px}
+footer{margin-top:70px;padding-top:20px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p class="toct">Contents</p>
+  <a href="#start">Getting started</a>
+  <a href="#tabs">The five tabs</a>
+  <a href="#today">Today</a>
+  <a href="#routine">Your daily routine</a>
+  <a class="sub" href="#prep">Morning prep</a>
+  <a class="sub" href="#plan">Plan a trade</a>
+  <a class="sub" href="#journal">Journal your trades</a>
+  <a class="sub" href="#review">End-of-day review</a>
+  <a href="#discipline">The Discipline score</a>
+  <a href="#stats">Stats</a>
+  <a href="#calm">Tilt and quiet mode</a>
+  <a href="#progress">Progress</a>
+  <a href="#social">Social</a>
+  <a href="#settings">Settings and your data</a>
+  <a href="#faq">Common questions</a>
+  <a href="#glossary">Glossary</a>
+</nav>
+
+<main>
+<header class="hero" id="top">
+  <div class="brand">
+    <svg viewBox="0 0 100 100" width="40" height="40" fill="none" stroke-linecap="round" aria-hidden="true"><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="fill:var(--card);stroke:var(--line2)" stroke-width="10"/><path d="M50 8C70 8 82 24 84 44C87 66 82 92 50 92C18 92 13 66 16 44C18 24 30 8 50 8Z" style="stroke:var(--acc)" stroke-width="10" pathLength="100" stroke-dasharray="72 100"/><circle cx="40.5" cy="48" r="9.25" style="fill:var(--acc)"/><circle cx="59.5" cy="48" r="7.5" style="stroke:var(--muted)" stroke-width="3.5"/></svg>
+    <span>Daruma</span>
+  </div>
+  <p class="kick">Graded on process, not profit</p>
+  <h1>How to use Daruma, <em>screen by screen</em></h1>
+  <p class="lede">Daruma is the phone-first view of your trading journal. It reads your fills, scores how disciplined each day was, and rewards the habits that make traders better: a plan before the trade, a note after it, a review at night. This guide walks through every screen.</p>
+  <div class="pills">
+    <span class="pill">read-only · no keys needed</span>
+    <span class="pill">works on your phone</span>
+    <span class="pill">about 15 minutes to read</span>
+    <span class="pill">XP never comes from profit</span>
+  </div>
+  <div class="links">
+    <a href="/daruma">Open Daruma →</a>
+    <a href="/help">Full journal user guide →</a>
+  </div>
+
+  <div class="loop" aria-label="The daily loop">
+    <div><i>Morning</i><b>Prep</b><small>Readiness, a trade cap, a loss limit. Thirty seconds.</small></div>
+    <div><i>Before</i><b>Plan</b><small>Stop and target first, then the trade.</small></div>
+    <div><i>During</i><b>Trade</b><small>Daruma reads your fills and keeps score.</small></div>
+    <div><i>After</i><b>Journal</b><small>Rate the execution, one line of why.</small></div>
+    <div><i>Evening</i><b>Review</b><small>One lesson, one focus for tomorrow.</small></div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section id="start">
+  <h2>Getting started</h2>
+  <p class="lead">You need one thing: the address of the wallet you trade with. No wallet connection, no signature, no trading keys.</p>
+
+  <div class="row">
+    <div class="text">
+      <ol class="steps">
+        <li><b>Open the link</b><p>Open <code>/daruma</code> on your league's server in your phone's browser (it works on a computer too). You land on the welcome screen.</p></li>
+        <li><b>Paste your wallet address</b><p>Paste the <code>0x…</code> address you trade with on Hyperliquid or Lighter. Daruma checks both exchanges and adds every account it finds.</p></li>
+        <li><b>Tap <em>Start day one</em></b><p>Daruma loads your fill history, rebuilds your trades, and opens the Today screen. The first load can take a moment on a long history. After that only new trades are fetched.</p></li>
+        <li><b>Add it to your home screen</b><p>On iPhone tap Share, then <em>Add to Home Screen</em>. On Android or desktop use the browser's <em>Install</em> option. Daruma installs as its own app, with its own icon.</p></li>
+      </ol>
+    </div>
+    <figure><div class="phone"><img src="img/welcome.webp" alt="The Daruma welcome screen: a field for a wallet address, a Start day one button and a link to try sample data" width="780" height="1688"></div><figcaption class="cap">The welcome screen. One field, one button.</figcaption></figure>
+  </div>
+
+  <h3>Trading on Bybit or Binance?</h3>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/welcome-apikey.webp" alt="The API key form on the welcome screen, with fields for a read-only key and secret" width="780" height="1688"></div><figcaption class="cap">Tap <em>Bybit or Binance? Use an API key</em> to switch the form.</figcaption></figure>
+    <div class="text">
+      <p>Tap <em>Bybit or Binance? Use an API key</em> on the welcome screen and paste a <b>read-only</b> API key and secret. Daruma refuses any key that can trade, transfer or withdraw.</p>
+      <p>The secret stays in your browser. Each request is signed on your device and your league's server only passes it on, because the exchanges don't accept calls from a web page directly. Connect the key once per device.</p>
+      <p>You can add more wallets or exchanges later from Settings (the gear at the top right of Today).</p>
+    </div>
+  </div>
+
+  <div class="note tip"><b class="tag">Just looking?</b><p>Tap <em>Try it with sample data</em> on the welcome screen. Daruma generates five months of made-up trades so every screen is populated. Nothing is fetched or saved, and anything you log on the sample is thrown away when you load real data or reload the page.</p></div>
+
+  <div class="note"><b class="tag">What Daruma reads</b><p>Your closed and open trades, funding and fees, deposits and withdrawals, all from the exchange's public data. It never places orders and never holds keys that could. The screenshots in this guide use the sample data.</p></div>
+</section>
+
+<!-- ============================================================ -->
+<section id="tabs">
+  <h2>The five tabs</h2>
+  <p class="lead">Everything in Daruma lives under five tabs at the bottom of the screen. On a wide screen they become a sidebar.</p>
+  <div class="tbl cols3"><table>
+    <thead><tr><th>Tab</th><th>What it's for</th><th>Open it when</th></tr></thead>
+    <tbody>
+      <tr><td><b>Today</b></td><td>Your three dials, today's numbers, what to do next, and live warnings when you're running hot.</td><td>All day. It's the home screen.</td></tr>
+      <tr><td><b>Stats</b></td><td>P&amp;L, win rate, best and worst markets and hours, what's costing you money, in-depth stats.</td><td>Weekly, or when you want to know what to change.</td></tr>
+      <tr><td><b>Prep</b></td><td>The morning check-in: readiness, a trade cap, a loss limit, today's rules and a one-line plan.</td><td>Before your first trade.</td></tr>
+      <tr><td><b>Social</b></td><td>Your league table, boards, feed, duels, mentors, playbooks and your public profile.</td><td>When you want company or competition.</td></tr>
+      <tr><td><b>Progress</b></td><td>Level and XP, goals, Trader Age, habits and leaks, badges, report cards and the week card you can share.</td><td>End of the week.</td></tr>
+    </tbody>
+  </table></div>
+  <p>If your league owner has switched on the AI coach, a sixth tab, <b>Coach</b>, appears between Prep and Social. You can chat with it about your trading within a daily allowance.</p>
+  <figure class="wide"><img src="img/desktop-today.webp" alt="Daruma on a wide screen: the five tabs become a sidebar on the left, and the Today cards spread over two columns" width="2732" height="1720"><figcaption class="cap">The same app on a laptop. The tabs move to the left and the cards use the room.</figcaption></figure>
+</section>
+
+<!-- ============================================================ -->
+<section id="today">
+  <h2>Today</h2>
+  <p class="lead">Today is useful before you log anything. Everything at the top is read from your fills.</p>
+
+  <h3>The three dials</h3>
+  <figure class="dials"><img src="img/dials.webp" alt="Three dials: Form 53, Discipline with a dash because nothing has closed yet today, Load 0.0 times" width="1434" height="736"></figure>
+  <div class="tbl cols3"><table>
+    <thead><tr><th>Dial</th><th>What it measures</th><th>How to read it</th></tr></thead>
+    <tbody>
+      <tr><td><b>Form</b></td><td>Your recent trading against your own earlier trading: average trade, win rate and how far you are below your 30-day high.</td><td><b>50 is your usual.</b> Above it you're trading better than normal, below it worse. Low form is a good reason to trade smaller.</td></tr>
+      <tr><td><b>Discipline</b></td><td>The share of today's closed trades with none of the six slips (<a href="#discipline">explained below</a>).</td><td><b>100 is a clean day.</b> It appears with your first closed trade, and starts every day at 100. Under the dial: yesterday's score.</td></tr>
+      <tr><td><b>Load</b></td><td>How much you've traded today against your usual day: trades opened and size traded.</td><td><b>1.0× is a normal day.</b> 2.0× means twice your usual. If you set a trade cap in Prep, Load tracks that too.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The cards under the dials</h3>
+  <div class="row">
+    <div class="text">
+      <p>Scroll down and the day unfolds, card by card. Tap any card with a chevron to open the full screen behind it.</p>
+      <ul>
+        <li><b>Discipline</b> explains today's score in a sentence, with a <em>Breakdown</em> of each slip.</li>
+        <li><b>Net today, entries, risk used</b> are your numbers against the limits you set in Prep.</li>
+        <li><b>Plan your next trade</b> opens the plan form (<a href="#plan">below</a>).</li>
+        <li><b>Tilt</b> is a live reading of the triggers that come before a blow-up. Switch on <em>Notify me</em> to get a nudge even in another tab.</li>
+        <li><b>Trader Age</b> says how seasoned your process looks, in years.</li>
+        <li><b>The coach's line</b> is the one finding from your own trades that matters most right now.</li>
+        <li><b>Your session</b> draws today's P&amp;L curve against your loss limit, with each trade and slip marked.</li>
+        <li><b>Next step</b> is the one thing to do now: morning prep before you trade, the review after.</li>
+        <li><b>Today's XP</b> lists what's still on offer today, and the weekly challenge.</li>
+        <li><b>Last 7 trading days</b> shows Discipline and net day by day.</li>
+      </ul>
+    </div>
+    <figure><div class="phone"><img src="img/today-cards.webp" alt="Today, scrolled down: Plan your next trade, the Tilt meter reading Calm, Trader Age 8.3 years, the coach's line and Your session" width="780" height="1688"></div><figcaption class="cap">Today, a little further down.</figcaption></figure>
+  </div>
+
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/today-xp.webp" alt="The Today's XP card: morning prep +10, plan before your first trade +15, journal today's trades +15, end-of-day review +15, and the weekly challenge" width="780" height="1688"></div><figcaption class="cap">What today can still earn you.</figcaption></figure>
+    <div class="text">
+      <p>The two counters at the top right of Today are shortcuts. The <b>pencil</b> shows trades waiting to be journaled and opens the journal. The <b>flame</b> is your streak of clean days.</p>
+      <p>At the bottom of Today, <b>Customize this screen</b> lets you hide any card and put the ones below the dials in your own order. Hidden cards keep working in the background. Your layout syncs with your settings.</p>
+      <div class="note tip"><b class="tag">Tip</b><p>The default Today is lean on purpose. If you like seeing your level and league standing at the top, switch on <em>Level and league</em> in Customize.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="routine">
+  <h2>Your daily routine</h2>
+  <p class="lead">Four short habits. Each is optional, each earns XP, and skipping one never costs you anything. Together they take about ten minutes a day.</p>
+  <div class="tbl cols3"><table>
+    <thead><tr><th>Habit</th><th>When</th><th>Takes</th><th>XP</th></tr></thead>
+    <tbody>
+      <tr><td><b>Morning prep</b></td><td>Before your first trade</td><td>30 seconds</td><td class="num">+10</td></tr>
+      <tr><td><b>Plan before your first trade</b></td><td>A plan line and a loss limit, saved before you trade</td><td>1 minute</td><td class="num">+15 (half if written later that day)</td></tr>
+      <tr><td><b>Journal today's trades</b></td><td>After your trades close</td><td>1 minute per trade</td><td class="num">+15</td></tr>
+      <tr><td><b>Stops written</b></td><td>With your journal or plan</td><td>seconds</td><td class="num">+10</td></tr>
+      <tr><td><b>Loss limit respected</b></td><td>No new entry after you've passed your limit</td><td>nothing to do</td><td class="num">+10</td></tr>
+      <tr><td><b>End-of-day review</b></td><td>After your last trade</td><td>5 minutes</td><td class="num">+15</td></tr>
+    </tbody>
+  </table></div>
+  <p>A day's XP is its Discipline score plus these bonuses, plus any badges, challenges and goals you complete. Your league owner can change the numbers, so yours may differ slightly from this table.</p>
+  <div class="note warn"><b class="tag">Timing counts</b><p>Prep, plans and loss limits pay in full only when they were there before your first trade of the day. You can still open an old day from the calendar and journal it, but it no longer earns XP. This is what keeps the leaderboards honest.</p></div>
+
+  <!-- Prep -->
+  <h3 id="prep">1. Morning prep</h3>
+  <div class="row">
+    <div class="text">
+      <p>Open the <b>Prep</b> tab. Daruma has already guessed your trading style from your last 90 days (scalper, day, swing or position trader) and asks a question or two that fit it. After a few days of answers, the ones you keep giving show up as one-tap <em>usuals</em>.</p>
+      <p>Then three taps: how you <b>slept</b>, how <b>calm</b> you feel, how <b>focused</b> you are. They become your readiness score for the day. Readiness doesn't change your Discipline. It's there so Stats can later show you which days your discipline tends to break.</p>
+      <p>Below that, your limits for today:</p>
+      <ul>
+        <li><b>Trade cap</b>: how many trades you'll allow yourself. The Entries tile on Today counts against it.</li>
+        <li><b>Stop for the day at a loss of</b>: your daily loss limit in dollars. The Risk used tile fills as you approach it, and the tripwire warns you at 80%.</li>
+        <li><b>Rules for today</b>: structured rules Daruma can check against your fills at the end of the day. Which setups and markets you'll trade, a stop time, a maximum number of open positions, "stop after two losses".</li>
+        <li><b>One-line plan</b>: the sentence you want to remember at 2pm.</li>
+      </ul>
+      <p>Tap <b>Lock in my day</b>. You're done.</p>
+    </div>
+    <figure><div class="phone"><img src="img/prep-filled.webp" alt="Prep filled in: readiness 88, sleep 4, calm 4, focus 5, trade cap 3" width="780" height="1688"></div><figcaption class="cap">Three taps give a readiness of 88. The trade cap sits below.</figcaption></figure>
+  </div>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/today-prepped.webp" alt="Today after prep: Entries 0 of 3, 3 left today, Risk used 0% of $150" width="780" height="1688"></div><figcaption class="cap">Back on Today, your limits are now live: 0 of 3 entries, $0 of $150 risked.</figcaption></figure>
+    <div class="text">
+      <p>Once your prep is saved, the Today tiles switch from plain counts to <b>progress against your limits</b>. If you wear a WHOOP, an Oura ring, or use Apple Health, Prep can take your readiness from there instead of the three taps (your league owner has to connect the service first).</p>
+      <p>The <em>Your plan, live</em> card on Today then shows each structured rule as kept, broken or not yet tested, with a countdown to your stop time.</p>
+    </div>
+  </div>
+
+  <!-- Plan -->
+  <h3 id="plan">2. Plan a trade</h3>
+  <div class="row">
+    <div class="text">
+      <p>Tap <b>Plan your next trade</b> on Today. The form asks for the market, long or short, your <b>stop</b> (required), and optionally an entry, a target and one line on why.</p>
+      <p>Save it and it waits in your journal. When you open a trade on that market and side within the next 24 hours, the plan <b>attaches itself</b> to the trade: the stop and target come from it, it counts as a plan written live, and the line becomes the trade's setup. No trade in 24 hours and it quietly expires.</p>
+      <p>Daruma catches typos: each price has to be within 10× of the market's price, so an extra zero is refused rather than saved.</p>
+      <p>Later, under <b>Stats → Your plans</b>, you'll see what share of your trades had a plan, how often you followed it, and one sentence on what not following it cost you.</p>
+    </div>
+    <figure><div class="phone"><img src="img/plan.webp" alt="The Plan a trade form: market SOL, Long, entry 150, stop 147, target 158, why: breakout retest of the range high" width="780" height="1688"></div><figcaption class="cap">A plan takes four numbers and one line.</figcaption></figure>
+  </div>
+
+  <!-- Journal -->
+  <h3 id="journal">3. Journal your trades</h3>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/journal-card.webp" alt="A journal card: ETH long, minus $115, a candle chart of the trade with entry and exit marked, a fill replay, a 1 to 5 execution rating, setup and note fields" width="780" height="1688"></div><figcaption class="cap">One card per trade: the chart, the replay, the rating.</figcaption></figure>
+    <div class="text">
+      <p>Tap the <b>pencil counter</b> at the top of Today. Every unjournaled trade from the last 30 days gets a card.</p>
+      <p>Each card shows the market and side, the net result, when it opened and closed, how long it was held, and a <b>chart of the trade</b>: the candles around it, the holding period shaded, every fill marked (▲ a buy, ▼ a sell), your entry and exit as pills on the price axis, and the best and worst points while you were in it. <b>Replay the fills</b> steps through the trade the way it happened.</p>
+      <p>Then the part that matters:</p>
+      <ol>
+        <li><b>Rate the execution</b> from 1 to 5. Rate how well you traded it, not how it paid. A perfectly executed loser is a 5.</li>
+        <li><b>Name the setup</b> (breakout, fade, retest…). Your past tags come back as chips, so Stats can break results down by setup.</li>
+        <li><b>One line</b> on what you'd do differently. The prompt changes with the trade.</li>
+      </ol>
+      <p>Tap <b>Save</b>. The next card is already waiting.</p>
+    </div>
+  </div>
+  <div class="row">
+    <div class="text">
+      <p><b>Skip</b> takes a trade out of the backlog without journaling it (no XP, no credit, just out of the way). <b>Clear them</b> at the top skips every trade from before today in one tap, with an Undo until you leave the screen. Today's trades stay: journaling them is today's XP.</p>
+      <p>If your setup names one of your <a href="#playbooks">playbooks</a>, the card shows that playbook's rules as a checklist. Tick the ones you kept and Daruma will tell you, over time, what keeping each rule is worth.</p>
+      <p><b>Share</b> posts the trade to your league's feed. <b>Ask mentor</b> sends it to a mentor for review, if your league has them.</p>
+    </div>
+    <figure><div class="phone"><img src="img/journal-rated.webp" alt="A journal card filled in: execution rated 4, setup breakout, a one-line note" width="780" height="1688"></div><figcaption class="cap">A rating, a setup and a line. That's a journaled trade.</figcaption></figure>
+  </div>
+
+  <!-- Review -->
+  <h3 id="review">4. End-of-day review</h3>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/review-filled.webp" alt="The end-of-day review: a 1 to 5 rating of how well you traded your plan, three questions, today's lesson in one line and one focus for tomorrow" width="780" height="1688"></div><figcaption class="cap">The review ends with one lesson and one focus.</figcaption></figure>
+    <div class="text">
+      <p>After your last trade, Today's <b>Next step</b> card points to the review. It opens with your day in numbers, then asks how well you traded your plan and a few questions that fit your trading style.</p>
+      <p>The two lines at the end do the most work:</p>
+      <ul>
+        <li><b>Today's lesson, in one line.</b> It goes into your <a href="#lessons">lessons library</a> and comes back to you on Today after 1, 3, 7, 14, 30 and 60 days, until it sticks.</li>
+        <li><b>One focus for tomorrow.</b> It's the first thing you see on Today in the morning.</li>
+      </ul>
+      <p>The review earns +15 XP and feeds your report cards and the coach's line.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="discipline">
+  <h2>The Discipline score</h2>
+  <p class="lead">The one number Daruma is built around. It's read from your fills alone, so there's nothing to log, nothing to fake, and profit plays no part.</p>
+  <div class="row">
+    <div class="text">
+      <p>Each closed trade is <b>clean</b> or has one or more <b>slips</b>. The day's Discipline is the share of clean trades: three clean out of four is 75. "Usual" always means your own history before that day, so a day is never judged against itself.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Slip</th><th>What it means</th></tr></thead>
+        <tbody>
+          <tr><td><b>Revenge entry</b></td><td>Opened within 15 minutes of closing a loss.</td></tr>
+          <tr><td><b>Trading on after two losses</b></td><td>A third trade the same day after two losing ones in a row.</td></tr>
+          <tr><td><b>Sizing up after a loss</b></td><td>Within 2 hours of a loss, a position over 1.5× your usual size.</td></tr>
+          <tr><td><b>Adding to a loser</b></td><td>Adding to a position while it was under water.</td></tr>
+          <tr><td><b>Overtrading</b></td><td>More trades than 1.5× your usual day.</td></tr>
+          <tr><td><b>Holding a loser</b></td><td>A losing trade held over 3× as long as your usual winner.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Tap <b>Breakdown</b> on the Discipline card to see which slips happened, how many trades each touched, your last 14 trading days and your streak.</p>
+    </div>
+    <figure><div class="phone"><img src="img/discipline.webp" alt="The Discipline breakdown: 100, 1 of 1 trade clean, a 14-day chart with a 42-day streak, and each of the six slips listed with None" width="780" height="1688"></div><figcaption class="cap">A clean day, a 42-day streak, and all six slips at zero.</figcaption></figure>
+  </div>
+  <h3>Streaks and shields</h3>
+  <p>A day scoring 70 or more is a <b>clean day</b> and extends your streak. Shields cover the occasional off day so one bad afternoon doesn't erase a month. You earn shields as the streak grows; the Breakdown screen says how many you hold.</p>
+  <h3>Verified Discipline</h3>
+  <p>Because the score comes from public fills, your league's server can work it out itself. Under <b>Social → What you share</b>, switch on <em>Verify my discipline</em> and your score gets a ✓ on the boards. Leaderboards, duels and competitions use verified scores; the banner on Today reminds you if yours isn't verified yet.</p>
+  <div class="note"><b class="tag">What Discipline ignores</b><p>Profit, the number of trades, how big your account is, and anything you type. You can have a losing day at 100 and a winning day at 25. That's the point.</p></div>
+</section>
+
+<!-- ============================================================ -->
+<section id="stats">
+  <h2>Stats</h2>
+  <p class="lead">The numbers, and more usefully, what moves them. Pick a range at the top (7, 30 or 90 days, or everything) and perps, spot or both.</p>
+  <div class="gallery">
+    <figure><div class="phone"><img src="img/stats.webp" alt="Stats: net P&L, win rate, average trade, profit factor, average win, fees and funding, then a daily P&L bar chart" width="780" height="1688"></div><figcaption class="cap">The headline numbers and daily P&amp;L.</figcaption></figure>
+    <figure><div class="phone"><img src="img/stats-markets.webp" alt="Stats, further down: results by market, best and worst hour, your plans, and whether your habits pay" width="780" height="1688"></div><figcaption class="cap">Markets, time of day, your plans.</figcaption></figure>
+    <figure><div class="phone"><img src="img/stats-findings.webp" alt="What moves your results: findings tagged Leak, Watch and Edge, each with a one-line action and a Why link" width="780" height="1688"></div><figcaption class="cap">What moves your results.</figcaption></figure>
+  </div>
+  <h3>What moves your results</h3>
+  <p>The most useful part of Stats is the list of findings near the bottom. Each is read from your own trades over the range you picked, says what to do about it, and has a <em>Why</em> that shows the numbers behind it.</p>
+  <div class="tbl cols3"><table>
+    <thead><tr><th>Tag</th><th>Meaning</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag leak">Leak</span></td><td>Something that is costing you money, with a size.</td><td>"Fees eat 118% of what you make. Use limit orders where you can."</td></tr>
+      <tr><td><span class="tag watch">Watch</span></td><td>A risk to keep an eye on, not yet a pattern.</td><td>"You're $895 below your peak. Don't size up to win it back."</td></tr>
+      <tr><td><span class="tag edge">Edge</span></td><td>Something that works. Do more of it.</td><td>"Your largest 25% of trades are your best. Wait for them."</td></tr>
+    </tbody>
+  </table></div>
+  <p>Just above it, <b>Does discipline pay?</b> compares your average day at 70+ with your days under 70, in dollars. For most traders that one comparison is the whole argument for the app.</p>
+
+  <h3>In-depth stats</h3>
+  <div class="row">
+    <div class="text">
+      <p>Tap <b>See in-depth stats</b> for the full picture over the same range: your <b>equity curve</b> and drawdown, results, consistency and risk figures, <b>what each slip cost</b> against your clean trades, how your trades land by size, P&amp;L by hour and weekday, fees and funding, and tables by market, side, position size, holding time, month, and the market's volatility and trend on the day.</p>
+      <p>Once you've tagged setups and rated executions in the journal, two more tables appear: results <b>by setup</b> and <b>by your own rating</b>. That's how you find out whether your 5-rated trades really are your best.</p>
+      <p>Some of the deeper insights unlock as your level rises.</p>
+    </div>
+    <figure><div class="phone"><img src="img/deep.webp" alt="In-depth stats: an equity curve with the peak and the current point marked, and the drawdown from the running high below it" width="780" height="1688"></div><figcaption class="cap">The equity curve, one step per closed trade.</figcaption></figure>
+  </div>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/how.webp" alt="How the scores work: the Discipline, Form, Load and Tilt formulas written out in plain words" width="780" height="1688"></div><figcaption class="cap">Every formula, in plain words.</figcaption></figure>
+    <div class="text">
+      <p>Nothing in Daruma is a black box. <b>How the scores work</b>, at the bottom of Stats, spells out every formula: Discipline, Form, Load, Tilt, market conditions and Trader Age. Plain arithmetic, no AI.</p>
+      <div class="note tip"><b class="tag">Tip</b><p>Set Stats to <em>90D</em> once a month and read the findings top to bottom. Pick one leak. Plug it (see <a href="#progress">Progress</a>). Ignore the rest until it's done.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="calm">
+  <h2>Tilt and quiet mode</h2>
+  <p class="lead">Most blow-ups don't start with a bad idea. They start with the next trade after a loss. Daruma watches for that moment and steps in.</p>
+  <div class="gallery">
+    <figure><div class="phone"><img src="img/tilt-alert.webp" alt="A tilt alert at the top of Today: Three losses close together. 3 losses in 6 minutes. This is when revenge trades happen. Step away for 15 minutes? With Taking a break and Dismiss buttons. Below it the dials read Form 18, Discipline 33, Load 3.0 times" width="780" height="1688"></div><figcaption class="cap">A tilt alert names the pattern it saw.</figcaption></figure>
+    <figure><div class="phone"><img src="img/quiet-mode.webp" alt="Quiet mode: a full-screen card titled Step away, listing what pushed the tilt reading to 69, the lesson you wrote, and buttons to start a 15-minute break or say I'm calm" width="780" height="1688"></div><figcaption class="cap">Quiet mode, with the lesson you wrote.</figcaption></figure>
+    <figure><div class="phone"><img src="img/break-timer.webp" alt="On a break: a 14:59 countdown over a dimmed Today screen, with End the break early" width="780" height="1688"></div><figcaption class="cap">The 15-minute break.</figcaption></figure>
+  </div>
+  <h3>The tilt meter</h3>
+  <p>The Tilt card on Today reads 0 to 100 and adds up today's triggers: losses in a row, a loss in the last 15 minutes, entries at 1.5× your usual size, four entries in an hour, most of your risk budget used, and low readiness from your prep. Profit plays no part. From 35 it reads <em>heating up</em>.</p>
+  <h3>Tilt alerts</h3>
+  <p>After each refresh that brings new trades, Daruma checks the last hour for five specific patterns, such as a re-entry within 15 minutes of a loss or three losses in 45 minutes, and puts a calm banner at the top of Today naming what it saw. Each pattern is said at most once a day. With notifications allowed, it also arrives as a system notification, even with Daruma in another tab.</p>
+  <h3>Quiet mode</h3>
+  <p>At a tilt reading of 65, the next loss or entry opens <b>quiet mode</b>: a full-screen card that lists what pushed the reading up and brings back the lesson you wrote about that very slip. <b>Start a 15-minute break</b> dims the app and counts down. <b>I'm calm</b> closes it. One answer covers one episode. Breaks are logged on the day and never change your Discipline.</p>
+  <p>Don't want any of this? Settings → <em>Tilt alerts</em> turns it off.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="progress">
+  <h2>Progress</h2>
+  <p class="lead">Everything you've earned by process: your level, your goals, your habits, your badges. Nothing here comes from profit.</p>
+  <div class="row">
+    <div class="text">
+      <h4>Level and XP</h4>
+      <p>XP adds up into levels with names (Rookie, Consistent, Professional, Veteran…). The ring shows how far you are to the next one. <em>Where this week's XP came from</em> breaks the week down by source.</p>
+      <h4>Process goals</h4>
+      <p>Up to three at a time. Tap <b>New goal</b> and pick a target: a month's Discipline average, weeks without one particular slip, a share of the month's trades journaled, days prepped, or weeks inside your loss limit. Each shows a ring and on-track or behind. Reaching one earns the Goal getter badge.</p>
+      <h4>Trader Age</h4>
+      <p>How seasoned your process looks, in years, next to how long you've actually traded. Every ten points of daily rating doubles it, and only trading days count, so a break freezes it. <b>Pace</b> is this week against your six-month norm. Tap <em>What builds it</em> for the parts, what's holding it back, and what each slip costs you in years.</p>
+    </div>
+    <figure><div class="phone"><img src="img/progress.webp" alt="Progress: level 5 Consistent with 521 XP to Professional, the Process goals card with a New goal button, and Trader Age 8.4 years" width="780" height="1688"></div><figcaption class="cap">Level, goals and Trader Age at the top of Progress.</figcaption></figure>
+  </div>
+
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/progress-leaks.webp" alt="Progress, further down: report cards graded A, Your leaks over 30 days with a Plug this leak button, the lessons library and good moments" width="780" height="1688"></div><figcaption class="cap">Report cards, leaks and good moments.</figcaption></figure>
+    <div class="text">
+      <h4>Weekly challenge</h4>
+      <p>One challenge a week, aimed at your biggest leak ("No DOGE trades this week", "No entries within 15 minutes of a loss"). Keep it on every trading day and it pays, typically +150 XP. <em>Pick another</em> if it doesn't fit.</p>
+      <h4>Your leaks and habits</h4>
+      <p>The <b>leak map</b> lists each recurring slip, what it cost you in the last 30 days, and whether it's shrinking. Tap <b>Plug this leak</b> and it becomes a habit checked from your fills. Three clean trading weeks in a row plug it and earn a badge. Weeks you don't trade are skipped; a week with the slip starts the count again.</p>
+      <p><b>Good moments</b> are the times you followed a rule that usually costs you, like walking away after a loss. They deserve to be seen too.</p>
+      <h4 id="lessons">Lessons library</h4>
+      <p>Each review's lesson becomes a card that comes back on Today after 1, 3, 7, 14, 30 and 60 days. <em>I still live by it</em> moves it to the next step; <em>I slipped on it</em> restarts it tomorrow. A lesson kept through all six is kept for good. You can add lessons of your own.</p>
+    </div>
+  </div>
+
+  <h3>Badges</h3>
+  <div class="row">
+    <div class="text">
+      <p>About 270 badges in 45 families, each with six tiers from Bronze to Legend. Discipline, consistency, journaling, risk control, habits, results, milestones, social. New ones are revealed as you earn the earlier ones, so the case never shows you a wall of grey.</p>
+      <p>Progress shows your latest badges and the ones that are <em>next up</em> with how close you are. <b>See your badge case</b> opens the full collection, filtered by family. Tap any badge to read what it's for.</p>
+      <p>If you'd like to show them off, <em>Social → What you share</em> can switch on a public badge page at <code>/b/yourname</code> that shows badges, level and streak and nothing else.</p>
+    </div>
+    <figure><div class="phone"><img src="img/badges.webp" alt="The badge case: 77 of 295 earned, filter chips by family, and a grid of Discipline badges with their tier and progress to the next" width="780" height="1688"></div><figcaption class="cap">The badge case, filtered by family.</figcaption></figure>
+  </div>
+
+  <h3>Report cards</h3>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/report.webp" alt="A weekly report card: grade A, process 100 out of 100 up 7 on the week before, results, slips, process grades and a focus for next week" width="780" height="1688"></div><figcaption class="cap">Week 40, graded A on process.</figcaption></figure>
+    <div class="text">
+      <p>Every week and every month gets a <b>report card</b> with a letter grade for your process, your results for the record, each slip against the period before, how your routines went (days prepped, plans before the first trade, reviews, trades journaled), the badges you earned and a focus for next period.</p>
+      <p>The grade is for process. You can get an A on a losing week, and an F on a winning one. Flip between weeks and months with the arrows, and share any card as an image.</p>
+    </div>
+  </div>
+
+  <h3>Share my week</h3>
+  <div class="row">
+    <div class="text">
+      <p><b>Share my week</b>, at the bottom of Progress, draws an image of your week: the Discipline average as a ring, clean days out of trading days, your streak, level and XP gained, your duel record and your top badges.</p>
+      <p>It has <b>no dollar amounts and no P&amp;L</b>, on purpose, so you can post it anywhere. Choose 4:5 or square, dark or light, and which parts to show. Then <em>Share</em> to your phone's share sheet, <em>Download</em>, or <em>Copy image</em>. It's drawn in your browser; nothing is sent anywhere.</p>
+      <p>Share cards unlock at a level your league owner sets.</p>
+    </div>
+    <figure><div class="phone"><img src="img/share-week.webp" alt="Share my week: a dark card with a Discipline ring at 100, 3 of 3 clean days, a 42-day streak, level 5 and three gold badges, with format and theme choices and Download and Copy image buttons" width="780" height="1688"></div><figcaption class="cap">A week card ready to post.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="social">
+  <h2>Social</h2>
+  <p class="lead">Your league. Everyone your owner shared the link with, ranked by process, never by profit.</p>
+
+  <h3>Joining</h3>
+  <p>Open the <b>Social</b> tab and pick a name (3 to 20 letters, numbers or underscores). That's your profile. If your owner set an invite code, enter it here. Your journal, notes and trades stay on your device; the league only receives the numbers you choose to share.</p>
+
+  <div class="row">
+    <div class="text">
+      <h4>League</h4>
+      <p>Everyone is ranked by <b>XP earned this week</b>. On Monday the top of each tier moves up a league (Bronze, Silver, Gold, Platinum, Diamond) and the bottom moves down. You can be in several leagues at once; <em>Find leagues</em> lists them.</p>
+      <p>Under <em>Ranked by</em>, switch the board to Discipline, streak, all-time XP, or, for members who share them, return and drawdown.</p>
+      <h4>Boards</h4>
+      <p>Server-wide leaderboards across all leagues, for members who opted in under What you share.</p>
+      <h4>Feed</h4>
+      <p>What people you follow are up to: trades and plans they posted, milestones, badges, playbooks they shared. <b>Post a trade</b> shares one of yours with your thesis. <em>Discover</em> shows everyone.</p>
+      <h4>Competitions</h4>
+      <p>Time-boxed contests your owner or members set up: a week of clean days, a month of journaling. Prizes are badges and bragging rights, never money.</p>
+    </div>
+    <figure><div class="phone"><img src="img/social-league.webp" alt="The Social tab: shortcuts to Reviews, Mentors, Playbooks, Invite and Find people; League, Boards and Feed; the Main league with 4 traders, ranked by XP earned this week" width="780" height="1688"></div><figcaption class="cap">The league table, ranked by this week's XP.</figcaption></figure>
+  </div>
+
+  <h3>Duels</h3>
+  <div class="row flip">
+    <figure><div class="phone"><img src="img/duels.webp" alt="Duels: your record of won, lost and drawn, a field to challenge someone by name, league-mates one tap away, and the ladder" width="780" height="1688"></div><figcaption class="cap">Challenge anyone in the league, one on one.</figcaption></figure>
+    <div class="text">
+      <p>Challenge anyone to a week or a month, one on one: on Discipline, clean days, journaling, last one standing, or process XP. They have 48 hours to accept. Daruma scores it from both your fills. You can put XP on it (never money) once you've earned some, and a duel played to the end gives the winner +100 XP.</p>
+      <p>After three duels you join the <b>ladder</b>, with a rating that starts at 1000 and moves with each result. Beating a higher rating counts more.</p>
+      <p><b>Group duel</b> invites 3 to 6 people to the same contest. It starts the next Monday once three of you are in.</p>
+      <p>Don't want to be challenged? Switch off <em>Accept duel challenges</em> under What you share.</p>
+    </div>
+  </div>
+
+  <h3>People, partners and mentors</h3>
+  <div class="gallery">
+    <figure><div class="phone"><img src="img/people.webp" alt="Find people: a search field, filters for Everyone, Open to duels and Looking for a partner, and member cards with a Challenge button" width="780" height="1688"></div><figcaption class="cap">Find people.</figcaption></figure>
+    <figure><div class="phone"><img src="img/profile.webp" alt="A member profile: name, level and league, 30-day Discipline 98, a 42-day streak, 73 badges listed" width="780" height="1688"></div><figcaption class="cap">A public profile.</figcaption></figure>
+    <figure><div class="phone"><img src="img/mentors.webp" alt="Mentors: filters by style and room, sort by room first, fastest reply, most come back or lowest rate, and an explanation of what mentors see" width="780" height="1688"></div><figcaption class="cap">Mentors.</figcaption></figure>
+  </div>
+  <p><b>Find people</b> lists everyone with a public profile. Filter to people open to duels, people looking for an <b>accountability partner</b>, or mentors. A partner sees your streak, Discipline and slips (never your trades or P&amp;L), can nudge you, and can share a weekly challenge with you.</p>
+  <p><b>Mentors</b> are members your league owner appointed. Pick up to two. They see your daily scores, slips and nightly lesson, and the trades you send them with <em>Ask mentor</em> from a journal card. Each sets a rate in XP per trade reviewed; your first trade with each is free. Their track record (trades reviewed, time to first reply, how many members come back) is measured by the server, not written by them.</p>
+
+  <h3 id="playbooks">Playbooks</h3>
+  <div class="row">
+    <div class="text">
+      <p>A playbook is a setup's name and its rules, one per line: "Breakout retest: wait for the retest, stop under the low, no entry in the first 5 minutes". Write yours under <b>Social → Playbooks</b>.</p>
+      <p>When a journal card's setup names a playbook, the card shows its rules as a checklist. Tick the ones you kept, and each playbook then shows what keeping its rules is worth, from your own closed trades: kept every rule against broke one, in win rate and result per trade.</p>
+      <p><b>Share with the league</b> publishes a playbook's name and rules (never your trades). Members can <b>adopt</b> it into their own list, and hear about it when you improve the rules.</p>
+    </div>
+    <figure><div class="phone"><img src="img/playbooks.webp" alt="Playbooks: Yours and Shared by members, with an explanation and a New playbook button" width="780" height="1688"></div><figcaption class="cap">Your setups' rules, written once.</figcaption></figure>
+  </div>
+
+  <h3>Invite</h3>
+  <p><b>Social → Invite</b> has your personal link (<code>/daruma?ref=yourname</code>). When someone joins through it and becomes active, you both earn XP, and you can see which of your links brings people in.</p>
+
+  <h3>What you share, and your account</h3>
+  <div class="gallery">
+    <figure><div class="phone"><img src="img/sharing.webp" alt="What you share: profile picture, public name and bio, then switches for public profile, badge page, milestones in the feed, habits, mentors, partner, duels, boards and verified discipline" width="780" height="1688"></div><figcaption class="cap">Every switch is off until you turn it on.</figcaption></figure>
+    <figure><div class="phone"><img src="img/account.webp" alt="Account: claim your wallet by signing a message, add a passkey, your devices, and leave the league" width="780" height="1688"></div><figcaption class="cap">Account: wallet claim, passkeys, devices.</figcaption></figure>
+  </div>
+  <p><b>What you share</b> (tap your avatar on Social) is the privacy page. Each switch names exactly what leaves your device: a public profile, a badge page, milestones in the feed, the habits you run, whether mentors can see your days, whether you're open to duels or looking for a partner, the process boards, the global boards, verified Discipline, and whether to show your % return. Dollar P&amp;L is never shared unless you switch it on.</p>
+  <p><b>Account</b> is where you make your profile portable. <em>Claim your wallet</em> signs a short message (no gas, nothing moves) to prove the address is yours; a claimed wallet gets a ✓ and lets you sign in anywhere. <em>Add a passkey</em> lets you sign in with Face ID, a fingerprint or your device PIN. <em>Add a device</em> gives you a one-time code for a new phone. <em>Leave the league</em> deletes your profile from the server; your journal isn't touched.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="settings">
+  <h2>Settings and your data</h2>
+  <p class="lead">The gear at the top right of Today, Stats and Progress opens Settings.</p>
+  <div class="row">
+    <div class="text">
+      <ul>
+        <li><b>Wallets</b>: add another address, remove one, connect Bybit or Binance, or <em>Refresh now</em>.</li>
+        <li><b>Appearance</b>: Dark, Light, or Auto to follow your phone.</li>
+        <li><b>Colorway</b>: TS9 (the default green), Ink or BB. Colorways apply in dark mode.</li>
+        <li><b>Trader profile</b>: Daruma's guess at your style, or override it. Your prep questions and review questions follow it.</li>
+        <li><b>Tilt alerts</b>: on or off.</li>
+        <li><b>Reminders</b>: push notifications for prep, the review, tilt alerts while Daruma is closed, and league news.</li>
+        <li><b>Your data</b>: where your journal is saved and whether it syncs.</li>
+        <li><b>Install Daruma as an app</b>, and links to this tutorial and the full journal.</li>
+      </ul>
+    </div>
+    <figure><div class="phone"><img src="img/settings.webp" alt="The Settings sheet: wallets, appearance Dark Light Auto, colorway TS9 Ink BB, trader profile and tilt alerts" width="780" height="1688"></div><figcaption class="cap">Settings slides up over the screen.</figcaption></figure>
+  </div>
+  <div class="gallery">
+    <figure><div class="phone"><img src="img/today-light.webp" alt="Today in the light appearance" width="780" height="1688"></div><figcaption class="cap">Light appearance.</figcaption></figure>
+    <figure><div class="phone"><img src="img/customize.webp" alt="Customize Today: switches for each card and up and down arrows to reorder the cards below the dials" width="780" height="1688"></div><figcaption class="cap">Customize any screen from its foot.</figcaption></figure>
+  </div>
+  <h3>Where your journal lives</h3>
+  <p>Your trades are cached in your browser so loads are quick. Your journal (notes, prep, reviews, plans, settings) is saved in your browser and, on a server with an access token, synced to it, so you can open Daruma on your phone and your laptop and pick up where you left off. The Settings sheet's <em>Your data</em> section tells you which applies to you.</p>
+  <div class="note warn"><b class="tag">Good to know</b><p>If the server has no access token, Settings warns you. In that case everyone who opens the link shares one journal, and you should ask the owner to set one before you log anything personal.</p></div>
+  <p><b>Reset progress awards</b>, at the very bottom of Progress, clears every badge, achievement and completed challenge on all your devices and earns them again from your history. Use it if something looks wrong; it doesn't touch your journal.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="faq">
+  <h2>Common questions</h2>
+  <details><summary>Why does my Discipline dial show a dash?</summary><p>Nothing has closed yet today. Today's score appears with your first closed trade. Under the dial you can see your last trading day's score.</p></details>
+  <details><summary>I had a great day and my Discipline went down. Why?</summary><p>Discipline never looks at profit. Check the Breakdown: one of the six slips happened, most often a re-entry within 15 minutes of a loss or adding to a position while it was under water. A profitable slip is still a slip.</p></details>
+  <details><summary>Can I journal trades from last week?</summary><p>Yes. The journal lists every unjournaled trade from the last 30 days, and you can open older days from the calendar. Notes on old days are kept and count toward your stats, but XP is only paid for logging done in time.</p></details>
+  <details><summary>Does Daruma trade, or need my private key?</summary><p>No. It reads public fill data for a wallet address, or uses a read-only exchange API key. It can't place orders, move funds, or see anything a block explorer couldn't.</p></details>
+  <details><summary>Why is Form grey or missing?</summary><p>Form needs about 15 closed trades, with at least 10 before the recent window, and a trade in the last 30 days. It fills in as your history grows.</p></details>
+  <details><summary>I got a new phone. How do I get my journal back?</summary><p>If your league's server syncs your journal, open Daruma on the new phone and sign in: with a passkey, by claiming your wallet, or with a one-time code from <em>Account → Add a device</em> on the old phone. If you aren't on a syncing server, use the full journal's Backup to move it.</p></details>
+  <details><summary>Something looks off after a refresh.</summary><p>Open Settings and tap <em>Refresh now</em>. In the full journal, Shift-click <em>Load all</em> forces a complete re-fetch of your history. A strip under the header flags anything incomplete for as long as it's true.</p></details>
+  <details><summary>Where is the full journal?</summary><p>The link at the bottom of the Settings sheet (or the sidebar on a wide screen) opens the full journal: the trade list, pattern miner, price excursions, exports and backups. Daruma and the journal are the same app with the same data.</p></details>
+  <details><summary>Can I turn off the social and competitive parts?</summary><p>Yes. Don't create a profile, and the Social tab stays empty while everything else works. If you have a profile, every public switch is under What you share, and you can leave the league at any time from Account.</p></details>
+</section>
+
+<!-- ============================================================ -->
+<section id="glossary">
+  <h2>Glossary</h2>
+  <dl>
+    <dt>Fill</dt><dd>One executed order on the exchange. A trade is made of one or more fills.</dd>
+    <dt>Trade</dt><dd>A position from open to flat, rebuilt from your fills. Partial closes belong to the same trade.</dd>
+    <dt>Slip</dt><dd>One of the six behaviours Discipline counts against a trade (revenge entry, trading on after two losses, sizing up after a loss, adding to a loser, overtrading, holding a loser).</dd>
+    <dt>Clean day</dt><dd>A day with Discipline of 70 or more. Clean days extend your streak.</dd>
+    <dt>Shield</dt><dd>Covers one off day so your streak survives it. Earned as your streak grows.</dd>
+    <dt>XP</dt><dd>Points for process: your daily Discipline score plus bonuses for prep, plans, journaling and reviews, plus badges, challenges and goals. Never for profit.</dd>
+    <dt>Level</dt><dd>What your lifetime XP adds up to, with a name for each step.</dd>
+    <dt>Leak</dt><dd>A recurring slip or pattern that is costing you money, with the amount attached.</dd>
+    <dt>Habit</dt><dd>A rule Daruma checks for you from your fills, usually created by plugging a leak.</dd>
+    <dt>Playbook</dt><dd>A setup's name and its rules. Shows up as a checklist on matching journal cards.</dd>
+    <dt>Trader Age</dt><dd>How seasoned your process looks, in years, from your daily ratings over six months.</dd>
+    <dt>Tilt</dt><dd>A live 0 to 100 reading of the triggers that come before a blow-up. At 65, quiet mode opens.</dd>
+    <dt>Verified</dt><dd>A score the server worked out itself from your public fills, marked with a ✓.</dd>
+    <dt>Readiness</dt><dd>Your morning prep in one number (sleep, calm, focus), or your wearable's score.</dd>
+    <dt>Report card</dt><dd>The weekly and monthly summary with a letter grade for your process.</dd>
+  </dl>
+</section>
+
+<footer>
+  <p>Daruma is the phone-first view of Ledger, your trading journal. This tutorial is served by your own deployment and reflects the version you're running. For the full journal, see the <a href="/help">user guide</a>; for how everything is computed, the <a href="/docs">technical reference</a>.</p>
+</footer>
+</main>
+</div>
+</body>
+</html>

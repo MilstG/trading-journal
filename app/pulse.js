@@ -1374,6 +1374,7 @@ function pzSheetHtml(){
       ${SRV.enabled&&!SRV.needsAuth?'<p class="pz-warn" style="margin-top:10px">This server has no access token set, so everyone who opens this link shares one journal. The owner should set AUTH_TOKEN before sharing it.</p>':''}
       ${tokenAsk?pzTokenHtml():''}</section>
     <section style="display:flex;flex-direction:column;gap:8px">${_deferredInstall?'<button type="button" class="pz-ghost" id="pzInstall">Install Daruma as an app</button>':'<p class="pz-fine">To install: on iPhone tap Share → Add to Home Screen; on Android or desktop use the browser’s Install option.</p>'}
+      ${/^https?:$/.test(location.protocol)?'<a class="pz-ghost" href="/tutorial/">How to use Daruma</a>':''}
       <a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a>${((SRV.enabled&&SRV.token&&!SRV.badAuth)||(typeof SOC!=='undefined'&&SOC.me&&SOC.me.admin))&&/^https?:$/.test(location.protocol)?'<a class="pz-ghost" href="/admin">Admin panel</a>':''}</section>
   </div></div>`;
 }
