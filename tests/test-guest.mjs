@@ -52,7 +52,8 @@ t('members, the owner, the demo, a closed league and a cap of 0 are never capped
   eq(run('pzLockWord(4)'), 'level 4');
 });
 t('the game is recomputed when the cap changes (joining lifts it at once)', () => {
-  const src = grabFn('gameContext');
+  const src = grabFn('_gameKey'); // gameContext's memo key
+  ok(grabFn('gameContext').includes('const key=_gameKey();'));
   ok(src.includes("'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)"), 'the cap is part of the memo key');
 });
 t('the invite link fills the code in and leaves the address bar; joining forgets it', () => {

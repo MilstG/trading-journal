@@ -265,8 +265,8 @@ function renderTable(){
       :t.partialHistory?` <span class="pill be" data-tip="This position was ${t.openSz>0?'partly ':''}opened before the fill history begins, so the entry is ${t.openSz>0?'only the part that was served':'unknown'} and no return % is shown; the result is the exchange’s own and counts.">PARTIAL</span>`:'';
     const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction. Net shown is realized so far.">OPEN</span>`:t.movedOut?`<span class="pill be" data-tip="This spot balance left without a sell (a transfer, staking, a send), so the position ended there. Listed for the record; not a completed trade, so it is kept out of the statistics.">MOVED</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge+gapBadge;
     return `<tr class="trow ${expandedId===t.id?'expanded':''}" data-id="${esc(t.id)}" tabindex="0" role="button" aria-expanded="${expandedId===t.id?'true':'false'}" aria-label="${esc(dispMarket(dcoin(t)))} ${t.dir}${t.isOpen?' open':''}, net ${fmtUsd(t.net)}. Activate to ${expandedId===t.id?'collapse':'expand'} journal.">
-      <td class="l num">${fmtDate(t.openTime)}</td>
-      <td class="l" style="font-weight:600">${esc(dispMarket(dcoin(t)))}${(multi&&t.wallet)||candleVenue(t)?`<div style="margin-top:3px">${candleVenue(t)&&!(t.wallet&&!t.wallet.label&&multi)?`<span class="tagchip">${esc(VENUE_NAMES[t.venue])}</span>`:''}${multi&&t.wallet?`<span class="tagchip">${esc(labelFor(t.wallet))}</span>`:''}</div>`:''}</td><td class="l">${side}</td>
+      <td class="l num"><span class="dl">${fmtDate(t.openTime)}</span><span class="ds">${shortDay(t.openTime)}</span></td>
+      <td class="l" style="font-weight:600">${esc(dispMarket(dcoin(t)))}<span class="mside"> ${side}</span>${(p=>`<div class="msub${p?'':' nop'}"><span class="mdate">${shortDay(t.openTime)}</span>${p}</div>`)((candleVenue(t)&&!(t.wallet&&!t.wallet.label&&multi)?`<span class="tagchip">${esc(VENUE_NAMES[t.venue])}</span>`:'')+(multi&&t.wallet?`<span class="tagchip">${esc(labelFor(t.wallet))}</span>`:''))}</td><td class="l">${side}</td>
       <td class="num">${t.partialHistory&&!(t.openSz>0)?'<span style="color:var(--faint)" data-tip="Entry unknown: every opening fill predates the history (the exit price stood in for it in older versions).">—</span>':fmtNum(t.avgEntry)}</td><td class="num">${fmtNum(t.avgExit)}</td>
       <td class="num">${fmtNum(t.maxSize)}</td>
       <td class="num ${outClass(t.net)}" style="font-weight:600">${fmtUsd(t.net)}</td>
@@ -281,6 +281,8 @@ function renderTable(){
   if(expandedId&&document.getElementById('att-'+expandedId))loadAttachments(expandedId);
   if(expandedId&&typeof mrJournalLoad==='function')mrJournalLoad(expandedId); // a mentor review of this trade (social server only)
 }
+// the trades table's date on a phone or tablet ("Oct 5", "Oct 5 ’25"): the clock is in the expanded row
+function shortDay(ms){ const p=tzParts(ms); return MONTHS[p.mo]+' '+p.day+(p.y!==new Date().getFullYear()?' ’'+String(p.y).slice(2):''); }
 function renderPager(total,pages){
   const el=$('pager'); if(!el)return;
   const sizeSel=`<div class="pgsize">Rows <select id="pgSel">${[10,20,50].map(n=>`<option value="${n}"${n===pageSize?' selected':''}>${n}</option>`).join('')}</select></div>`;
@@ -330,7 +332,7 @@ function journalRow(t,j,R){
       <div class="field"><label>Tags — comma separated</label>
         <input type="text" data-j="tags" data-id="${esc(t.id)}" value="${esc((j.tags||[]).join(', '))}" placeholder="a-setup, trend, scalp"></div>
       <div class="field"><label>Planned risk ($) — for this trade's R-multiple</label>
-        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?esc('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
+        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${esc(_oneR>0?'default '+(+_oneR.toFixed(2))+((settings.rBasis||'avgloss')==='fixed'?'':' (avg loss)'):'e.g. 100')}" min="0" step="any"></div>
       <div class="field"><label>Trade plan — entry / stop / target <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— scored under Diagnostic → Plan adherence</span>${planTimingBadge(t,j)}</label>
         <div style="display:flex;gap:6px">
           <input type="number" data-j="plan_entry" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.entry)?esc(j.plan.entry):''}" placeholder="entry px" step="any" style="flex:1">
@@ -511,7 +513,9 @@ function jReadDrawer(id,nums){
   const fresh=!journal[id], j=ensureJ(id), before=JSON.stringify(j);
   j.notes=g('notes').value;
   if(g('setup'))j.setup=g('setup').value;
-  if(g('tags'))j.tags=parseTags(g('tags').value);
+  if(g('tags')){ j.tags=parseTags(g('tags').value);
+    // once the field is left (or saved), show what was kept: "beta, Trend, trend" is saved as "beta, Trend"
+    if(nums&&document.activeElement!==g('tags'))g('tags').value=j.tags.join(', '); }
   let err='';
   if(nums){
     if(g('risk')){ const v=parseFloat(g('risk').value); j.risk=v>0?v:null; }
@@ -607,7 +611,7 @@ function render(){
   const _drafts=captureDrafts();
   try{ renderInner(); } finally { restoreDrafts(_drafts); }
 }
-let _coachFirst=true, _orphSeen='', _coachStage=0;
+let _coachFirst=true, _coachStage=0;
 // Big accounts: when the coach's inputs changed (a journal save, new fills) rebuilding it is ~1 s at 30k
 // trades — its context, the game's every-trade context (X10), then the game. Each is its own idle task here, then the panel, instead of one
 // block inside render(). Memoized steps cost nothing, so an unchanged coach just redraws; a newer
@@ -626,14 +630,18 @@ function renderInner(){
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
   renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll,pt); renderDowHour(ptAll,pt); renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
-  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  // (a big account's first one is staged too: built in one idle callback it was a ~1.4 s task at 31k trades)
+  if(_coachFirst&&!(allTrades.length>=5000&&typeof requestIdleCallback==='function')){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  else if(_coachFirst){ _coachFirst=false; coachStaged(); }
   else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
   renderTripwire(); renderEdge(pt);
   const coins=[...new Set(allTrades.filter(viewFilter).map(dcoin))].sort(); const csel=$('fCoin'),cur=csel.value;
   csel.innerHTML='<option value="">All markets</option>'+coins.map(c=>`<option value="${esc(c)}">${esc(dispMarket(c))}</option>`).join(''); csel.value=cur;
   const wsel=$('fWallet');
   if(settings.wallets.length>1){ wsel.classList.remove('hide'); const wcur=wsel.value;
-    wsel.innerHTML='<option value="">All wallets</option>'+settings.wallets.map(w=>`<option value="${esc(w.address)}">${esc(labelFor(w))}</option>`).join(''); wsel.value=wcur; }
+    // one label on two venues (an address's Hyperliquid and Lighter accounts) read as the same wallet twice: name the venue
+    const lc={}; for(const w of settings.wallets){ const k=labelFor(w); lc[k]=(lc[k]||0)+1; }
+    wsel.innerHTML='<option value="">All wallets</option>'+settings.wallets.map(w=>`<option value="${esc(w.address)}">${esc(labelFor(w)+(lc[labelFor(w)]>1?' · '+(VENUE_NAMES[venueOf(w)]||venueOf(w)):''))}</option>`).join(''); wsel.value=wcur; }
   else wsel.classList.add('hide');
   refreshTagFilter(); renderTable();
   if(activeTab==='diag') renderDiagnostic(pt,ptAll);
@@ -662,7 +670,7 @@ function renderTape(){
   const chip=t=>`<span class="tp">${fmtT(t.closeTime)} <b>${esc(dispMarket(dcoin(t)))}</b> <b class="${isBE(t.net)?'':(t.net>=0?'up':'dn')}">${isBE(t.net)?'B/E':(t.net>=0?'+':'−')+'$'+Math.abs(t.net).toFixed(0)}</b></span>`;
   // closed trades only, so say so — and name today's entries still open (the unplanned nudge counts those too)
   const openN=allTrades.filter(t=>t.isOpen&&!t.orphan&&tradeRow(t)&&viewFilter(t)&&t.openTime>=day0).length, openTxt=openN?` · ${openN} OPENED TODAY, STILL OPEN`:'';
-  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} closed trade${today.length===1?'':'s'}${openTxt}</span>`:`<span class="tp sum">NO CLOSED TRADES TODAY${openTxt} · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
+  const sum=today.length||Math.abs(tNet)>=0.005?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} closed trade${today.length===1?'':'s'}${openTxt}</span>`:`<span class="tp sum">NO CLOSED TRADES TODAY${openTxt} · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
   el.classList.remove('hide');
   el.innerHTML=sum+closedAll.slice(0,12).map(chip).join('');
 }
@@ -672,10 +680,10 @@ function renderPulse(){
   const now=Date.now();
   // the net is money (spot by the day it was realized); the count is of completed trades
   const win=(from)=>{ const xs=inv.filter(t=>t.closeTime>=from&&t.closeTime<=now);
-    return {net:xs.filter(moneyRow).reduce((s,t)=>s+t.net,0), n:xs.filter(t=>tradeRow(t)&&!t.movedOut&&!t.isOpen).length}; };
+    return {net:xs.filter(moneyRow).reduce((s,t)=>s+t.net,0), n:xs.filter(t=>tradeRow(t)&&!t.movedOut&&!t.isOpen).length, any:xs.some(t=>moneyRow(t)&&!t.isOpen)}; }; // any: money realized with no trade done (a partial sell) still shows
   const spans=[['Today',win(tzMidnight(now))],['7D',win(now-7*86400000)],['30D',win(now-30*86400000)]];
   el.classList.remove('hide');
-  el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
+  el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.any?cls(v.net):''}">${v.any?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
 function renderReview(){
   jFlush(); // a day / week answer still waiting for its autosave is saved before the form is rebuilt
@@ -1417,6 +1425,7 @@ function saveDay(typing,btn){
     if(!nx) delete journal[k]; else journal[k]=nx;
     markJEdit(k); Store.set(J_KEY,journal);
     renderTripwire(); // a committed max loss takes effect immediately
+    if(!typing)try{ renderCoach(); }catch(err){ console.warn('coach',err); } // "Write today's plan" stayed up after the plan was saved; not on every keystroke
     const s=$('djSaved'); if(s){ s.textContent='saved'; clearTimeout(s._t); s._t=setTimeout(()=>{ s.textContent=''; },1400); } }
   if(!typing&&e.maxLoss>0)askNotifyPerm(); // committed max loss + a gesture — offer desktop notifications
 }
@@ -1490,12 +1499,12 @@ function renderProjection(){
         <p class="mini-note">At this pace, expect a dip like the median at some point. If the 1-in-4 number would force you to stop trading or cut size, you are oversized now — decide the response before it happens.</p>
       </div>
       <div class="diag-card"><h3 data-tip="Kelly sizing from the same trades the projection is built on: win rate and payoff ratio give the growth-optimal risk fraction. Full-Kelly assumes the edge is stable and exactly known (it isn't) and is famously violent; quarter-Kelly is the calmer default. In-sample guidance, not a guarantee.">Sizing at this edge</h3>
-        ${(function(){ const kel=kellyFromTrades(closed);
-          if(!kel)return '<p class="lead">Needs \u226510 decisive trades (outside the break-even band) in this view.</p>';
+        ${(function(){ const kel=kellyFromTrades(bt); // the projection's basis, as the tip says (it read all history)
+          if(!kel)return '<p class="lead">Needs \u226510 decisive trades (outside the break-even band) in this basis — pick a longer lookback.</p>';
           const acct2=(accountValue||0)+(spotAccountValue||0);
           const pctv=x=>(x*100).toFixed(1)+'%';
           const dollar=x=>acct2>0?' \u00b7 '+fmtUsd(acct2*x):'';
-          const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime).map(t=>t.net);
+          const chron=[...bt].sort((a,b)=>a.closeTime-b.closeTime).map(t=>t.net);
           const acf1=_autocorr1(chron);
           const hc=kellyHaircut(kel.quarter,acf1);
           const streaky=acf1!=null&&acf1>0.15&&kel.quarter!=null&&kel.quarter>0;
@@ -1549,7 +1558,7 @@ function renderDataHealth(){
   const el=$('dataHealth'); if(!el)return;
   const items=[];
   if(Array.isArray(fillsTruncated)&&fillsTruncated.length)
-    items.push('fill history truncated for '+fillsTruncated.map(esc).join(', ')+' (Shift-click Load all for a full refetch)');
+    items.push('fill history truncated for '+fillsTruncated.map(esc).join(', ')+(typeof fillsTruncWindow!=='undefined'&&fillsTruncWindow?' · older fills are only in Hyperliquid’s archive'+(srvOwner()?'':' (the server’s owner can recover them)'):''));
   if(_fetchHealth.funding)items.push('funding history partial — net PnL may be missing funding for this load');
   if(_fetchHealth.twap)items.push('TWAP fill history partial — TWAP-executed trades may be missing for this load');
   // seams: position changes with no fill behind them — fills the exchange no longer serves. Said once,
@@ -1564,24 +1573,31 @@ function renderDataHealth(){
   if(_fetchHealth.ledger)items.push('capital-flow history partial — return-on-capital may be incomplete');
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
   const orph=allTrades.filter(t=>t.orphan);
-  if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
+  if(orph.length)items.push(orphanLines(orph,t=>esc(dispMarket(dcoin(t))+(t.market==='spot'?'':' '+(t.dir||'').toLowerCase())+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(' · ')+' — kept out of your stats. Full refetch reads the fills again');
   // a server to recover from: the archive panel (check, sample, backfill, the index) stays reachable
   // here whether or not there is anything to warn about — once the seams are closed, the strip is the
   // one place that says so, and the panel is still how the index and other wallets are looked after
   const canArc=srvOwner(); // the owner's token session only: the archive spends their AWS budget
-  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+(cov&&cov.gaps?'Recover from the archive…':'Archive…')+'</button>':'';
+  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+((cov&&cov.gaps)||(typeof fillsTruncWindow!=='undefined'&&fillsTruncWindow)?'Recover from the archive…':'Archive…')+'</button>':'';
+  // the full refetch without Shift (a phone has none); not for the 10,000-fill window alone, which no refetch passes
+  const refBtn=settings.wallets.length&&(orph.length||_fetchHealth.funding||_fetchHealth.twap||fillsTruncated.some(x=>!/10,000 fills/.test(x)))?' <button class="df-btn" id="dhRefetch" style="margin-left:6px" data-tip="Read every fill the exchange still serves again and merge it into the cached history; nothing cached is lost.">Full refetch</button>':'';
   if(!items.length&&!canArc){ el.classList.add('hide'); el.innerHTML=''; delete el.dataset.ok; return; }
   el.classList.remove('hide');
-  if(!items.length){ el.dataset.ok='1';
-    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov&&cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
-  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+arcBtn; }
+  // the check is the reconstruction's against Hyperliquid wallets' fills: nothing loaded that way (pasted
+  // fills, sample data, Lighter or a CEX alone) means nothing was checked, so no tick
+  if(!items.length&&cov){ el.dataset.ok='1';
+    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
+  else if(!items.length){ delete el.dataset.ok; el.innerHTML='<b>Data health:</b> no Hyperliquid fills loaded to check'+arcBtn; }
+  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+refBtn+arcBtn; }
   const b=$('arcOpen'); if(b)b.onclick=()=>toggleArchivePanel($('dataHealth'));
+  const rb=$('dhRefetch'); if(rb)rb.onclick=()=>fullRefetch();
 }
 // Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server
 // (archive.js): a coverage check (what the archive holds, what the seams need, what it would cost), a
 // sample hour, then the backfill with a spending cap. The server merges what it finds into its fill
 // cache; the next load merges that into this browser's (data-io.js: srvArchived) and reconstructs.
 let _arcTimer=null;
+function _arcApplied(v){ try{ if(v!==undefined)localStorage.setItem('arc_applied',String(v)); else return +localStorage.getItem('arc_applied')||0; }catch(e){ return 0; } }
 // Opened from the Data health strip (seams on record) or from the server-sync bar (always there, so a
 // check, a diagnose or a running backfill stays reachable once the seams are gone); anchored below either.
 async function toggleArchivePanel(anchor){
@@ -1638,7 +1654,10 @@ async function toggleArchivePanel(anchor){
   };
   const poll=async()=>{ clearTimeout(_arcTimer); try{ const st=await call(''); draw(st);
       if(st.job&&st.job.state==='running')_arcTimer=setTimeout(poll,3000);
-      else if(st.job&&st.job.state==='done'&&!st.job.applied){ st.job.applied=true; if(st.job.added){ out(`Done: ${st.job.added} fills recovered — loading them…`); loadAll(); } } }
+      // a finished job's fills are loaded once (remembered by its start, across panel openings and reloads);
+      // an incomplete one recovered fills too
+      else if(st.job&&(st.job.state==='done'||st.job.state==='incomplete')&&st.job.added&&_arcApplied()!==st.job.startedAt){ _arcApplied(st.job.startedAt);
+        out(`${st.job.state==='done'?'Done':'Partly done'}: ${st.job.added} fills recovered — loading them…`); loadAll(); } }
     catch(e){ p.innerHTML='<b>Hyperliquid’s archive</b> — '+esc(e.message)+' <button class="df-btn" id="arcClose">Close</button>'; $('arcClose').onclick=toggleArchivePanel; } };
   poll();
 }
@@ -1661,7 +1680,8 @@ function renderReconcile(){
   // the exchange's figure is account-based, unrealized included: the open positions' marks go in the
   // fills' side too (as verifiedFigure does), or a large open position reads as a gap of its own
   const uPerp=openPositions.filter(p=>!p.venue||p.venue==='hyperliquid').reduce((s,p)=>s+(p.uPnl||0),0);
-  const recLive=recPerp+uPerp;
+  const uSpot=spotHoldings.filter(h=>!h.venue||h.venue==='hyperliquid').reduce((s,h)=>s+(h.uPnl||0),0);
+  const recLive=recPerp+uPerp, recAllLive=recAll+uPerp+uSpot, recSpotLive=recSpot+uSpot; // the total and spot too: a large open position read as "recon −$20,000" on whole fills
   // integrity banner: perp reconstruction vs Hyperliquid's verified figure, on EVERY tab.
   // Perp-only on purpose: spot gaps are expected (unknown cost basis on transfers/airdrops).
   const wEl=$('reconWarn');
@@ -1684,7 +1704,7 @@ function renderReconcile(){
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;
   el.classList.remove('hide');
   el.innerHTML=`<span class="rlab" data-tip="Hyperliquid's own account P&L figures, as its app reports them — always all time, whatever period or filter is picked above. “recon” is how far the fill-based sum is from each; a large gap means fills are missing, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic.">Verified · Hyperliquid all-time · doesn’t follow the period</span>`+
-    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recLive))+item('Spot + vaults',spot,delta(spot,recSpot))+
+    item('Total PnL',all,delta(all,recAllLive))+item('Perps',perp,delta(perp,recLive))+item('Spot + vaults',spot,delta(spot,recSpotLive))+
     (hlPnl.partial?`<span class="ritem" style="color:var(--gold)" data-tip="Hyperliquid didn’t answer the portfolio request for at least one wallet this load, so these sums cover only the wallets it did. Load all again.">⚠ a wallet is missing from these</span>`:'')+
     (dataAudit?`<button class="linkish" id="auditOpen2" data-tip="Where the fills and Hyperliquid’s perp figure part ways: its own P&L curve set against your fills and funding at each of its points, the recent day / week / month side by side, and the funding check.">Audit</button>`:'');
   const a2=$('auditOpen2'); if(a2)a2.onclick=toggleAuditPanel;
@@ -1699,6 +1719,7 @@ function toggleAuditPanel(){
   const el=document.createElement('div'); el.id='auditPanel'; el.className='reconwarn'; el.style.cssText='margin-top:-6px;margin-bottom:12px;font-size:12.5px;line-height:1.55';
   host.insertAdjacentElement('afterend',el); renderAuditPanel();
 }
+const ARCHIVE_FROM=Date.UTC(2025,4,25); // the archive's first day of node_fills (engine.js: reconcileSplit)
 function renderAuditPanel(){
   const el=$('auditPanel'); if(!el)return;
   if(!dataAudit){ el.innerHTML='<b>Perp P&amp;L audit</b> — Load all to run it. <button class="df-btn" id="auditClose">Close</button>'; $('auditClose').onclick=toggleAuditPanel; return; }
@@ -1715,7 +1736,10 @@ function renderAuditPanel(){
       :`Funding: ${sg(unf)} of the ${fmtUsd(a.funding)} paid lands on no trade’s window, so the trades’ net leaves it out (the line above counts it).`);
     if(a.before)rows.push(`<b>Before the first fill:</b> Hyperliquid’s record starts ${ymd(a.before.start)}, the earliest fill it still serves is ${ymd(a.before.first)}.`
       +(a.before.gap!=null?` At its first point after that (${ymd(a.before.at)}) the fills already stand ${sg(a.before.gap)} from its curve: roughly the P&amp;L made before the first fill, give or take what was still open then.`:'')
-      +` That P&amp;L is in its figure and in no fill; neither the exchange nor its archive (from May 2025) still has those fills.`);
+      // the archive (hl-mainnet-node-data, from 2025-05-25) holds every fill from then on: only history that
+      // ended before it is gone for good; the rest the archive panel can recover
+      +(a.first<=ARCHIVE_FROM?` That P&amp;L is in its figure and in no fill; neither the exchange nor its archive (from ${ymd(ARCHIVE_FROM)}) still has those fills.`
+        :` That P&amp;L is in its figure and in no fill the exchange still serves. Hyperliquid’s archive holds fills from ${ymd(ARCHIVE_FROM)} on`+(a.before.start<ARCHIVE_FROM?`, so what came before that date is gone for good; the rest`:`, so these`)+` can be recovered`+(srvOwner()?' (Data health → Recover from the archive…)':' by the server’s owner')+'.'));
     const W=a.windows, wl={day:'24 h',week:'7 days',month:'30 days'};
     const wrows=['day','week','month'].filter(k=>W[k]).map(k=>{ const w=W[k], sh=w.hlVlm>0?Math.round(Math.min(9.99,w.fillsVlm/w.hlVlm)*100)+'%':'—';
       return `<tr><td>${wl[k]}</td><td style="text-align:right">${fmtUsd(w.hlPnl)}</td><td style="text-align:right">${fmtUsd(w.fillsPnl)}</td><td style="text-align:right">${fmtUsd(w.hlVlm,0)}</td><td style="text-align:right">${fmtUsd(w.fillsVlm,0)}</td><td style="text-align:right">${sh}</td></tr>`; }).join('');

@@ -150,7 +150,8 @@ function sanitizeLeague(b, prev) {
 // (nested objects too, e.g. coach.packs) must be a number inside the range the sanitizer itself would
 // keep, read off it by asking for ±1e15 with the rest of the request in place (so a limit that depends
 // on another field, like a burn under its cap, is the one this request sets). Lists, text and switches
-// aren't checked here; a number with only one possible value (a choice of two) isn't either.
+// aren't checked here (levelsError / multError below take the two lists that matter); a number with only
+// one possible value (a choice of two) isn't either.
 // -> an error naming the field and its range, or null.
 function rangeError(label, b, prev, sanitize) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
@@ -170,6 +171,36 @@ function rangeError(label, b, prev, sanitize) {
     return null; };
   return walk(b, sanitize(null, prev), []);
 }
+// The two lists rangeError skips, checked the same way: sanitizeLevels drops a threshold that isn't above the
+// one before ("500, 100, 50" kept [500], capping everyone at level 2) and sanitizeMult ignores or clamps tiers
+// it can't use, both of which the panel used to report as saved. -> an error naming the problem, or null.
+const listOf = v => (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/).filter(s => s !== ''));
+const numOf = v => typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? +v : NaN;
+function levelsError(b) {
+  if (!b || typeof b !== 'object' || !own(b, 'thresholds')) return null;
+  const t = listOf(b.thresholds);
+  if (t.length > 99) return 'Levels → thresholds: at most 99 (levels 2 to 100), not ' + t.length + '.';
+  for (let i = 0; i < t.length; i++) { const n = numOf(t[i]);
+    if (!isFinite(n) || Math.round(n) < 1) return 'Levels → thresholds: ' + JSON.stringify(t[i]) + ' isn’t an amount of XP (a whole number above 0).';
+    if (i && Math.round(n) <= Math.round(numOf(t[i - 1]))) return 'Levels → thresholds must go up: level ' + (i + 2) + ' (' + t[i] + ' XP) needs more XP than level ' + (i + 1) + ' (' + t[i - 1] + ' XP).'; }
+  return null;
+}
+function multError(b) {
+  if (!b || typeof b !== 'object' || !own(b, 'tiers')) return null;
+  const t = b.tiers, L = 'XP multiplier → tiers';
+  if (!Array.isArray(t) || !t.length) return L + ': a list of [weeks, multiplier] pairs, at least one.';
+  if (t.length > 8) return L + ': at most 8, not ' + t.length + '.';
+  const r = [];
+  for (const x of t) { const w = Array.isArray(x) && x.length === 2 ? numOf(x[0]) : NaN, m = Array.isArray(x) && x.length === 2 ? numOf(x[1]) : NaN, s = JSON.stringify(x);
+    if (!isFinite(w) || !isFinite(m)) return L + ': ' + s + ' isn’t [weeks, multiplier].';
+    if (w < 1 || w > 104 || !Number.isInteger(w)) return L + ': weeks must be a whole number from 1 to 104 (not ' + x[0] + ').';
+    if (m < 1.01 || m > 3) return L + ': a multiplier must be from 1.01 to 3 (not ' + x[1] + ').';
+    r.push([w, Math.round(m * 100) / 100]); }
+  r.sort((a, c) => a[0] - c[0]); // the order sanitizeMult keeps them in
+  for (let i = 1; i < r.length; i++) if (r[i][0] <= r[i - 1][0] || r[i][1] <= r[i - 1][1])
+    return L + ': weeks and multipliers must both go up, tier by tier (' + r[i - 1].join('w ') + '× then ' + r[i].join('w ') + '×).';
+  return null;
+}
 
 module.exports = { PROFILES, MODULES, LEAGUE_METRICS, BADGE_METRICS, DEFAULTS, DEFAULT_LEVEL_TITLES,
-  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, dayXpParts, rangeError };
+  sanitizeModules, sanitizeLevels, sanitizeXp, sanitizeCoachCfg, sanitizeProfiles, sanitizeBadge, sanitizeLeague, levelStart, levelOf, dayXpCap, dayXpParts, rangeError, levelsError, multError };

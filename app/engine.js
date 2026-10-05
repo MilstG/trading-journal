@@ -56,7 +56,7 @@ function reconstructTrades(fills, addr, market){
   const me=addr&&/^0x[0-9a-f]{40}$/i.test(String(addr))?String(addr).toLowerCase():null;
   const liqOf=f=>{ const l=f.liquidation; if(l&&typeof l==='object'&&l.liquidatedUser&&me)return String(l.liquidatedUser).toLowerCase()===me;
     return !!(l||/liquidat/i.test(f.dir||'')); };
-  const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={};
+  const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={}, dustLeft={};
   // Spot: a position runs from the balance leaving zero to its return to zero (dust aside): partial
   // sells stay inside it, so a stack nibbled around for months is one open position, not a trade a
   // day. Its money is counted apart from it, by the day it was realized (dayRz: one row per coin and
@@ -75,7 +75,7 @@ function reconstructTrades(fills, addr, market){
     if(spot&&f.feeToken&&(f.side==='B'?f.feeToken!=='USDC':!SPOT_QUOTES[f.feeToken])){ fee=fee*px; feeBasis=fee; } // a buy's fee is in the token bought; closedPnl already counts it in the cost basis
     let after=before+signed;
     // spot exits leave dust (fees come out of the token bought): under $1 or 1/10,000 of the position counts as flat
-    if(spot&&Math.abs(after)>EPS&&Math.abs(after)<Math.abs(before)&&(Math.abs(after)*px<1||Math.abs(after)<=1e-4*Math.abs(before)))after=0;
+    if(spot&&Math.abs(after)>EPS&&Math.abs(after)<Math.abs(before)&&(Math.abs(after)*px<1||Math.abs(after)<=1e-4*Math.abs(before))){ dustLeft[coin]=Math.abs(after); after=0; }
     // Perps: a fill that starts from a position the fills so far don't reach is a seam — fills the
     // exchange no longer serves (TWAP slices older than ~3 months, history past its retention)
     // moved the position in between. startPosition is the exchange's own, so the position is
@@ -113,8 +113,10 @@ function reconstructTrades(fills, addr, market){
     let t=open[coin];
     // a fill acting on a position held before the history began (closing it, or flipping through it)
     // belongs to the side that was held; a fresh position takes the side it opens
+    // spot dust left by an earlier exit (read as flat then) is not a holding from before the history
+    const heldDust=spot&&Math.abs(before)>EPS&&(Math.abs(before)*px<1||(dustLeft[coin]!=null&&Math.abs(before)<=dustLeft[coin]*(1+1e-6)+EPS));
     if(!t){ t=open[coin]=newTrade(coin,f,(Math.abs(before)>EPS?before>0:after>0)?'Long':'Short',0,0,0);
-      if(Math.abs(before)>EPS){ t.partialHistory=true; // held before its first served fill: the entry is unknown, adds or not
+      if(Math.abs(before)>EPS&&!heldDust){ t.partialHistory=true; // held before its first served fill: the entry is unknown, adds or not
         // the fills saw this coin go flat earlier, so the position it starts from was opened in fills we
         // never got: a seam like the others (it was counted as none, so coverage read whole)
         if(wasFlat){ t.gaps=1; t.gapSz=Math.abs(before); t.gapNotional=Math.abs(before)*px; t.gapTimes=[f.time]; } } }
@@ -1378,7 +1380,9 @@ function pnlAudit(fills, frows, hist, trades, win, now){
   // its first point after that fill — the P&L made before it, give or take what was still open then
   // (its points are a week apart there: the one before the fill says nothing of the days up to it)
   let before=null;
-  if(isFinite(first)&&points.length&&points[0].t<first-3*86400e3){ const after=points.find(p=>p.t>=first);
+  // Only when the curve moved before the first fill: an account whose curve sat at 0 until then made nothing
+  // before it (dates alone used to claim P&L before the first fill).
+  if(isFinite(first)&&points.length&&points[0].t<first-3*86400e3&&points.some(p=>p.t<first&&Math.abs(p.hl)>=1)){ const after=points.find(p=>p.t>=first);
     before={start:points[0].t,first,at:after?after.t:null,gap:after?after.gap:null}; }
   const windows={};
   for(const k of ['day','week','month']){ const w=win&&win[k]; if(!w||!isFinite(w.from))continue;
@@ -1445,15 +1449,18 @@ function historyNote(){
   const cov=typeof dataCoverage!=='undefined'?dataCoverage:null, seams=!!(cov&&cov.gaps>0);
   const SEAMS='Some fills are missing from this wallet’s history, so figures built from fills can differ from Hyperliquid’s own. The verified figure is the exchange’s.';
   const OLDER='Part of this wallet’s history is older than anything Hyperliquid still serves, so figures built from fills can differ from the exchange’s own. The verified figure is the exchange’s.';
-  const GAP='Figures built from fills differ from Hyperliquid’s own for this wallet. A Shift-click on Refresh forces a full re-fetch; if it persists, trust the verified figure.';
+  const GAP='Figures built from fills differ from Hyperliquid’s own for this wallet. Full refetch (in the data-health line, or Settings) reads every fill again; if it persists, trust the verified figure.';
   if(seams)return {kind:'seams',text:SEAMS};
   const perp=hlPnl&&hlPnl.perp; if(perp==null||hlPnl.partial)return null;
   const hl=t=>typeof candleVenue==='function'?!candleVenue(t):true;
   const rows=allTrades.filter(t=>hl(t)&&moneyRow(t)&&t.market==='perp'&&!(t.orphan||(t.offRecord&&!t.isOpen)));
-  const pd=rows.reduce((s,t)=>s+t.net,0)-perp, lim=Math.max(2500,Math.abs(perp)*0.05);
+  // the exchange's figure is account-based, unrealized included: the open positions' marks go on the fills'
+  // side (as verifiedFigure does), or whole fills beside a large open position read as a reconstruction gap
+  const uP=(typeof openPositions!=='undefined'?openPositions:[]).filter(p=>!p.venue||p.venue==='hyperliquid').reduce((s,p)=>s+(p.uPnl||0),0);
+  const pd=rows.reduce((s,t)=>s+t.net,0)+uP-perp, lim=Math.max(2500,Math.abs(perp)*0.05);
   if(Math.abs(pd)<=lim)return null;
   const sp=reconcileSplit(rows,'perp'), pre=sp?sp.pre:0;
-  if(sp&&Math.abs(pre)>Math.max(500,Math.abs(pd)*0.1))return {kind:Math.abs(pd-pre)<=lim?'older':'older+',text:Math.abs(pd-pre)<=lim?OLDER:OLDER+' Some recent fills may be missing too: a Shift-click on Refresh forces a full re-fetch.'};
+  if(sp&&Math.abs(pre)>Math.max(500,Math.abs(pd)*0.1))return {kind:Math.abs(pd-pre)<=lim?'older':'older+',text:Math.abs(pd-pre)<=lim?OLDER:OLDER+' Some recent fills may be missing too: Full refetch (in the data-health line, or Settings) reads every fill again.'};
   return {kind:'gap',text:GAP};
 }
 // the deepest fall from a high on a curve of [time, value] points

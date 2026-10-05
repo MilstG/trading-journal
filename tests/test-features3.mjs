@@ -355,7 +355,7 @@ console.log('\nHIP-3 wiring guards (UI plumbing)');
 // (the one-shot coin-shape verification scaffolding was removed once the live shape was
 // confirmed; the normalizer in mapClearinghouse still handles bare and prefixed coins)
 await t('fill cache read/write routes through pack/unpack in loadAll and backup', () => {
-  ok(html.includes('await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt,indexThrough:ixc.indexThrough,indexTriedAt:ixc.indexTriedAt}))'), 'write path');
+  ok(html.includes('await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt,trunc,indexThrough:ixc.indexThrough,indexTriedAt:ixc.indexTriedAt}))'), 'write path'); // trunc: the truncation record (beta 6, J4)
   ok(html.includes('idbGet(fcKey).then(unpackFillCache)'), 'read path');
   ok(html.includes("idbGet('flc:'+a).then(unpackFillCache)"), 'the cached start reads the same way');
   ok(html.includes("await unpackFillCache(await idbGet('flc:'+w.address))"), 'backup decompresses');

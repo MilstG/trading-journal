@@ -444,7 +444,7 @@ function createArchive(deps) {
       let buf = null; try { buf = await ix.get(cfg.indexPrefix + 'd/' + day + '/' + sh + '.jsonl.gz', { maxBytes: Math.min(SHARD_MAX, rem) }); }
       catch (e) { if (e.status === 404 || e.code === 'NoSuchKey') { missing++; continue; } throw e.code === 'TooLarge' && rem < SHARD_MAX ? overBudget(maxGB, 'the index downloads') : e; }
       bytes += buf.length; files++; if (bytes > budget) throw overBudget(maxGB, 'the index downloads');
-      const x = extractFillsFromObject(buf, addr); fills.push(...x.fills);
+      const x = extractFillsFromObject(buf, addr); for (const f of x.fills) fills.push(f); // not push(...): a busy wallet's day overflows the call stack
       if (onProgress) onProgress({ done: files + missing, total: days.length, fills: fills.length, bytes }); } } catch (e) { halt = halt || e; } };
     await Promise.all(Array.from({ length: 8 }, worker));
     if (halt instanceof Error) throw halt;
@@ -639,7 +639,7 @@ function createArchive(deps) {
           // the plan's sizes come from the listing; the budget holds against what actually arrives
           const rem = budget - cur.bytes;
           try { const buf = await s3.get(it.key, { maxBytes: Math.max(1, Math.min(GET_MAX, rem)) }); cur.bytes += buf.length;
-            const x = extractFillsFromObject(buf, addr); found.push(...x.fills); cur.fills += x.fills.length; }
+            const x = extractFillsFromObject(buf, addr); for (const f of x.fills) found.push(f); cur.fills += x.fills.length; }
           catch (e) { cur.errors++; cur.lastError = e.message; log('archive: ' + it.key + ': ' + e.message);
             if (e.code === 'TooLarge' && rem < GET_MAX) { cur.lastError = overBudget(maxGB, 'the downloads').message; return finish('failed'); } }
           cur.done++; cur.lastKey = it.key;
@@ -647,7 +647,9 @@ function createArchive(deps) {
         if (!live()) return; // a stop that landed during the last download: still nothing is merged
         try { const r = deps.writeFills(addr, found, { hours: items.length, bytes: cur.bytes }); cur.added = r.added; cur.cacheCount = r.count; }
         catch (e) { cur.errors++; cur.lastError = 'writing the cache: ' + e.message; }
-        finish(cur.errors && !cur.done ? 'failed' : 'done');
+        // done counts hours tried (the progress bar); an hour whose download failed is not recovered, so
+        // every hour failing is a failure and some failing is incomplete, never "done"
+        finish(!cur.errors ? 'done' : cur.errors >= cur.total ? 'failed' : 'incomplete');
         log('archive: backfill ' + addr + ' done — ' + cur.done + '/' + cur.total + ' hours, ' + cur.fills + ' fills found, ' + (cur.added || 0) + ' new, ' + (cur.bytes / 1048576).toFixed(1) + ' MB');
       })().catch(e => { cur.lastError = e.message; finish('failed'); }).finally(() => { cur.cost = cost(cur.bytes); });
       return cur;

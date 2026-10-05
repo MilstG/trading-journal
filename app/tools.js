@@ -266,7 +266,7 @@ async function loadDemo(){
 }
 // sample mode ends with nothing to replace its trades (a backup applied): they leave the screen too
 function sampleEnd(){ if(!sampleLeave())return;
-  allTrades=[]; openPositions=[]; spotHoldings=[]; accountValue=null; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null; _pastedFills=null; fillsTruncated=[];
+  allTrades=[]; openPositions=[]; spotHoldings=[]; accountValue=null; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null; _pastedFills=null; fillsTruncated=[]; fillsTruncWindow=false;
   resetDerivedState();
   if(PZ){ try{ pzRender(); }catch(e){} } else { $('app').classList.add('hide'); $('empty').classList.remove('hide'); } }
 (function(){ for(const id of ['demoBtn','demoBtn2']){ const b=$(id); if(b)b.onclick=loadDemo; } })();

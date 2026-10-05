@@ -16,7 +16,7 @@ const grabConst = name => { const i = html.indexOf('const ' + name + '='); if (i
 let clock = Date.UTC(2026, 9, 1, 15); // Thu 2026-10-01 15:00Z, ISO week 2026-W40 (Mon 09-28)
 class FDate extends Date { constructor(...a) { if (!a.length) super(clock); else super(...a); } static now() { return clock; } }
 const ctx = vm.createContext({ Date: FDate, Math, console, Set, Map, Object, JSON, Array, String, Number, Promise, isFinite, Infinity, setTimeout });
-const FNS = ['tradeRow', 'gameContext', 'pzEarned', 'pzEarnedRecord', 'pzBadgeStub', 'pzEarnedBadges', 'pzHabitResAll', 'pzGoalKeys', 'pzAdoptKeys', 'pzPluggedKeys',
+const FNS = ['tradeRow', 'gameContext', '_gameKey', 'gameWarm', 'pzEarned', 'pzEarnedRecord', 'pzBadgeStub', 'pzEarnedBadges', 'pzHabitResAll', 'pzGoalKeys', 'pzAdoptKeys', 'pzPluggedKeys',
   'xpLedger', 'disciplineStreak', 'isoWeekOfKey', 'nthKey', 'gameAchievements', 'challengeResults', 'challengeStatus', 'levelFor', 'pzLevelCfg', 'pzXpCfg',
   'personalBests', 'disciplineSaved', 'ruleFollowThrough', 'habitsList', 'habitById', 'habitSentence', 'habitDayResults', 'habitProgress', 'habitSummary',
   'isoWeekKey', 'lastCompletedWeekRange', 'tzParts', 'tzMidnight', 'addDays', 'dateBound', 'pzBadgeCatalog', 'pzPlugs', 'pzPlugState', 'isoWeekMondayKey',
@@ -27,7 +27,7 @@ const CONSTS = ['LEVELS', 'PZ_XP_DEF', 'PZ_TIERS', 'PZ_TIER_XP', 'pzN', 'pzUsd',
 vm.runInContext(`var settings={tz:'utc'}, journal={}, allTrades=[], _jrev=0, _excM={}, _pzSlipDays=new Map(), _gameMemo={key:null,g:null}, _coachMemo={key:'k'}, _coachMemoAll={key:'k'}, _pzCatPass=null;
 var PZ_CFG={rev:0,levels:null,xp:null}, SOC={me:null,cache:{}}, S_KEY='s', J_KEY='j', saves=0, Store={ async set(){ saves++; } }, markJEdit=()=>{}, pbNorm=a=>a||[];
 var _avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0, isLoss=n=>n<-1, pzReadinessManual=()=>null, viewFilter=()=>true, dayLabel=k=>k;
-var COACH=null, coachCtx=null, coachContext=()=>coachCtx, planAdherence=()=>({items:[]}), pzBonus=()=>({total:0});
+var COACH=null, coachCtx=null, coachContext=()=>coachCtx, _coachKey=()=>({key:_coachMemoAll.key}), planAdherence=()=>({items:[]}), pzBonus=()=>({total:0});
 var pzBehaviorDays=closed=>coachCtx.days.map(d=>({key:d.key,score:d.disc,n:d.n,net:d.net,flags:{},slips:[]}));
 var customRulePreds=(trades,rules)=>rules.map(r=>({pred:t=>!!t.bad}));
 ${CONSTS.map(grabConst).join('\n')}
@@ -120,6 +120,16 @@ await t('a focus habit set mid-week earns from the pick on; the one it replaced 
   ctx.journal = {}; clock = Date.UTC(2026, 9, 4, 15); await run("setWeekFocus('hB')"); // Sunday, after trading
   clock = Date.UTC(2026, 9, 5, 15);
   eq(game().bonuses.filter(b => b.why === 'focus habit').length, 0, 'picked Sunday after trading: nothing back to Monday');
+});
+
+console.log('\nThe game\u2019s warm check (Daruma builds a cold game in idle steps)');
+t('gameWarm is true exactly when gameContext() would be a memo hit: after a build, and not after anything in its key moved', () => {
+  account(range('2026-09-28', 4, { j: 1 })); ctx._coachMemoAll = { key: 'k1' };
+  ok(!run('gameWarm()'), 'nothing built yet'); const g = run('gameContext()'); ok(run('gameWarm()'), 'built');
+  ok(run('gameContext()') === g, 'and a call now is that memo');
+  run('_jrev++'); ok(!run('gameWarm()'), 'a journal change'); run('gameContext()'); ok(run('gameWarm()'));
+  ctx._coachMemoAll.key = 'k2'; ok(!run('gameWarm()'), 'the coach context moved'); run('gameContext()'); ok(run('gameWarm()'));
+  run('PZ_CFG.rev++'); ok(!run('gameWarm()'), 'the league\u2019s config moved');
 });
 
 console.log('\nX8 · badges count distinct things');

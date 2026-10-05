@@ -77,8 +77,8 @@ try {
     await call('/stats', { method: 'POST', key: K, body: stats() });
     me = (await call('/me', { key: K })).d.me;
     eq([me.mult.held, me.mult.now, me.mult.hist['2026-W43']], [1, 1.1, 1.1]);
-    // tiers whose multiplier goes down are refused (weeks are sorted); the last good ones stay
-    await call('/admin/config', { method: 'PUT', owner: true, body: { mult: { tiers: [[2, 1.5], [4, 1.2]] } } });
+    // tiers whose multiplier goes down are refused, out loud (weeks are sorted); the last good ones stay
+    eq((await call('/admin/config', { method: 'PUT', owner: true, body: { mult: { tiers: [[2, 1.5], [4, 1.2]] } } })).status, 400);
     eq((await call('/config')).d.mult.tiers, [[1, 1.1], [3, 1.2]]);
     // off: this week goes back to ×1
     await call('/admin/config', { method: 'PUT', owner: true, body: { mult: { on: false } } });

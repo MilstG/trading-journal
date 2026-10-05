@@ -217,13 +217,13 @@ t('coachContext(true) reads every trade but orphans; the view one follows the fi
   X.allTrades = [{ id: 'p', market: 'perp', coin: 'BTC' }, { id: 's', market: 'spot', coin: 'PURR' }, { id: 'x', market: 'perp', coin: 'xyz:TSLA' }, { id: 'o', market: 'perp', coin: 'ETH', orphan: true, isOpen: true }]
     .map(x => ({ openTime: at, closeTime: at + H, net: 1, ...x }));
   vm.createContext(X);
-  vm.runInContext('var _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};' + grabFn('coachContext') + ';this.coachContext=coachContext;', X);
+  vm.runInContext('var _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};' + grabFn('_coachKey') + grabFn('coachContext') + ';this.coachContext=coachContext;', X);
   eq(X.coachContext(true).trades.map(x => x.id), ['p', 's', 'x']);
   eq(X.coachContext().trades.map(x => x.id), ['p']);
   X.view = 'spot'; X.dexView = 'all';
   eq(X.coachContext(true).trades.map(x => x.id), ['p', 's', 'x'], 'switching the view leaves the game alone');
   eq(X.coachContext().trades.map(x => x.id), ['s']);
-  ok(grabFn('gameContext').includes('coachContext(true)') && grabFn('gameContext').includes('_coachMemoAll.key'));
+  ok(grabFn('gameContext').includes('coachContext(true)') && grabFn('_gameKey').includes('_coachMemoAll.key'));
   ok(grabFn('rvModel').includes('ctx=g.ctx') && grabFn('hlModel').includes('ctx=g.ctx'), 'Review’s routine vs results reads the same trades as the days it scores');
 });
 

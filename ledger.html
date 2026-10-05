@@ -23,7 +23,6 @@
 @font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url(app/fonts/inter-500.woff2) format('woff2')}
 @font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url(app/fonts/inter-600.woff2) format('woff2')}
 </style>
-<script src="app/chart.umd.js" data-only="journal"></script>
 <style>
 /* ================================================================
    LEDGER — Terminal design system (single source of truth)
@@ -233,13 +232,13 @@ body.bb .topnav button.on{color:#FFD79A;background:#0A0A08}
 .p-n{font-size:11.5px;color:var(--faint)}
 
 /* ---------- stats: strict 4-column ruled grid ---------- */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);margin-top:-1px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:-1px} /* minmax: a long sub-line can't widen a track past the page */
 .stat{padding:14px 16px;border-left:1px solid var(--line2);position:relative}
 .stat:nth-child(4n+1){border-left:none}
 .stat:nth-child(n+5){border-top:1px solid var(--line2)}
 .stat .k{font-family:var(--cond);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--lbl);margin-bottom:7px}
 .stat .v{font-size:19px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat .sub{font-size:11.5px;color:var(--faint);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .sub{font-size:11.5px;color:var(--faint);margin-top:5px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere} /* two lines at most, then an ellipsis: the verified card's sub-line carries the closed-fills figure */
 
 /* secondary strip */
 .strip{display:flex;flex-wrap:wrap;margin-top:-1px}
@@ -266,9 +265,9 @@ body.bb .topnav button.on{color:#FFD79A;background:#0A0A08}
 .chart-box{position:relative;height:210px}
 .card.hero .chart-box{height:260px}
 .chart-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--faint);font-size:13px;padding:0 20px;font-family:var(--prose)}
-.charts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px} /* minmax: a canvas sized at a wider window can't hold its track open */
 .charts .card{margin:0}
-.calrow{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.calrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:14px}
 .calrow .card{margin:0}
 
 /* calendar heatmap */
@@ -477,18 +476,22 @@ body.bb .tip{border-color:#3A3A32}
 .foot b{color:var(--muted)}
 
 /* ---------- responsive ---------- */
-@media(max-width:1020px){
-  .stats{grid-template-columns:repeat(2,1fr)}
+/* two stat columns until there's room for four whole figures beside the side panel (at 1100 px four
+   columns cut "$14,415,710.00" and the verified card's closed-fills figure short) */
+@media(max-width:1199px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .stat:nth-child(4n+1){border-left:1px solid var(--line2)}
   .stat:nth-child(2n+1){border-left:none}
   .stat:nth-child(n+3){border-top:1px solid var(--line2)}
-  .charts{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:1020px){
+  .charts{grid-template-columns:repeat(2,minmax(0,1fr))}
   .diag-grid{grid-template-columns:1fr}
   .journal{grid-template-columns:minmax(0,1fr)}
-  .calrow{grid-template-columns:1fr}
+  .calrow{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:640px){
-  .charts{grid-template-columns:1fr}
+  .charts{grid-template-columns:minmax(0,1fr)}
   .tmenu-pop{right:auto;left:0}
   /* nothing may push the page wider than the screen: grids shrink below their content,
      wide tables scroll inside themselves, the tab bar scrolls instead of overflowing */
@@ -505,8 +508,35 @@ body.bb .tip{border-color:#3A3A32}
   .trades th:nth-child(4),.trades td:nth-child(4),.trades th:nth-child(5),.trades td:nth-child(5),
   .trades th:nth-child(6),.trades td:nth-child(6),.trades th:nth-child(10),.trades td:nth-child(10){display:none}
 }
+/* narrower than a wide desktop: the side folds into the market cell (its pill beside the name), the date
+   loses its clock, size, hold and the caret step aside, so net, return, R and the journal fit beside a
+   wallet pill (the expanded row still has everything) */
+.trades .ds,.trades .mside{display:none}
+@media(max-width:1299px){
+  .trades .dl{display:none} .trades .ds{display:inline} .trades .mside{display:inline}
+  .trades>thead>tr>th:nth-child(3),.trades>tbody>tr.trow>td:nth-child(3),.trades>thead>tr>th:nth-child(6),.trades>tbody>tr.trow>td:nth-child(6),
+  .trades>thead>tr>th:nth-child(10),.trades>tbody>tr.trow>td:nth-child(10),.trades>thead>tr>th:nth-child(12),.trades>tbody>tr.trow>td:nth-child(12){display:none}
+  .trades>tbody>tr.trow>td:nth-child(2){white-space:normal;max-width:170px}
+  .trades>tbody>tr.trow .tagchip{max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+}
+/* 900–1020 px keeps the side panel: entry and exit step aside there too */
+@media(min-width:900px) and (max-width:1020px){
+  .trades>thead>tr>th:nth-child(4),.trades>tbody>tr.trow>td:nth-child(4),.trades>thead>tr>th:nth-child(5),.trades>tbody>tr.trow>td:nth-child(5){display:none}
+}
+/* a phone: the date goes under the market too (its column steps aside), cells pack tighter */
+.trades .mdate{display:none} .trades .msub{margin-top:3px} .trades .msub.nop{display:none}
+@media(max-width:640px){
+  .trades>thead>tr>th:nth-child(1),.trades>tbody>tr.trow>td:nth-child(1){display:none}
+  .trades .mdate{display:inline;color:var(--faint);font-weight:400;font-size:11px;margin-right:4px} .trades .msub.nop{display:block}
+  .trades>thead>tr>th,.trades>tbody>tr.trow>td{padding-left:5px;padding-right:5px}
+  .trades>tbody>tr.trow>td{font-size:12px} .trades>thead>tr>th{letter-spacing:0}
+  .trades>tbody>tr.trow>td:nth-child(2){max-width:118px}
+  .trades>tbody>tr.trow>td:nth-child(11){max-width:64px;overflow:hidden;text-overflow:ellipsis}
+  .trades>tbody>tr.trow .tagchip{max-width:6.5em;font-size:10.5px;padding:0 5px}
+}
+@media(max-width:380px){ .trades>thead>tr>th,.trades>tbody>tr.trow>td{padding-left:3px;padding-right:3px} }
 @media(max-width:460px){
-  .stats{grid-template-columns:1fr}
+  .stats{grid-template-columns:minmax(0,1fr)}
   .stat:nth-child(n){border-left:none;border-top:1px solid var(--line2)}
   .stat:first-child{border-top:none}
   .brand h1{font-size:15px}
@@ -1032,7 +1062,8 @@ body.light .pz-nudge.warn .pz-ico{background:#F6E7BF;color:#9A5A00}
 .pz-ringbtn[aria-pressed="true"]{background:var(--pz-card);border-color:var(--pz-line2)}
 .pz-ringbtn .pz-rl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--pz-muted)}
 .pz-ringbtn[aria-pressed="true"] .pz-rl{color:var(--pz-text)}
-.pz-ringbtn .pz-rs{font-size:11px;color:var(--pz-muted);margin-top:-2px}
+.pz-ringbtn .pz-rs{font-size:11px;color:var(--pz-muted);margin-top:-2px;white-space:nowrap}
+body.ts9 .pz-ringbtn .pz-rs{letter-spacing:.04em} /* "Last: Fri · 100" fits one line under a 390 px phone's dial */
 .pz-ring{position:relative;display:block;width:var(--sz,96px);height:var(--sz,96px);flex-shrink:0}
 .pz-ring svg{display:block;width:100%;height:100%}
 .pz-ring .pz-track{fill:none;stroke:var(--pz-track);stroke-width:10}
@@ -1099,7 +1130,7 @@ body.light .pz-nudge.warn .pz-ico{background:#F6E7BF;color:#9A5A00}
 .pz-snap-ax{font:10px var(--pz-num);fill:var(--pz-muted)}.pz-snap-pill{font:700 9px var(--pz-num);fill:#0E1216}
 .pz-snapph{display:flex;align-items:center;justify-content:center;gap:8px;aspect-ratio:360/200;border-radius:12px;background:#0E1216;font-size:12px;color:var(--pz-muted)}
 .pz-rp-row{display:flex;gap:8px;align-items:center}.pz-rp-btn{flex:0 0 auto;width:36px;height:36px}.pz-rp-mid{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:6px}
-.pz-rp-dots{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;max-width:100%}.pz-rp-gap{color:var(--pz-muted);font-size:12px;line-height:11px}.pz-rp-dot{width:11px;height:11px;border-radius:999px;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .12s}.pz-rp-dot.on{background:var(--c);transform:scale(1.2);box-shadow:0 0 0 2px var(--pz-card),0 0 0 3.5px var(--pz-text)}
+.pz-rp-dots{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;max-width:100%}.pz-rp-gap{color:var(--pz-muted);font-size:12px;line-height:11px}.pz-rp-dot{width:11px;height:11px;border-radius:999px;border:2px solid var(--c);background:transparent;padding:0;cursor:pointer;transition:transform .12s;position:relative}.pz-rp-dot::after{content:'';position:absolute;inset:-15px -5px}.pz-rp-dot.on{background:var(--c);transform:scale(1.2);box-shadow:0 0 0 2px var(--pz-card),0 0 0 3.5px var(--pz-text)}
 .pz-rp-lbl{font-size:13px;text-align:center}.pz-rp-say{font-size:12px;color:var(--pz-muted);margin:6px 0 0;text-align:center;line-height:1.45}
 .pz-goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
 .pz-goal{display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--pz-line);border-radius:14px!important}
@@ -1194,6 +1225,8 @@ body.pz-quiet-on{overflow:hidden}
 .pz-seg{display:flex;gap:4px;padding:4px;border-radius:16px!important;background:var(--pz-card);border:1px solid var(--pz-line)}
 .pz-seg button{min-width:52px;height:40px;padding:0 12px;border:0;border-radius:12px!important;background:none;color:var(--pz-muted);font-size:13px;font-weight:700;cursor:pointer}
 .pz-seg button[aria-pressed="true"]{background:var(--pz-text);color:var(--pz-bg)}
+/* a choice that can't be made (an XP stake past what you can cover, a step past the end) looks it */
+#pz .pz-seg button:disabled,#pz .pz-ghost:disabled,#pz .pz-chipbtn:disabled,#pz .pz-kudo:disabled,#pz .pz-dtype:disabled,#pz .pz-linkbtn:disabled,#pz .pz-pill:disabled{opacity:.4;cursor:default}
 .pz-ins{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--pz-line)}
 .pz-ins:last-child{border-bottom:none}
 .pz-tag{flex-shrink:0;margin-top:2px;padding:2px 8px;border-radius:8px!important;font-size:11px;font-weight:700;letter-spacing:.04em}
@@ -1242,7 +1275,11 @@ body.pz-quiet-on{overflow:hidden}
 .pz-trade-t{display:flex;align-items:center;gap:8px}.pz-trade-t b{font-size:18px}
 .pz-side{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:color-mix(in srgb, var(--c) 16%, transparent);color:var(--c)}
 .pz-trade-net{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1;font-family:var(--pz-num)}.pz-trade-net b{font-size:22px;font-weight:600}.pz-trade-net span{font-size:12px;opacity:.85}
-.pz-trade-meta{display:flex;flex-wrap:wrap;font-size:12px;color:var(--pz-muted);margin-top:-6px}.pz-trade-meta span+span::before{content:'·';margin:0 6px;opacity:.6}
+/* each part carries its "·" in the 14px before it; the row starts 14px early and that strip is clipped, so a
+   wrapped line never begins with a stray dot */
+.pz-trade-meta{display:flex;flex-wrap:wrap;font-size:12px;color:var(--pz-muted);margin:-6px 0 0 -14px;clip-path:inset(0 0 0 14px)}.pz-trade-meta>span{margin-left:14px}.pz-trade-meta>span::before{content:'·';display:inline-block;width:14px;margin-left:-14px;text-align:center;opacity:.6}
+.pz-offline{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--pz-muted)}
+.pz-noteq{font-size:13px;font-weight:600;line-height:1.4;color:var(--pz-soft);margin-bottom:-6px}
 .pz-trade-q{display:flex;flex-direction:column;gap:6px}
 .pz-stars{display:flex;gap:6px}
 .pz-stars button{width:40px;height:40px;border-radius:12px!important;border:1px solid var(--pz-line2);background:#1B1F25;color:var(--pz-muted);font-family:var(--pz-num);font-size:20px;font-weight:600;cursor:pointer}
@@ -1328,7 +1365,8 @@ body.ts9 .pz-wl-bar{border-radius:6px}
 @media (max-width:699px){.pz-wl-main{padding:28px 0}.pz-wl-art{display:none}.pz-wl-mini{display:block}}
 .pz-fine{margin:0;font-size:13px;line-height:1.5;color:var(--pz-muted)}
 .pz-err{color:#FFB39E}
-.pz-note{cursor:pointer;position:fixed;left:50%;bottom:calc(78px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:10px 16px;border-radius:14px!important;background:#1B1F25;border:1px solid var(--pz-line2);color:var(--pz-soft);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+/* at the top on a phone: above the nav it covered the last button on the screen (Send challenge, Save) */
+.pz-note{cursor:pointer;position:fixed;left:50%;top:calc(10px + env(safe-area-inset-top));transform:translateX(-50%);z-index:60;max-width:min(92vw,520px);padding:10px 16px;border-radius:14px!important;background:#1B1F25;border:1px solid var(--pz-line2);color:var(--pz-soft);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 .pz-note.err{border-color:#6A2E20;color:#FFB39E}
 .pz-note:empty{display:none}
 .pz-spin{display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:50%!important;border:2px solid var(--pz-good);border-right-color:transparent;animation:pzspin .8s linear infinite;vertical-align:-1px}
@@ -1595,6 +1633,9 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 .pz-packsum .tot{border-top:1px solid var(--pz-line2);padding-top:6px}
 .pz-packbtns{display:flex;flex-direction:column;gap:8px}
 .pz-linkbtn{background:none;border:0;padding:0;color:var(--pz-acc);font:inherit;font-weight:600;cursor:pointer;text-decoration:underline}
+/* text-sized links keep their look and place; an invisible box around each makes the tap area 44 px tall */
+#pz .pz-linkbtn,#pz a.pz-link,#pz .pz-hlmore,#pz .pz-quietbtn,#pz .pz-why>summary,#pz summary.pz-fine{position:relative}
+#pz .pz-linkbtn::after,#pz a.pz-link::after,#pz .pz-hlmore::after,#pz .pz-quietbtn::after,#pz .pz-why>summary::before,#pz summary.pz-fine::before{content:'';position:absolute;left:-8px;right:-8px;top:50%;height:44px;transform:translateY(-50%)}
 .pz-nudge{display:flex;align-items:flex-start;gap:12px}.pz-nudge p{margin:0;font-size:14px;line-height:1.45}
 .pz-nudge.warn{background:#24190F;border-color:#4A3418}.pz-nudge.warn .pz-ico{background:#3A2A16;color:#FFB25A}
 .pz-nudge.good{background:#10201A;border-color:#1D3A2E}.pz-nudge.good .pz-ico{background:#16302A;color:var(--pz-acc)}
@@ -1630,7 +1671,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   .pz-jgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pz-sheet-bg{align-items:center}
   .pz-sheet{border-radius:24px!important}
-  .pz-note{bottom:24px;left:calc(50% + 116px)}
+  .pz-note{top:auto;bottom:24px;left:calc(50% + 116px)}
 }
 @media (max-width:899px){ .pz-wide,.pz-col{display:flex;flex-direction:column;gap:14px} .pz-flow{display:flex;flex-direction:column;gap:14px} .pz-flow>.pz-col{margin-bottom:0} }
 @media (max-width:360px){ .pz-ringbtn{--sz:84px} .pz-grid3{grid-template-columns:repeat(2,minmax(0,1fr))} }
@@ -1680,7 +1721,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
       <span id="hdrsum" class="hdrsum hide"></span>
       <button class="btn ghost hide" id="installSide" title="Install Ledger as an app"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>Install app</span></button>
       <button class="btn ghost" id="walletsBtn">Wallets ▾</button>
-      <button class="btn primary" id="loadAll" data-tip="Load / refresh every wallet and exchange. Fills are cached locally, so a refresh only fetches what's new since last time. Shift-click to force a full re-fetch.">Load all</button>
+      <button class="btn primary" id="loadAll" data-tip="Load / refresh every wallet and exchange. Fills are cached locally, so a refresh only fetches what's new since last time. Shift-click (or Export &amp; tools → Full refetch) reads every fill again.">Load all</button>
     </div>
     <nav class="side-links" aria-label="More"><a href="daruma">Daruma view</a><a href="admin" target="_blank" rel="noopener">Admin</a><a href="help" target="_blank" rel="noopener">User guide</a></nav>
   </header>
@@ -1843,6 +1884,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
       <button class="linkish" id="backupAll">Backup all</button>
       <button class="linkish hide" id="backupSrv" data-tip="Store the same full backup on the sync server (kept: newest 10, gzipped). Covers what daily snapshots don't — fill caches beyond the API's history cap.">Backup to server</button>
       <button class="linkish" id="autoBtn" data-tip="Auto-refresh: while this tab is open, re-fetch new fills every 3 minutes and automatically lock in MAE/MFE measurements for freshly closed trades. Incremental — only new activity is fetched.">⟳ auto: on</button>
+      <button class="linkish" id="fullRefetch" data-tip="Read every fill the exchange still serves again, from the start, and merge it into the cached history (nothing cached is lost). For a gap after an earlier load. A history that starts at the exchange’s 10,000-fill window can’t be refetched past it: only the archive has older fills.">Full refetch</button>
       <button class="linkish" id="clearCandles" data-tip="Candles fetched for MAE/MFE excursions are cached in this browser (IndexedDB) and quietly become the largest thing stored. Clearing is safe — candles re-fetch on the next run, and completed MAE/MFE measurements are saved separately and kept.">Clear candle cache</button>
       <button class="linkish hide" id="installPWA" data-tip="Install Ledger as an app (available when the page is served over http/https and your browser supports it).">Install app</button>
       <button class="linkish hide" id="helpBtn" data-tip="The built-in user guide: every view, the journaling habits, backups, alerts, and the Telegram bot — served by your own deployment.">Help</button>
@@ -1915,6 +1957,9 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   </div>
 </div>
 
+<!-- Chart.js loads with the app's parts, not in the page head: a script there held the first paint until
+     its 205 KB arrived and ran (~2.4 s on a throttled phone). Nothing before this line draws a chart. -->
+<script src="app/chart.umd.js" data-only="journal"></script>
 <script src="app/core.js"></script>
 <script src="app/venues.js"></script>
 <script src="app/engine.js"></script>

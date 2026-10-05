@@ -188,6 +188,23 @@ await t('date filters: a bare to= date includes that whole day; seconds epochs w
   }
   eq((await jget('/api/v1/stats?from=nope')).status, 400, 'every filtered endpoint');
   eq((await jget('/api/v1/trades?from=&to=')).status, 200, 'empty means no filter');
+  // a day the calendar doesn't have used to roll over (Feb 31 = Mar 3); bare or ISO, it's refused
+  for (const q of ['from=2026-02-31', 'to=2026-04-31', 'from=2026-02-30T00:00:00Z', 'from=2026-00-10']) eq((await jget('/api/v1/trades?' + q)).status, 400, q);
+  eq((await jget('/api/v1/trades?from=2028-02-29&to=2028-02-29T12:00:00Z')).status, 200, 'a leap day is a day');
+});
+await t('an unknown filter value is a 400 naming what’s allowed, not an answer for everything', async () => {
+  for (const [q, re] of [['trades?status=bogus', /^status must be open\|closed\|all$/], ['trades?outcome=bogus', /^outcome must be win\|loss\|be$/],
+    ['trades?dir=sideways', /^dir must be Long\|Short\|Spot$/], ['trades?tz=mars', /^tz must be utc\|local$/], ['stats?tz=Europe/Paris', /^tz must be utc\|local$/],
+    ['trades?order=up', /^order must be asc\|desc$/], ['breakdown?basis=xxx', /^basis must be usd\|pct$/], ['metrics?format=xml', /^format must be json\|prom$/],
+    ['whatif?field=net&op=lt&value=abc', /^net needs a number; got "abc"$/], ['whatif?field=hour&op=in&value=9,x', /^hour needs a number list/],
+    ['whatif?field=net&op=gt&value=12abc', /needs a number/]]) {
+    const r = await jget('/api/v1/' + q); eq(r.status, 400, q); ok(re.test(r.body.error), q + ': ' + r.body.error);
+  }
+  // the documented values still work, case-insensitively where they always matched loosely
+  eq((await jget('/api/v1/trades?dir=long')).body.total, (await jget('/api/v1/trades?dir=Long')).body.total);
+  eq((await jget('/api/v1/trades?status=CLOSED&outcome=Win')).body.total, 1);
+  for (const q of ['trades?status=all&tz=local&order=desc', 'breakdown?basis=PCT', 'metrics?format=json', 'whatif?field=net&op=lt&value=-1.5', 'whatif?field=hour&op=in&value=9, 10'])
+    eq((await get('/api/v1/' + q)).status, 200, q);
 });
 await t('pagination + events flag', async () => {
   const p = (await jget('/api/v1/trades?limit=2&offset=2&sort=openTime&order=asc')).body;
@@ -338,6 +355,7 @@ await t('journal read-only views + tags', async () => {
   const one = (await jget('/api/v1/journal/' + encodeURIComponent(ETH_T1_ID))).body;
   eq(one.entry.notes, 'clean entry');
   eq((await jget('/api/v1/journal/' + encodeURIComponent(ETH_T2_ID))).status, 404);
+  for (const id of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) eq((await jget('/api/v1/journal/' + id)).status, 404, id + ' is not an entry');
   const tags = (await jget('/api/v1/tags')).body.tags;
   eq(tags, [{ tag: 'breakout', n: 1 }]);
 });
@@ -532,6 +550,21 @@ await t('buildBotState assembles a truthful snapshot for the Telegram router', a
   ok(st.stats30 && st.stats30.n === 2, 'both ETH round trips inside 30d');
   near(st.stats30.net, -105.51); // sums come from realized money (the open BTC trade's fee so far included), as /stats and /metrics report
   ok(!('goals' in st), 'no goals configured — router says so');
+});
+
+console.log('\nHEAD');
+await t('HEAD answers like GET without the body (uptime monitors), with the GET body’s length', async () => {
+  const http = require('node:http');
+  const raw = (method, p, h, enc) => new Promise((ok2, no) => { const rq = http.request(base + p, { method, headers: { ...(h || {}), ...(enc ? { 'Accept-Encoding': enc } : {}) } }, r => {
+    const parts = []; r.on('data', c => parts.push(c)); r.on('end', () => ok2({ status: r.statusCode, headers: r.headers, len: Buffer.concat(parts).length })); }); rq.on('error', no); rq.end(); });
+  for (const [p, h, enc] of [['/'], ['/', null, 'gzip'], ['/api/health'], ['/daruma'], ['/admin'], ['/help'], ['/api/v1'], ['/api/v1/stats', READ], ['/api/v1/metrics?format=prom', READ], ['/api/v1/stats'], ['/nope']]) {
+    const g = await raw('GET', p, h, enc), hd = await raw('HEAD', p, h, enc);
+    eq(hd.status, g.status, 'HEAD ' + p); eq(hd.len, 0, 'no body: ' + p);
+    eq([hd.headers['content-type'], hd.headers['content-encoding']], [g.headers['content-type'], g.headers['content-encoding']], p);
+    eq(+hd.headers['content-length'], g.len, 'Content-Length is the GET body’s: ' + p);
+  }
+  eq((await raw('HEAD', '/api/data', FULL)).status, 200, 'token routes too');
+  eq((await fetch(base + '/api/data', { method: 'HEAD' })).status, 401, 'and their auth');
 });
 
 console.log('\nAPI v1: engine failure stays soft');
