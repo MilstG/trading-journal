@@ -25,9 +25,10 @@
 //
 // Persistence API (unchanged):
 //   GET  /api/health         -> {ok:true, auth:<bool>, appSyncCapable} (no auth)
-//   GET  /api/data           -> {rev, snapshot|null}; ?only=rev -> {rev} (AUTH_TOKEN)
-//   PUT  /api/data {rev,snapshot,restore?} -> {rev:new}                (AUTH_TOKEN)
-//        stale rev -> 409 {rev, snapshot}; restore:true keeps the state it replaces (snapshots/pre-restore-<time>.json)
+//   GET  /api/data           -> {rev, snapshot|null, storeId?, at?, hist?}; ?only=rev -> {rev, storeId?, at?} (AUTH_TOKEN)
+//   PUT  /api/data {rev,snapshot,restore?,storeId?,at?} -> {rev:new, storeId, at}  (AUTH_TOKEN)
+//        stale rev (or another storeId / at) -> 409 {rev, snapshot, storeId?, at?, hist?}; restore:true keeps the state it replaces (snapshots/pre-restore-<time>.json)
+//        the data file gone after this process saw one -> 503 (never "no data yet")
 //   GET  /api/snapshots , GET /api/snapshots/<YYYY-MM-DD | pre-restore-<time>>  (AUTH_TOKEN)
 //   GET/PUT/DELETE /api/att/<key>  (GET of none stored -> 200 [])      (AUTH_TOKEN)
 //   POST /api/backup , GET /api/backups , GET /api/backups/<name>     (AUTH_TOKEN)
@@ -222,6 +223,21 @@ const parseTime = (v) => {
   return isNaN(t) ? null : t;
 };
 const qnum = (v, dflt) => { const n = parseFloat(v); return isFinite(n) ? n : dflt; };
+// HEAD is GET without the body (uptime monitors probe /, /api/health with it), so every GET route answers it
+// as written: Node already drops a HEAD response's body (writes are ignored, nothing streams). writeHead is
+// held until end() so a one-piece answer still says how long the GET body would be.
+function headAsGet(req, res) {
+  req.method = 'GET';
+  const wh = res.writeHead, w = res.write, end = res.end; let held = null;
+  const flush = () => { if (held) { const a = held; held = null; wh.apply(res, a); } };
+  res.writeHead = (...a) => { held = a; return res; };
+  res.write = (...a) => { flush(); return w.apply(res, a); };
+  res.end = (chunk, ...a) => {
+    if (chunk != null && typeof chunk !== 'function' && !res.headersSent && res.getHeader('content-length') == null)
+      res.setHeader('Content-Length', Buffer.byteLength(chunk, typeof a[0] === 'string' ? a[0] : undefined)); // a writeHead header of its own still wins
+    flush(); return end.call(res, chunk, ...a);
+  };
+}
 const csvCell = (v) => {
   if (v == null) return '';
   let s = String(v);
@@ -573,15 +589,15 @@ function createApp(opts) {
   const fundingDir = path.join(dataDir, 'funding');
   const ledgerDir = path.join(dataDir, 'ledger');
   const marketFile = path.join(dataDir, 'market.json');
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.mkdirSync(attDir, { recursive: true });
-  fs.mkdirSync(fillsDir, { recursive: true });
-  fs.mkdirSync(fundingDir, { recursive: true });
-  fs.mkdirSync(ledgerDir, { recursive: true });
   const reportsDir = path.join(dataDir, 'reports');
-  fs.mkdirSync(reportsDir, { recursive: true });
   const backupsDir = path.join(dataDir, 'backups');
-  fs.mkdirSync(backupsDir, { recursive: true });
+  // an unusable DATA_DIR (a file where a folder should be, no permission, read-only) used to end the
+  // boot in a raw stack trace: it's one line naming the folder and the problem (see the main block)
+  try { for (const d of [dataDir, attDir, fillsDir, fundingDir, ledgerDir, reportsDir, backupsDir]) fs.mkdirSync(d, { recursive: true }); }
+  catch (e) { const why = { ENOTDIR: 'part of that path is a file, not a folder', EEXIST: 'part of that path is a file, not a folder', EACCES: 'no permission to create or write it',
+      EPERM: 'no permission to create or write it', EROFS: 'it is on a read-only filesystem', ENOSPC: 'the disk is full' }[e.code] || e.code || e.message;
+    const err = new Error('DATA_DIR ' + dataDir + ' is not usable: ' + why + '. Point DATA_DIR at a writable folder (or attach the volume) and restart.');
+    err.dataDirUnusable = true; throw err; }
   const BACKUP_RE = /^backup-[A-Za-z0-9-]+\.json\.gz$/;
   const BACKUP_KEEP = 10;
   // Encrypted off-site copies (offsite.js): every server backup as it's made, plus a daily
@@ -629,11 +645,14 @@ function createApp(opts) {
   // before the last write (dataBroken 'bak'), and with no good copy either (dataBroken true)
   // the journal API refuses to read or write until the owner restores a file — an empty answer
   // would let the next save replace the journal, and copy the damaged file over the backup.
-  let dataBroken = false;
+  // Nor is a file that vanished after this process read or wrote one (dataGone): an unmounted or
+  // wiped volume answered "no data yet", and every device then took that empty copy as the newest.
+  let dataBroken = false, dataGone = false, _seenRev = 0;
   const readData = () => {
-    let st; try { st = fs.statSync(dataFile); } catch (e) { dataBroken = false; return null; }
+    let st; try { st = fs.statSync(dataFile); } catch (e) { dataBroken = false; dataGone = _seenRev > 0; return null; }
+    dataGone = false;
     if (_dataCache.data && _dataCache.mtime === st.mtimeMs) return _dataCache.data;
-    try { const d = JSON.parse(fs.readFileSync(dataFile, 'utf8')); _dataCache = { mtime: st.mtimeMs, data: d }; dataBroken = false; return d; }
+    try { const d = JSON.parse(fs.readFileSync(dataFile, 'utf8')); _dataCache = { mtime: st.mtimeMs, data: d }; dataBroken = false; _seenRev = Math.max(_seenRev, +(d && d.rev) || 0); return d; }
     catch (e) {
       // a read that failed for another reason (too many open files…) isn't a damaged file: answer
       // from the last good read, or refuse this once — never "empty", never the backup
@@ -645,8 +664,18 @@ function createApp(opts) {
         dataBroken = true; return null; }
     }
   };
+  // The journal store's identity, sent with every answer (app/core.js srvDiverged): a random id made at
+  // its first write and kept by every later one, this version's time, and with the whole copy the
+  // times of the last HIST_KEEP revisions. A device can then tell a store that went backwards or was
+  // replaced (redeployed empty, restored from an older bundle) from one another device saved to,
+  // and keep its own newer copy instead of taking the older one.
+  const HIST_KEEP = 200;
+  const dataVer = (d, full) => d && typeof d.storeId === 'string'
+    ? Object.assign({ storeId: d.storeId, at: d.updatedAt || null }, full && Array.isArray(d.hist) ? { hist: d.hist } : {}) : {};
+  const DATA_GONE = 'The journal file is missing on the server (was the data volume unmounted or wiped?). Not answering with an empty journal: put DATA_DIR back, or restart the server to start a new one; the app keeps your browser’s copy and saves it back.';
   const writeData = (obj) => {
     _dataCache.mtime = 0; // invalidate — the rename below may land within the same ms
+    _seenRev = Math.max(_seenRev, +obj.rev || 0);
     const tmp = dataFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(obj));
     // only a file that reads back is worth keeping as the backup
@@ -766,15 +795,20 @@ function createApp(opts) {
   // server is open (unchanged from before) and this distinction is moot.
   const readOk = (req) => authOk(req)
     || (!!readAuth && !lockedOut(req) && timingSafeEq(req.headers['authorization'] || '', 'Bearer ' + readAuth));
+  // A body of 1 KB or more goes gzipped to a client that takes it (every browser): the journal
+  // (/api/data) is megabytes of JSON for a big one, as is the admin's member list for a big league,
+  // and either is 10–20× smaller gzipped. Done in place (gzip costs a fraction of the JSON work).
   const json = (res, code, obj) => {
     const body = JSON.stringify(obj);
+    const req = res.req, gz = body.length >= 1024 && !!req && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
     const write = () => {
-      res.writeHead(code, {
+      const vary = gz ? [res.getHeader('Vary'), 'Accept-Encoding'].filter(Boolean).join(', ') : null;
+      res.writeHead(code, Object.assign({
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
-      });
-      res.end(body);
+      }, gz ? { 'Content-Encoding': 'gzip', 'Vary': vary } : {}));
+      res.end(gz ? zlib.gzipSync(body, { level: body.length > 1e6 ? 3 : 6 }) : body);
     };
     // Flat 300ms on every 401: turns online brute-force of the bearer tokens from
     // thousands of guesses/second into three per second, at zero cost to real clients
@@ -983,7 +1017,20 @@ function createApp(opts) {
   // hash; the HTML is sent with every <script src="app/x.js"> rewritten to "app/x.js?v=<hash>", so
   // browsers can keep those for a year and still pick up a new deploy at once.
   const appDir = path.join(path.dirname(htmlPath), 'app');
-  const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash}
+  // Brotli for a browser that takes it (all of them over HTTPS): ~14% under gzip -9 for this code, about
+  // 80 KB less for Daruma's first open. Quality 11 takes ~0.3 s on the biggest file, so it's built in the
+  // background the first time a file is asked for with br; that request (and any until it's ready) gets gzip.
+  const brOf = (f) => {
+    if (f.br === undefined) { f.br = null;
+      zlib.brotliCompress(f.buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: f.buf.length } },
+        (e, out) => { if (!e && out.length < f.gz.length) f.br = out; }); }
+    return f.br;
+  };
+  // [Content-Encoding or null, body] for a {buf, gz} file and this request's Accept-Encoding
+  const encodedFile = (req, f) => { const ae = req.headers['accept-encoding'] || '';
+    const br = /\bbr\b/.test(ae) ? brOf(f) : null;
+    return br ? ['br', br] : /\bgzip\b/.test(ae) ? ['gzip', f.gz] : [null, f.buf]; };
+  const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash, br}
   const appFile = (name) => {
     if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name)) return null; // app/ or app/features/ only: no other paths, no dotfiles
     const file = path.join(appDir, name);
@@ -1127,6 +1174,7 @@ function createApp(opts) {
     const snap = currentSnapshot();
     const s = Object.assign({}, S_DEFAULTS, snap.settings || {});
     if (query.tz === 'utc' || query.tz === 'local') s.tz = query.tz;
+    else if (query.tz != null && query.tz !== '') throw { code: 400, msg: 'tz must be utc|local' }; // not a silent UTC answer for tz=Europe/Paris
     else if (s.tz !== 'utc' && s.tz !== 'local') s.tz = 'utc';
     E.settings = s;
     E.journal = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
@@ -1141,17 +1189,22 @@ function createApp(opts) {
     if (market && market !== 'perp' && market !== 'spot') throw { code: 400, msg: 'market must be perp|spot|combined' };
     const wallet = q.wallet ? String(q.wallet).toLowerCase() : null;
     const coin = q.coin ? String(q.coin).toUpperCase() : null;
-    const dir = q.dir || null;
-    const status = q.status || 'all';
-    const outcome = q.outcome || null;
+    // an unknown value used to answer as if unfiltered (status, outcome) or with nothing (dir): name what's allowed
+    const pick = (k, allowed) => { if (q[k] == null || q[k] === '') return null; const v = allowed.find(a => a.toLowerCase() === String(q[k]).toLowerCase());
+      if (v === undefined) throw { code: 400, msg: k + ' must be ' + allowed.join('|') }; return v; };
+    const dir = pick('dir', ['Long', 'Short', 'Spot']);
+    const status = pick('status', ['open', 'closed', 'all']) || 'all';
+    const outcome = pick('outcome', ['win', 'loss', 'be']);
     const tag = q.tag || null;
     const text = q.q ? String(q.q).toLowerCase() : null;
     // A bare date is a whole calendar day on the requested clock (tz=utc|local): from= is its
     // first millisecond and to= its LAST, so to=2026-09-01 includes Sept 1 (like the app's range).
     const dayBound = (v, end) => {
+      // a day the calendar doesn't have (2026-02-31) is refused, not rolled into March by Date (bare or ISO)
+      const dm = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v == null ? '' : v)), real = dm && (x => x.getUTCMonth() === +dm[2] - 1 && x.getUTCDate() === +dm[3])(new Date(Date.UTC(+dm[1], +dm[2] - 1, +dm[3])));
+      if (dm && !real) return null;
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v));
       if (!m) return parseTime(v);
-      if (+m[2] < 1 || +m[2] > 12 || +m[3] < 1 || +m[3] > 31) return null;
       const y = +m[1], mo = +m[2] - 1, d = +m[3], utc = !(E.settings && E.settings.tz === 'local');
       const at = dd => utc ? Date.UTC(y, mo, dd) : new Date(y, mo, dd).getTime();
       return end ? at(d + 1) - 1 : at(d);
@@ -1256,6 +1309,9 @@ function createApp(opts) {
     const cmp = numeric ? parseFloat(raw) : String(raw).toUpperCase() === String(raw) && (field === 'coin' || field === 'symbol')
       ? String(raw).toUpperCase() : String(raw);
     const list = op === 'in' ? String(raw).split(',').map(s => numeric ? parseFloat(s) : (field === 'coin' || field === 'symbol' ? s.toUpperCase() : s)) : null;
+    // value=abc compared as NaN matched nothing and answered "nothing removed"; 12abc read as 12
+    if (numeric && (op === 'in' ? String(raw).split(',') : [raw]).some(s => String(s).trim() === '' || !isFinite(Number(s))))
+      throw { code: 400, msg: field + ' needs a number' + (op === 'in' ? ' list (comma-separated)' : '') + '; got ' + JSON.stringify(String(raw).slice(0, 40)) };
     const norm = v => (field === 'coin' || field === 'symbol') ? String(v).toUpperCase()
       : field === 'wallet' ? String(v).toLowerCase() : v;
     switch (op) {
@@ -1800,7 +1856,7 @@ function createApp(opts) {
   }
 
   /* ---------------- v1 endpoint docs (served at GET /api/v1) ---------------- */
-  const FILTER_DOC = 'market, wallet, coin, dir, status=open|closed|all, outcome=win|loss|be, tag, q, from, to (ms or seconds epoch, ISO time, or YYYY-MM-DD = that whole day on the tz clock, to inclusive; compared with closeTime, which for an open trade is its last fill — same semantics as the app), tz=utc|local';
+  const FILTER_DOC = 'market=perp|spot|combined, wallet, coin, dir=Long|Short|Spot, status=open|closed|all, outcome=win|loss|be, tag, q, from, to (ms or seconds epoch, ISO time, or YYYY-MM-DD = that whole day on the tz clock, to inclusive; compared with closeTime, which for an open trade is its last fill — same semantics as the app), tz=utc|local';
   const V1_DOCS = [
     { method: 'GET',  path: '/api/v1', auth: 'none', desc: 'this index' },
     { method: 'POST', path: '/api/v1/refresh', auth: 'full', desc: 'fetch fills/funding/positions from Hyperliquid into server caches; body {wallets?,full?,force?}; min interval 15s unless force' },
@@ -2023,6 +2079,7 @@ function createApp(opts) {
       // JSON by default; ?format=prom emits Prometheus exposition text (numbers only).
       if (url === '/api/v1/metrics') {
         if (!engine.ok) throw { code: 503, msg: 'analytics engine unavailable' };
+        if (query.format != null && query.format !== '' && query.format !== 'json' && query.format !== 'prom') throw { code: 400, msg: 'format must be json|prom' };
         const d = readData();
         const market = readMarket();
         const m = { updated_at: null, trades_total: null, open_trades: null, net_total: null,
@@ -2068,6 +2125,7 @@ function createApp(opts) {
         const sortKey = query.sort || 'openTime';
         const SORTS = ['openTime', 'closeTime', 'net', 'pnl', 'fees', 'durationMs', 'coin', 'maxSize'];
         if (!SORTS.includes(sortKey)) throw { code: 400, msg: 'sort must be one of ' + SORTS.join('|') };
+        if (query.order != null && query.order !== '' && query.order !== 'asc' && query.order !== 'desc') throw { code: 400, msg: 'order must be asc|desc' };
         const dirn = query.order === 'asc' ? 1 : -1;
         const sorted = [...all].sort((a, b) => {
           const A = a[sortKey], B = b[sortKey];
@@ -2131,7 +2189,8 @@ function createApp(opts) {
       if (url === '/api/v1/breakdown') {
         const { closed, all } = prepare(query);
         const by = String(query.by || 'coin').toLowerCase();
-        const basis = String(query.basis || 'usd').toLowerCase() === 'pct' ? 'pct' : 'usd';
+        const basis = String(query.basis || 'usd').toLowerCase();
+        if (basis !== 'usd' && basis !== 'pct') throw { code: 400, msg: 'basis must be usd|pct' };
         const top = Math.max(1, Math.min(50, Math.floor(qnum(query.top, 5))));
         const KEYS = {
           coin: t => t.symbol || t.coin, dir: t => t.dir, market: t => t.market,
@@ -2390,7 +2449,7 @@ function createApp(opts) {
       if (jM) {
         const snap = currentSnapshot();
         let id; try { id = decodeURIComponent(jM[1]); } catch (e) { throw { code: 400, msg: 'malformed percent-encoding in id' }; }
-        const e = (snap.journal || {})[id];
+        const jr = snap.journal || {}, e = Object.prototype.hasOwnProperty.call(jr, id) ? jr[id] : null; // not __proto__ / constructor
         return e ? send(200, { id, entry: e }) : send(404, { error: 'no journal entry for ' + id });
       }
       if (url === '/api/v1/tags') {
@@ -2601,6 +2660,7 @@ function createApp(opts) {
   if (opts.pushTick !== false) { const pt = setInterval(() => { social.tick().catch(() => {}); }, 60000); if (pt.unref) pt.unref(); }
 
   const handleRequest = (req, res) => {
+    if (req.method === 'HEAD') headAsGet(req, res);
     const [url, qs] = (req.url || '/').split('?');
     const query = Object.fromEntries(new URLSearchParams(qs || ''));
 
@@ -2643,7 +2703,7 @@ function createApp(opts) {
       return res.end();
     }
     if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/daruma' || url === '/keel' || url === '/pulse')) {
-      // the page is ~0.3 MB (its code is in app/*.js, below): sent gzipped, and a browser that already has this
+      // the page is ~0.3 MB (its code is in app/*.js, below): sent compressed (brOf), and a browser that already has this
       // version gets a 304 instead of the whole file on every open
       const shell = appShell(url === '/daruma' || url === '/keel' || url === '/pulse' ? 'keel' : 'journal');
       if (shell.error) return json(res, 500, { error: shell.error });
@@ -2652,9 +2712,9 @@ function createApp(opts) {
         // no other site can frame the journal (a <meta> tag can't say this; browsers ignore it there)
         'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" };
       if ((req.headers['if-none-match'] || '') === shell.etag) { res.writeHead(304, head); return res.end(); }
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-      res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
-      return res.end(gz ? shell.gz : shell.buf);
+      const [enc, body] = encodedFile(req, shell);
+      res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
+      return res.end(body);
     }
 
     // --- the app's scripts (app/*.js): long-lived when asked for by their current hash
@@ -2674,9 +2734,9 @@ function createApp(opts) {
       const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
         'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-      res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
-      return res.end(gz ? f.gz : f.buf);
+      const [enc, body] = encodedFile(req, f);
+      res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
+      return res.end(body);
     }
 
     // --- built-in documentation: /help (user guide), /docs (technical reference) and /tutorial/ (the Daruma tutorial).
@@ -2886,8 +2946,10 @@ function createApp(opts) {
         if (!body || typeof body !== 'object' || body.app !== 'ledger')
           return json(res, 400, { error: "expected the app's backup JSON (app:'ledger')" });
         const name = 'backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json.gz';
-        try { gzWrite(path.join(backupsDir, name), body); }
-        catch (e) { return json(res, 500, { error: 'write failed: ' + e.message }); }
+        // made at boot only, a backups/ folder lost with a remounted volume used to fail every backup until a
+        // restart (not recursive: with DATA_DIR itself gone this fails, rather than write where no volume is)
+        try { if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir); gzWrite(path.join(backupsDir, name), body); }
+        catch (e) { console.error('[ledger] backup failed: ' + e.message); return json(res, 500, { error: 'write failed (' + (e.code || 'error') + ')' }); }
         try {
           const files = fs.readdirSync(backupsDir).filter(f => BACKUP_RE.test(f)).sort();
           while (files.length > BACKUP_KEEP) fs.unlinkSync(path.join(backupsDir, files.shift()));
@@ -3031,8 +3093,9 @@ function createApp(opts) {
       if (req.method === 'GET') {
         const d = readData();
         if (dataBroken === true) return json(res, 500, { error: 'The journal file on the server is damaged. Restore a copy from DATA_DIR/snapshots/ before syncing.' });
-        if (query.only === 'rev') return json(res, 200, { rev: (d && d.rev) || 0 }); // an open tab asking "has another device saved?"
-        return json(res, 200, { rev: (d && d.rev) || 0, snapshot: (d && d.snapshot) || null });
+        if (dataGone) return json(res, 503, { error: DATA_GONE });
+        if (query.only === 'rev') return json(res, 200, Object.assign({ rev: (d && d.rev) || 0 }, dataVer(d))); // an open tab asking "has another device saved?"
+        return json(res, 200, Object.assign({ rev: (d && d.rev) || 0, snapshot: (d && d.snapshot) || null }, dataVer(d, true)));
       }
 
       if (req.method === 'PUT') {
@@ -3050,21 +3113,33 @@ function createApp(opts) {
         });
         req.on('end', () => {
           if (aborted) return;
-          let body;
-          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          let raw = Buffer.concat(chunks), body;
+          // the app sends a big snapshot gzipped (writeServer): unpacked here, never past MAX_BODY
+          if (/^\s*gzip\s*$/i.test(req.headers['content-encoding'] || '')) {
+            try { raw = zlib.gunzipSync(raw, { maxOutputLength: MAX_BODY }); }
+            catch (e) { return e && e.code === 'ERR_BUFFER_TOO_LARGE' ? json(res, 413, { error: 'payload too large' }) : json(res, 400, { error: 'invalid gzip body' }); }
+          } else if (req.headers['content-encoding'] && !/^\s*identity\s*$/i.test(req.headers['content-encoding'])) return json(res, 415, { error: 'unsupported content encoding' });
+          try { body = JSON.parse(raw.toString('utf8')); }
           catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
           if (!body || typeof body !== 'object' || typeof body.rev !== 'number'
               || !body.snapshot || typeof body.snapshot !== 'object')
             return json(res, 400, { error: 'expected {rev:number, snapshot:object}' });
           const cur = readData();
           if (dataBroken === true) return json(res, 503, { error: 'The journal file on the server is damaged; not saving over it. Restore a copy from DATA_DIR/snapshots/.' });
+          if (dataGone) return json(res, 503, { error: DATA_GONE });
           const curRev = (cur && cur.rev) || 0;
-          if (body.rev !== curRev)
-            return json(res, 409, { rev: curRev, snapshot: (cur && cur.snapshot) || null });
-          const next = { rev: curRev + 1, snapshot: body.snapshot, updatedAt: new Date().toISOString() };
+          // the revision alone can't tell a store restored from an older bundle and saved up to the same
+          // number again: a client that names the store and the version it holds must match both
+          if (body.rev !== curRev || (typeof body.storeId === 'string' && body.storeId !== ((cur && cur.storeId) || null))
+              || (typeof body.at === 'string' && cur && cur.updatedAt && body.at !== cur.updatedAt))
+            return json(res, 409, Object.assign({ rev: curRev, snapshot: (cur && cur.snapshot) || null }, dataVer(cur, true)));
+          const at = new Date().toISOString();
+          const next = { rev: curRev + 1, snapshot: body.snapshot, updatedAt: at, storeId: (cur && typeof cur.storeId === 'string' && cur.storeId) || crypto.randomBytes(12).toString('base64url'),
+            hist: [...(cur && Array.isArray(cur.hist) ? cur.hist : []), [curRev + 1, at]].slice(-HIST_KEEP) };
           if (cur && (body.restore === true || journalDrop(cur, body.snapshot))) snapshotPreRestore(cur);
-          try { writeData(next); } catch (e) { return json(res, 500, { error: 'write failed: ' + e.message }); }
-          return json(res, 200, { rev: next.rev });
+          // the reason, not the server's absolute paths
+          try { writeData(next); } catch (e) { console.error('[ledger] saving the journal failed: ' + e.message); return json(res, 500, { error: 'write failed (' + (e.code || 'error') + ')' }); }
+          return json(res, 200, Object.assign({ rev: next.rev }, dataVer(next)));
         });
         return;
       }
@@ -3098,7 +3173,7 @@ function createApp(opts) {
           let existing = 0; try { existing = fs.statSync(file).size; } catch (e) {}
           if (attDirSize() - existing + size > MAX_ATT_TOTAL)
             return json(res, 507, { error: 'attachment store full (' + Math.round(MAX_ATT_TOTAL / 1024 / 1024) + ' MB cap) — delete attachments from old trades first' });
-          try { fs.writeFileSync(file + '.tmp', JSON.stringify(arr)); fs.renameSync(file + '.tmp', file); }
+          try { if (!fs.existsSync(attDir)) fs.mkdirSync(attDir); fs.writeFileSync(file + '.tmp', JSON.stringify(arr)); fs.renameSync(file + '.tmp', file); } // att/ too (see backups)
           catch (e) { return json(res, 500, { error: 'write failed' }); }
           return json(res, 200, { ok: true, count: arr.length }); });
         return;
@@ -3149,7 +3224,8 @@ if (require.main === module) {
   // a stray rejection is logged, not fatal: one failed background write shouldn't take every member offline
   process.on('unhandledRejection', e => console.error('[ledger] unhandled rejection: ' + (e && e.stack || e)));
   const port = parseInt(process.env.PORT, 10) || 8080;
-  const app = createApp();
+  let app; try { app = createApp(); }
+  catch (e) { if (!e || !e.dataDirUnusable) throw e; console.error('[ledger] ' + e.message); process.exit(1); }
   if (!process.env.AUTH_TOKEN)
     console.warn('[ledger] WARNING: AUTH_TOKEN is not set — the persistence API is open to anyone with the URL.');
   if (!fs.existsSync('/data') && !process.env.DATA_DIR)

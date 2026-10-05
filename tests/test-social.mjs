@@ -31,9 +31,12 @@ t('stats are clamped and filtered: bad days, badges and oversized text never get
 });
 t('sharing defaults keep money and the address private', () => {
   const sh = S.sanitizeShare({ usd: true, profile: 'yes' });
-  eq(sh, { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: true, usd: true, addr: false, mentor: true, bench: true, duels: true, seek: false }, 'looking for a partner is off until you say so');
+  eq(sh, { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: false, usd: true, addr: false, mentor: true, bench: true, duels: true, seek: false }, 'looking for a partner is off until you say so');
   const d = S.sanitizeShare({});
-  eq([d.usd, d.addr, d.seek], [false, false, false], 'dollar P&L, the wallet address and partner-seeking start off');
+  eq([d.ret, d.usd, d.addr, d.seek], [false, false, false, false], '% return, dollar P&L, the wallet address and partner-seeking start off');
+  eq(S.sanitizeShare({ feed: false }, Object.assign({}, S.DEFAULT_SHARE, { ret: true })).ret, true, 'a member who shared % return under the old default keeps it');
+  const legacy = { profile: true, boards: true, feed: true, habits: true, usd: false, addr: false }; // stored before ret existed: it was on for them
+  eq(S.sanitizeShare({}, legacy).ret, true);
 });
 t('new sharing defaults never switch anything on for existing members', () => {
   const old = S.sanitizeShare({ global: false, page: false, ret: false, mentor: false });

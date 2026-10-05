@@ -188,8 +188,12 @@ function pzNav(tab, level){
   const ft=pzFeatTab(tab);
   const cur=ft?(ft.tab.nav||'today'):tab==='discipline'||tab==='journal'||tab==='review'||tab==='plan'||tab==='askmentor'?'today':tab==='profile'||tab==='comp'||tab==='sharing'||tab==='account'||tab==='leagues'||tab==='mentor'||tab==='mentee'||tab==='mentors'||tab==='mentorp'||tab==='reviews'||tab==='tr'||tab==='lginfo'||tab==='duels'||tab==='people'||tab==='duelnew'||tab==='podnew'||tab==='post'||tab==='compose'?'social':tab==='deep'||tab==='how'?'trends':tab==='badges'||tab==='report'||tab==='lessons'?'progress':tab;
   if(typeof pzCoachStatus==='function')pzCoachStatus(); // asked once per profile, so the bar knows whether there is a coach
-  // the owner hasn't switched the AI coach on: no tab for it (a visitor has no coach status yet: the league config says)
-  const noCoach=typeof COACH!=='undefined'&&COACH&&(COACH.status?!COACH.status.enabled:!!(SOC.cfg&&SOC.cfg.coach&&SOC.cfg.coach.ai===false));
+  // the owner hasn't switched the AI coach on: no tab for it (a visitor has no coach status yet: the league config says).
+  // Neither known (offline, or the server slow to answer): the last answer this device had, else no tab, since a
+  // Coach tab that opens on "isn't switched on" is worse than none.
+  let coachOn=null; if(typeof COACH!=='undefined'&&COACH){ coachOn=COACH.status?!!COACH.status.enabled:SOC.cfg?!(SOC.cfg.coach&&SOC.cfg.coach.ai===false):null;
+    try{ if(coachOn==null)coachOn=localStorage.getItem('pz_coach_on')==='1'; else localStorage.setItem('pz_coach_on',coachOn?'1':'0'); }catch(e){ if(coachOn==null)coachOn=false; } }
+  const noCoach=coachOn===false;
   const items=[['today','Today'],['trends','Stats'],['checkin','Prep'],...(noCoach?[]:[['coach','Coach']]),['social','Social'],['progress','Progress']];
   const lockT=0; // Stats is always open; only its deeper insights are level-gated
   return `<nav class="pz-nav" aria-label="Daruma"><div class="pz-brand">${pzMark(30)}<span>Daruma</span></div>
@@ -232,7 +236,7 @@ const PZ_SECTIONS={
     ['insight','Coach insight','One line on what matters most',1],['next','Next step','Prep in the morning, review at night',1],
     ['now','Before you trade','How you do at this hour, the market today, time since a loss',1],['good','Done right today','Moments you followed a rule that usually costs you',1],['duels','Duels','Challenges waiting for you and duels running',1],
     ['lesson','A lesson to revisit','One of your own lessons, back when it’s due',1],
-    ['inbox','From your partners and mentor','Nudges, notes and season results',1],['partners','Your partners','Their streak and slips this week',1],
+    ['inbox','From your partners and mentor','Nudges, notes and season results',1],['partners','Your partners','Their streak and slips over their last 7 trading days',1],
     ['xp','Today’s XP','What earns XP today, and what’s due this week',1],['week','Last 7 trading days','Discipline and net, day by day',1],
     ['level','Level and league','Level progress, XP today, league standing',0],['yesterday','Last trading day','Its score, net and lesson in full',0]],
   stats:[['tiles','Headline numbers','Net, win rate, average trade and more',1],['daily','Daily P&L','',1],['findings','What moves your results','Your biggest edges and leaks',1],
@@ -1237,7 +1241,8 @@ function pzJournalHtml(D){
   const clear=older?`<p class="pz-sub pz-jclear">${older===D.inbox.length?(older===1?'It is':'All '+older+' are'):older+' of these are'} from before today. <button type="button" class="pz-linkbtn" data-pz-jclear>Clear ${older===1?'it':'them'}</button></p>`:'';
   const card=t=>{ const r=pzS.jr[t.id]||0, q=tradeQuestion(t,journal[t.id],_excM[t.id]).q, short=t.dir==='Short';
     const be=isBE(t.net), col=be?'var(--pz-soft)':t.net>=0?PZ_COL.good:PZ_COL.low, hm=x=>String(x.h).padStart(2,'0')+':'+String(x.min).padStart(2,'0');
-    const pct=!t.isOpen&&measured(t)&&t.avgEntry>0&&t.avgExit>0?(t.avgExit/t.avgEntry-1)*100*(short?-1:1):null, nf=(t.events||[]).length;
+    // the trade's return (net after fees on its largest size, retPct): the same % as its question, the full journal and a mentor's thread
+    const pct=t.isOpen?null:retPct(t), nf=(t.events||[]).length;
     const openK=dayKey(t.openTime), closeK=dayKey(t.closeTime), when=dayLabel(openK)+' · '+hm(tzParts(t.openTime))+(t.isOpen?' · still open':' → '+(closeK===openK?'':dayLabel(closeK)+' · ')+hm(tzParts(t.closeTime)));
     const size=t.maxSize>0?(+(+t.maxSize).toPrecision(5)).toLocaleString('en-US')+' '+dispMarket(dcoin(t)):'';
     return `<section class="pz-card pz-trade" data-pz-trade="${esc(t.id)}"><div class="pz-trade-h"><div class="pz-trade-t"><b>${esc(dispMarket(dcoin(t)))}</b><span class="pz-side" style="--c:${short?PZ_COL.low:PZ_COL.good}">${t.dir==='Spot'?'Spot':short?'Short':'Long'}</span></div>
@@ -1248,7 +1253,7 @@ function pzJournalHtml(D){
       <input type="text" id="pzSetup_${esc(t.id)}" aria-label="Setup" placeholder="Setup (breakout, fade, retest…)" autocomplete="off">
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-setupchip="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
       <div data-pz-pbslot="${esc(t.id)}">${pzPbCheckHtml(t.id,(journal[t.id]||{}).setup)}</div>
-      <textarea id="pzNoteT_${esc(t.id)}" rows="2" aria-label="${esc(q)}" placeholder="${esc(q)}"></textarea>
+      <label class="pz-noteq" for="pzNoteT_${esc(t.id)}">${esc(q)}</label><textarea id="pzNoteT_${esc(t.id)}" rows="2" placeholder="One line is enough"></textarea>
       <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" data-pz-jsave style="flex:1">Save</button><button type="button" class="pz-ghost pz-sm" data-pz-jskip aria-label="Skip this trade: out of the backlog, not journaled">Skip</button>${SOC.me&&!pzS.demo&&!(SOC.cfg&&SOC.cfg.posts&&!SOC.cfg.posts.on)?`<button type="button" class="pz-ghost pz-sm" data-soc-share="${esc(t.id)}">Share</button>`:''}${mrCanShare()?`<button type="button" class="pz-ghost pz-sm" data-mr-share="${esc(t.id)}">Ask mentor</button>`:''}</div></section>`; };
   return `${back}${pzHead(D.inbox.length+' to journal','Journal')}<p class="pz-sub" style="margin-top:-6px">Rate how well you executed each trade, not how it paid. One line is enough.</p>${undo}${clear}
     <div class="pz-jgrid">${list.map(card).join('')}</div>${jpg.html}`;
@@ -1275,10 +1280,12 @@ function pzPbToggleNa(btn){
   const inp=row&&row.querySelector('input[data-pz-pbr]'); if(inp){ inp.disabled=on; if(on)inp.checked=false; }
   if(box)box.dataset.touched='1';
 }
-async function pzSaveJournal(sec){
+// The card's question sits above its box and is saved as the note's first line. quiet (Ask mentor, Share): save
+// whatever is typed without a word or a redraw, since the caller goes on to send it; true when anything was saved.
+async function pzSaveJournal(sec, quiet){
   const id=sec.dataset.pzTrade, rating=pzS.jr[id]||0;
-  const setup=(sec.querySelector('input[type=text]')||{value:''}).value.trim(), note=(sec.querySelector('textarea')||{value:''}).value.trim();
-  if(!rating&&!setup&&!note){ pzNote('Pick a rating or write a line first.','err'); return; }
+  const setup=(sec.querySelector('input[type=text]')||{value:''}).value.trim(), noteEl=sec.querySelector('textarea'), note=(noteEl||{value:''}).value.trim();
+  if(!rating&&!setup&&!note){ if(!quiet)pzNote('Pick a rating or write a line first.','err'); return false; }
   const t=allTrades.find(x=>x.id===id)||{};
   const j=ensureJ(id); if(setup)j.setup=pzCanonSetup(setup); if(rating)j.rating=rating; delete j.skip; // one spelling per setup, so stats by setup add up
   const box=sec.querySelector('[data-pz-pb][data-touched]'), p=box&&pbList().find(x=>x.id===box.dataset.pzPb);
@@ -1286,7 +1293,8 @@ async function pzSaveJournal(sec){
   if(p&&playbookFor(j.setup,[p])){ const live=!!((j.pb&&j.pb.id===p.id&&j.pb.live)||t.isOpen); j.pb={id:p.id,...pzPbRead(box,p),at:Date.now(),...(live?{live:true}:{})}; }
   if(note){ const q=tradeQuestion(t,j,_excM[id]).q; j.notes=(j.notes?j.notes+'\n\n':'')+q+'\n'+note; }
   delete pzS.jr[id]; markJEdit(id); await Store.set(J_KEY,journal);
-  pzNote('Saved.'); pzRender();
+  if(quiet){ if(noteEl)noteEl.value=''; const si=sec.querySelector('input[type=text]'); if(si)si.value=''; return true; } // emptied: a later Save doesn't add the same line twice
+  pzNote('Saved.'); pzRender(); return true;
 }
 // Skip takes a trade out of the backlog without journaling it: no XP, no streak, no discipline
 // credit, and the trade still sits in the full journal for a note later. The flag syncs like a note.
@@ -1331,7 +1339,7 @@ function pzConnectHtml(){
       <div class="pz-wl-formh"><span>Read-only API key</span><button type="button" class="pz-wl-link" data-pz-cexoff>← Use a wallet address</button></div>
       ${pzCexFormHtml(true)}`:`
       <div class="pz-wl-formh"><label for="pzAddr">Start with your wallet</label><button type="button" class="pz-wl-link" data-pz-cex="bybit">Bybit or Binance? Use an API key →</button></div>
-      ${settings.wallets.length&&!busy?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map(w=>esc(labelFor(w))).join(', ')}. Add another address, or look around with sample data.</p>`:''}
+      ${settings.wallets.length&&!busy&&!err?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map((w,i)=>`${esc(labelFor(w))} <button type="button" class="pz-linkbtn" data-pz-rmw="${i}" aria-label="Remove ${esc(labelFor(w))}">Remove</button>`).join(', ')}. Add another address, or look around with sample data.</p>`:''}
       <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid or Lighter" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
       ${errHtml}`}</div>
     <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>${/^https?:$/.test(location.protocol)?'<a class="pz-wl-link" href="/tutorial/">How it works →</a>':''}
@@ -1402,12 +1410,12 @@ function pzSheetHtml(){
 function pzNote(m, kind){
   pzS.note=m?{m,kind:kind||''}:null;
   const el=$('pzNote'); if(!el)return;
+  // the first-run and loading screens show the message in place; an error there isn't toasted too (it said it twice)
+  if(!allTrades.length&&$('pzView')){ pzRender(); if(kind==='err'){ el.textContent=''; clearTimeout(pzNote._t); return; } }
   el.className='pz-note'+(kind==='err'?' err':'');
   el.innerHTML=m?(kind==='busy'?'<span class="pz-spin"></span>':'')+esc(m):'';
   // messages go by themselves (errors stay a little longer), or with a tap, or when you change screens
   clearTimeout(pzNote._t); if(m&&kind!=='busy')pzNote._t=setTimeout(()=>{ if(el.textContent===m){ el.textContent=''; pzS.note=null; } },kind==='err'?9000:5000);
-  // the first-run and loading screens show the message inline too
-  if(!allTrades.length&&$('pzView'))pzRender();
 }
 let _pzLastD=null;
 // Daruma's 1–5 radio groups (prep, the review, a trade's execution) as ARIA's radio group: one Tab stop
@@ -1415,8 +1423,33 @@ let _pzLastD=null;
 function pzRoving(scope){ if(!scope)return;
   for(const g of scope.matches&&scope.matches('[role=radiogroup]')?[scope]:scope.querySelectorAll('[role=radiogroup]')){
     const R=[...g.querySelectorAll('[role=radio]')], on=R.find(b=>b.getAttribute('aria-checked')==='true')||R[0]; for(const b of R)b.tabIndex=b===on?0:-1; } }
+// "5 min ago", "3h ago", "2 days ago"
+function pzAgoTxt(at){ const m=Math.round((Date.now()-at)/60000); return m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+'h ago':Math.round(m/1440)+' days ago'; }
+// Big accounts (5,000+ trades): when the game's inputs changed (new fills, a journal save, a new day), its
+// context is rebuilt in idle steps (the every-trade coach context, then the game) and the screen is
+// drawn once they're in. Built inside pzRender it was one task of 7–11 s at 31k trades on a throttled
+// phone. The screen on show stays until then; calls meanwhile join the build. The draw after it reads
+// the memos (the same objects a direct call builds); should the game still be cold then (a step threw),
+// that draw builds it itself as before, so an error shows as it always did.
+// The coach context's three heaviest parts go first, one step each, into the memos it reads them from
+// (computeStatsMemo, diagScanMemo, behaviorSignalsMemo: hits need equal trades and inputs, so the
+// context then takes exactly what it would have computed). pzBeforeDraw's work runs just before the draw.
+var _pzStage=0, _pzStaged=false, _pzPre=[]; // var: pzRender may run before this line has (a load-time caller)
+function pzStage(){ if(_pzStage)return; _pzStage=1; const W={};
+  const steps=[()=>{ const {trades,money}=_coachKey(true), closed=trades.filter(t=>!t.isOpen&&t.closeTime); if(closed.length>=5){ W.closed=closed; W.money=money; W.s=computeStatsMemo(closed,money); } },
+    ()=>{ if(W.s)diagScanMemo(W.closed); }, ()=>{ if(W.s)behaviorSignalsMemo(W.closed,W.s,W.money); },
+    ()=>coachContext(true), ()=>gameContext()];
+  const next=()=>requestIdleCallback(()=>{ const f=steps.shift();
+    if(!f){ _pzStage=0; for(const g of _pzPre.splice(0))try{ g(); }catch(e){ console.warn(e); } _pzStaged=true; pzRender(); return; }
+    try{ f(); }catch(e){ console.warn(e); } next(); },{timeout:1000});
+  next(); }
+function pzStaging(){ return allTrades.length>=5000&&typeof requestIdleCallback==='function'&&(!!_pzStage||!gameWarm()); }
+// f, before the next draw: now, or (a big account's game being rebuilt in steps) once the build is in
+function pzBeforeDraw(f){ if(pzStaging()){ _pzPre.push(f); pzStage(); } else f(); }
 function pzRender(){
   if(!PZ)return; const view=$('pzView'); if(!view)return;
+  if(_pzStaged)_pzStaged=false;
+  else if(pzStaging()){ pzStage(); return; }
   try{ socVisitPing(); }catch(e){}
   // keep what's typed across re-renders (a background sync or auto-refresh can land mid-edit)
   const root=$('pz'), keep={}; root.querySelectorAll('input[id],textarea[id]').forEach(el=>{ keep[el.id]=el.value; });
@@ -1428,7 +1461,6 @@ function pzRender(){
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
     try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Daruma hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
-    ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
     socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
     const feat=pzFeatTab(tab);
@@ -1437,8 +1469,13 @@ function pzRender(){
       :tab==='review'?pzReviewHtml(D):tab==='coach'?pzCoachHtml(D):tab==='leagues'?socFindHtml(D):tab==='lginfo'?socLeagueInfoHtml(D,pzHashArg()):tab==='checkin'?pzCheckinHtml(D):tab==='progress'?pzProgressHtml(D)
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='duels'?socDuelsHtml(D):tab==='people'?socPeopleHtml(D):tab==='duelnew'?socDuelNewHtml(D,pzHashArg()):tab==='podnew'?socPodNewHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
       :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='post'?socPostHtml(D,pzHashArg()):tab==='compose'?socComposeHtml(D):tab==='reviews'?mrListHtml(D):tab==='mentors'?socMentorsHtml(D):tab==='mentorp'?socMentorPageHtml(D,pzHashArg()):tab==='askmentor'?mrAskHtml(D):tab==='tr'?mrThreadHtml(D,pzHashArg(),/\/mod$/.test(location.hash)):tab==='plan'?planPzHtml(D):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
-    html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${body}</main>`;
-    socSync(D.g); }
+    // offline: say what's on screen is the last load (the refresh failing otherwise only shows as a passing note)
+    const off=typeof navigator!=='undefined'&&navigator.onLine===false?`<p class="pz-offline" role="status">Offline · showing your last load${typeof _viewAt!=='undefined'&&_viewAt?', '+pzAgoTxt(_viewAt):''}</p>`:'';
+    html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${off}${body}</main>`;
+    socSync(D.g);
+    // the week's challenge, once a week on the first draw: picked after this screen is built, as the journal's
+    // coach does (renderCoach), so writing it (a journal change) doesn't rebuild the game in the middle of this draw
+    ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{}); }
   view.innerHTML=html;
   for(const el of view.querySelectorAll('.pz-chiprow:not(.pz-wrapr)'))el.classList.toggle('pz-scrolls',el.scrollWidth>el.clientWidth+4);
   pzQuietMount(allTrades.length?_pzLastD:null);
@@ -1454,8 +1491,13 @@ async function pzConnect(inputId){
   if(!/^(lighter:)?0x[0-9a-fA-F]{40}$/i.test(a)){ pzNote('That doesn’t look like a wallet address — it starts with 0x and is 42 characters long. For Bybit or Binance, connect an API key instead.','err'); const f=$(inputId); if(f)f.focus(); return; }
   if(el)el.value=''; pzS.sheet=false; pzNote('Loading your trades…','busy');
   for(let i=0;_loading&&i<240;i++)await sleep(250); // a background refresh is running: let it finish, then load
-  $('walletAddr').value=a;
+  const had=settings.wallets.some(w=>w.address.toLowerCase()===a.toLowerCase());
+  $('walletAddr').value=a; loadAll.empty=false;
   await loadAll();
+  // nothing loaded (no trades, positions or balances anywhere): a new address that found nothing isn't kept,
+  // so a typo doesn't stay behind as a wallet and the right address doesn't become a second one
+  if(loadAll.empty&&!allTrades.length&&!had){ const i=settings.wallets.findIndex(w=>w.address.toLowerCase()===a.toLowerCase());
+    if(i>=0)await removeWallet(i); pzNote('No trades, positions or balances found for '+walletShort(a)+'. Check the address, or look around with sample data.','err'); return; }
   // real trades loaded: sample-data mode is over (not before, in case the load didn't happen)
   if(allTrades.length&&settings.wallets.some(w=>w.address.toLowerCase()===a.toLowerCase()))pzS.demo=false;
 }
@@ -1470,6 +1512,9 @@ async function pzToken(){
 }
 function wirePulse(){
   const root=$('pz'); if(!root)return;
+  // the offline line comes and goes with the connection; back online, a quiet refresh
+  addEventListener('offline',()=>{ if(allTrades.length)pzRender(); });
+  addEventListener('online',()=>{ if(!allTrades.length)return; pzRender(); if(settings.wallets.length&&!_loading)loadAll({auto:true}); });
   root.addEventListener('click',async ev=>{
     const t=ev.target.closest('button,a,[data-pz-close]'); if(!t||!root.contains(t))return;
     const ds=t.dataset;

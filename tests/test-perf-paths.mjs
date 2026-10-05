@@ -197,4 +197,34 @@ t('the memoized panels are keyed on everything they read', () => {
     closed.pop();
   });
 }
+
+// ---- fetchPositions: every clearinghouse at once, read in the old order ----
+// The sequential version it replaced, as it shipped: the result (positions in order, account value, the
+// dexes that answered) must be the same whatever order the answers arrive in and whichever of them fail.
+{
+  const SEQ = `async function fetchPositionsSeq(addr, hip3Dexs){
+  let positions=[], accountValue=null; const okDex=new Set();
+  try{ const s=await hlPost({type:'clearinghouseState',user:addr}); positions=mapClearinghouse(s,''); okDex.add('');
+    accountValue=s.marginSummary?parseFloat(s.marginSummary.accountValue):null; }catch(e){}
+  for(const dex of (hip3Dexs||[])){ try{ const s=await hlPost({type:'clearinghouseState',user:addr,dex}); positions=positions.concat(mapClearinghouse(s,dex)); okDex.add(dex); }catch(e){} }
+  return {positions,accountValue,okDex}; }`;
+  const mk = (seed) => { let x = seed; const r = () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const book = {}, fail = new Set();
+    for (const dex of ['', 'xyz', 'flx', 'vntl']) { if (r() < 0.25) fail.add(dex);
+      book[dex] = { marginSummary: dex ? undefined : { accountValue: String(1000 + Math.round(r() * 1e5) / 100) },
+        assetPositions: Array.from({ length: Math.floor(r() * 4) }, (_, i) => ({ position: { coin: (dex && r() < 0.5 ? dex + ':' : '') + 'C' + i, szi: String(Math.round((r() - 0.5) * 100) / 10), entryPx: String(10 + i), unrealizedPnl: String(r() * 10 - 5), returnOnEquity: '0.01', positionValue: String(r() * 1000), leverage: { value: 1 + i } } })) }; }
+    // answers arrive out of order: each after its own random delay
+    const hlPost = b => new Promise((res, rej) => setTimeout(() => fail.has(b.dex || '') ? rej(new Error('down')) : res(JSON.parse(JSON.stringify(book[b.dex || '']))), Math.floor(r() * 20)));
+    return hlPost; };
+  const load = async (hlPost) => {
+    const mod = await import('data:text/javascript;base64,' + Buffer.from('let hlPost;export const set=f=>{hlPost=f;};\n' + grabFn('mapClearinghouse') + '\n' + grabFn('fetchPositions') + '\n' + SEQ + '\nexport { fetchPositions, fetchPositionsSeq };').toString('base64'));
+    mod.set(hlPost); return mod; };
+  await t('fetchPositions asks every clearinghouse at once and returns what the one-by-one version did, failures and order included', async () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const m = await load(mk(seed)), dexes = seed % 5 ? ['xyz', 'flx', 'vntl'].slice(0, seed % 4) : [];
+      const a = await m.fetchPositions('0xabc', dexes); m.set(mk(seed)); const b = await m.fetchPositionsSeq('0xabc', dexes);
+      same([a.positions, a.accountValue, [...a.okDex]], [b.positions, b.accountValue, [...b.okDex]], 'seed ' + seed);
+    }
+  });
+}
 report('perf paths');

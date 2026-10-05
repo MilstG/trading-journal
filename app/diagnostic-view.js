@@ -438,7 +438,7 @@ function setupSectionHtml(closed){
     :c.trend==='worsening'?'<span class="badge no" data-tip="Negative in discovery and worse recently. Nothing here to keep yet.">worsening</span>'
     :c.trend==='negative'?'<span class="badge no" data-tip="Negative throughout. This is a leak wearing a setup name.">negative throughout</span>':'';
   const row=c=>`<div class="metric-row"><span class="ml"><b>${esc(c.name)}</b> ${badge(c)}</span>
-    <span class="mv">${c.n} trades · <span class="${c.net>=0?'pos-t':'loss'}">${fmtUsd(c.net)}</span> · ${fmtUsd(c.expectancy)}/trade${c.winRate!=null?' · '+Math.round(c.winRate*100)+'% wr':''} · recent ${c.lateExp!=null?fmtUsd(c.lateExp):'—'} vs early ${fmtUsd(c.earlyExp)}</span></div>`;
+    <span class="mv">${c.n} trade${c.n===1?'':'s'} · <span class="${c.net>=0?'pos-t':'loss'}">${fmtUsd(c.net)}</span> · ${fmtUsd(c.expectancy)}/trade${c.winRate!=null?' · '+Math.round(c.winRate*100)+'% wr':''} · recent ${c.lateExp!=null?fmtUsd(c.lateExp):'—'} vs early ${fmtUsd(c.earlyExp)}</span></div>`;
   return `<div class="diag-section">
     <h2>Setup scorecards <span style="font-size:11px;color:var(--faint);font-weight:400">per-setup equity · early vs recent expectancy · needs journaled setups</span></h2>
     <p class="lead">Every named setup from your journal, tracked as its own little strategy: cumulative equity per setup and whether the most recent third of its trades still performs like the two-thirds it was "discovered" on. This is the working answer to the miner's own caveat — validated patterns are hypotheses to re-test, and this card is the re-test.</p>
@@ -448,6 +448,20 @@ function setupSectionHtml(closed){
       <p class="mini-note">X-axis is each setup's own trade count, so young and old setups are comparable by shape. In-sample; a setup under ~20 trades is a sketch, not a track record.</p>
     </div>
   </div>`;
+}
+// Whether the Diagnostic's window reaches past what the fills hold whole, and the words for it: the
+// exchange's figure leads (verifiedHeadline: all time, seams or a material gap), or the window starts
+// before the fills are whole (the latest seam, or a wallet whose history starts at the exchange's
+// 10,000-fill window). null when the fills speak for the window.
+function diagFillsRecord(){
+  const vh=typeof verifiedHeadline==='function'?verifiedHeadline():null, cov=typeof dataCoverage!=='undefined'?dataCoverage:null;
+  const whole=cov?Math.max(cov.gapLast||0,cov.truncLast||0)||null:null, from=typeof periodFrom==='function'?periodFrom():null;
+  if(!vh&&!(whole&&(from==null||from<whole)))return null;
+  const d=ms=>new Date(ms).toISOString().slice(0,10), bits=[];
+  if(vh)bits.push('Hyperliquid’s own figure for this view is '+fmtUsd(vh.ver)+' (unrealized included)'+(vh.share!=null?'; the fills hold '+Math.round(vh.share*100)+'% of your volume':''));
+  if(cov&&cov.truncLast&&(from==null||from<cov.truncLast))bits.push('a wallet’s fills start at the exchange’s 10,000-fill window on '+d(cov.truncLast)+', so its earlier history is missing');
+  if(cov&&cov.gaps&&cov.gapLast&&(from==null||from<cov.gapLast))bits.push(cov.gaps+' position change'+(cov.gaps===1?' has':'s have')+' no fill behind '+(cov.gaps===1?'it':'them')+', the latest on '+d(cov.gapLast));
+  return {ver:vh?vh.ver:null, whole, text:'This verdict covers the fills on record, not the account: '+bits.join('; ')+'.'+(whole?' Pick a period from '+d(whole)+' on for a verdict on whole fills.':'')};
 }
 // Capital & true return — deposits/withdrawals/transfers from the exchange ledger turn PnL
 // into a percentage that means something. Capital is account-wide, so this card always uses
@@ -540,14 +554,21 @@ function renderDiagnostic(closed, allv){
 
   // verdict
   const profitable=s.net>0, edgeProven=edgeEstablished(s.sharpeLo,boot);
-  const grade = (profitable&&edgeProven&&N>=100)?'Positive edge — statistically supported'
+  // The fills can't speak for the account when the exchange's own figure leads (seams, a material gap) or
+  // a window reaches back past where the fills are whole (a seam, a wallet starting at the exchange's
+  // 10,000-fill window): the verdict is then about the fills on record, and says so — "Profitable…
+  // $59,911 net" stood beside a −$9,758 account.
+  const fr=diagFillsRecord(), acctNeg=fr&&fr.ver!=null&&fr.ver<=0;
+  let grade = (profitable&&edgeProven&&N>=100)?'Positive edge — statistically supported'
     : (profitable&&edgeProven)?'Positive edge — limited sample'
     : profitable?'Profitable, but not yet distinguishable from noise'
     : 'Net negative — no demonstrated edge';
-  const verdictText=`${fmtUsd(s.net)} net over ${N} completed trades and ${s.sharpeN||0} calendar days. `+
+  if(fr&&profitable)grade=acctNeg?'The fills on record are profitable — the account is not':grade+', on the fills on record';
+  const verdictText=(fr?'On the fills on record: ':'')+`${fmtUsd(s.net)} net over ${N} completed trades and ${s.sharpeN||0} calendar days. `+
     `Expectancy ${fmtUsd(s.expectancy)}/trade${boot?` (95% CI ${fmtUsd(boot.lo)} to ${fmtUsd(boot.hi)}${boot.lo>0?' — significant':' — spans zero, not yet proven'})`:''}. `+
     `Sharpe ${s.sharpe!=null?s.sharpe.toFixed(2):'—'}${s.sharpe!=null?` (CI ${s.sharpeLo.toFixed(1)}–${s.sharpeHi.toFixed(1)})`:''}, `+
-    `profit factor ${s.profitFactor===Infinity?'∞':s.profitFactor.toFixed(2)}, win rate ${pct(s.winRate)}. Net of all fees and funding, in-sample (not walk-forward).`;
+    `profit factor ${s.profitFactor===Infinity?'∞':s.profitFactor.toFixed(2)}, win rate ${pct(s.winRate)}. Net of all fees and funding, in-sample (not walk-forward).`+
+    (fr?' '+fr.text:'');
 
   const li=(cls,mk,txt)=>`<li class="${cls}"><span class="mk">${mk}</span><span>${txt}</span></li>`;
   const sgn=n=>(n>=0?'+':'')+fmtUsd(n);
@@ -638,7 +659,7 @@ function renderDiagnostic(closed, allv){
        </div>
        <div class="diag-card"><h3 data-tip="Risk control and execution discipline: drawdown, streaks, position-sizing, mistake cost, self-rating accuracy, and market concentration.">Risk &amp; discipline</h3>
          ${mrow('Max drawdown',`<span class="${cls(s.maxDD)}">${fmtUsd(s.maxDD)}${s.maxDDpct!=null?' · '+ddPctOfBest(s.maxDDpct):''}</span>`,'Largest peak-to-trough drop in cumulative realized PnL, in dollars and as a share of your best-ever cumulative profit (the all-time high of the PnL curve, deposit/withdrawal independent — not the peak it fell from). How deep a hole you have been in — the emotional and capital stress test of your strategy.')}
-         ${mrow('Longest losing streak',s.longL+' trades','Most consecutive losing trades. Matters for position sizing: a strategy that can string together many losses needs smaller bets to survive.')}
+         ${mrow('Longest losing streak',s.longL+' trade'+(s.longL===1?'':'s'),'Most consecutive losing trades. Matters for position sizing: a strategy that can string together many losses needs smaller bets to survive.')}
          ${mrow('Oversizing check',oversizing?'<span class="badge no">biggest trades worst</span>':(bigExp!=null&&smallExp!=null?'<span class="badge ok">size looks ok</span>':'<span class="badge mid">n/a</span>'),'Compares expectancy on your largest 25% of trades (by notional) vs your smallest 25%. If your biggest bets underperform, you are sizing up on conviction that is not justified.')}
          ${bigExp!=null&&smallExp!=null?mrow('· Largest 25% vs smallest',`${fmtUsd(bigExp)} vs ${fmtUsd(smallExp)}/trade`,'Average net per trade in your largest-notional quartile vs your smallest. You want the big ones to be at least as good as the small ones.'):''}
          ${mrow('Mistake-flag cost',mistakeCost!=null?(mistakeCost>0?`<span class="loss">${fmtUsd(mistakeCost)}/trade</span>`:'<span class="badge ok">none</span>'):'<span class="badge mid">no flags logged</span>','Expectancy on trades you flagged with a mistake vs clean trades. Quantifies what your known errors actually cost you. Flag trades in the journal to enable.')}
@@ -820,12 +841,13 @@ function renderDiagnostic(closed, allv){
     let cum=0,hwm=0; const eqD=[],hwmD=[],ts=[];
     for(const t of chronAll){ cum+=t.net; if(cum>hwm)hwm=cum; eqD.push(cum); hwmD.push(hwm); ts.push(t.closeTime); }
     const di=decimateIdx(eqD); // both series sampled at the equity curve's kept extremes
-    _diagCharts.eq=new Chart($('diagEq'),{type:'line',data:{labels:pickIdx(ts,di).map(fmtDate),datasets:[
+    const tsK=pickIdx(ts,di);
+    _diagCharts.eq=new Chart($('diagEq'),{type:'line',data:{labels:tsK.map(fmtDate),datasets:[
       {data:pickIdx(hwmD,di),borderColor:'#3A4560',borderWidth:1.2,borderDash:[4,4],pointRadius:0,fill:false},
       {data:pickIdx(eqD,di),borderColor:themeGreen(),borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,fill:'-1',backgroundColor:tint(themeRed(),.14)}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+(c.datasetIndex?'equity ':'high-water ')+fmtUsd(c.parsed.y),
         afterBody:it=>{ const a=it.find(x=>x.datasetIndex===1), b=it.find(x=>x.datasetIndex===0); if(!a||!b)return []; const dd=a.parsed.y-b.parsed.y; return [dd<0?' Drawdown '+fmtUsd(dd)+(b.parsed.y>0?' ('+Math.round(-dd/b.parsed.y*100)+'% of the high)':''):' At the high']; }}}},
-        scales:scales(),interaction:{intersect:false,mode:'index'}}});
+        scales:scales(timeX(tsK)),interaction:{intersect:false,mode:'index'}}});
     explain(_diagCharts.eq,'Green: your running total. Dashed: its highest point so far. The red gap between them is the drawdown you were sitting in.');
   } },eager);
   // --- rolling 30-trade expectancy ---
@@ -837,12 +859,12 @@ function renderDiagnostic(closed, allv){
     const roll=[],rt=[]; let s2=0;
     for(let i=0;i<chronClosed.length;i++){ s2+=chronClosed[i].net; if(i>=W)s2-=chronClosed[i-W].net;
       if(i>=W-1){ roll.push(s2/W); rt.push(chronClosed[i].closeTime); } }
-    const ri=decimateIdx(roll);
-    _diagCharts.roll=new Chart($('diagRoll'),{type:'line',data:{labels:pickIdx(rt,ri).map(fmtDate),datasets:[
+    const ri=decimateIdx(roll), rtK=pickIdx(rt,ri);
+    _diagCharts.roll=new Chart($('diagRoll'),{type:'line',data:{labels:rtK.map(fmtDate),datasets:[
       {data:pickIdx(roll,ri),borderColor:themeGreen(),borderWidth:1.6,pointRadius:0,pointHoverRadius:3,tension:.1,
        segment:{borderColor:c=>c.p1.parsed.y>=0?tint(themeGreen(),.95):tint(themeRed(),.95)},fill:{target:{value:0}},backgroundColor:themeGreen()+'12'}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtUsd(c.parsed.y)+' a trade over the last '+W,afterLabel:c=>' '+fmtUsd(c.parsed.y*W)+' in total over those '+W+' trades'}}},
-        scales:scales(),interaction:{intersect:false,mode:'index'}}});
+        scales:scales(timeX(rtK)),interaction:{intersect:false,mode:'index'}}});
     explain(_diagCharts.roll,'Your average trade over a sliding window of the last '+W+'. Above zero, your recent trading is making money; a falling line is an edge fading.');
   } else if($('diagRoll')){ $('diagRoll').style.display='none'; $('diagRollEmpty').classList.remove('hide'); } },eager);
   if(runBtn){

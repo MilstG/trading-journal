@@ -88,6 +88,18 @@ tests/          test suites (`npm test`; CI runs them on every push)
   unsent edits and the server revision they were made on; at the next start, if
   no other device has saved since, it keeps its own copy and sends it (rather
   than taking the server's older one). Plugs and habits merge item by item.
+- **The server's data goes backwards:** redeployed without its volume, the
+  volume wiped, or `DATA_DIR` restored from an older bundle. Every write records
+  the store's id (made at its first save) and the time of each revision, and the
+  browser remembers which version it last matched. A server that comes back
+  empty, with another store, or with an older (or rewritten) revision is not
+  "another device saved": the browser keeps its own copy, merges it over the
+  server's (entries only one side has are kept; one both have goes to the later
+  edit) and saves it back as a restore, so the server first keeps what it had as
+  "before restore". The status line says what happened. A server whose data file
+  disappears while it runs answers `503` instead of "no data yet" until it's back
+  (or restarted). To really go back to an older copy, use **History → restore**:
+  that is a restore, and wins.
 - **Stays in the browser (by design):** candle caches and fill caches
   (re-fetchable, large). Journal image attachments sync on their own, per trade
   (`/api/att`, size-capped), so they follow you to other devices, but they aren't

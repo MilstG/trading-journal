@@ -74,8 +74,21 @@ try {
     // Oct 2026: the perp P&L audit (engine.js pnlAudit, the panel in journal.js), the Audit button on the reconciliation
     // note, and the owner-only archive: about 10 KB raw / 3 KB gzipped on both screens
     // (2040 / 1698 raw, 692 / 572 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2065, 700],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1720, 580],
+    // Oct 2026 (beta 6, the full journal): spot counted once on every surface (closedMoney / closedTrade and the
+    // readers that use them), the truncation record kept in the fill cache, a Full refetch that merges, the
+    // Diagnostic verdict that says when it speaks for the fills only, the curve kept to the account it covers,
+    // the phone and tablet trades table and the equity axes: about 18 KB raw / 6 KB gzipped on the journal,
+    // a third of it comments, ~8 KB raw / 3 KB gzipped of it on Daruma too. Measured with the same week's
+    // Daruma and server fixes in the tree: 2086 / 1742 raw, 707 / 587 gzipped.
+    // Oct 2026: the performance pass — Daruma's game built in idle steps (pzStage), the journal's first coach
+    // staged, gzipped saves (srvPutData), the clearinghouses asked at once — about 6 KB raw / 2 KB gzipped on
+    // both screens, half of it comments (2046 / 1704 raw, 694 / 574 gzipped). Browsers over HTTPS now get
+    // these files brotli'd (server.js brOf), ~14% under the gzipped sizes counted here.
+    // Merged, with the server's sync fixes (store id, merge on a replaced store, Open existing on a backup) in
+    // app/core.js too: 2090 / 1746 raw, 709 / 588 gzipped. With main's accounting audit (closedTrades /
+    // realizedMoney, measured rows) merged over it: 2100 / 1755 raw, 713 / 592 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2110, 717],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1765, 596],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

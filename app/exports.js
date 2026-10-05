@@ -480,7 +480,7 @@ $('exportSpotLots').onclick=async()=>{
     }
     openLots+=m.open.length;
   }
-  if(!totalRows){ setStatus('No spot disposals found in the cached fills. If you have traded spot, hit Load all first (Shift-click for a full re-fetch).'); return; }
+  if(!totalRows){ setStatus('No spot disposals found in the cached fills. If you have traded spot, hit Load all first (Export & tools → Full refetch reads every fill again).'); return; }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});
   dlBlob(blob,'ledger-spot-lots-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();

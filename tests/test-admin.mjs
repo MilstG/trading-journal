@@ -216,12 +216,27 @@ try {
       [{ mentorXp: { rateMin: 50, rateMax: 10 } }, /lowest rate \(50\) is above the highest \(10\)/],
       [{ mentorXp: { holdHours: 1 } }, /Mentoring XP → holdHours must be from 12 to 336/],
       [{ pots: { burnMax: 10, burnPct: 20 } }, /Buy-ins → burnPct must be from 0 to 10 \(not 20\)/],
-      [{ guestCap: -3 }, /Levels stop at/], [{ guestCap: '' }, /Levels stop at/]]) {
+      [{ guestCap: -3 }, /Levels stop at/], [{ guestCap: '' }, /Levels stop at/],
+      // the two lists: a threshold below the one before (kept as [500] once, capping everyone at level 2), and tiers
+      [{ levels: { mode: 'table', thresholds: '500, 100, 50' } }, /^Levels → thresholds must go up: level 3 \(100 XP\) needs more XP than level 2 \(500 XP\)\.$/],
+      [{ levels: { mode: 'table', thresholds: '1500, 2500, 400' } }, /level 4 \(400 XP\)/],
+      [{ levels: { mode: 'table', thresholds: [300, 'lots'] } }, /"lots" isn’t an amount of XP/],
+      [{ levels: { thresholds: Array.from({ length: 100 }, (_, i) => 100 * (i + 1)) } }, /at most 99/],
+      [{ mult: { tiers: [[500, 50]] } }, /weeks must be a whole number from 1 to 104 \(not 500\)/],
+      [{ mult: { tiers: [[2, 9]] } }, /multiplier must be from 1\.01 to 3 \(not 9\)/],
+      [{ mult: { tiers: [[2, 1.05], [4, 1.01]] } }, /must both go up, tier by tier \(2w 1\.05× then 4w 1\.01×\)/],
+      [{ mult: { tiers: Array.from({ length: 9 }, (_, i) => [i + 1, 1.1 + i / 10]) } }, /at most 8, not 9/],
+      [{ mult: { tiers: [[2, 1.05], 'x'] } }, /"x" isn’t \[weeks, multiplier\]/], [{ mult: { tiers: [] } }, /at least one/]]) {
       const r = await adm('/config', 'PUT', Object.assign({ open: !before.open }, body));
       eq(r.status, 400, JSON.stringify(body)); ok(re.test(r.d.error), r.d.error);
     }
     const after = (await adm('/overview', 'GET')).d.config;
-    eq([after.open, after.xp, after.coach, after.guestCap], [before.open, before.xp, before.coach, before.guestCap], 'nothing in a refused request is applied');
+    eq([after.open, after.xp, after.coach, after.guestCap, after.levels, after.mult], [before.open, before.xp, before.coach, before.guestCap, before.levels, before.mult], 'nothing in a refused request is applied');
+    // what's valid is stored as typed: a string table, out-of-order tiers that are fine once sorted (as the sanitizer keeps them)
+    const ok2 = await adm('/config', 'PUT', { levels: { mode: 'table', thresholds: '300, 800 1500' }, mult: { tiers: [[8, 1.2], [2, 1.05], [104, 3]] } });
+    eq([ok2.status, ok2.d.config.levels.thresholds, ok2.d.config.mult.tiers], [200, [300, 800, 1500], [[2, 1.05], [8, 1.2], [104, 3]]]);
+    await adm('/config', 'PUT', { levels: before.levels, mult: before.mult });
+    eq(SC.levelsError({ mode: 'curve', base: 300 }), null, 'no thresholds in the request, nothing to check');
     eq((await adm('/config', 'PUT', { xp: { checkin: 1000, discipline: 2.5 }, coach: { packs: { cost: 1 } }, mentorXp: { rateMin: 10, rateMax: 10 }, guestCap: 0 })).status, 200, 'the edges are fine');
     // loading is separate: a config written by hand (or an older version) is still clamped into shape
     eq(SC.sanitizeXp({ checkin: 5000 }, null).checkin, 1000);
@@ -241,6 +256,16 @@ t('the Routines tab shows the same default questions the app asks', () => {
   eq(Object.keys(admin), Object.keys(app));
   for (const k of Object.keys(app)) eq([admin[k].name, admin[k].morning, admin[k].eod], [app[k].name, app[k].morning, app[k].eod], k);
   eq(Object.keys(app), SC.PROFILES);
+});
+
+t('Save levels refuses what the server refuses, instead of saving a trimmed table', () => {
+  const src = readFileSync(new URL('../admin.html', import.meta.url).pathname, 'utf8'), i = src.indexOf('function levelProblem(');
+  const levelProblem = (0, eval)('(' + src.slice(i, src.indexOf('return null; }', i) + 14) + ')');
+  for (const s of ['500, 100, 50', '1500, 2500, 400', '300 x', '0, 5', '300, 800, 1500', '', '300\n800']) {
+    const srv = SC.levelsError({ thresholds: s }); eq(!!levelProblem(s), !!srv, JSON.stringify(s) + ' → ' + srv);
+  }
+  ok(/level 3 \(100 XP\) needs more XP than level 2 \(500 XP\)/.test(levelProblem('500, 100, 50')));
+  ok(/if\(bad&&body\.mode==='table'\)\{ UI\.levelDraft=levelDraft\(\); render\(\); return note\(/.test(src), 'Save shows the preview and the error');
 });
 
 report('admin');

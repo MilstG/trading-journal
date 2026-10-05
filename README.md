@@ -48,12 +48,14 @@ persists across devices and reboots.
    each can be labeled.
 3. Click **Load all**. Ledger pages through your fill history, reconstructs
    trades, fetches funding history and open positions, and renders everything.
-4. Explore the views in the top navigation: **Trades**, **Diagnostic**,
-   **Review**, and **Project**.
+4. Explore the views in the top navigation: **Dashboard** (stats, charts and
+   the trades table), **Review**, **Diagnostic**, and **Project**.
 
 Subsequent loads are incremental: fills are cached in your browser (IndexedDB)
-and only new activity is fetched. **Shift-click Load all** to force a full
-re-fetch if something looks off. A persistent **data-health strip** under the
+and only new activity is fetched. **Full refetch** (Export & tools, the
+data-health strip, or Shift-click Load all) reads every fill again and merges it
+into the cache; a history that starts at the exchange's 10,000-fill window can
+only be extended from Hyperliquid's archive. A persistent **data-health strip** under the
 header flags anything incomplete — truncated fill history, partial funding or
 capital-flow fetches, failing browser storage — for as long as it's true,
 instead of a status message that scrolls away.
@@ -1097,7 +1099,9 @@ its token and keeps syncing, and the sign-in card offers "Sign in with it" to co
 Without `AUTH_TOKEN` on the server the panel says so straight away. Settings are checked
 before they're sent: a value outside a field's range (or an empty one) is named under the
 field and nothing is saved, and the server refuses such values with a 400 instead of
-clamping them. "Levels stop at" has an explicit **No limit** switch. The
+clamping them. The same goes for the two lists: level thresholds that don't go up, and
+multiplier tiers outside 1–104 weeks or 1.01–3×, more than 8, or not rising tier by tier,
+are named and not saved (rather than quietly trimmed). "Levels stop at" has an explicit **No limit** switch. The
 sections sit in a sidebar, grouped (People, Compete, Progress, Coaching, Community),
 with counts for open reports and wallets waiting for you; on a phone they fold into a
 menu under the top bar. Each page opens with its title, what it's for and its main
@@ -1935,7 +1939,7 @@ switches moved into **Settings**).
 | **Tax export by country…** | Tax exports set up for your country, with a preview per tax year before you download. **US**: FIFO lots, short vs long term. **UK**: HMRC's matching for cryptoassets (same day, then the next 30 days, then the Section 104 pool), on the 6 April tax year. **Germany**: FIFO, with coins held more than a year marked tax-free and the year's tax-free total shown. **Australia**: FIFO, flagging gains that may get the 50% CGT discount, on the 1 July income year. **Canada**: adjusted cost base (average cost), flagging possible superficial losses. **Other**: FIFO by calendar year. Set a report currency and paste a daily rate table (`YYYY-MM-DD,rate`, units per 1 USD, e.g. from your central bank). Each fill converts at its own date, and the download stays disabled until every fill has a rate. Two CSVs: spot disposals (asset, quantity, dates, proceeds, costs including fees, gain, matching rule, flag) and closed perp trades (realized P&L, fees, funding and net, each converted at the close date). Every wallet is pooled, since tax is per person. It computes gains, not tax. **Not tax advice.** |
 | **Koinly CSV / CoinTracker CSV** (in Tax export by country…) | Files in the import formats of the two most used crypto tax tools. **Koinly** (universal format): `Date, Sent Amount, Sent Currency, Received Amount, Received Currency, Fee Amount, Fee Currency, Net Worth Amount, Net Worth Currency, Label, Description, TxHash`, dates `YYYY-MM-DD HH:mm:ss` UTC. **CoinTracker**: `Date, Received Quantity, Received Currency, Sent Quantity, Sent Currency, Fee Amount, Fee Currency, Tag`, dates `MM/DD/YYYY HH:mm:ss` UTC. Spot fills are trades (the fee in its own coin). Perps keep the other exports' treatment, one closed trade at its close time: realised profit is received, a loss sent (Koinly `realized gain`, CoinTracker `margin_gain` / `margin_loss`), with the trade's fees in the fee column; its funding is its own row (paid: Koinly `margin fee`, CoinTracker `margin_fee`; received: `realized gain` / `margin_gain`); a fee rebate is `realized gain` / `margin_rebate`. Deposits and withdrawals (capital flows) are untagged transfers in USDC. Amounts stay in the coins traded (both tools price them in your currency); Net Worth is the USD value where the quote is a stablecoin. Pick all history, one tax year (the country's tax year) or a date range. |
 | **Export journal** | Journal entries as JSON. |
-| **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device. |
+| **Backup all** | Everything portable in one JSON: journal, wallets, settings, saved MAE/MFE measurements, and per-wallet fill caches (which preserve history beyond the API's pagination cap — keep these). Restore via **Open existing** or by importing on another device: it asks first, wallets and settings come from the backup, your journal is merged (notes written since the backup are kept unless the backup's copy is newer) and the fill caches are restored. A backup is restored, never linked, so nothing is ever saved over it — use **Link new file** for a file to auto-save to. |
 | **Backup to server** | (shown when server sync is connected) The same full backup, stored gzipped on the companion server under `DATA_DIR/backups/` — newest 10 kept. The sync bar's **History** lists them under "Server backups": restoring one works like opening the file (wallets and settings from the backup, your journal merged), and the server first keeps a copy of what it replaces. Scripts: `GET /api/backups`. |
 | **Export report** (Diagnostic) | Self-contained HTML snapshot of the entire Diagnostic view with charts as images. |
 | **Export PDF** (Diagnostic) | Print-grade PDF sibling of the report: headline stats, every visible chart embedded as a JPEG image (the built-in PDF writer gained DCTDecode image XObjects for this), and the recommendations — opens anywhere, no browser needed. |
@@ -1947,7 +1951,10 @@ switches moved into **Settings**).
    Fine for a single machine; export backups periodically.
 2. **Linked data file.** Bind your journal/wallets/settings to a real JSON
    file on disk (File System Access API); auto-saves on every change. Put the
-   file in a cloud-synced folder for cross-device use.
+   file in a cloud-synced folder for cross-device use. **Open existing** on a
+   data file asks before merging it with a journal that has notes (entries only
+   in this browser are kept unless the file's copy is newer) and writes the merge
+   to it; on a Backup all file it restores the backup instead of linking it.
 3. **Server sync.** Serve the app with the companion server and everything
    important auto-saves to it (~1s after each edit) and loads on every visit —
    survives reboots and redeploys, works across devices. The status bar shows
@@ -2124,13 +2131,16 @@ below, including auth mode and filter docs.
 
 **Filters** (shared by trades/stats/equity/calendar/breakdown/projection/
 kelly/whatif/export): `market=perp|spot|combined`, `wallet`, `coin` (matches
-raw coin or resolved spot symbol), `dir`, `status=open|closed|all`,
+raw coin or resolved spot symbol), `dir=Long|Short|Spot`, `status=open|closed|all`,
 `outcome=win|loss|be` (uses your saved break-even band), `tag`, `q` (notes
 substring), `from`/`to` (ms or seconds epoch, ISO time, or `YYYY-MM-DD` —
 a whole day on the `tz` clock, `to` inclusive), `tz=utc|local`. Note `local` is the
 *server's* timezone — API consumers should prefer `utc`. The 1R basis for R
 multiples is pinned to the filtered closed set, mirroring the app's period
-behavior.
+behavior. A value outside these lists (or `basis`, `format`, `order`), a day the
+calendar doesn't have (`2026-02-31`) or a `whatif` value that isn't a number for
+a numeric field is a `400` naming what's allowed, never an answer for everything.
+`HEAD` works wherever `GET` does (uptime monitors).
 
 **Access control.** Three layers, weakest wins nothing it shouldn't:
 

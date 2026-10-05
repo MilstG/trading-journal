@@ -111,4 +111,39 @@ await t('two overlapping digest runs post the week once', async () => {
   } finally { S.close(); }
 });
 
+console.log('\nCompression: a big journal both ways');
+// raw HTTP, so the encodings on the wire are what's checked (fetch would unpack them unseen)
+const rawReq = (base, method, path, headers, body) => new Promise((res, rej) => {
+  const u = new URL(base + path), r = http.request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method, headers }, x => {
+    const ch = []; x.on('data', c => ch.push(c)); x.on('end', () => res({ status: x.statusCode, headers: x.headers, buf: Buffer.concat(ch) })); });
+  r.on('error', rej); if (body) r.write(body); r.end(); });
+await t('a gzipped PUT is unpacked and kept as sent; GET answers gzipped to a client that takes it, plain otherwise; bombs and bad bodies are refused', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'ledger-gzip-'));
+  const app = createApp({ dataDir, auth: 't', htmlPath, push: false, offsiteTimer: false, fetchImpl: async () => { throw new Error('offline'); } });
+  const base = await new Promise(r => app.listen(0, '127.0.0.1', () => r('http://127.0.0.1:' + app.address().port)));
+  const A = { Authorization: 'Bearer t' }, J = { ...A, 'Content-Type': 'application/json' };
+  try {
+    const journal = {}; for (let i = 0; i < 2000; i++) journal['perp|0xabc|BTC|' + (1.7e12 + i * 6e5)] = { notes: 'Entered on the retest, sized half. ' + i, tags: ['breakout'], rating: 3 };
+    const body = JSON.stringify({ rev: 0, snapshot: { app: 'ledger', journal } });
+    const put = await rawReq(base, 'PUT', '/api/data', { ...J, 'Content-Encoding': 'gzip' }, zlib.gzipSync(body));
+    eq([put.status, JSON.parse(put.buf).rev], [200, 1]);
+    const gz = await rawReq(base, 'GET', '/api/data', { ...A, 'Accept-Encoding': 'gzip, deflate, br' });
+    eq([gz.status, gz.headers['content-encoding'], gz.headers.vary], [200, 'gzip', 'Accept-Encoding']);
+    const plain = await rawReq(base, 'GET', '/api/data', A);
+    eq(plain.headers['content-encoding'], undefined, 'no Accept-Encoding: plain');
+    eq(zlib.gunzipSync(gz.buf).toString(), plain.buf.toString(), 'the same answer either way');
+    eq(JSON.parse(plain.buf).snapshot.journal, journal, 'kept exactly as sent');
+    ok(gz.buf.length * 8 < plain.buf.length, gz.buf.length + ' bytes for ' + plain.buf.length);
+    eq((await rawReq(base, 'GET', '/api/data?only=rev', { ...A, 'Accept-Encoding': 'gzip' })).headers['content-encoding'], undefined, 'a small answer stays plain');
+    // past MAX_BODY once unpacked (25 MB of spaces is a ~25 KB upload): refused, the journal untouched
+    const bomb = await rawReq(base, 'PUT', '/api/data', { ...J, 'Content-Encoding': 'gzip' }, zlib.gzipSync(Buffer.alloc(30 * 1024 * 1024, 32)));
+    eq(bomb.status, 413);
+    eq((await rawReq(base, 'PUT', '/api/data', { ...J, 'Content-Encoding': 'gzip' }, 'not gzip')).status, 400);
+    eq((await rawReq(base, 'PUT', '/api/data', { ...J, 'Content-Encoding': 'br' }, '{}')).status, 415);
+    eq(JSON.parse((await rawReq(base, 'GET', '/api/data', A)).buf).rev, 1, 'none of those saved');
+    // a plain PUT works as it always did
+    eq((await rawReq(base, 'PUT', '/api/data', J, JSON.stringify({ rev: 1, snapshot: { journal: { a: 1 } } }))).status, 200);
+  } finally { app.close(); }
+});
+
 report('sync-server');

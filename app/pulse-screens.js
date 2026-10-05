@@ -29,7 +29,10 @@ function pzXpSources(g, fromKey){
 // features whose screen lives under a tab (pzFeature tab.nav) show their card on that tab too, linking to it
 function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
 // a challenge as a rule for the week ("No SOL trades this week"), else the habit sentence
-function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); return m?'No '+m[1]+' this week':habitSentence(spec); }
+function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); if(!m)return habitSentence(spec);
+  // "largest 25% trades" and "the “breakout” setup" don't follow "No" as they stand
+  const x=m[1].replace(/^(largest|smallest|biggest) (.+?) trades$/,'trades in your $1 $2').replace(/^the (“.+”) setup$/,'$1 setups');
+  return 'No '+x+' this week'; }
 // XP won or lost on stakes moves a separate balance: the level counts only XP earned
 function pzStakeLine(L){ const n=typeof SOC!=='undefined'&&SOC.me?+SOC.me.stakeNet||0:0; if(!n)return '';
   return `<p class="pz-sub" style="font-size:12px;margin:0" data-pz-tip="${esc('Stakes move XP between members without touching your level: what you win or lose on duels changes the XP you can stake, never what you’ve earned.')}">${Math.max(0,L.xp+n).toLocaleString()} XP to stake · ${n>0?'+':'−'}${Math.abs(n).toLocaleString()} from stakes</p>`; }
@@ -69,7 +72,7 @@ function pzProgressHtml(D){
   const leakAll=pzLeakMap(g,30), leaks=leakAll.slice(0,4).concat(leakAll.slice(4).filter(x=>x.plug&&!x.plug.done)), plugs=pzPlugs().filter(p=>!p.dropped);
   const leakHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your leaks · 30 days</b><span class="pz-sub" style="font-size:12px">vs the 30 before</span></div>
     ${leaks.length?leaks.map(x=>{ const tr=x.n<x.prevN?'down':x.n>x.prevN?'up':'flat', p=x.plug;
-      return `<div class="pz-leak"><div class="pz-kvrow"><b style="font-size:14px">${esc(x.label)}</b><b style="color:${x.cost<0?PZ_COL.low:'var(--pz-soft)'}" title="${esc(signedPlain(x.cost))}">${x.n?esc(pzSigned(x.cost)):'—'}</b></div>
+      return `<div class="pz-leak"><div class="pz-kvrow"><b style="font-size:14px">${esc(x.label)}</b><b style="color:${x.cost<0?PZ_COL.low:'var(--pz-soft)'};white-space:nowrap" title="${esc(signedPlain(x.cost))}">${x.n?esc(pzSigned(x.cost)):'—'}</b></div>
         <span class="pz-sub" style="font-size:12px">${x.n} trade${x.n===1?'':'s'} · ${tr==='down'?'<span style="color:'+PZ_COL.good+'">▼ fewer</span> than the 30 days before ('+x.prevN+')':tr==='up'?'<span style="color:'+PZ_COL.low+'">▲ more</span> than before ('+x.prevN+')':'same as before'}</span>
         ${p?(p.done?`<div class="pz-kvrow"><span class="pz-chipbtn ok">${pzI('check',14,3)} Plugged ${esc(dayLabel(p.done))}</span>${p.back?`<button type="button" class="pz-ghost pz-sm" style="width:auto" data-pz-plug="${esc(x.slip)}">It’s back — plug again</button>`:''}</div>`:`<div class="pz-plug"><span class="pz-steps">${[0,1,2].map(i=>`<i class="${i<p.cleanRun?'on':''}"></i>`).join('')}</span><span class="pz-sub" style="font-size:12px">${p.cleanRun} of 3 clean trading weeks · ${pzPlugWeekNote(p)}</span><button type="button" class="pz-kudo" data-pz-unplug="${esc(x.slip)}">Stop</button></div>`)
           :x.n?`<button type="button" class="pz-ghost pz-sm" data-pz-plug="${esc(x.slip)}">Plug this leak</button>`:''}</div>`; }).join('')
@@ -279,7 +282,8 @@ function pzReportHtml(D){
   const seg=`<div class="pz-seg" role="group" aria-label="Period"><button type="button" data-pz-rk="week" aria-pressed="${kind==='week'}">Week</button><button type="button" data-pz-rk="month" aria-pressed="${kind==='month'}">Month</button></div>`;
   const nav=`<div class="pz-kvrow pz-span"><button type="button" class="pz-chip icon" data-pz-rkey="${esc(keys[i-1]||'')}"${i>0?'':' disabled'} aria-label="Previous">${pzI('back',18)}</button><b style="font-size:15px">${esc(label)}</b><button type="button" class="pz-chip icon" data-pz-rkey="${esc(keys[i+1]||'')}"${i<keys.length-1?'':' disabled'} aria-label="Next" style="transform:scaleX(-1)">${pzI('back',18)}</button></div>`;
   const slipRows=Object.keys(PZ_BEH).filter(k=>r.slips[k]||r.prevSlips[k]).map(k=>{ const a=(r.slips[k]||{}).n||0, b=(r.prevSlips[k]||{}).n||0;
-    return `<div class="pz-row-t"><span>${esc(PZ_BEH[k])}</span><b>${a}${r.prevKey?` <small style="color:${a<b?PZ_COL.good:a>b?PZ_COL.low:'var(--pz-muted)'};font-weight:600">${a<b?'▼':a>b?'▲':'='}${b}</small>`:''}</b></div>`; }).join('');
+    // this period's count, then the one before it in words ("was 6"): an arrow next to a bare number read as the change
+    return `<div class="pz-row-t"><span>${esc(PZ_BEH[k])}</span><b style="white-space:nowrap">${a}${r.prevKey?` <small style="color:${a<b?PZ_COL.good:a>b?PZ_COL.low:'var(--pz-muted)'};font-weight:600">${a===b?'(same)':(a<b?'▼':'▲')+' was '+b}</small>`:''}</b></div>`; }).join('');
   const leakTxt=r.leak?PZ_BEH[r.leak]+' cost '+pzSigned(r.slips[r.leak].cost)+' over '+r.slips[r.leak].n+' trade'+(r.slips[r.leak].n===1?'':'s'):null;
   const focus=r.leak&&!pzPlugs().some(p=>p.slip===r.leak&&!p.dropped&&!p.done)?{t:'Plug “'+PZ_BEH[r.leak].toLowerCase()+'”',btn:`<button type="button" class="pz-ghost pz-sm" data-pz-plug="${esc(r.leak)}" style="width:auto;padding:0 14px">Plug it</button>`}
     :r.challenge&&r.challenge.status==='missed'?{t:'Give the challenge another week: '+habitSentence(r.challenge.ch.spec).replace(/^./,c=>c.toLowerCase()),btn:''}
@@ -699,7 +703,7 @@ function socPartnersHtml(){
   const card=p=>{ const v=p.view||{};
     return `<section class="pz-card pz-kv"><div class="pz-kvrow"><a href="#u/${esc(p.handle)}" style="display:flex;align-items:center;gap:10px;color:var(--pz-text);text-decoration:none;min-width:0">${socAv(p.handle,34)}<span style="min-width:0"><b>@${esc(p.handle)}</b><span class="pz-sub" style="display:block;font-size:12px">Level ${v.level||1} · ${v.streak||0}-day streak</span></span></a>
       <button type="button" class="pz-chip icon" data-soc-pdel="${esc(p.id)}" aria-label="End the partnership with @${esc(p.handle)}">${pzI('x',16)}</button></div>
-      <div class="pz-kvrow"><span class="pz-sub" style="font-size:13px">7-day discipline <b style="color:var(--pz-text)">${v.avg7==null?'—':v.avg7}</b> · slips <b style="color:${v.slips7?PZ_COL.low:'var(--pz-text)'}">${v.slips7||0}</b></span>${socDayDots(v.days)}</div>
+      <div class="pz-kvrow"><span class="pz-sub" style="font-size:13px" data-pz-tip="${esc(socDisc7Tip(v.verified7))}">Discipline, last 7 trading days <b style="color:var(--pz-text)">${v.avg7==null?'—':v.avg7}</b> · slips <b style="color:${v.slips7?PZ_COL.low:'var(--pz-text)'}">${v.slips7||0}</b></span>${socDayDots(v.days)}</div>
       ${p.challenge?`<p class="pz-sub" style="font-size:13px">Shared challenge: <b style="color:var(--pz-text)">${esc(p.challenge.text)}</b>${p.challenge.mine?' (yours)':''}</p>`:''}
       ${pzS.chFor===p.id?`<div class="pz-field"><label for="socChIn" style="font-size:13px">This week’s shared challenge</label><input type="text" id="socChIn" maxlength="140" placeholder="e.g. No trades in the first 15 minutes"></div>
         <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-chsave="${esc(p.id)}">Set it for you both</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-chfor="">Cancel</button></div>`
@@ -715,7 +719,7 @@ function socPartnerStripHtml(){
   if(!SOC.me||!SOC.me.partners)return '';
   const c=socGet('partners','/partners',60000), L=c&&c.d?c.d.partners.filter(p=>p.status==='active'):[]; if(!L.length)return '';
   return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your partners</b><a class="pz-link" href="#social" data-soc-sub="feed" style="min-height:0">All ›</a></div>
-    ${L.map(p=>{ const v=p.view||{}; return `<div class="pz-kvrow" style="gap:10px">${socAv(p.handle,28)}<span style="flex:1;min-width:0;font-size:13px"><b>@${esc(p.handle)}</b> · ${v.streak||0}-day streak · ${v.slips7?`<span style="color:${PZ_COL.low}">${v.slips7} slip${v.slips7===1?'':'s'}</span>`:'no slips'} this week</span>${p.canNudge?`<button type="button" class="pz-linkbtn" data-soc-nudge="${esc(p.id)}">Nudge</button>`:''}</div>`; }).join('')}</section>`;
+    ${L.map(p=>{ const v=p.view||{}; return `<div class="pz-kvrow" style="gap:10px">${socAv(p.handle,28)}<span style="flex:1;min-width:0;font-size:13px"><b>@${esc(p.handle)}</b> · ${v.streak||0}-day streak · ${v.slips7?`<span style="color:${PZ_COL.low}">${v.slips7} slip${v.slips7===1?'':'s'}</span>`:'no slips'} in their last 7 trading days</span>${p.canNudge?`<button type="button" class="pz-linkbtn" data-soc-nudge="${esc(p.id)}">Nudge</button>`:''}</div>`; }).join('')}</section>`;
 }
 // nudges, mentor notes and season results, until you've read them
 function socInboxHtml(){
@@ -744,7 +748,7 @@ function socMentorHtml(D){
   const pg=pzPage('mentees',L);
   return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}${socMentorSetHtml()}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
     ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.picked?' <span class="pz-tag win">picked you</span>':m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
-      <span class="pz-sub" style="font-size:12px">7-day discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'} · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
+      <span class="pz-sub" style="font-size:12px" data-pz-tip="${esc(socDisc7Tip(m.verified7))}">Discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'}, last 7 trading days · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
       <span class="pz-sub" style="font-size:12px">${m.notes} note${m.notes===1?'':'s'} so far</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
       :'<section class="pz-card"><p class="pz-sub">No one has let mentors in yet. Members switch on “Let mentors see my days” under What you share.</p></section>'}`;
 }
@@ -764,7 +768,7 @@ function socMenteeHtml(D, handle){
       :`<button type="button" class="pz-linkbtn" style="align-self:flex-start" data-soc-notefor="${esc(d.k)}">Add a note on this day</button>`}</section>`;
   return `${back}${pzHead('Level '+m.level+' · '+m.streak+'-day streak','@'+m.handle)}
     <div class="pz-wide"><div class="pz-col">${m.days.length?pg.items.map(row).join('')+pg.html:'<section class="pz-card"><p class="pz-sub">No trading days shared yet.</p></section>'}</div>
-    <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">At a glance</b><div class="pz-row-t"><span>7-day discipline</span><b>${m.avg7==null?'—':m.avg7}</b></div><div class="pz-row-t"><span>Slips, 7 days</span><b>${m.slips7}</b></div><div class="pz-row-t"><span>Best streak</span><b>${m.best}</b></div>
+    <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">At a glance</b><div class="pz-row-t" data-pz-tip="${esc(socDisc7Tip(m.verified7))}"><span>Discipline, last 7 trading days</span><b>${m.avg7==null?'—':m.avg7}</b></div><div class="pz-row-t"><span>Slips, last 7 trading days</span><b>${m.slips7}</b></div><div class="pz-row-t"><span>Best streak</span><b>${m.best}</b></div>
       ${m.challenge?`<div class="pz-row-t"><span>Last challenge</span><b>${esc(m.challenge)}</b></div>`:''}${m.habits.length?`<p class="pz-sub" style="font-size:13px">Habits: ${m.habits.map(esc).join(' · ')}</p>`:''}</section>
       ${(notesBy['']||[]).length?`<section class="pz-card pz-kv"><b class="pz-kvh">General notes</b>${notesBy[''].map(n=>`<div class="pz-quote">${esc(n.text)}</div>`).join('')}</section>`:''}
       <p class="pz-fine">You see what @${esc(m.handle)} chose to share with mentors: scores, slips and their nightly lesson. Trades only when they send one for review (under Trades to review); never wallets.</p></div></div>`;

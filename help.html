@@ -49,7 +49,7 @@ code,kbd{font:.92em var(--mono);background:var(--code-bg);border:1px solid var(-
 .note.warn{border-left-color:var(--gold)}
 .note b{color:var(--fg)}
 table{border-collapse:collapse;width:100%;font-size:13.5px}
-.tblwrap{overflow-x:auto;margin:14px 0}
+.tblwrap{overflow-x:auto;max-width:100%;margin:14px 0}
 .tblwrap table{min-width:520px}
 th{text-align:left;font:11px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 14px 8px 0;border-bottom:1px solid var(--line)}
 td{padding:9px 14px 9px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--muted)}
@@ -66,6 +66,8 @@ html{scroll-behavior:smooth}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media (max-width:800px){
   .wrap{flex-direction:column;gap:0}
+  /* stacked, main would size to its content (align-items:flex-start): a wide table then pushed the page sideways */
+  main{width:100%;max-width:100%}
   nav.toc{position:static;flex:none;width:100%;max-height:none;padding:20px 0 14px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:2px 14px}
   nav.toc .toct{width:100%}
   nav.toc a{border-left:none;padding:3px 0}
@@ -118,7 +120,7 @@ html{scroll-behavior:smooth}
     <li>Open <code>ledger.html</code> in a modern browser (Chrome or Edge recommended), or open your deployed URL if you run the companion server.</li>
     <li>Paste a wallet address (<code>0x…</code>) and click <b>Add</b>. Add as many wallets as you like; each can carry a label. Every wallet's history is pooled into one combined view.</li>
     <li>Click <b>Load all</b>. Ledger pages through your fills, reconstructs round-trip trades, fetches funding and open positions, and renders everything.</li>
-    <li>Explore the four tabs: <b>Trades</b>, <b>Diagnostic</b>, <b>Review</b>, and <b>Project</b>.</li>
+    <li>Explore the four tabs: <b>Dashboard</b> (stats, charts and the trades table), <b>Review</b>, <b>Diagnostic</b>, and <b>Project</b>.</li>
   </ol>
   <h3>Just looking?</h3>
   <p>Click <b>Load sample data</b> (on the welcome screen, or <b>Sample data</b> in the setup panel). It generates a realistic five-month synthetic history and runs it through the normal import pipeline, so every panel is populated; the charts draw candles from the sample trades’ own prices. Nothing is fetched or saved: notes, prep, plans, awards and challenges you make on the sample stay in that tab and never reach your own journal (wallets you add and the look you pick do stay). Reload, add a real address or paste your own fills to clear it.</p>
@@ -132,7 +134,7 @@ html{scroll-behavior:smooth}
   <p>Loads are <b>incremental</b>: fills are cached in your browser (IndexedDB) and only new activity is fetched. While the tab is open, auto-refresh pulls new fills roughly every 3 minutes (toggle with <b>⟳ auto</b>).</p>
   <p><b>Which exchanges.</b> Paste a 0x address in <b>Add</b> and Ledger looks for it on both Hyperliquid and Lighter, adding each one where you have an account. For Bybit or Binance (USD-M futures), use <b>Connect exchange</b> with a read-only API key; it needs the companion server, which relays the signed requests. Binance's API only goes back 3 months, and Bybit's 2 years. Trades from other venues show a small venue tag.</p>
   <ul>
-    <li><b>Shift-click Load all</b> forces a full re-fetch if something looks off.</li>
+    <li><b>Full refetch</b> (Export &amp; tools menu, or the button on the data-health strip; Shift-click Load all does the same on a desktop) reads every fill the exchange still serves again and merges it into your cached history, nothing cached is lost. It closes a gap left by an earlier load. It can’t reach past the exchange’s window: Hyperliquid serves only a wallet’s newest 10,000 fills, so a history that starts there stays truncated (the strip keeps saying so on every load) and only <b>Recover from the archive…</b> can bring older fills back.</li>
     <li>A <b>data-health strip</b> under the header stays visible for as long as anything is incomplete — truncated fill history, partial funding fetches, failing browser storage — instead of a status message that scrolls away.</li>
     <li><b>Fills the exchange no longer serves.</b> Hyperliquid keeps TWAP slice fills for about three months and ordinary fills for a long but finite time. A wallet that TWAPs out of its positions and is added to Ledger later has seams in its history: a fill that starts from a position no earlier fill reaches. Ledger finds every seam, says how much size moved off the record and when, keeps the trades whose result those seams took out of the stats (they stay in the trades table, badged <b>INCOMPLETE</b>), and shows Hyperliquid’s own all-time P&amp;L (the figure its app and trackers such as Hyperdash report, unrealized included) as the Net PnL headline, with the fill-based sum beside it. No refetch can bring those fills back; from the first load on, every slice still served is cached so nothing further ages out. With a companion server and an AWS key (README-deploy, “Recovering fills from Hyperliquid's archive”), <b>Recover from the archive…</b> on the data-health strip pulls them from Hyperliquid’s node-data archive for the hours the seams need, within a spending cap you set. That button shows only while seams remain; once a backfill closes them it goes with the warning. The same panel (check coverage, diagnose, sample hour, backfill, progress) is always reachable from <b>Wallets ▾ → Archive</b> on the server-sync bar. Only the owner sees either button: it needs the server’s access token connected in this browser, and a server without an AUTH_TOKEN refuses the archive altogether, since the downloads are billed to your AWS account.</li>
     <li>Hyperliquid's API caps how far back it pages. Your cached fills preserve history <em>beyond</em> that cap, which is why backups that include fill caches matter (see <a href="#exports">Exports &amp; backups</a>).</li>
@@ -389,7 +391,7 @@ html{scroll-behavior:smooth}
   <p class="kicker">16</p>
   <h2>Troubleshooting</h2>
   <h3>Numbers look off / trades missing</h3>
-  <p><b>Shift-click Load all</b> for a full re-fetch. Check the data-health strip: a "truncated" flag means the exchange API stopped serving older pages — history past that point exists only in your cached fills and backups. A "no longer serves every fill" note is different: those fills (TWAP slices older than about three months, history past the exchange’s retention) are gone from the API for good, so the headline leans on Hyperliquid’s own verified figure and the affected trades stay out of the stats.</p>
+  <p><b>Full refetch</b> (Export &amp; tools, or Shift-click Load all) reads every fill again and merges it into your cache. Check the data-health strip: a "truncated" flag means the exchange stopped serving older fills (it keeps a wallet’s newest 10,000) — history past that point exists only in your cached fills, your backups and Hyperliquid’s archive, and a refetch can’t reach it. A "no longer serves every fill" note is different: those fills (TWAP slices older than about three months, history past the exchange’s retention) are gone from the API for good, so the headline leans on Hyperliquid’s own verified figure and the affected trades stay out of the stats.</p>
   <h3>My win rate seems wrong</h3>
   <p>Trades strictly inside the break-even band (automatic by default: 5% of your median trade's net, $0.50–$50) count as scratches and don't enter the win rate. Set a fixed band in settings if you prefer.</p>
   <h3>Spot symbols show as @123</h3>

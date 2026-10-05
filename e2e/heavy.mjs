@@ -1,9 +1,10 @@
 // A heavy account in the real app: ~18k trades (the built-in sample history repeated across time
 // blocks and coin groups, the way AUDIT-4's profile scaled it), against the real server, offline.
 // e2e/run.mjs works on ~100 trades, where nothing is slow; this is where the Diagnostic's worker
-// batch, the memoized panels, the near-linear Trader Age history and the lazy below-the-fold work
-// either hold or regress. Every budget is real (a few times what it measures locally, not 5–10×):
-// before that work this history took ~3 s to open the Diagnostic, in one 3 s main-thread task.
+// batch, the memoized panels, the near-linear Trader Age history, the coach and Daruma's game built in
+// idle steps, and the lazy below-the-fold work either hold or regress. Every budget is real (a few
+// times what it measures locally, not 5–10×): before that work this history took ~3 s to open the
+// Diagnostic, in one 3 s main-thread task.
 // Run: npm run test:e2e:heavy   (HEAVY=10x30 for ~31k trades; E2E_SLOW=2 doubles the budgets)
 import { createRequire } from 'node:module';
 import { mkdtempSync } from 'node:fs';
@@ -26,8 +27,11 @@ const SLOW = Math.max(1, +process.env.E2E_SLOW || 1);
 const [BLOCKS, GROUPS] = (process.env.HEAVY || '6x30').split('x').map(Number);
 // measured locally at ~18k trades: import ~0.8 s, render ~0.3 s and then the coach in idle steps
 // (each under ~0.3 s; it was one ~1 s block), Diagnostic ~0.3 s, Review ~0.2 s, the other tabs ~0.1 s,
-// longest task while switching tabs ~0.3 s (it was 3 s)
-const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, renderTask: 900, mcLands: 15000, daruma: 4000 };
+// longest task while switching tabs ~0.3 s (it was 3 s). The import's longest task, its first coach
+// included, ~0.5 s (0.7 s at 18k / 1.05 s at 31k when that coach was one idle callback); Daruma drawn
+// ~1.5 s after the import with no task over ~0.2–0.4 s (its game was one 1.2–1.7 s task inside the import)
+const BUDGET_MS = { import: 3000, render: 2500, diag: 1200, review: 1000, proj: 800, dash: 800, tabTask: 900, renderTask: 900, mcLands: 15000, daruma: 4000,
+  importTask: 900, darumaDrawn: 6000, darumaTask: 900 };
 const within = (what, ms) => ok(ms <= BUDGET_MS[what] * SLOW, `${what} took ${ms} ms — over its ${BUDGET_MS[what] * SLOW} ms budget`);
 const timings = {};
 
@@ -67,6 +71,9 @@ try {
     }, [BLOCKS, GROUPS]);
     N = r.trades; timings.import = r.ms;
     ok(N >= 10000, 'a heavy history: ' + N + ' trades'); within('import', r.ms);
+    // the first render's coach (its context, the game) comes in idle steps here too: it was one ~1.4 s task at 31k
+    await page.waitForFunction(() => { const el = document.getElementById('coach'); return el && el.innerText.trim().length > 50 && _gameMemo.key && _gameMemo.key.startsWith(_coachMemoAll.key); }, null, { timeout: 15000 });
+    const lt = await longest('load'); timings['task:import'] = lt; within('importTask', lt);
     eq(errors, [], 'no uncaught errors');
   });
   await settle();
@@ -149,6 +156,7 @@ try {
     await p.route('**/*', r => r.request().url().startsWith(BASE) ? r.continue() : r.abort());
     await p.addInitScript(tok => { try { localStorage.setItem('srv_token', tok); } catch (e) {} }, TOKEN);
     await p.goto(BASE + '/daruma'); await p.waitForSelector('#pz', { state: 'visible' });
+    await p.evaluate(() => { window.__lt = []; new PerformanceObserver(l => { for (const e of l.getEntries()) window.__lt.push(Math.round(e.duration)); }).observe({ type: 'longtask' }); });
     // the Diagnostic view, the excursion/miner panels, the replay chart and the exports aren't on this page
     eq(await p.evaluate(() => [typeof renderDiagnostic, typeof renderMinerResults, typeof openReplay, typeof MiniPDF, typeof diagScan, typeof reconstructCompute, typeof fetchCandles]),
       ['undefined', 'undefined', 'undefined', 'undefined', 'function', 'function', 'function']);
@@ -159,6 +167,12 @@ try {
       fills.sort((a, b) => a.time - b.time);
       const t0 = performance.now(); await loadFromPaste(fills, { offline: true, sample: true }); return Math.round(performance.now() - t0); }, [BLOCKS, GROUPS]);
     timings.daruma = ms; within('daruma', ms);
+    // drawn once the game is built, in idle steps: no single task near what the whole build costs (it was one
+    // 1.3–2 s task here, and 7–11 s on a phone at 4x CPU)
+    const t1 = Date.now();
+    await p.waitForFunction(() => !_pzStage && document.getElementById('pz').innerText.trim().length > 100 && gameWarm(), null, { timeout: BUDGET_MS.darumaDrawn * SLOW });
+    timings.darumaDrawn = ms + (Date.now() - t1); within('darumaDrawn', timings.darumaDrawn);
+    await p.waitForTimeout(500); const dlt = await p.evaluate(() => Math.max(0, ...__lt)); timings['task:daruma'] = dlt; within('darumaTask', dlt);
     ok(await p.evaluate(() => allTrades.length) >= 10000 && await p.evaluate(() => !!_worker), 'reconstructed in the worker (its function list resolves here)');
     for (const h of ['#progress', '#journal', '']) { await p.evaluate(x => { location.hash = x; }, h);
       await p.waitForFunction(() => document.getElementById('pz').innerText.trim().length > 100); await p.waitForTimeout(300); }

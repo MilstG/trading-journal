@@ -83,9 +83,12 @@ function dailyLossToday(trades){
   const k=nfDayKey(Date.now()); let net=0, n=0;
   for(const t of (trades||[])){
     const today=!t.isOpen&&t.closeTime&&nfDayKey(t.closeTime)===k;
+    // a spot day row repeats what its position's per-fill results (rz) already hold: counted, a −$300 spot
+    // day read −$600 and the limit fired at half. Day rows are neither money here nor trades.
+    if(t.spotRz)continue;
     if(t.rz){ for(const [tm,v] of t.rz)if(nfDayKey(tm)===k)net+=v; }
     else if(today)net+=t.net; // a trade built without per-fill results (imports, tests): whole trade on its close day
-    if(today)n++; }
+    if(today&&!t.movedOut)n++; }
   return {net, n};
 }
 function renderTripwire(){
@@ -1203,10 +1206,11 @@ function wireFindingCards(root, findings){
 // or cherry-pick clean dexes, and matches what the server verifies from the wallet. The default
 // follows the view, for the dashboard's own coach card, findings and habits. Memoized separately.
 let _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};
-function coachContext(all){
-  // two populations of the same rows (engine.js: tradeRow / moneyRow): trades (perp trades, spot
-  // positions that closed by selling; never spot day rows or balances that left) carry counts,
-  // win rates and behaviour; money (perp trades, spot day rows) carries every sum of P&L and fees
+// the context's rows and the key its memo is checked against (coachContext, and gameWarm in progress.js).
+// Two populations of the same rows (engine.js: tradeRow / moneyRow): trades (perp trades, spot
+// positions that closed by selling; never spot day rows or balances that left) carry counts,
+// win rates and behaviour; money (perp trades, spot day rows) carries every sum of P&L and fees
+function _coachKey(all){
   const base=all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter);
   const trades=base.filter(t=>tradeRow(t)&&!t.movedOut), positions=base.filter(tradeRow); // positions: every trade row, a balance that left included (realized by fill)
   const money=base.filter(t=>moneyRow(t)&&t.closeTime); // realized money, the realized part of an open perp trade included (realizedMoney)
@@ -1214,6 +1218,10 @@ function coachContext(all){
   for(const t of money){ net+=t.net; if(t.closeTime>lastClose)lastClose=t.closeTime; }
   const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,money.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
     JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),JSON.stringify(settings.playbooks||[]),_be].join('|');
+  return {trades,money,positions,key};
+}
+function coachContext(all){
+  const {trades,money,positions,key}=_coachKey(all);
   const memo=all?_coachMemoAll:_coachMemo;
   if(memo.key===key)return memo.ctx;
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
@@ -1286,7 +1294,7 @@ function tradeQuestion(t, j, e){
   }
   if(plan&&t.avgExit>0&&(short?t.avgExit>plan.stop:t.avgExit<plan.stop))return {q:'You got out past your planned stop. What happened between the stop and the exit?',why:'exit beyond stop'};
   if(e&&e.mfePct!=null&&t.avgEntry>0){ const ret=retPct(t);
-    if(e.mfePct>=1&&ret!=null&&ret<e.mfePct*0.25)return {q:`It was up ${e.mfePct.toFixed(1)}% at its best and closed at ${ret>=0?'+':''}${ret.toFixed(1)}%. Where was your exit plan?`,why:'gave back'}; }
+    if(e.mfePct>=1&&ret!=null&&ret<e.mfePct*0.25)return {q:`It was up ${e.mfePct.toFixed(1)}% at its best and closed at ${ret>=0?'+':'−'}${Math.abs(ret).toFixed(2)}%. Where was your exit plan?`,why:'gave back'}; }
   if(addedToLoser(t))return {q:'You added to this while it was losing. Was that the plan, or hoping?',why:'added to loser'};
   const j2=j.mistakes||[];
   if(j2.includes('Revenge trade'))return {q:'You flagged this as revenge. What would have stopped you from taking it?',why:'revenge'};
@@ -1305,6 +1313,10 @@ function lastSessionLine(ctx){
   const miss=weak.length?PART_MISS[weak[0]]:null;
   const money=`<b class="${cls(d.net)}">${signedPlain(d.net)}</b>`, sc=`process <b>${d.score}</b>`;
   const when=dayLabel(d.key);
+  // a trade you flagged yourself ("FOMO entry"…) still journals honestly and scores (AUDIT-4), but a day
+  // carrying one isn't praised as "earned the right way": the flag is the lesson
+  const flagged=((ctx.byDay||{})[d.key]||[]).map(t=>journal[t.id]).find(j=>j&&Array.isArray(j.mistakes)&&j.mistakes.length);
+  if(d.score>=70&&flagged)return `${when}: ${money}, ${sc} — and you flagged “${esc(flagged.mistakes[0])}” yourself. Honest journaling; now the fix is not to repeat it.`;
   if(d.score>=70&&d.net>=0)return `${when}: ${money}, ${sc}. Earned the right way — do it again.`;
   if(d.score>=70)return `${when}: ${money}, ${sc}. A good loss: you did your part and the market said no.`;
   // nothing journaled yet, ever: the score is low because the journal is empty, and saying "process 0,
