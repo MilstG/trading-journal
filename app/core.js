@@ -969,9 +969,8 @@ function capitalModel(flows, closed, equityNow, now){
   tw+=prevCap*(now-prevT);
   const spanMs=now-chron[0].time;
   const avgCapital=spanMs>0?tw/spanMs:cap;
-  const in0=(closed||[]).filter(t=>!t.isOpen&&t.closeTime>=chron[0].time&&t.closeTime<=now);
-  // money rows summed, trade rows counted (moneyRow / closedTrade inlined: the server runs this bare)
-  const closedIn=in0.filter(t=>!t.spotPos).sort((x,y)=>x.closeTime-y.closeTime), nTrades=in0.filter(t=>!t.spotRz&&!t.movedOut).length;
+  const closedIn=(closed||[]).filter(t=>t.closeTime>=chron[0].time&&t.closeTime<=now) // the realized money in the window (an open perp trade's realized part included: realizedMoney)
+    .sort((x,y)=>x.closeTime-y.closeTime);
   const realized=closedIn.reduce((s,t)=>s+t.net,0);
   const roc=avgCapital>0?realized/avgCapital:null;
   const years=spanMs/(365*86400000);
@@ -989,7 +988,7 @@ function capitalModel(flows, closed, equityNow, now){
   const implied=(equityNow!=null&&isFinite(equityNow))?equityNow-cap:null; // the account's own all-time accounting, unrealized included
   return {n:chron.length, firstAt:chron[0].time, lastAt:chron[chron.length-1].time,
     totIn, totOut, netDeposited:cap, maxCapital:maxCap, avgCapital,
-    realized, nTrades, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
+    realized, nTrades:closedIn.length, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
     equityNow:equityNow!=null?equityNow:null, impliedPnl:implied};
 }
 // Money-weighted (XIRR) annual return: the rate r solving Σ flow·(1+r)^(yrs remaining) =

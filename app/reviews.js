@@ -19,7 +19,7 @@ function mrSizeRange(notional){ const n=Math.abs(+notional||0); return n<1e3?0:n
 function mrSummary(t, j, o){ j=j||{}; o=o||{}; const p=j.plan||{}, num=v=>+v>0?+v:null, closed=!t.isOpen&&t.closeTime>0;
   const note=[j.notes||'',o.extra||''].map(s=>String(s).trim()).filter(Boolean).join('\n\n');
   return {coin:t.coin,label:o.label||t.coin,side:t.dir==='Short'?'short':'long',market:t.market==='spot'?'spot':'perp',openedAt:t.openTime,closedAt:closed?t.closeTime:null,
-    entry:t.avgEntry,exit:closed?t.avgExit:null,stop:num(p.stop),target:num(p.target),size:mrSizeRange((t.maxSize||0)*(t.avgEntry||0)),
+    entry:measured(t)?t.avgEntry:null,exit:closed?t.avgExit:null,stop:num(p.stop),target:num(p.target),size:notionalOf(t)!=null?mrSizeRange(notionalOf(t)):null, // a stand-in entry is not shared as one
     pct:closed&&o.pct!=null?o.pct:null,r:closed&&o.r!=null?o.r:null,usd:closed&&o.usd?t.net:null,setup:j.setup||'',note,plan:o.plan||''}; }
 function mrCanShare(){ return !!(SOC.me&&SOC.share&&SOC.share.mentor&&!pzS.demo); }
 // to: which picked mentor it goes to (null: the server decides, or every mentor when none is picked); fee: the

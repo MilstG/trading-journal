@@ -342,7 +342,7 @@ function retPct(t){ if(t.partialHistory)return null; const notional=t.maxSize*t.
 // when it was sized up. entryDrift was only ever a proxy — it compares against the first
 // fill, so it also flags planned scale-ins into strength. Events are [time, px, sz, ±1].
 function addedToLoser(t){
-  if(!Array.isArray(t.events)||t.events.length<2)return false;
+  if(!Array.isArray(t.events)||t.events.length<2||t.partialHistory)return false; // the running average starts from fills we never saw
   if(t.dir!=='Long'&&t.dir!=='Short')return false;
   const short=t.dir==='Short', TOL=1e-3;
   let sz=0,notional=0;
@@ -358,7 +358,7 @@ function addedToLoser(t){
 }
 // a position that was added to at least once (a second entry in its direction), to a winner or a loser
 function hasAdd(t){
-  if(!Array.isArray(t.events)||t.events.length<2||(t.dir!=='Long'&&t.dir!=='Short'))return false;
+  if(!Array.isArray(t.events)||t.events.length<2||t.partialHistory||(t.dir!=='Long'&&t.dir!=='Short'))return false;
   let adds=0; for(const ev of t.events)if(ev[3]>0&&ev[2]>0&&ev[1]>0)adds++;
   return adds>=2;
 }
@@ -439,8 +439,8 @@ function mcMaxDD(nets,iters){ if(nets.length<2)return null; const dds=new Array(
 function edgeEstablished(sharpeLo, boot){ return (sharpeLo!=null&&sharpeLo>0)||!!(boot&&boot.lo>0); }
 // That test on a set of closed trades (Project's basis). Seed, order and B match the Diagnostic's
 // Monte Carlo (_diagMCInput), so the same trades get the same answer on both tabs.
-function edgeTest(closed){ const N=closed.length; if(N<5)return {proven:false,sharpeLo:null,boot:null};
-  const sh=sharpeStats(dailySeriesCalendar(closed)), lo=sh?sh.lo:null;
+function edgeTest(closed, money){ const N=closed.length; if(N<5)return {proven:false,sharpeLo:null,boot:null};
+  const sh=sharpeStats(dailySeriesCalendar(money||closed)), lo=sh?sh.lo:null; // the daily series is money (spot by the day it was realized), as the Diagnostic's
   if(lo!=null&&lo>0)return {proven:true,sharpeLo:lo,boot:null};
   _srand(_hashSeed('diag|'+N+'|'+closed[0].id+'|'+closed[N-1].id));
   const boot=bootstrapMeanCI(closed.map(t=>t.net),N>3000?800:2000);
@@ -450,13 +450,13 @@ function edgeTest(closed){ const N=closed.length; if(N<5)return {proven:false,sh
 // Pure given tzMidnight/addDays/isWin/isLoss, so the Node harness can pin exact outputs.
 function projBaseline(trades, lookbackDays, now){
   now=now||Date.now();
-  const closed=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
+  // one list, two populations: money rows (perp trades, spot day rows) make the daily series and the
+  // total; trade rows (perp trades, spot round trips — not a balance that merely left) make the counts
+  // and rates. Given trade rows alone (older callers, tests) both are the same rows.
+  const done=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
+  const money=done.filter(t=>!t.spotPos), closed=done.filter(t=>!t.spotRz&&!t.movedOut);
   const from=lookbackDays>0? now-lookbackDays*86400000 : -Infinity;
-  const inWin0=closed.filter(t=>t.closeTime>=from);
-  if(!inWin0.length) return null;
-  // money rows for the days and the total, trade rows for the counts (moneyRow / closedTrade, inlined:
-  // the server and the tests run this bare) — a spot sell is a position and a day row, summed twice before
-  const inWin=inWin0.filter(t=>!t.spotPos), tr=inWin0.filter(t=>!t.spotRz&&!t.movedOut);
+  const inWin=money.filter(t=>t.closeTime>=from), trIn=closed.filter(t=>t.closeTime>=from);
   if(!inWin.length) return null;
   const m={}; let min=Infinity;
   inWin.forEach(t=>{ const k=tzMidnight(t.closeTime); m[k]=(m[k]||0)+t.net; if(k<min)min=k; });
@@ -464,8 +464,8 @@ function projBaseline(trades, lookbackDays, now){
   // lookback with trades only in the last 10 days is a trader who paused, not a 9x pace.
   // Accounts younger than the lookback clamp to their own first trade ever, so a 2-week-old
   // account isn't diluted across 90 empty days it didn't exist for.
-  if(lookbackDays>0&&closed.length){
-    const firstEver=tzMidnight(Math.min(...closed.map(t=>t.closeTime)));
+  if(lookbackDays>0&&money.length){
+    const firstEver=tzMidnight(Math.min(...money.map(t=>t.closeTime)));
     const start=Math.max(tzMidnight(from),firstEver);
     if(start<min)min=start;
   }
@@ -473,13 +473,13 @@ function projBaseline(trades, lookbackDays, now){
   const daily=[]; let active=0;
   for(let d=min; d<=end; d=addDays(d,1)){ daily.push(m[d]||0); if(m[d]!=null)active++; }
   const total=inWin.reduce((s,t)=>s+t.net,0);
-  const w=tr.filter(t=>isWin(t.net)).length, l=tr.filter(t=>isLoss(t.net)).length;
-  return { daily, trades:tr.length, total,
+  const w=trIn.filter(t=>isWin(t.net)).length, l=trIn.filter(t=>isLoss(t.net)).length;
+  return { daily, trades:trIn.length, total,
     perDay: daily.length? total/daily.length : 0,
     activeDays:active, calDays:daily.length,
     winRate:(w+l)? w/(w+l) : null,
-    expectancy: tr.length? tr.reduce((s,t)=>s+t.net,0)/tr.length : 0,
-    tradesPerWeek: daily.length? tr.length/(daily.length/7) : 0 };
+    expectancy: trIn.length? total/trIn.length : 0,
+    tradesPerWeek: daily.length? trIn.length/(daily.length/7) : 0 };
 }
 // Bootstrap Monte Carlo: resample the observed daily distribution forward `horizonDays`.
 // Default is i.i.d. daily sampling; pass block>1 for a moving-block bootstrap that samples
@@ -1151,9 +1151,9 @@ function minerFams(closed,ST,fz){
   fz=fz||{};
   const H=t=>tzHour(t.closeTime), D=t=>tzDow(t.closeTime); const TZ=tzLabel();
   const qv=(vals,p)=>{const s=[...vals].sort((a,b)=>a-b);return s.length?s[Math.min(s.length-1,Math.floor(p*s.length))]:null;};
-  const notion=t=>(t.maxSize||0)*(t.avgEntry||0);
+  const notion=t=>notionalOf(t)||0, held=t=>holdOf(t)||0; // measured rows only: a stand-in entry has no size or hold (0 falls in no quarter)
   const nq3=fz.nq3!=null?fz.nq3:(qv(closed.map(notion).filter(x=>x>0),0.75)||Infinity), nq1=fz.nq1!=null?fz.nq1:(qv(closed.map(notion).filter(x=>x>0),0.25)||0);
-  const hq3=fz.hq3!=null?fz.hq3:(qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.75)||Infinity), hq1=fz.hq1!=null?fz.hq1:(qv(closed.map(t=>t.durationMs||0).filter(x=>x>0),0.25)||0);
+  const hq3=fz.hq3!=null?fz.hq3:(qv(closed.map(held).filter(x=>x>0),0.75)||Infinity), hq1=fz.hq1!=null?fz.hq1:(qv(closed.map(held).filter(x=>x>0),0.25)||0);
   let _dq3=null,_maq3=null,_maq1=null,_mfMed=null;
   // compact formatters so condition names carry their actual thresholds ("largest 25% by $ size (≥ $12.5k)")
   const fUsd=n=>!isFinite(n)?'':n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(1)+'k':'$'+n.toFixed(0);
@@ -1164,10 +1164,10 @@ function minerFams(closed,ST,fz){
       return Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([c])=>[dispMarket(c),t=>(t.symbol||dcoin(t))===c,'mkt:'+c]); })(),
     session:[['00–08h '+TZ,t=>H(t)<8,'sess:0'],['08–16h '+TZ,t=>H(t)>=8&&H(t)<16,'sess:1'],['16–24h '+TZ,t=>H(t)>=16,'sess:2']],
     day:[['weekends',t=>D(t)===0||D(t)===6,'day:we'],['weekdays',t=>D(t)>0&&D(t)<6,'day:wd']],
-    hold:[['quick trades'+(isFinite(hq1)&&hq1>0?' (held under '+fDur(hq1)+')':' (fastest 25%)'),t=>(t.durationMs||0)<=hq1,'hold:lo'],
-          ['long holds'+(isFinite(hq3)?' (held over '+fDur(hq3)+')':' (slowest 25%)'),t=>(t.durationMs||0)>=hq3,'hold:hi']],
-    size:[['largest 25% by $ size'+(isFinite(nq3)?' (\u2265 '+fUsd(nq3)+')':''),t=>notion(t)>=nq3,'size:hi'],
-          ['smallest 25% by $ size'+(nq1>0?' (\u2264 '+fUsd(nq1)+')':''),t=>notion(t)<=nq1,'size:lo']],
+    hold:[['quick trades'+(isFinite(hq1)&&hq1>0?' (held under '+fDur(hq1)+')':' (fastest 25%)'),t=>held(t)>0&&held(t)<=hq1,'hold:lo'],
+          ['long holds'+(isFinite(hq3)?' (held over '+fDur(hq3)+')':' (slowest 25%)'),t=>held(t)>0&&held(t)>=hq3,'hold:hi']],
+    size:[['largest 25% by $ size'+(isFinite(nq3)?' (\u2265 '+fUsd(nq3)+')':''),t=>notion(t)>0&&notion(t)>=nq3,'size:hi'],
+          ['smallest 25% by $ size'+(nq1>0?' (\u2264 '+fUsd(nq1)+')':''),t=>notion(t)>0&&notion(t)<=nq1,'size:lo']],
     state:[
       ['entered within 1h of a loss',t=>{const x=ST.get(t.id);return !!(x&&x.prevNet!=null&&isLoss(x.prevNet)&&x.gap<=3600000);},'st:loss1h'],
       ['entered after 2+ straight losses',t=>{const x=ST.get(t.id);return !!(x&&x.streak<=-2);},'st:loss2'],
@@ -1330,12 +1330,24 @@ function tableFilter(t){ return !t.orphan && !t.spotRz && (view==='combined' ? t
 // A spot position is never money (its sells are in the day rows); a day row is never a trade.
 function tradeRow(t){ return !t.spotRz; }
 function moneyRow(t){ return !t.spotPos; }
-// What most readers of allTrades want, so none of them adds both spot kinds again (a spot sell used to be
-// summed twice and counted as up to three trades: position, sell day, buy day). Closed money: summed by
-// when it was realized (totals, time windows, curves, loss limits). Closed trades: counted, listed,
-// journaled, graded; a spot position whose balance left without a sell (movedOut) is listed, never scored.
-function closedMoney(t){ return moneyRow(t)&&!t.isOpen&&!!t.closeTime; }
-function closedTrade(t){ return tradeRow(t)&&!t.isOpen&&!t.movedOut&&!!t.closeTime; }
+// The two closed populations, for every corner that needs "closed trades" without the period: the
+// completed trades (perp trades and spot round trips; not a balance that merely left, not a result
+// the fills can't give) and the realized money (perp trades and spot day rows). f narrows further.
+function closedTrades(f){ return allTrades.filter(t=>!t.isOpen&&t.closeTime&&tradeRow(t)&&!t.movedOut&&!(t.orphan||t.offRecord)&&(!f||f(t))); }
+// Realized money: every money row with a close, the realized part of an open perp trade included
+// (a partial close, its fees and funding so far — Hyperliquid's own realized figure counts them, and
+// so does the tripwire); an orphan or a result the fills can't give (offRecord, once closed) stays out.
+function realizedMoney(f){ return allTrades.filter(t=>t.closeTime&&moneyRow(t)&&!(t.orphan||(t.offRecord&&!t.isOpen))&&(!f||f(t))); }
+// Measured rows: the entry is known. A position that started from a balance already held, or from
+// fills the exchange no longer serves (partialHistory), carries a stand-in entry (its exit price) and a
+// size that includes what was held before, so anything that reads the size, the entry or the hold —
+// sizing medians, hold times, entry timing — takes measured rows only. The result (net) is real either way.
+function measured(t){ return !t.partialHistory; }
+function notionalOf(t){ return measured(t)&&t.maxSize>0&&t.avgEntry>0?t.maxSize*t.avgEntry:null; }
+function holdOf(t){ return measured(t)&&t.durationMs>0?t.durationMs:null; }
+// The day's money: the net of the money rows by the day they closed (a perp trade by its close, a
+// spot day row by its day), for every per-day figure the trade rows used to be summed for.
+function dayNetMap(money, dayOf){ const m={}; for(const t of money||[]){ if(!t.closeTime)continue; const k=dayOf(t.closeTime); m[k]=(m[k]||0)+(+t.net||0); } return m; }
 // The all-time net the fills can't give: Hyperliquid's own P&L for a market ('perp', 'spot' or
 // 'combined' — what its app and trackers such as Hyperdash show, unrealized included) with the
 // fill-based sum beside it, when seams were found or, for perps, the two differ materially.
@@ -1460,23 +1472,22 @@ function verifiedFigure(mkt){
   if(mkt==='spot')return null;
   const ver=mkt==='perp'?hlPnl.perp:hlPnl.all;
   if(ver==null||hlPnl.partial)return null; // a wallet the exchange didn't answer for: the sum understates and must not lead
-  // money rows only (moneyRow, inlined: this runs in bare contexts in the tests): a spot position and its
-  // day rows are the same P&L ("closed fills" read perp + 2× spot)
-  const hlOf=t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&!t.spotPos&&(mkt==='combined'||mkt==='all'||t.market===mkt);
-  const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen);
+  const hlOf=t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&(mkt==='combined'||mkt==='all'||t.market===mkt);
+  // money rows (perp trades, spot day rows): a spot position and the day rows that carry its sells are never both summed
+  const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen&&!t.spotPos);
   const rec=hl.reduce((s,t)=>s+t.net,0);
-  const nT=allTrades.filter(t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&!t.spotRz&&!t.isOpen&&!t.movedOut&&(mkt==='combined'||mkt==='all'||t.market===mkt)).length; // trades, counted once
+  const nTr=allTrades.filter(t=>hlOf(t)&&!t.isOpen&&!t.spotRz&&!t.movedOut).length; // the count is of completed trades
   const seams=!!(dataCoverage&&dataCoverage.gaps>0);
   // The exchange's figure is account-based, unrealized included. Set against it, the fills must count
   // what open trades have realized so far and what the open positions are marked at — a large open
   // position used to read as a material gap on its own, and the exchange's curve took over a
   // dashboard whose fills were whole.
   const hlPos=p=>!p.venue||p.venue==='hyperliquid';
-  const live=rec+allTrades.filter(t=>hlOf(t)&&t.isOpen).reduce((s,t)=>s+t.net,0)
+  const live=rec+allTrades.filter(t=>hlOf(t)&&t.isOpen&&!t.spotPos).reduce((s,t)=>s+t.net,0) // open perp trades' realized so far; an open spot position's sells are already in its day rows
     +(mkt==='perp'||mkt==='combined'||mkt==='all'?openPositions.filter(hlPos).reduce((s,p)=>s+(p.uPnl||0),0):0)
     +(mkt==='combined'||mkt==='all'?spotHoldings.filter(hlPos).reduce((s,h)=>s+(h.uPnl||0),0):0);
   if(!seams&&!(mkt==='perp'&&Math.abs(live-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
-  return {ver,rec,live,seams,n:nT,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
+  return {ver,rec,live,seams,n:nTr,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
 }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }
@@ -1538,7 +1549,7 @@ function computeStats(closed, allv){
   const withR=closed.map(rFor).filter(r=>r!==null);
   const avgR=withR.length?withR.reduce((a,b)=>a+b,0)/withR.length:null;
   const totalR=withR.length?withR.reduce((a,b)=>a+b,0):null;
-  const holds=closed.map(t=>t.durationMs).filter(x=>x>0);
+  const holds=closed.map(holdOf).filter(x=>x>0); // measured rows only: a stand-in entry has no hold
   const avgHold=holds.length?holds.reduce((a,b)=>a+b,0)/holds.length:0;
   const activeDaily=Object.values(dailyPnl(allv));
   const greenDays=activeDaily.filter(x=>x>0).length, totalDays=activeDaily.length;
@@ -1547,7 +1558,7 @@ function computeStats(closed, allv){
   const rets=closed.map(retPct).filter(x=>x!==null); const avgRet=rets.length?_avg(rets):null;
   const _sortedNets=[...closed.map(t=>t.net)].sort((a,b)=>a-b);
   const median=_sortedNets.length?(_sortedNets.length%2?_sortedNets[(_sortedNets.length-1)/2]:(_sortedNets[_sortedNets.length/2-1]+_sortedNets[_sortedNets.length/2])/2):null;
-  return {n:closed.length,openN:allv.filter(t=>t.isOpen).length,net,fees,fund,volume:allv.reduce((a,t)=>a+((t.makerNotional||0)+(t.takerNotional||0)+(t.unkNotional||0)),0),wins:wins.length,losses:losses.length,breakeven:scratches.length,
+  return {n:closed.length,mn:allv.length,net,fees,fund,volume:allv.reduce((a,t)=>a+((t.makerNotional||0)+(t.takerNotional||0)+(t.unkNotional||0)),0),wins:wins.length,losses:losses.length,breakeven:scratches.length,
     winRate:(wins.length+losses.length)?wins.length/(wins.length+losses.length):0,
     profitFactor:glAll>0?gpAll/glAll:(gpAll>0?Infinity:0),avgWin:avgW,avgLoss:avgL,payoff,breakevenWR,
     expectancy,maxDD,maxDDpct,

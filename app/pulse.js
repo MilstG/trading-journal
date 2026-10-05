@@ -44,15 +44,16 @@ function pzScoreOf(parts){
 // vs the median of the 60 entries before today. net is today's realized result fill by fill
 // (realizedByDay), as the tripwire reads it: a partial close of a position still open counts today,
 // and a trade closing today doesn't bring yesterday's partial losses with it. closed: trades closed today.
-function pzRisk(trades, dayE, rules, todayK, dayOf){
-  const opened=trades.filter(t=>t.openTime&&dayOf(t.openTime)===todayK);
+// positions: every trade row (a balance that later left included), whose fills make today's realized result
+function pzRisk(trades, dayE, rules, todayK, dayOf, positions){
+  const opened=trades.filter(t=>measured(t)&&t.openTime&&dayOf(t.openTime)===todayK); // a stand-in entry is not an entry
   const closedT=trades.filter(t=>!t.isOpen&&t.closeTime&&dayOf(t.closeTime)===todayK);
-  const net=(realizedByDay(trades,dayOf,todayK)[todayK]||[]).reduce((s,x)=>s+x[1],0), loss=Math.max(0,-net);
+  const net=(realizedByDay(positions||trades,dayOf,todayK)[todayK]||[]).reduce((s,x)=>s+x[1],0), loss=Math.max(0,-net);
   const cap=dayE&&dayE.maxTrades>0?+dayE.maxTrades:(+rules.maxPerDay||0);
   const limit=dayE&&dayE.maxLoss>0?+dayE.maxLoss:(+rules.dailyLossLimit||0);
   const shares=[]; if(cap>0)shares.push(opened.length/cap); if(limit>0)shares.push(loss/limit);
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0));
-  const prior=trades.filter(t=>t.openTime&&dayOf(t.openTime)<todayK).sort((a,b)=>b.openTime-a.openTime).slice(0,60).map(size).filter(x=>x>0);
+  const size=t=>notionalOf(t)||0; // measured rows only
+  const prior=trades.filter(t=>measured(t)&&t.openTime&&dayOf(t.openTime)<todayK).sort((a,b)=>b.openTime-a.openTime).slice(0,60).map(size).filter(x=>x>0);
   const now=opened.map(size).filter(x=>x>0);
   const sizeX=prior.length>=5&&now.length?nfMedian(now)/nfMedian(prior):null;
   return {trades:opened.length, closed:closedT, cap, loss, net, limit, used:shares.length?Math.max(...shares):null, sizeX};
@@ -220,7 +221,7 @@ function pzData(){
   const dayE=journal['day:'+todayK]||null;
   const day=g.days.find(d=>d.key===todayK)||null;
   const last=g.days.filter(d=>d.key<todayK).slice(-1)[0]||null;
-  const risk=pzRisk(ctx.trades,dayE,nfRules(),todayK,dayKey);
+  const risk=pzRisk(ctx.trades,dayE,nfRules(),todayK,dayKey,ctx.positions);
   const inbox=journalInbox(ctx.trades,journal,now);
   return {g,ctx,todayK,dayE,day,last,risk,ready:pzReadiness(dayE),inbox,todayTrades:ctx.byDay[todayK]||[],
     form:pzForm(ctx.closed,now,{isWin,isLoss}),load:pzLoad(ctx.trades,todayK,dayKey)};
@@ -297,14 +298,15 @@ function pzCustomizeHtml(screen){
 function pzTodayFacts(D){
   const {g,ctx,todayK,risk}=D, now=Date.now(), dayOf=t=>dayKey(t);
   const closedT=(risk.closed||[]).slice().sort((a,b)=>a.closeTime-b.closeTime);
+  const moneyT=(ctx.money||closedT).filter(t=>t.closeTime&&dayOf(t.closeTime)===todayK).sort((a,b)=>a.closeTime-b.closeTime); // today's money: perp trades closed today, spot by its day
   const wins=closedT.filter(t=>isWin(t.net)).length, losses=closedT.filter(t=>isLoss(t.net)).length;
-  const fees=closedT.reduce((s,t)=>s+(+t.fees||0),0);
+  const fees=moneyT.reduce((s,t)=>s+(+t.fees||0),0);
   const open=(typeof allTrades!=='undefined'&&allTrades.length?allTrades:(ctx.trades||[])).filter(t=>t.isOpen&&!t.orphan&&t.market!=='spot');
   const pos=typeof dexPositions==='function'?dexPositions():[];
   const upnl=pos.reduce((s,p)=>s+(+p.uPnl||0),0);
-  let cum=0, hi=0, lo=0; const curve=closedT.map(t=>{ cum+=t.net; hi=Math.max(hi,cum); lo=Math.min(lo,cum); return {t:t.closeTime,v:cum,tr:t}; });
+  let cum=0, hi=0, lo=0; const curve=moneyT.map(t=>{ cum+=t.net; hi=Math.max(hi,cum); lo=Math.min(lo,cum); return {t:t.closeTime,v:cum,tr:t}; }); // the session curve is money
   const lastLoss=closedT.filter(t=>isLoss(t.net)).pop()||null;
-  const lastOpen=(ctx.trades||[]).filter(t=>t.openTime&&dayOf(t.openTime)===todayK).sort((a,b)=>b.openTime-a.openTime)[0]||null;
+  const lastOpen=(ctx.trades||[]).filter(t=>measured(t)&&t.openTime&&dayOf(t.openTime)===todayK).sort((a,b)=>b.openTime-a.openTime)[0]||null;
   return {now,closedT,wins,losses,fees,open,pos,upnl,curve,hi,lo,net:cum,lastLoss,lastOpen};
 }
 // minutes into today on the app's clock; earlier days clamp to the start
@@ -409,7 +411,7 @@ function pzTiltAlertCheck(){
   const D=pzData(), now=Date.now(), s=pzTaState();
   const sig=D.todayK+':'+(D.ctx.trades||[]).filter(t=>(t.openTime&&dayKey(t.openTime)===D.todayK)||(t.closeTime&&dayKey(t.closeTime)===D.todayK)).map(t=>t.id+(t.isOpen?'o':'c'+t.closeTime)).sort().join(',');
   if(s.sig===sig)return null; s.sig=sig;
-  const r=pzTiltAlertPick(pzTiltAlerts(D.ctx.trades,{now,dayOf:dayKey,isLoss:PZ_LOSS,maxTrades:D.risk.cap,lossLimit:D.risk.limit}),s.gate,now,D.todayK);
+  const r=pzTiltAlertPick(pzTiltAlerts(D.ctx.trades,{now,dayOf:dayKey,isLoss:PZ_LOSS,maxTrades:D.risk.cap,lossLimit:D.risk.limit,money:D.ctx.money}),s.gate,now,D.todayK);
   s.gate=r.st; if(r.pick)s.cur=Object.assign({},r.pick,{day:D.todayK,shown:now});
   pzTaSave(s); if(r.pick)pzTaNotify(r.pick); return r.pick;
 }
@@ -514,7 +516,7 @@ function pzSessionHtml(D,F){
     <line x1="${PL}" x2="${W-PR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--pz-line2)" stroke-width="1"/>
     ${limit!=null?`<line x1="${PL}" x2="${W-PR}" y1="${y(limit)}" y2="${y(limit)}" stroke="${PZ_COL.low}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W-PR}" y="${y(limit)-4}" font-size="13" text-anchor="end" fill="${PZ_COL.low}">loss limit ${esc(pzShort(-limit))}</text>`:''}
     <path d="${path}" fill="none" stroke="${curveCol}" stroke-width="2.2" stroke-linejoin="round"/>
-    ${F.curve.map(p=>`<g data-pz-tip="${esc(dispMarket(dcoin(p.tr))+' '+(p.tr.dir||'')+' closed '+new Date(p.t).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'\nThis trade '+signedPlain(p.tr.net)+'\nDay so far '+signedPlain(p.v))}"><circle cx="${x(pzDayMin(p.t,todayK)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="10" fill="transparent"/><circle cx="${x(pzDayMin(p.t,todayK)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3" fill="${p.tr.net>=0?PZ_COL.good:PZ_COL.low}"/></g>`).join('')}
+    ${F.curve.map(p=>`<g data-pz-tip="${esc(dispMarket(dcoin(p.tr))+' '+(p.tr.dir||'')+' closed '+new Date(p.t).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+'\n'+(p.tr.spotRz?'This day\u2019s spot':'This trade')+' '+signedPlain(p.tr.net)+'\nDay so far '+signedPlain(p.v))}"><circle cx="${x(pzDayMin(p.t,todayK)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="10" fill="transparent"/><circle cx="${x(pzDayMin(p.t,todayK)).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3" fill="${p.tr.net>=0?PZ_COL.good:PZ_COL.low}"/></g>`).join('')}
     ${mark(planAt,'plan',PZ_COL.xp)}${mark(until,'stop '+(R.until||''),PZ_COL.mid,true)}${mark(nowM,'now','var(--pz-soft)')}
     ${bars.join('')}</svg>`;
   return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your session</b><span class="pz-sub" style="font-size:12px">high ${esc(pzSigned(F.hi))} · low ${esc(pzSigned(F.lo))}</span></div>${svg}
@@ -539,7 +541,7 @@ function pzPositionsHtml(D,F){
   if(!F.open.length&&!F.pos.length)return '';
   const closed=D.ctx.closed||[], now=F.now;
   const winHold=nfMedian(closed.filter(t=>isWin(t.net)&&t.openTime&&!t.partialHistory).slice(-200).map(t=>t.closeTime-t.openTime))||0;
-  const size=t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0)), usual=nfMedian(closed.slice(-60).map(size).filter(x=>x>0))||0;
+  const size=t=>notionalOf(t)||0, usual=nfMedian([...closed].sort((a,b)=>b.closeTime-a.closeTime).slice(0,60).map(size).filter(x=>x>0))||0; // the latest 60 closes (ctx.closed is newest-opened first), measured rows only
   const dur=ms=>ms<3600000?Math.max(1,Math.round(ms/60000))+'m':ms<86400000?(ms/3600000).toFixed(1)+'h':(ms/86400000).toFixed(1)+'d';
   const posBy=new Map(F.pos.map(p=>[p.coin,p]));
   const list=F.open.length?F.open:F.pos.map(p=>({coin:p.coin,dir:p.side==='long'?'Long':'Short',fromPos:p}));
@@ -864,7 +866,7 @@ function pzImproversHtml(g){
 function pzTrendsHtml(D){
   const {g}=D, ctx=g.ctx, R=pzS.range, now=Date.now();
   const from=R==='all'?0:pzRangeStart(R,now), fromKey=dayKey(from);
-  const st=pzStatsFor(ctx.trades.filter(pzInMk),from);
+  const st=pzStatsFor(ctx.trades.filter(pzInMk),from,(ctx.money||[]).filter(pzInMk)); // counts from trades, sums from money rows
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
   const money=v=>v==null||!isFinite(v)?'—':pzSigned(v), exact=v=>v==null||!isFinite(v)?'':signedPlain(v);
   let stats;
@@ -925,8 +927,10 @@ function pzRangeFindings(ctx, fromMs){
   let v;
   if(closed.length<10)v={findings:[],n:closed.length,few:true};
   else { let findings=[];
-    try{ const s=computeStats(closed,closed), chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
-      findings=buildFindings(closed,s,{scan:diagScan(closed),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)}); }
+    try{ const mon=(ctx.money||closed).filter(t=>t.closeTime&&t.closeTime>=fromMs&&pzInMk(t)); // money rows in the range: the sums and the realized curve
+      const s=computeStats(closed,mon), chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
+      const chronM=[...mon].sort((a,b)=>a.closeTime-b.closeTime), netsM=chronM.map(t=>t.net);
+      findings=buildFindings(closed,s,{scan:diagScan(closed),sig:behaviorSignals(closed,s,mon),money:mon,cdd:currentDD(netsM),uw:underwaterStats(chronM),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)}); }
     catch(e){ console.warn('range findings failed',e); }
     v={findings,n:closed.length,few:false}; }
   _pzRF={key,v}; return v;
@@ -1001,7 +1005,7 @@ function pzEquitySvg(curve,byId){
     <line class="pz-eqx" x1="0" x2="0" y1="${T}" y2="${DT+DH}" stroke="var(--pz-soft)" stroke-width="1" style="display:none"/>
     <circle class="pz-eqd" r="4" fill="var(--pz-text)" style="display:none"/>
   </svg><div class="pz-eqtip" role="status" aria-live="polite" hidden></div></div>
-  <p class="pz-fine" style="margin:0">Each step is one closed trade, in order. Hover or drag across the chart to read any point.</p>`;
+  <p class="pz-fine" style="margin:0">Each step is one close, in order: a perp trade, or a spot coin’s day. Hover or drag across the chart to read any point.</p>`;
 }
 function pzEqHover(ev){
   const w=ev.target.closest&&ev.target.closest('.pz-eqwrap'); if(!w||!PZ_EQ.curve)return;
@@ -1052,13 +1056,13 @@ function pzDeepHtml(D){
   const dlock=pzLocked('deep',g.level.level); if(dlock)return back+pzLockedHtml('In-depth stats',dlock,g);
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
   const head=`${back}${pzHead(R==='all'?'All time':'Last '+R+' days','In-depth stats',seg)}${pzMkSeg()}`;
-  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t));
+  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), mon=(ctx.money||tr).filter(t=>t.closeTime>=fromMs&&pzInMk(t));
   const X=pzDeepStats(tr,{isWin,isLoss,coin:dcoin,hourOf:tzHour,dowOf:tzDow,monthOf:ms=>dayKey(ms).slice(0,7),
     setupOf:t=>journal[t.id]&&journal[t.id].setup?String(journal[t.id].setup).trim():null,ratingOf:t=>journal[t.id]&&+journal[t.id].rating||null,
-    volOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.vol; },trendOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.trend; }});
+    volOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.vol; },trendOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.trend; }},mon);
   pzRegimeWant();
   if(!X)return `${head}<section class="pz-card"><p class="pz-sub">No closed trades in this range.</p></section>`;
-  const s=computeStats(tr,tr);
+  const s=computeStats(tr,mon); // trade stats from closed trades, sums from money rows
   const hr=h=>String(h).padStart(2,'0')+':00';
   // results, risk, consistency
   const results=pzKv('Results',[
@@ -1136,7 +1140,7 @@ function pzDeepHtml(D){
   const breakdown=bk?`<div class="pz-span pz-kv"><div class="pz-chiprow" role="group" aria-label="Break down by">${BK.map(x=>`<button type="button" class="pz-chipbtn" data-pz-bk="${x[0]}" aria-pressed="${x===bk}">${esc(x[1])}</button>`).join('')}</div>
     ${(()=>{ const ins=bk[0]==='vol'?pzRegimeInsight(X.vol,PZ_VOL):bk[0]==='trend'?pzRegimeInsight(X.trend,PZ_TREND):null; return ins?`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('bolt',18)}</span><p>${esc(ins.text)}</p></section>`:''; })()}
     ${pzTbl('By '+bk[1].toLowerCase(),bk[2],bk[3],bk[4]||undefined)}${tagHint}</div>`:'';
-  return `${head}<div class="pz-wide">${eq}<div class="pz-col">${results}${cons}${slipHtml}</div><div class="pz-col">${risk}${planHtml}${distHtml}${pzCostHtml(tr)}</div>${hourHtml}${excHtml?`<div class="pz-col">${dowHtml}</div><div class="pz-col">${excHtml}</div>`:dowHtml.replace('pz-card pz-kv','pz-card pz-span pz-kv')}${breakdown}
+  return `${head}<div class="pz-wide">${eq}<div class="pz-col">${results}${cons}${slipHtml}</div><div class="pz-col">${risk}${planHtml}${distHtml}${pzCostHtml(mon)}</div>${hourHtml}${excHtml?`<div class="pz-col">${dowHtml}</div><div class="pz-col">${excHtml}</div>`:dowHtml.replace('pz-card pz-kv','pz-card pz-span pz-kv')}${breakdown}
     <section class="pz-span" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"><a class="pz-link" href="#how">How the scores are worked out ›</a><a class="pz-link" style="white-space:normal;text-align:center" href="${esc(pzFullHref())}">Pattern miner, excursions and Diagnostic in the full journal ›</a></section></div>`;
 }
 function pzHowHtml(){
@@ -1241,7 +1245,7 @@ function pzJournalHtml(D){
     const pct=t.isOpen?null:retPct(t), nf=(t.events||[]).length;
     const openK=dayKey(t.openTime), closeK=dayKey(t.closeTime), when=dayLabel(openK)+' · '+hm(tzParts(t.openTime))+(t.isOpen?' · still open':' → '+(closeK===openK?'':dayLabel(closeK)+' · ')+hm(tzParts(t.closeTime)));
     const size=t.maxSize>0?(+(+t.maxSize).toPrecision(5)).toLocaleString('en-US')+' '+dispMarket(dcoin(t)):'';
-    return `<section class="pz-card pz-trade" data-pz-trade="${esc(t.id)}"><div class="pz-trade-h"><div class="pz-trade-t"><b>${esc(dispMarket(dcoin(t)))}</b><span class="pz-side" style="--c:${short?PZ_COL.low:PZ_COL.good}">${short?'Short':'Long'}</span></div>
+    return `<section class="pz-card pz-trade" data-pz-trade="${esc(t.id)}"><div class="pz-trade-h"><div class="pz-trade-t"><b>${esc(dispMarket(dcoin(t)))}</b><span class="pz-side" style="--c:${short?PZ_COL.low:PZ_COL.good}">${t.dir==='Spot'?'Spot':short?'Short':'Long'}</span></div>
         <div class="pz-trade-net" style="color:${col}"><b>${be?'B/E':signedPlain(t.net)}</b>${pct!=null?`<span>${(pct>=0?'+':'−')+Math.abs(pct).toFixed(2)}%</span>`:''}</div></div>
       <div class="pz-trade-meta"><span>${esc(when)}</span><span>${esc((t.isOpen?'open ':'held ')+pzHeld((t.isOpen?Date.now():t.closeTime)-t.openTime))}</span>${size?`<span>${esc(size)}</span>`:''}<span>${nf} fill${nf===1?'':'s'}</span></div>
       <div class="pz-snap" data-pz-snap="${esc(t.id)}">${pzSnapHtml(t)}</div>${planPzRpHtml(t)}
@@ -1432,8 +1436,8 @@ function pzAgoTxt(at){ const m=Math.round((Date.now()-at)/60000); return m<1?'ju
 // context then takes exactly what it would have computed). pzBeforeDraw's work runs just before the draw.
 var _pzStage=0, _pzStaged=false, _pzPre=[]; // var: pzRender may run before this line has (a load-time caller)
 function pzStage(){ if(_pzStage)return; _pzStage=1; const W={};
-  const steps=[()=>{ const {trades}=_coachKey(true), closed=trades.filter(t=>!t.isOpen&&t.closeTime); if(closed.length>=5){ W.closed=closed; W.s=computeStatsMemo(closed,trades); } },
-    ()=>{ if(W.s)diagScanMemo(W.closed); }, ()=>{ if(W.s)behaviorSignalsMemo(W.closed,W.s); },
+  const steps=[()=>{ const {trades,money}=_coachKey(true), closed=trades.filter(t=>!t.isOpen&&t.closeTime); if(closed.length>=5){ W.closed=closed; W.money=money; W.s=computeStatsMemo(closed,money); } },
+    ()=>{ if(W.s)diagScanMemo(W.closed); }, ()=>{ if(W.s)behaviorSignalsMemo(W.closed,W.s,W.money); },
     ()=>coachContext(true), ()=>gameContext()];
   const next=()=>requestIdleCallback(()=>{ const f=steps.shift();
     if(!f){ _pzStage=0; for(const g of _pzPre.splice(0))try{ g(); }catch(e){ console.warn(e); } _pzStaged=true; pzRender(); return; }

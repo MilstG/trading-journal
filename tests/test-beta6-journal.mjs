@@ -23,7 +23,7 @@ const ctx = { Math, Object, Array, String, Number, JSON, isFinite, isNaN, Set, M
   candleVenue: t => t.venue && t.venue !== 'hyperliquid' ? t.venue : '', coachOn: () => false, lastWeekFocusHtml: () => '', pbSummary: () => null, pbList: () => [] };
 vm.createContext(ctx);
 const FNS = ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'tzParts', 'tzMidnight', 'addDays', 'tradeDex', 'dexOk', 'dexFilter', 'viewFilter',
-  'tradeRow', 'moneyRow', 'closedMoney', 'closedTrade', 'projBaseline', 'monthlyGoalModel', 'capitalModel', 'dailyLossToday', 'verifiedFigure', 'historyNote', 'reconcileSplit',
+  'tradeRow', 'moneyRow', 'closedTrades', 'realizedMoney', 'measured', 'notionalOf', 'holdOf', 'dayNetMap', 'projBaseline', 'monthlyGoalModel', 'capitalModel', 'dailyLossToday', 'verifiedFigure', 'historyNote', 'reconcileSplit',
   'pnlAudit', 'fillTrunc', 'truncNoteOf', 'mergeCoverage', 'renderPulse', 'renderTape', 'isoWeekKey', 'lastCompletedWeekRange', 'weeklyReviewSectionHtml', 'esc', 'fmtDate',
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'riskFor', 'rFor', 'retPct', 'computeStats', 'pzStatsFor', 'dashCurve', 'verifiedCurveFor', 'sumSeries', 'curveSlice',
   'periodFrom', 'rangeActive', 'diagFillsRecord'];
@@ -62,7 +62,7 @@ t('the reconstruction gives both kinds of spot rows, as the app sees them', () =
   eq(rz.length, 4, 'two buy days (net $0) and two sell days');
   near(rz.reduce((s, x) => s + x.net, 0), 120, 1e-9, 'the day rows hold the realized spot money');
   near(A.filter(x => !x.isOpen).reduce((s, x) => s + x.net, 0), 270, 1e-9, 'summing every closed row reads spot twice: the bug');
-  eq(A.filter(ctx.closedTrade).length, 2); near(A.filter(ctx.closedMoney).reduce((s, x) => s + x.net, 0), 170, 1e-9);
+  eq(ctx.closedTrades().length, 2); near(ctx.realizedMoney().reduce((s, x) => s + x.net, 0), 170, 1e-9);
 });
 
 console.log('\nEvery surface counts spot once');
@@ -83,12 +83,12 @@ t('monthly goals: the month’s net and its trade count', () => {
 });
 t('Project: the basis sums money once and counts trades', () => {
   const b = ctx.projBaseline(A.filter(x => !x.isOpen && x.closeTime), 90);
-  near(b.total, 170); eq(b.trades, 2); near(b.expectancy, 75, 1e-9, '(100 + 50) / 2 trades');
+  near(b.total, 170); eq(b.trades, 2); near(b.expectancy, 85, 1e-9, 'the money, $170, over 2 trades (main’s projBaseline: expectancy is total ÷ trades)');
   near(b.daily.reduce((s, v) => s + v, 0), 170);
 });
 t('Capital & true return: realized once, trades counted once', () => {
-  const m = ctx.capitalModel([{ time: NOW - 20 * D, usdc: 1000, type: 'deposit' }], A.filter(x => !x.isOpen && x.closeTime && !x.orphan && !x.offRecord), 1170);
-  near(m.realized, 170); eq(m.nTrades, 2);
+  const m = ctx.capitalModel([{ time: NOW - 20 * D, usdc: 1000, type: 'deposit' }], ctx.realizedMoney(), 1170); // the Diagnostic passes realizedMoney()
+  near(m.realized, 170);
 });
 t('daily loss limit: today’s realized is +$170 over 2 trades (a −$300 spot day used to read −$600)', () => {
   const d = ctx.dailyLossToday(A); near(d.net, 170, 1e-9); eq(d.n, 2);
@@ -107,7 +107,7 @@ t('weekly review: the week’s net and trade count', () => {
 });
 t('Daruma’s Stats: Net, the day bars and the markets from money rows; counts from trades', () => {
   const trades = A.filter(x => !x.spotRz); // coachContext(true)'s trades: no day rows
-  const st = ctx.pzStatsFor(trades, NOW - 30 * D);
+  const st = ctx.pzStatsFor(trades, NOW - 30 * D, ctx.realizedMoney()); // Daruma passes coachContext's money
   near(st.s.net, 170); eq(st.s.n, 2);
   eq(st.days.map(d => [d.k, +d.net.toFixed(2), d.n]).filter(d => d[0] === '2026-10-05'), [['2026-10-05', 170, 2]]);
   near(st.markets.find(m => m.k === 'PURR').net, 20, 1e-9, 'PURR’s partial sale counts though its stack is still open');
@@ -115,19 +115,20 @@ t('Daruma’s Stats: Net, the day bars and the markets from money rows; counts f
 });
 t('the readers that list, count or grade trades take trade rows (inbox, streak, review, playbooks, miner, guardrails, heatmap, calendar, ratchet, Daruma)', () => {
   const src = n => grabFn(n);
-  ok(/closedTrade\(t\)&&viewFilter\(t\)/.test(src('inboxSectionHtml')), 'journal inbox and streak');
-  ok(/closedTrade\(t\)&&viewFilter\(t\)/.test(src('renderReviewInner')) && /closedMoney\(t\)&&viewFilter\(t\)/.test(src('renderReviewInner')), 'the Review digest');
-  ok(/closedTrade\(t\)&&viewFilter\(t\)/.test(src('playbooksSectionHtml')), 'playbooks');
-  ok(/allTrades\.filter\(closedTrade\)/.test(src('pbsYoursHtml')), 'Daruma’s playbooks');
-  ok(/closedTrade\(t\)&&viewFilter\(t\)/.test(src('setWeekChallenge')) && /closedTrade\(t\)&&viewFilter\(t\)/.test(src('adoptHabit')), 'the habit miner’s inputs');
-  ok(/closedTrade\(t\)&&!t\.orphan/.test(src('guardrailSignals')), 'the guardrails');
-  ok(/renderCalendar\(ptAll,pt\); renderDowHour\(pt\)/.test(src('renderInner')), 'calendar counts and the weekday×hour heatmap see spot trades');
-  ok(/tradeRow\(t\)&&t\.openTime/.test(src('socJournalTrades')), 'Daruma’s share-a-trade list');
-  ok(/!t\.spotRz&&dayKey\(t\.openTime\)/.test(src('pzPlanCheck')), 'Daruma’s plan check');
+  // the engine's two populations (closedTrades / realizedMoney; tests/test-populations.mjs guards hand-built lists)
+  ok(/tradeRow\(t\)&&!t\.movedOut/.test(src('inboxSectionHtml')), 'journal inbox and streak');
+  ok(/closedTrades\(viewFilter\)/.test(src('renderReviewInner')) && /realizedMoney\(viewFilter\)/.test(src('renderReviewInner')), 'the Review digest');
+  ok(/closedTrades\(viewFilter\)/.test(src('playbooksSectionHtml')), 'playbooks');
+  ok(/closedTrades\(\)/.test(src('pbsYoursHtml')), 'Daruma’s playbooks');
+  ok(/closedTrades\(viewFilter\)/.test(src('setWeekChallenge')) && /closedTrades\(viewFilter\)/.test(src('adoptHabit')), 'the habit miner’s inputs');
+  ok(/closedTrades\(\)/.test(src('guardrailSignals')), 'the guardrails');
+  ok(/renderCalendar\(ptAll,pt\); renderDowHour\(ptAll,pt\)/.test(src('renderInner')), 'calendar counts and the weekday×hour heatmap see spot trades');
+  ok(/tradeRow\(t\)&&!t\.movedOut/.test(src('socJournalTrades')), 'Daruma’s share-a-trade list');
+  ok(/tradeRow\(t\)&&!t\.movedOut&&!t\.orphan&&t\.openTime/.test(src('pzPlanCheck')), 'Daruma’s plan check');
 });
 t('Project: “Sizing at this edge” reads the basis trades, as its tip says', () => {
   const s = grabFn('renderProjection'); ok(/kellyFromTrades\(bt\)/.test(s) && !/kellyFromTrades\(closed\)/.test(s));
-  ok(/projBaseline\(inv,_proj\.look\)/.test(s), 'the basis is built from both kinds, split inside');
+  ok(/projBaseline\(rowsAll,_proj\.look\)/.test(s), 'the basis is built from both kinds, split inside');
 });
 
 console.log('\nFill truncation survives the next load');

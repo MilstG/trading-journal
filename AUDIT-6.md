@@ -2,7 +2,7 @@
 
 > **Status: addressed.** Every finding below is fixed with a regression test, except the few
 > listed under "Left as they are" with the reasoning; the performance work (P1–P4) landed with its
-> results pinned identical. 95 suites / 1,524 tests, the size budget and the three browser suites
+> results pinned identical. 96 suites / 1,528 tests, the size budget and the three browser suites
 > (`e2e/run.mjs` 42, `e2e/sync.mjs` 3, `e2e/heavy.mjs` 10 at ~18k and at ~31k trades) green at the
 > merged revision.
 
@@ -69,14 +69,14 @@ list; readers that took both added spot twice. On the test wallet the Spot 30-da
 −$7,503 over 3 trades for −$3,751 over 1; the Project basis "15 trades" for 6; the journal inbox
 asked for day rows the table never lists, so they could never clear. Synthetic truth (a spot round
 trip +$100, a perp trade +$50, today) read "TODAY +$250 · 3 closed trades". Worst of it: **the
-daily loss limit fired at half the limit** on a spot loss. Every reader now goes through two
-helpers (`closedMoney` for sums, curves and time windows; `closedTrade` for counts, lists, the
-inbox, rules and playbooks): the tape, the pulse strip, the Review digest, the weekly review, the
-projection, playbooks, monthly goals, guardrails, the habit miner, the excursion fetches, the
-Diagnostic's capital model, `verifiedFigure`'s "closed fills", the inbox and streak, the tripwire,
-Daruma's Stats, plan check and share list. **[R2]** The server's alerts and Telegram "today" read
-every fill today the way the app's tripwire does (a −$300 partial spot sell read $0 against a $400
-limit), and the weekly digest counts spot once.
+daily loss limit fired at half the limit** on a spot loss. Main's accounting audit (#116, #117)
+landed the same rule in parallel — `closedTrades` for counts, lists, the inbox, rules and playbooks;
+`realizedMoney` for sums, curves and time windows; a guard test against hand-built closed lists — and
+this round merged onto it, keeping what it adds on top: the tape and pulse strip show money realized
+on a day no trade closed (a partial spot sell), the daily loss limit skips day rows, Daruma's card
+shows the trade's return, and the tests in `test-beta6-journal` pin every surface. **[R2]** The
+server's alerts and Telegram "today" read money rows (a −$300 partial spot sell read $0 against a
+$400 limit), and the weekly digest counts spot once.
 
 **R3 · [repro] Spot dropped out of the weekday × hour heatmap and the calendar's trade counts**
 (a spot view with three round trips read "$10.00 · 0 trades"). Both count trades now.

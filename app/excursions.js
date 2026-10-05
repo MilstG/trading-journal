@@ -141,7 +141,7 @@ function excSummary(rows){
 // interval) — excursion is then an upper bound from candle extremes, so it's flagged and kept out
 // of the summary statistics.
 function excRow(t,ex,risk){
-  const notional=(t.maxSize||0)*(t.avgEntry||0);
+  const notional=notionalOf(t)||0; // measured rows only
   const r=(risk>0)?risk:null;
   return {id:t.id,coin:t.coin,symbol:t.symbol,dir:t.dir,net:t.net,ret:retPct(t),notional,
     maePct:ex.maePct,mfePct:ex.mfePct,nC:ex.nC,risk:r,
@@ -162,7 +162,7 @@ let _excQuiet=false; // the auto-ratchet's runs write nothing to the status line
 let _excCache={key:null,rows:null,openRows:null,skippedCoins:null,skippedN:0};
 async function runExcursions(closed,openTrades){
   const now=Date.now();
-  const base=closed.filter(t=>!t.isOpen&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0);
+  const base=closed.filter(t=>!t.isOpen&&notionalOf(t)>0); // measured rows only
   // open positions are measured over [openTime, now] via a pseudo-close so the same
   // planner/cache/compute path serves the live monitor (#4)
   const pseudo=(openTrades||[]).filter(t=>t.isOpen&&t.avgEntry>0&&!isDustOpen(t))
@@ -312,7 +312,7 @@ async function autoRatchet(){
     const now=Date.now();
     let persisted=null; try{ persisted=await idbGet('excRows'); }catch(e){}
     const have=(persisted&&persisted.v===1&&persisted.rows)||{};
-    const recent=allTrades.filter(t=>!t.isOpen&&tradeRow(t)&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0
+    const recent=closedTrades(t=>notionalOf(t)>0 // completed, measured trades: no spot day rows, no balance that merely left, no stand-in entry
       &&t.closeTime>now-21*86400e3&&!have[t.id]&&!_ratchetTried.has(t.id));
     if(!recent.length)return;
     // the newest 25 per run: the rest follow on the next refresh instead of queueing a hundred candle requests at start

@@ -105,9 +105,9 @@ function taxStatementModel(trades,wallets,nowIso){
     const fees=-t.fees, fund=t.funding||0;
     bal+=t.net;
     Y.lines.push({date:dU(t.closeTime),symbol:dcoin(t),market:t.market,dir:t.dir,
-      held:t.durationMs?t.durationMs/86400000:0,pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
+      held:(!t.spotRz&&holdOf(t))?holdOf(t)/86400000:0, /* a spot day row and a stand-in entry have no holding period */pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
       wallet:t.wallet&&(t.wallet.label||(t.wallet.address?t.wallet.address.slice(0,10):''))||''});
-    M.n++; if(t.net>0)M.wins++; else if(t.net<0)M.losses++;
+    M.n++; if(!t.spotRz){ if(t.net>0)M.wins++; else if(t.net<0)M.losses++; } // a spot day row is a line of realized money, not a trade to rate
     M.pnl+=t.pnl; M.fees+=fees; M.funding+=fund; M.net+=t.net; M.endBal=bal;
     Y.totals.n++; Y.totals.pnl+=t.pnl; Y.totals.fees+=fees; Y.totals.funding+=fund; Y.totals.net+=t.net; Y.close=bal;
     grand.n++; grand.pnl+=t.pnl; grand.fees+=fees; grand.funding+=fund; grand.net+=t.net;
@@ -144,7 +144,7 @@ function renderTaxPdfDoc(model){
   // ---- statement summary (per year) ----
   const cols={yr:Mg, n:Mg+92, pnl:Mg+205, fees:Mg+285, fund:Mg+365, net:Mg+445, bal:W-Mg};
   const sumHead=(title)=>{ ensure(40); pdf.rect(Mg-4,y-4,W-2*Mg+8,15); pdf.text(Mg,y,title,{size:8,bold:true,color:dark}); y-=16;
-    pdf.text(cols.yr,y,'TAX YEAR',{size:7,color:gray}); pdf.textR(cols.n,y,'TRADES',{size:7,color:gray});
+    pdf.text(cols.yr,y,'TAX YEAR',{size:7,color:gray}); pdf.textR(cols.n,y,'CLOSES',{size:7,color:gray});
     pdf.textR(cols.pnl,y,'REALIZED PNL',{size:7,color:gray}); pdf.textR(cols.fees,y,'FEES',{size:7,color:gray});
     pdf.textR(cols.fund,y,'FUNDING',{size:7,color:gray}); pdf.textR(cols.net,y,'NET',{size:7,color:gray});
     pdf.textR(cols.bal,y,'CLOSING BAL',{size:7,color:gray}); y-=4; pdf.line(Mg,y,W-Mg,y); y-=11; };
@@ -188,7 +188,7 @@ function renderTaxPdfDoc(model){
     const mc={mo:Mg, n:Mg+120, wl:Mg+185, pnl:Mg+265, fees:Mg+330, fund:Mg+395, net:Mg+455, bal:W-Mg};
     for(const m of Y.months){ if(y-10<Mg+26){ page(); monHead(true); }
       pdf.text(mc.mo,y,m.label,{size:7.5});
-      pdf.textR(mc.n,y,m.n+' trades',{size:7.5,color:gray});
+      pdf.textR(mc.n,y,m.n+' rows',{size:7.5,color:gray});
       pdf.textR(mc.wl,y,m.wins+'W/'+m.losses+'L',{size:7.5,color:gray});
       pdf.textR(mc.pnl,y,money(m.pnl),{size:7.5,color:colFor(m.pnl)});
       pdf.textR(mc.fees,y,money(m.fees),{size:7.5,color:colFor(m.fees)});
@@ -342,7 +342,7 @@ $('exportTaxPdf').onclick=()=>{
   let doc; try{ doc=renderTaxPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the PDF ('+e.message+').'); return; }
   const blob=new Blob([doc],{type:'application/pdf'});
   dlBlob(blob,'ledger-statement-'+new Date().toISOString().slice(0,10)+'.pdf');
-  setStatus(`Exported statement PDF: ${model.grand.n} realized trades across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
+  setStatus(`Exported statement PDF: ${model.grand.n} realized rows (perp trades and spot days) across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
 };
 $('exportTax').onclick=()=>{
   // realized (closed) trades across ALL markets/wallets, ignoring view/period filters
@@ -354,17 +354,17 @@ $('exportTax').onclick=()=>{
   // ONE rectangular table — no embedded summary or comment lines, so every spreadsheet / tax tool parses it cleanly.
   const head=['tax_year','close_date','open_utc','close_utc','holding_days','market','symbol','direction','realized_pnl','fees','funding','net','wallet_label','wallet_address'];
   const lines=[head.join(',')]; const byYear={};
-  for(const t of rows){ const yr=new Date(t.closeTime).getUTCFullYear(); const hold=t.durationMs?(t.durationMs/86400000):0;
+  for(const t of rows){ const yr=new Date(t.closeTime).getUTCFullYear(); const hold=(!t.spotRz&&holdOf(t))?(holdOf(t)/86400000):null; // a spot day row and a stand-in entry have no holding period
     const addr=t.wallet&&t.wallet.address?t.wallet.address:''; const lbl=t.wallet&&t.wallet.label?t.wallet.label:'';
-    lines.push([yr,dateU(t.closeTime),isoU(t.openTime),isoU(t.closeTime),hold.toFixed(2),t.market,dcoin(t),t.dir,
+    lines.push([yr,dateU(t.closeTime),hold==null?'':isoU(t.openTime),isoU(t.closeTime),hold==null?'':hold.toFixed(2),t.market,dcoin(t),t.dir,
       t.pnl.toFixed(2),(-t.fees).toFixed(2),(t.funding||0).toFixed(2),t.net.toFixed(2),lbl,addr].map(q).join(','));
     const b=byYear[yr]||(byYear[yr]={n:0,net:0}); b.n++; b.net+=t.net; }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});
   dlBlob(blob,'ledger-tax-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();
-  const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} trade${byYear[y].n===1?'':'s'})`).join(' · ');
+  const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} row${byYear[y].n===1?'':'s'})`).join(' · ');
   const offN=rows.filter(t=>t.offRecord).length; // their rows carry only what the served fills realized
-  setStatus(`Exported ${rows.length} realized trades → ${summary}. Realized PnL only (no unrealized or transferred cost basis)${offN?` · ${offN} trade${offN===1?'':'s'} closed partly in fills Hyperliquid no longer serves, so ${offN===1?'its':'their'} figures are incomplete`:''} — not tax advice.`);
+  setStatus(`Exported ${rows.length} realized rows (perp trades and spot days) → ${summary}. Realized PnL only (no unrealized or transferred cost basis)${offN?` · ${offN} trade${offN===1?'':'s'} closed partly in fills Hyperliquid no longer serves, so ${offN===1?'its':'their'} figures are incomplete`:''} — not tax advice.`);
 };
 /* ---- tax export by country (presets in engine.js: TAX_PRESETS, taxReport) ---- */
 const TAX_UI={preset:null,cur:null,rates:''};

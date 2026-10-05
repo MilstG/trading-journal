@@ -85,9 +85,10 @@ try {
     // both screens, half of it comments (2046 / 1704 raw, 694 / 574 gzipped). Browsers over HTTPS now get
     // these files brotli'd (server.js brOf), ~14% under the gzipped sizes counted here.
     // Merged, with the server's sync fixes (store id, merge on a replaced store, Open existing on a backup) in
-    // app/core.js too: 2090 / 1746 raw, 709 / 588 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2100, 714],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1755, 592],
+    // app/core.js too: 2090 / 1746 raw, 709 / 588 gzipped. With main's accounting audit (closedTrades /
+    // realizedMoney, measured rows) merged over it: 2100 / 1755 raw, 713 / 592 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2110, 717],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1765, 596],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

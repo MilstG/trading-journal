@@ -173,7 +173,7 @@ const PZ_RULE_LABEL={setups:'Only my setups',coins:'Only these markets',until:'N
 const PZ_SETUP_DEFAULTS=['Breakout','Pullback','Trend continuation','Range fade','Reversal','News'];
 function pzPlanCheck(key){
   const e=journal['day:'+key]||{}, R=e.rules||{}, out=[];
-  const opened=allTrades.filter(t=>t.openTime&&!t.spotRz&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
+  const opened=allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan&&t.openTime&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
   const add=(k,ok,detail)=>out.push({k,label:PZ_RULE_LABEL[k],ok,detail}), lab=(k,label,ok,detail)=>out.push({k,label,ok,detail});
   // a setup is within the rule by name, or by naming the same playbook (an alias of a chosen playbook counts)
   if(Array.isArray(R.setups)&&R.setups.length){ const pbs=pbList(), want=new Set(R.setups.map(s=>s.toLowerCase())), wantPb=new Set(R.setups.map(s=>playbookFor(s,pbs)).filter(Boolean).map(p=>p.id)), tagged=opened.filter(t=>journal[t.id]&&journal[t.id].setup);
@@ -182,7 +182,7 @@ function pzPlanCheck(key){
     add('setups',!opened.length?null:off.length?false:un?null:true,R.setups.join(', ')+(off.length?' — '+off.length+' trade'+(off.length===1?'':'s')+' outside them':'')+(un?' · '+un+' not tagged yet':'')); }
   if(/^\d{2}:\d{2}$/.test(R.until||'')){ const [h,m]=R.until.split(':').map(Number), late=opened.filter(t=>{ const p=tzParts(t.openTime); return p.h*60+p.min>h*60+m; });
     add('until',!opened.length?null:!late.length,R.until+(late.length?' — '+late.length+' entr'+(late.length===1?'y':'ies')+' after':'')); }
-  if(R.maxPos>0){ const big=opened.filter(t=>Math.abs((+t.maxSize||0)*(+t.avgEntry||0))>R.maxPos*1.001);
+  if(R.maxPos>0){ const big=opened.filter(t=>notionalOf(t)>R.maxPos*1.001); // measured rows only
     add('maxPos',!opened.length?null:!big.length,usdPlain(R.maxPos)+(big.length?' — '+big.length+' trade'+(big.length===1?'':'s')+' bigger':'')); }
   // stop after N losses in a row (the older two-loss switch is the same rule with N=2)
   const N=R.lossStreak>1?+R.lossStreak:R.stop2?2:0;
@@ -456,7 +456,7 @@ function pzCoachStatus(force){
 }
 function pzCoachFacts(D){
   const g=D.g, ctx=g.ctx, now=Date.now(), from30=pzRangeStart(30,now), k30=dayKey(from30), e=D.dayE||{}, day=D.day;
-  const s30=pzStatsFor(ctx.trades,from30), r=v=>v==null||!isFinite(v)?null:Math.round(v*100)/100;
+  const s30=pzStatsFor(ctx.trades,from30,ctx.money), r=v=>v==null||!isFinite(v)?null:Math.round(v*100)/100;
   const yK=g.days.filter(d=>d.key<D.todayK).slice(-1)[0], ye=yK?(journal['day:'+yK.key]||{}).eod:null;
   const prof=pzProfile(ctx.closed);
   return {
@@ -500,7 +500,7 @@ function pzCoachDetail(D){
   for(const d of D.g.days)for(const s of (d.behavior.slips||[]))slipOf[s.id]=s.f.map(k=>PZ_BEH[k]);
   return {trades:closed.map(t=>{ const j=journal[t.id]||{}, p=tzParts(t.openTime||t.closeTime);
       return {date:dayKey(t.closeTime),opened:String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0'),market:dispMarket(dcoin(t)),side:t.dir,
-        holdMin:t.openTime?Math.round((t.closeTime-t.openTime)/60000):null,size:Math.round(Math.abs((+t.maxSize||0)*(+t.avgEntry||0))),net:Math.round(t.net*100)/100,
+        holdMin:holdOf(t)?Math.round(holdOf(t)/60000):null,size:notionalOf(t)!=null?Math.round(notionalOf(t)):null,net:Math.round(t.net*100)/100,
         slips:slipOf[t.id]||[],rating:j.rating||null,setup:j.setup||null,note:j.notes?String(j.notes).slice(-300):null,
         ...(()=>{ const p=j.pb&&playbookFor(j.setup,pbList()), g=p&&pbGrade(j.pb,p); return g?{playbook:p.name,rulesBroken:g.broke.map(id=>(p.rules.find(x=>x.id===id)||{}).text).filter(Boolean),rulesKept:g.graded.length-g.broke.length,of:g.graded.length,tickedBeforeClose:g.live}:{}; })()}; }),
     reviews:Object.keys(journal).filter(k=>k.startsWith('day:')&&journal[k]&&journal[k].eod&&k.slice(4)>=pzAddDays(D.todayK,-7)).sort().map(k=>({date:k.slice(4),...journal[k].eod}))};

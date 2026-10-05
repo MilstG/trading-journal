@@ -66,13 +66,24 @@ export function makeExtractor(html){
     }
     throw new Error('unbalanced braces: ' + header);
   }
-  function grabFn(name){
+  function grabRaw(name){
     const header = html.indexOf('async function ' + name + '(') >= 0
       ? 'async function ' + name + '('
       : 'function ' + name + '(';
     return grabBlock(header);
   }
-  const evalFn = (name) => (0, eval)('(' + grabFn(name) + ')');
+  // The population helpers (engine.js: measured / notionalOf / holdOf / dayNetMap) are one-liners many
+  // extracted functions lean on; a function that names one carries their definitions along, so a suite's
+  // context has them without listing them (a script context takes a function declared twice).
+  const HELPERS = ['measured', 'notionalOf', 'holdOf', 'dayNetMap'];
+  const helperRe = new RegExp('\\b(' + HELPERS.join('|') + ')\\b');
+  const helpersSrc = () => HELPERS.filter(h => html.indexOf('function ' + h + '(') >= 0).map(grabRaw).join('\n');
+  function grabFn(name){
+    const src = grabRaw(name);
+    return !HELPERS.includes(name) && helperRe.test(src) ? helpersSrc() + '\n' + src : src;
+  }
+  // a single function evaluated as an expression: the helpers it leans on are declared first (indirect eval, global)
+  const evalFn = (name) => { const src = grabRaw(name); if (!HELPERS.includes(name) && helperRe.test(src)) (0, eval)(helpersSrc()); return (0, eval)('(' + src + ')'); };
   const evalClass = (name) => (0, eval)('(' + grabBlock('class ' + name + '{') + ')');
 
   // Bundle several extracted functions into one ES module so they can reference each other
@@ -80,7 +91,8 @@ export function makeExtractor(html){
   // `prelude` carries one-line consts the functions lean on (isWin/_be and friends) —
   // consts aren't brace-extractable, so suites re-declare them, same as the server engine.
   const evalModule = (names, exports, prelude) => {
-    const src = (prelude ? prelude + '\n' : '') + names.map(grabFn).join('\n') +
+    const raw = names.map(grabRaw), need = raw.some(x => helperRe.test(x)) && !names.some(n => HELPERS.includes(n));
+    const src = (prelude ? prelude + '\n' : '') + (need ? helpersSrc() + '\n' : '') + raw.join('\n') + // a module declares each helper once
       '\nexport { ' + (exports || names).join(', ') + ' };';
     return import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
   };

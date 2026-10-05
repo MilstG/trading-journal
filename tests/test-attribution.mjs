@@ -174,20 +174,20 @@ t('break-even scratches count as trades but as neither win nor loss', () => {
 
 console.log('\nWiring');
 t('panel is rendered into the Diagnostic view above the equity section', () => {
-  ok(html.includes('${assetAttribSection(closed)}'), 'section never rendered');
-  const i = html.indexOf('${assetAttribSection(closed)}');
+  ok(html.includes('${assetAttribSection(closed,allv)}'), 'section never rendered'); // trades for the counts, money for the dollars
+  const i = html.indexOf('${assetAttribSection(closed,allv)}');
   ok(i > 0 && i < html.indexOf('<h2>Equity &amp; edge over time</h2>'), 'placed below the equity charts');
-  ok(html.includes('function assetAttribHtml(closed,basis)'));
-  ok(html.includes('function assetAttribSection(closed)'));
+  ok(html.includes('function assetAttribHtml(closed,basis,money)')); // the dollars come from money rows
+  ok(html.includes('function assetAttribSection(closed, money)'));
 });
 t('the basis toggle is wired, persisted, and separate from the miner basis', () => {
-  ok(html.includes('wireAssetAttrib(closed);'), 'toggle never wired');
+  ok(html.includes('wireAssetAttrib(closed,allv);'), 'toggle never wired');
   ok(html.includes('id="attribBasisTog"') && html.includes('id="attribBox"'));
   ok(html.includes('settings.attribBasis'), 'basis must survive a reload');
   ok(!html.includes("settings.anaBasis=btn.dataset.b"), 'must not write the miner basis');
 });
 t('repainting the panel does not discard miner results', () => {
-  const fn = html.slice(html.indexOf('function wireAssetAttrib(closed){'));
+  const fn = html.slice(html.indexOf('function wireAssetAttrib(closed, money){'));
   const body = fn.slice(0, fn.indexOf('\n}'));
   ok(body.includes("$('attribBox')"), 'must repaint only its own box');
   ok(!body.includes('_minerCache'), 'must not invalidate the miner cache');
@@ -199,7 +199,7 @@ t('the denominator ambiguity is explained in the UI, not just in tests', () => {
   ok(html.includes('attribution, not edge quality'), 'the size/frequency confound must be stated');
 });
 t('recommendations quantify the top leak and the profit concentration', () => {
-  ok(html.includes("const A=assetContribution(closed,'usd',5);"), 'recs never consult attribution');
+  ok(html.includes("const A=assetContribution(closed,'usd',5,ext.money||null);"), 'recs never consult attribution');
   // the share is of the net loss of the markets that lost overall, and is said that way (beta: "100% of
   // every dollar you lost" was false when winning markets had losing trades too)
   ok(html.includes('of their combined net loss'), 'the top leak is quantified against the losing markets');

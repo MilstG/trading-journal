@@ -212,7 +212,7 @@ t('coachContext(true) reads every trade but orphans; the view one follows the fi
   const X = { Math, Object, Array, String, JSON, Set, Map, Number, Date, isFinite, console,
     view: 'perp', dexView: 'main', settings: { tz: 'utc', rules: {}, habits: [] }, _jrev: 1, _excM: {}, _be: 50,
     dayKey: dayOf, customRules: () => [], habitsList: () => [], processContext: tr => ({ days: tr.map(x => x.id) }) };
-  X.viewFilter = x => !x.orphan && x.market === X.view && !x.coin.includes(':'); X.tradeRow = x => !x.spotRz;
+  X.viewFilter = x => !x.orphan && x.market === X.view && !x.coin.includes(':'); X.tradeRow = x => !x.spotRz; X.moneyRow = x => !x.spotPos;
   const at = Date.UTC(2026, 5, 1, 9);
   X.allTrades = [{ id: 'p', market: 'perp', coin: 'BTC' }, { id: 's', market: 'spot', coin: 'PURR' }, { id: 'x', market: 'perp', coin: 'xyz:TSLA' }, { id: 'o', market: 'perp', coin: 'ETH', orphan: true, isOpen: true }]
     .map(x => ({ openTime: at, closeTime: at + H, net: 1, ...x }));

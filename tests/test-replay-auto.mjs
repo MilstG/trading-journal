@@ -90,7 +90,7 @@ t('BTC + HYPE daily candles via the shared cache; avg-notional approximation sta
   ok(html.includes("for(const coin of ['BTC','HYPE'])"));
   ok(html.includes("excKey(coin,'1d')"));
   ok(html.includes('AVERAGE deployed notional (a stated approximation'));
-  ok(html.includes('renderBenchmark(closed);'));
+  ok(html.includes('renderBenchmark(closed,allv);')); // the realized curve it draws is money
 });
 t('benchmark never breaks the diagnostic', () =>
   ok(html.includes('/* benchmark is a bonus — never break the diagnostic over it */')));

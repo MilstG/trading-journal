@@ -653,7 +653,7 @@ function socPostHtml(D, id){
 }
 
 // ---- the composer ----
-function socJournalTrades(){ return allTrades.filter(t=>tradeRow(t)&&t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
+function socJournalTrades(){ return allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan&&t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
 function socComposeHtml(D){
   const back=`<a class="pz-back" href="#social" data-soc-sub="feed">${pzI('back',20)}Feed</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
@@ -716,8 +716,8 @@ async function socPostSend(){
   const text=($('socPostText')||{value:''}).value.trim(), body={kind:C.kind,text,media:C.media.map(m=>m.id)};
   if(C.kind==='trade'&&pzS.demo){ pzNote('Sample trades can’t be posted. Connect your wallet to share your own.','err'); return; }
   if(C.kind==='trade'){ const t=C.tid&&allTrades.find(x=>x.id===C.tid); if(!t){ pzNote('Pick the trade first.','err'); return; }
-    const p=typeof nfPlan==='function'?nfPlan(journal[t.id]):null, long=t.dir!=='Short', ok=(v,s)=>v>0&&(v-t.avgEntry)*(long?1:-1)*s>0;
-    body.trade={coin:t.coin,label:dispMarket(dcoin(t)),side:long?'long':'short',entry:t.avgEntry,stop:p&&ok(p.stop,-1)?p.stop:null,target:p&&ok(p.target,1)?p.target:null,
+    const p=typeof nfPlan==='function'?nfPlan(journal[t.id]):null, long=t.dir!=='Short', en=measured(t)?t.avgEntry:null, ok=(v,s)=>en>0&&v>0&&(v-en)*(long?1:-1)*s>0; // a stand-in entry is not posted as one
+    body.trade={coin:t.coin,label:dispMarket(dcoin(t)),side:long?'long':'short',entry:en,stop:p&&ok(p.stop,-1)?p.stop:null,target:p&&ok(p.target,1)?p.target:null,
       setup:(journal[t.id]||{}).setup||'',status:t.isOpen?'open':'closed',openedAt:t.openTime,closedAt:t.isOpen?null:t.closeTime,exit:t.isOpen?null:t.avgExit,
       usd:SOC.share&&SOC.share.usd&&!t.isOpen?t.net:null}; }
   else if(C.kind==='plan'){ const v=id=>parseFloat(($(id)||{value:''}).value);

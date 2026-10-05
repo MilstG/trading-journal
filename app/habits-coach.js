@@ -25,9 +25,11 @@ function nfRules(){ const r=settings.rules||{}; return {
   noAddToLosers:!!r.noAddToLosers, dailyLossLimit:+r.dailyLossLimit||0 }; }
 // Score personal rules against the reconstructed closed trades. Each finding carries the dollar
 // cost of the violating trades so a broken rule has a price, not just a count.
-function evaluateRules(closed, rules){
+// money: the money rows for the daily loss limit (a day's P&L; defaults to the trades). Entry-timing
+// rules (per day, cooldown) read measured rows only: a stand-in entry is not an entry.
+function evaluateRules(closed, rules, money){
   const R=rules||nfRules(); const out=[];
-  const byClose=[...closed].filter(t=>t.closeTime).sort((a,b)=>a.openTime-b.openTime);
+  const byClose=[...closed].filter(t=>t.closeTime&&measured(t)).sort((a,b)=>a.openTime-b.openTime);
   if(R.maxPerDay>0){
     const byDay={}; for(const t of byClose){ const k=nfDayKey(t.openTime); (byDay[k]=byDay[k]||[]).push(t); }
     const viol=[]; for(const k in byDay){ const arr=byDay[k].sort((a,b)=>a.openTime-b.openTime);
@@ -53,7 +55,7 @@ function evaluateRules(closed, rules){
     const viol=closed.filter(t=>addedToLoser(t));
     out.push({rule:'No adding to losers', n:viol.length, cost:viol.reduce((s,t)=>s+t.net,0), ids:viol.map(t=>t.id)}); }
   if(R.dailyLossLimit>0){
-    const byDay={}; for(const t of byClose){ const k=nfDayKey(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }
+    const byDay={}; for(const t of (money||closed)){ if(!t.closeTime)continue; const k=nfDayKey(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }
     let days=0, cost=0; const ids=[]; for(const k in byDay){ const arr=byDay[k].sort((a,b)=>a.closeTime-b.closeTime);
       let cum=0, tripped=false; for(const t of arr){ cum+=t.net; if(tripped){ cost+=t.net; ids.push(t.id); } if(cum<=-R.dailyLossLimit&&!tripped)tripped=true; }
       if(tripped)days++; }
@@ -99,7 +101,7 @@ function renderTripwire(){
   const lim=committed||R.dailyLossLimit;
   if(!(lim>0)||!allTrades.length){ el.classList.add('hide'); return; }
   const src=committed?'your committed max loss for today':'your daily limit';
-  const d=dailyLossToday(allTrades);
+  const d=dailyLossToday(allTrades.filter(moneyRow)); d.n=closedTrades(t=>nfDayKey(t.closeTime)===nfDayKey(Date.now())).length; // the net is money (spot by the day it was realized), the count is of completed trades
   // Open losses count toward the limit as an INTRADAY delta: open uPnL now minus open
   // uPnL at the first sight of this tz-day. Counting lifetime unrealized-since-entry
   // against a daily limit kept the banner permanently lit for anyone holding an old
@@ -136,7 +138,7 @@ function nfPlan(j){ const p=j&&j.plan; if(!p)return null;
 function planAdherence(closed, journalObj, excM){
   const items=[];
   for(const t of closed){ const j=journalObj[t.id]; const p0=nfPlan(j); if(!p0)continue;
-    if(!(t.avgExit>0)||!(t.avgEntry>0))continue;
+    if(!(t.avgExit>0)||!(t.avgEntry>0)||!measured(t))continue; // a stand-in entry can't be held to a plan
     const p=p0.entry?p0:{...p0,entry:t.avgEntry};
     const short=t.dir==='Short';
     const riskPer=Math.abs(p.entry-p.stop); if(!(riskPer>0))continue;
@@ -172,30 +174,35 @@ function planAdherence(closed, journalObj, excM){
 }
 
 /* ======================= 6 · WALLET / SETUP LEADERBOARD ======================= */
-function nfGroupStats(trades){
-  const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
-  const n=closed.length; if(!n)return null;
-  const net=closed.reduce((s,t)=>s+t.net,0);
+// trades: the group's trade rows (counts, win rate, expectancy); money: its money rows (net, drawdown,
+// Sharpe — spot by the day it was realized). Without a money list the trades carry the sums (a setup
+// group is journaled trades only).
+function nfGroupStats(trades, money){
+  const closed=trades.filter(t=>!t.isOpen&&t.closeTime), mon=money?money.filter(t=>t.closeTime):closed;
+  const n=closed.length; if(!n&&!mon.length)return null;
+  const net=mon.reduce((s,t)=>s+t.net,0), tnet=closed.reduce((s,t)=>s+t.net,0);
   const wins=closed.filter(t=>isWin(t.net)).length, losses=closed.filter(t=>isLoss(t.net)).length;
   const winRate=(wins+losses)?wins/(wins+losses):null;
-  const expectancy=net/n;
-  const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
+  const expectancy=n?tnet/n:null;
+  const chron=[...mon].sort((a,b)=>a.closeTime-b.closeTime);
   let cum=0,peak=0,mdd=0; for(const t of chron){ cum+=t.net; if(cum>peak)peak=cum; const dd=cum-peak; if(dd<mdd)mdd=dd; }
-  let sharpe=null; try{ const ss=sharpeStats(dailySeriesCalendar(closed)); sharpe=ss?ss.sr:null; }catch(e){} // .sr — sharpeStats has no .sharpe key, so this column was always a dash
+  let sharpe=null; try{ const ss=sharpeStats(dailySeriesCalendar(mon)); sharpe=ss?ss.sr:null; }catch(e){} // .sr — sharpeStats has no .sharpe key, so this column was always a dash
   return {n, net, winRate, expectancy, maxDD:mdd, sharpe};
 }
-function leaderboard(closed){
-  const byWallet={}, bySetup={};
+function leaderboard(closed, money){
+  const byWallet={}, bySetup={}, moneyWallet={};
+  const wkOf=t=>(t.wallet&&(t.wallet.label||t.wallet.address))||'\u2014';
   for(const t of closed){
-    const wk=(t.wallet&&(t.wallet.label||t.wallet.address))||'\u2014'; (byWallet[wk]=byWallet[wk]||[]).push(t);
+    const wk=wkOf(t); (byWallet[wk]=byWallet[wk]||[]).push(t);
     const j=journal[t.id]; const su=j&&j.setup&&j.setup.trim(); if(su){ (bySetup[su]=bySetup[su]||[]).push(t); }
   }
-  const pack=obj=>Object.keys(obj).map(k=>({label:k, ...nfGroupStats(obj[k])})).filter(x=>x&&x.n).sort((a,b)=>b.net-a.net);
-  return {wallets:pack(byWallet), setups:pack(bySetup)};
+  if(money)for(const t of money){ const wk=wkOf(t); (moneyWallet[wk]=moneyWallet[wk]||[]).push(t); if(!byWallet[wk])byWallet[wk]=[]; }
+  const pack=(obj,mon)=>Object.keys(obj).map(k=>({label:k, ...nfGroupStats(obj[k],mon?(mon[k]||[]):null)})).filter(x=>x&&(x.n||x.net)).sort((a,b)=>b.net-a.net);
+  return {wallets:pack(byWallet,money?moneyWallet:null), setups:pack(bySetup,null)};
 }
 
 /* ======================= 7 · FUNDING CARRY ======================= */
-function fundingCarry(closed){
+function fundingCarry(closed, money){
   let paid=0, recv=0, total=0, flipped=0, dominant=0;
   const byCoin={};
   for(const t of closed){ const f=t.funding||0; total+=f; if(f<0)paid+=-f; else recv+=f;
@@ -205,16 +212,16 @@ function fundingCarry(closed){
     if(Math.abs(f)>Math.abs(gross) && Math.abs(f)>0) dominant++; // funding bigger than the trade result itself
   }
   const coins=Object.values(byCoin).sort((a,b)=>Math.abs(b.funding)-Math.abs(a.funding));
-  const netPnl=closed.reduce((s,t)=>s+t.net,0);
+  const netPnl=(money||closed).reduce((s,t)=>s+t.net,0); // net P&L is money (spot by the day it was realized); funding lives on perp trades either way
   return {total, paid, recv, flipped, dominant, coins, shareOfNet:netPnl!==0?total/netPnl:null, n:closed.length};
 }
 
 /* ======================= diagnostic cards (2,4,5,7) ======================= */
 // Concatenated into the Diagnostic view; wired by nfWireDiag.
-function nfDiagExtra(closed){
+function nfDiagExtra(closed, money){
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   // 7 funding carry
-  const fc=fundingCarry(closed);
+  const fc=fundingCarry(closed, money);
   const fcRows=fc.coins.slice(0,6).map(c=>mrow(esc(c.coin),(c.funding>=0?'<span class="pos-t">+':'<span class="neg-t">')+fmtUsd(c.funding)+'</span>','Net funding on this coin over the period.')).join('');
   const fcHtml=`<div class="diag-card"><h3 data-tip="Funding is the quiet cost/credit of holding perps. This isolates it: what you paid, what flipped a gross winner into a loss, and where it concentrates.">Funding carry</h3>
     ${mrow('Net funding',(fc.total>=0?'<span class="pos-t">+':'<span class="neg-t">')+fmtUsd(fc.total)+'</span>','Total funding over the period (+ received / \u2212 paid). Already inside every net figure.')}
@@ -247,7 +254,7 @@ function nfDiagExtra(closed){
     ${pa.heldThroughN&&coachOn()?mrow('Held through the stop','<span class="neg-t">'+pa.heldThroughN+'</span>','Price traded past your planned stop (from candle excursions) and you stayed in anyway — even if the exit later recovered. Counted as a broken stop above. Run Price excursions to measure more trades.'):''}
     ${(pa.liveN||pa.hindsightN)&&coachOn()?mrow('Written live vs after',pa.liveN+' live ('+nfPct(pa.liveHonoredRate,0)+' honored) · '+pa.hindsightN+' after close ('+nfPct(pa.hindsightHonoredRate,0)+')','A plan saved while the position was still open is a commitment; one written after the close is hindsight, and usually flatters you. Plans saved before this was tracked are in neither bucket.'):''}</div>`; }
   // 4 rules
-  const R=nfRules(); const rc=evaluateRules(closed,R);
+  const R=nfRules(); const rc=evaluateRules(closed,R,money);
   const ruleInputs=`<div class="calc-row" style="flex-wrap:wrap;gap:10px;margin-bottom:8px">
      <label>Max trades/day <input type="number" id="nfRuleMax" value="${R.maxPerDay||''}" min="0" step="1" style="width:56px" placeholder="off"></label>
      <label>Cooldown after loss <input type="number" id="nfRuleCool" value="${R.cooldownMin||''}" min="0" step="1" style="width:56px" placeholder="min">min</label>
@@ -319,8 +326,8 @@ function nfWireSizer(){
 }
 
 /* ======================= 6 · leaderboard render (Review) ======================= */
-function nfLeaderboardHtml(closed){
-  const lb=leaderboard(closed);
+function nfLeaderboardHtml(closed, money){
+  const lb=leaderboard(closed, money);
   const multi=settings.wallets.length>1;
   const cell=(x)=>`<tr><td class="l">${esc(x.label)}</td><td style="text-align:right">${x.n}</td>
     <td style="text-align:right" class="${cls(x.net)}">${fmtUsd(x.net)}</td>
@@ -406,7 +413,7 @@ let _lrpMemo={key:null,preds:null};
 function liveRulePreds(){
   let last=0; for(const t of allTrades){ const x=t.closeTime||t.openTime||0; if(x>last)last=x; }
   const key=[allTrades.length,last,settings.tz,JSON.stringify(customRules()),_jrev].join('|');
-  if(_lrpMemo.key!==key)_lrpMemo={key,preds:customRulePreds(allTrades,customRules())};
+  if(_lrpMemo.key!==key)_lrpMemo={key,preds:customRulePreds(allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan),customRules())}; // rules read trades, not spot day rows
   return _lrpMemo.preds;
 }
 // Open positions breaking a live rule right now.
@@ -470,7 +477,7 @@ function processDays(closed, journalObj, opts){
   for(const t of closed){ if(t.isOpen||!t.closeTime)continue; const k=dayOf(t.closeTime); (by[k]=by[k]||[]).push(t); }
   // each day's entries across all trades (a spot holding carried on after a partial sale is not one)
   const all=opts.trades||closed, firstIn={}, lastIn={};
-  for(const t of all){ if(!t.openTime||t.carried)continue; const k=dayOf(t.openTime);
+  for(const t of all){ if(!t.openTime||!measured(t))continue; const k=dayOf(t.openTime); // a stand-in entry is not an entry
     if(!(firstIn[k]<=t.openTime))firstIn[k]=t.openTime; if(!(lastIn[k]>=t.openTime))lastIn[k]=t.openTime; }
   let rz=null; // realized results by day, built on the first day that has a loss limit
   const out=[];
@@ -503,7 +510,7 @@ function processDays(closed, journalObj, opts){
     const lim=(de&&de.maxLoss>0&&inTime(setAt('limitAt')))?de.maxLoss:(opts.dllLimit||0);
     let breached=false;
     if(lim>0){ let cum=0, breachAt=null;
-      if(!rz)rz=realizedByDay(all,dayOf);
+      if(!rz)rz=realizedByDay(opts.rzRows||all,dayOf); // every position's fills, a balance that later left included
       for(const [tm,v] of (rz[k]||[])){ cum+=v; if(cum<=-lim){ breachAt=tm; break; } }
       breached=breachAt!=null;
       parts.limit=(breached&&lastIn[k]>breachAt)?0:1; }
@@ -512,7 +519,7 @@ function processDays(closed, journalObj, opts){
     if(opts.pbChecked){ const pc=arr.filter(t=>opts.pbChecked.has(t.id)); if(pc.length)parts.playbook=1-pc.filter(t=>opts.pbBroke&&opts.pbBroke.has(t.id)).length/pc.length; }
     let sw=0, sv=0; for(const p in parts){ sw+=PROCESS_W[p]; sv+=PROCESS_W[p]*parts[p]; }
     const checkin=!!(de&&(de.sleep||de.stress||de.focus)), ckAt=checkin?setAt('checkinAt'):null;
-    out.push({key:k, score:Math.round(100*sv/sw), parts, n, net:arr.reduce((s,t)=>s+t.net,0), breached, first,
+    out.push({key:k, score:Math.round(100*sv/sw), parts, n, net:opts.dayNet?(opts.dayNet[k]||0):arr.reduce((s,t)=>s+t.net,0), breached, first, // the day's net is money (dayNetMap) when given
       credit:{checkin:checkin&&(ckAt==='legacy'||(ckAt!=null&&dayOf(ckAt)<=k))}});
   }
   return out;
@@ -687,6 +694,7 @@ function habitLink(days, byDay, opts){
     const flags={}; for(const f of RV_BLIND)flags[f]=0; for(const s2 of blind)for(const f of s2.f)if(f in flags)flags[f]++;
     let usd=0,pct=0,pn=0,r=0,rn=0,w=0,l=0;
     for(const t of tr){ usd+=+t.net||0; const p=pctOf(t); if(fin(p)){ pct+=p; pn++; } const x=rOf(t); if(fin(x)){ r+=x; rn++; } if(t.net>0)w++; else if(t.net<0)l++; }
+    if(d.net!=null)usd=d.net; // what the day made is money (the day's net), not the sum of the trades that closed
     const e=entryOf(d.key)||{}, rt=RT(d);
     pts.push({key:d.key,routine:rt.score,rate:rt.rate,discipline:d.score!=null?d.score:null,n:tr.length,wins:w,losses:l,
       usd,pct:pn?pct:null,r:rn&&rn===tr.length?r:null,flags,parts:d.parts||{},checkin:!!e.checkin,review:!!e.review}); }
@@ -750,10 +758,12 @@ function hlLinkWords(c){
 // Everything the process score needs from the rule engine, for one trade set.
 // A rule from findings only counts trades entered after it was made, and when those are the
 // only rules, the "rules kept" part starts on the first rule's day — history isn't regraded.
-function processContext(trades, rulePreds){
+// money: the money rows behind the days' net and the loss limit; positions: every trade row (a balance
+// that left included) for the realized-by-fill series
+function processContext(trades, rulePreds, money, positions){
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
   const viol=new Set();
-  for(const r of evaluateRules(closed,nfRules())) if(r.kind!=='dll') for(const id of (r.ids||[])) viol.add(id);
+  for(const r of evaluateRules(closed,nfRules(),money)) if(r.kind!=='dll') for(const id of (r.ids||[])) viol.add(id);
   const P=rulePreds||customRulePreds(trades,customRules());
   for(const x of P) if(x.pred) for(const t of closed) if(t.openTime>=(x.rule.createdAt||0)&&x.pred(t)) viol.add(t.id);
   // with no rules set, "no rule broken" is vacuously true — it would hand every day free points
@@ -769,16 +779,15 @@ function processContext(trades, rulePreds){
       planWindows.push({part:c.spec.part,from:dayKey(c.from),to:dayKey(c.to)}); }
   const pbG=typeof pbTradeGrades==='function'?pbTradeGrades(closed,journal,pbList()):{checked:new Set(),broke:new Set()};
   return {closed, days:processDays(closed,journal,{trades,violIds:viol,dayOf:dayKey,excM:_excM,dllLimit:R.dailyLossLimit,
-    rulesActive,rulesFrom,planFrom:{plan:since('plan'),planned:since('planned')},planWindows,pbChecked:pbG.checked,pbBroke:pbG.broke})};
+    dayNet:money?dayNetMap(money,dayKey):null,rzRows:positions||null,rulesActive,rulesFrom,planFrom:{plan:since('plan'),planned:since('planned')},planWindows,pbChecked:pbG.checked,pbBroke:pbG.broke})};
 }
 
 // ---- Review UI: journal inbox, process ----
 let _inboxSkip=new Set();
 function inboxSectionHtml(){
   if(!coachOn())return '';
-  const tr=allTrades.filter(t=>closedTrade(t)&&viewFilter(t)); // trades only: a spot day row isn't in the table and can't be journaled
-  const inbox=journalInbox(tr,journal).filter(t=>!_inboxSkip.has(t.id));
-  const st=journalStreak(tr,journal,dayKey,dayKey(Date.now()));
+  const inbox=journalInbox(allTrades.filter(t=>viewFilter(t)&&tradeRow(t)&&!t.movedOut),journal).filter(t=>!_inboxSkip.has(t.id)); // trades to journal: not spot day rows, not a balance that left
+  const st=journalStreak(allTrades.filter(t=>viewFilter(t)&&tradeRow(t)&&!t.movedOut),journal,dayKey,dayKey(Date.now()));
   const streakTxt=`<span class="sr-note" data-tip="Consecutive trading days on which every closed trade has a setup, tag, rating, note or mistake flag. Today only counts once it's complete — it never breaks the streak while you're still trading.">streak ${st.current} day${st.current===1?'':'s'} · best ${st.best}</span>`;
   if(!inbox.length) return `<div class="diag-section"><h2>Journal inbox <span style="font-size:11px;color:var(--faint);font-weight:400">last 30 days</span> ${streakTxt}</h2>
     <p class="lead">Nothing waiting — every trade from the last 30 days carries at least a setup, tag, rating, note or mistake flag.</p></div>`;
@@ -962,7 +971,7 @@ async function adoptHabit(spec){
   if(same){ await Store.set(S_KEY,settings); return same; }
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ // same contract as pins and rules: thresholds fixed at adoption, never re-derived
-    try{ const chron=allTrades.filter(t=>closedTrade(t)&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime); // the miner reads trades, as on the Diagnostic
+    try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
       params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const h={id:'h'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tpl:spec.tpl||null,kind:spec.kind,
     part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,
@@ -1013,7 +1022,7 @@ function habitSummary(res){ const kept=res.filter(r=>r.kept).length; return {kep
 function buildFindings(closed, s, ext){
   ext=ext||{}; const N=closed.length, F=[];
   if(!N)return F;
-  const B=ext.sig||behaviorSignals(closed,s);
+  const B=ext.sig||behaviorSignals(closed,s,ext.money||null);
   const add=f=>{ F.push(Object.assign({tone:'info',conf:'early',impact:0,n:N},f)); };
   const pc=x=>Math.round(x*100)+'%';
   // edge proof
@@ -1108,7 +1117,7 @@ function buildFindings(closed, s, ext){
       body:`${pc(B.conc)} of your result comes from one market.`,
       action:'Make sure it’s a repeatable edge before sizing up there — not one hot run.',
       evidence:`${dispMarket(B.topMkt.key)}: ${fmtUsd(B.topMkt.net)} over ${B.topMkt.n} trades`,conf:'early',impact:B.topMkt.net*0.2});
-  (function(){ const A=assetContribution(closed,'usd',5);
+  (function(){ const A=assetContribution(closed,'usd',5,ext.money||null);
     if(A.worst.length&&A.neg>0){ const w=A.worst[0];
       // w.share is its part of the net losses of the markets that lost overall, not of every losing trade's
       // dollars (winning markets have losing trades too), so it's said that way: "100% of your losses" was false
@@ -1197,21 +1206,28 @@ function wireFindingCards(root, findings){
 // or cherry-pick clean dexes, and matches what the server verifies from the wallet. The default
 // follows the view, for the dashboard's own coach card, findings and habits. Memoized separately.
 let _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};
-// the context's trades and the key its memo is checked against (coachContext, and gameWarm in progress.js)
+// the context's rows and the key its memo is checked against (coachContext, and gameWarm in progress.js).
+// Two populations of the same rows (engine.js: tradeRow / moneyRow): trades (perp trades, spot
+// positions that closed by selling; never spot day rows or balances that left) carry counts,
+// win rates and behaviour; money (perp trades, spot day rows) carries every sum of P&L and fees
 function _coachKey(all){
-  const trades=(all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter)).filter(t=>tradeRow(t)&&!t.movedOut); // trades, not spot day rows or balances that left
-  let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; net+=t.net; } }
-  const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
+  const base=all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter);
+  const trades=base.filter(t=>tradeRow(t)&&!t.movedOut), positions=base.filter(tradeRow); // positions: every trade row, a balance that left included (realized by fill)
+  const money=base.filter(t=>moneyRow(t)&&t.closeTime); // realized money, the realized part of an open perp trade included (realizedMoney)
+  let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; } }
+  for(const t of money){ net+=t.net; if(t.closeTime>lastClose)lastClose=t.closeTime; }
+  const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,money.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
     JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),JSON.stringify(settings.playbooks||[]),_be].join('|');
-  return {trades,key};
+  return {trades,money,positions,key};
 }
 function coachContext(all){
-  const {trades,key}=_coachKey(all);
+  const {trades,money,positions,key}=_coachKey(all);
   const memo=all?_coachMemoAll:_coachMemo;
   if(memo.key===key)return memo.ctx;
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime);
   let rulePreds=[]; try{ rulePreds=customRules().length?customRulePreds(trades,customRules()):[]; }catch(e){}
-  const pc=processContext(trades,rulePreds);
+  const pc=processContext(trades,rulePreds,money,positions);
+  const dayNet=dayNetMap(money,dayKey);
   const byDay={}; for(const t of closed){ const k=dayKey(t.closeTime); (byDay[k]=byDay[k]||[]).push(t); }
   const preds={};
   const avoid=habitsList().filter(h=>h.kind==='avoid'&&h.pid);
@@ -1219,11 +1235,12 @@ function coachContext(all){
     avoid.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }
   let findings=[];
   if(closed.length>=5){ try{
-    const s=computeStatsMemo(closed,trades); // the dashboard just ran it on the same trades (period "all")
+    const s=computeStatsMemo(closed,money); // trade stats from closed trades, sums from money rows (as the dashboard's period "all")
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
-    findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
+    const chronM=[...money].sort((a,b)=>a.closeTime-b.closeTime), netsM=chronM.map(t=>t.net); // the realized curve is money: drawdown and time underwater read it
+    findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s,money),money,cdd:currentDD(netsM),uw:underwaterStats(chronM),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
-  const ctx={trades,closed,days:pc.days,byDay,preds,findings,rulePreds};
+  const ctx={trades,closed,money,positions,dayNet,days:pc.days,byDay,preds,findings,rulePreds};
   memo.key=key; memo.ctx=ctx; return ctx;
 }
 function habitProgress(h, ctx, fromMs){
@@ -1427,6 +1444,7 @@ function coachLetterFacts(){
   const wkKey=isoWeekKey(from+3.5*86400000);
   const inWk=ctx.closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
   const prev=ctx.closed.filter(t=>t.closeTime>=from-7*86400000&&t.closeTime<from);
+  const M=ctx.money||ctx.closed, inWkM=M.filter(t=>t.closeTime>=from&&t.closeTime<to), prevM=M.filter(t=>t.closeTime>=from-7*86400000&&t.closeTime<from); // the net is money, as the weekly review's
   const sum=a=>+a.reduce((x,t)=>x+t.net,0).toFixed(2);
   const dec=inWk.filter(t=>isWin(t.net)||isLoss(t.net));
   const fromK=dayKey(from), toK=dayKey(to);
@@ -1440,8 +1458,8 @@ function coachLetterFacts(){
   const we=journal[wkKey]||{}; const fh0=we.focus&&habitById(we.focus), fh=fh0&&!fh0.retired?fh0:null;
   const lessons=Object.keys(journal).filter(k=>k.startsWith('week:')&&journal[k]&&journal[k].lesson).sort().reverse().slice(0,2).map(k=>journal[k].lesson);
   return {
-    week:wkKey.slice(5), trades:inWk.length, net:sum(inWk), winRate:dec.length?+(dec.filter(t=>isWin(t.net)).length/dec.length).toFixed(2):null,
-    prevWeek:{trades:prev.length,net:sum(prev)},
+    week:wkKey.slice(5), trades:inWk.length, net:sum(inWkM), winRate:dec.length?+(dec.filter(t=>isWin(t.net)).length/dec.length).toFixed(2):null,
+    prevWeek:{trades:prev.length,net:sum(prevM)},
     process:{thisWeek:wkDays.length?Math.round(_avg(wkDays.map(d=>d.score))):null,last20:tr.avg!=null?Math.round(tr.avg):null,prev20:tr.prevAvg!=null?Math.round(tr.prevAvg):null,
       goodDays:wkDays.filter(d=>d.score>=70).length,days:wkDays.length,weakestPart:weakest},
     quadrants60:{goodGreen:q.earned.n,goodRed:q.goodLoss.n,poorGreen:q.lucky.n,poorRed:q.deserved.n},
