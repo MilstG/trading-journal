@@ -1643,7 +1643,9 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 (function(){ try{ if(document.body.classList.contains('light'))return; var th=localStorage.getItem('ledger_theme'); if(th===null){ var m=document.querySelector('meta[name="default-theme"]'); th=m?m.getAttribute('content'):'ts9'; } if(th==='ts9'||th==='bb')document.body.classList.add(th); }catch(e){} })();
 </script>
 <script>/* Installable: when served, the journal's manifest and its PNG home-screen icon (the inline
-   data: ones above are for a copy opened from disk, which can't be installed anyway). */
+   data: ones above are for a copy opened from disk, which can't be installed anyway). The server already
+   writes these into the markup it serves (iPhone reads them from the HTML, not from this script); this
+   covers a copy served some other way. */
 (function(){ try{ if(!/^https?:$/.test(location.protocol))return;
   var l=document.querySelector('link[rel="manifest"]'); if(l)l.setAttribute('href','/manifest.webmanifest');
   var ic=document.querySelector('link[rel="apple-touch-icon"]'); if(ic)ic.setAttribute('href','/icons/ledger-180.png');

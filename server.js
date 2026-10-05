@@ -1034,7 +1034,14 @@ function createApp(opts) {
       const buf = Buffer.from(raw.replace(/<script src="app\/((?:features\/)?[a-z0-9.-]+\.js)"(?: data-only="(journal|keel)")?><\/script>\n?/g, (m, n, only) => { const f = files[i++];
         return only && only !== surface ? '' : '<script src="app/' + n + '?v=' + f.hash + '"></script>' + (m.endsWith('\n') ? '\n' : ''); })
         .replace(/url\(app\/fonts\/([a-z0-9-]+\.woff2)\)/g, (m, n) => fh.get(n) ? 'url(app/fonts/' + n + '?v=' + fh.get(n) + ')' : m)
-        .replace('<head>', '<head>\n<meta name="app-version" content="' + ver + '">' + (defaultTheme ? '\n<meta name="default-theme" content="' + defaultTheme + '">' : '')));
+        .replace('<head>', '<head>\n<meta name="app-version" content="' + ver + '">' + (defaultTheme ? '\n<meta name="default-theme" content="' + defaultTheme + '">' : ''))
+        // Install metadata is written into the markup here, per screen: iPhone's "Add to Home Screen" reads the
+        // name, icon and manifest from the HTML as served and ignores the page's own later changes to them
+        // (the inline data: ones in ledger.html only serve a copy opened from disk, which can't be installed).
+        .replace(/<link rel="manifest" href="[^"]*">/, '<link rel="manifest" href="' + (surface === 'keel' ? '/pulse.webmanifest' : '/manifest.webmanifest') + '">')
+        .replace(/<link rel="apple-touch-icon" href="[^"]*">/, '<link rel="apple-touch-icon" href="/icons/' + (surface === 'keel' ? 'pulse' : 'ledger') + '-180.png">')
+        .replace(/<title>[^<]*<\/title>/, surface === 'keel' ? '<title>Daruma — Ledger</title>' : '$&')
+        .replace(/<meta name="apple-mobile-web-app-title" content="[^"]*">/, surface === 'keel' ? '<meta name="apple-mobile-web-app-title" content="Daruma">' : '$&'));
       _appHtml[surface] = { mtime: st.mtimeMs, size: st.size, raw, rawHash, sig, ver, buf, gz: zlib.gzipSync(buf, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20) + '"' };
     }
     return _appHtml[surface];

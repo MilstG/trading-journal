@@ -181,6 +181,15 @@ await t('/daruma (and the old /keel and /pulse) serve the app, their trailing-sl
   const b = await listen(app);
   try {
     for (const pth of ['/daruma', '/keel', '/pulse']) { const r = await fetch(b + pth); eq(r.status, 200); ok((await r.text()).includes('id="pzView"')); }
+    // iPhone's Add to Home Screen reads these from the markup as served, never from the page's own scripts
+    const head = async pth => { const h = await (await fetch(b + pth)).text(); return h.slice(0, h.indexOf('<style')); };
+    const dh = await head('/daruma');
+    ok(dh.includes('<title>Daruma — Ledger</title>') && dh.includes('<meta name="apple-mobile-web-app-title" content="Daruma">'), 'Daruma installs under its own name');
+    ok(dh.includes('<link rel="apple-touch-icon" href="/icons/pulse-180.png">') && dh.includes('<link rel="manifest" href="/pulse.webmanifest">'), 'with its PNG icon and manifest');
+    ok(!dh.includes('href="data:'), 'no data: icon or manifest left in the served head');
+    const jh = await head('/');
+    ok(jh.includes('<title>Ledger — Hyperliquid Trade Journal</title>') && jh.includes('<meta name="apple-mobile-web-app-title" content="Ledger">'), 'the journal keeps its name');
+    ok(jh.includes('<link rel="apple-touch-icon" href="/icons/ledger-180.png">') && jh.includes('<link rel="manifest" href="/manifest.webmanifest">'), 'with its PNG icon and manifest');
     for (const pth of ['/daruma/', '/keel/', '/pulse/']) { const rd = await fetch(b + pth + '?x=1', { redirect: 'manual' }); eq(rd.status, 302); eq(rd.headers.get('location'), '/daruma?x=1'); }
     const m = await (await fetch(b + '/pulse.webmanifest')).json();
     eq(m.start_url, '/daruma'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq(m.short_name, 'Daruma'); eq(m.icons.map(i => i.src + ' ' + i.purpose), ['/icons/pulse-192.png any', '/icons/pulse-512.png any', '/icons/pulse-maskable-512.png maskable']);
