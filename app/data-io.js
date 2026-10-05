@@ -36,6 +36,7 @@ async function removeWallet(i){
   allTrades=allTrades.filter(t=>!t.wallet||t.wallet.address!==w.address);
   openPositions=openPositions.filter(p=>!p.wallet||p.wallet.address!==w.address);
   spotHoldings=spotHoldings.filter(p=>!p.wallet||p.wallet.address!==w.address);
+  spotBorrows=spotBorrows.filter(b=>!b.wallet||b.wallet.address!==w.address);
   hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
   // per-wallet equity isn't tracked, so the aggregates are unknowable until the next load —
   // null beats keeping the removed wallet's money in the capital card's equity
@@ -97,7 +98,7 @@ async function srvIndexFills(a, fc){
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
 let _viewAt=0; // when what's on screen was loaded from the exchange (Daruma's offline line says so)
-function saveLastView(){ _viewAt=Date.now(); try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:_viewAt,positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
+function saveLastView(){ _viewAt=Date.now(); try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:_viewAt,positions:openPositions,accountValue,spotHoldings,spotBorrows,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
 // Opening the app shows your saved data at once — trades rebuilt from the cached fills and funding,
 // positions as they were last time — and the refresh runs quietly behind it.
 async function bootFromCache(){
@@ -117,7 +118,7 @@ async function bootFromCache(){
       return r.perp.concat(r.spot); }));
     if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
     allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm; migrateSpotJournalIds(allTrades);
-    if(view&&view.v===1&&view.key===walletsSig()){ _viewAt=view.at||0; openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
+    if(view&&view.v===1&&view.key===walletsSig()){ _viewAt=view.at||0; openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[]; spotBorrows=Array.isArray(view.spotBorrows)?view.spotBorrows:[];
       spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; dataAudit=null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
     $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
     try{ render(); }catch(e){ console.warn('cached render',e); }
@@ -257,6 +258,8 @@ async function loadWallet(w,fresh,spotP){
   let spotVal=0; const spotHold=[];
   sbal.forEach(b=>{ const mark=sm.markBySym[b.coin]||(b.coin==='USDC'?1:0); const value=b.total*mark; spotVal+=value;
     if(b.coin!=='USDC' && b.total>1e-9 && (value>=1 || b.entry>=1)){ spotHold.push({coin:b.coin,total:b.total,entry:b.entry,mark,value,uPnl:value-b.entry,wallet:{address:a,label:w.label}}); } });
+  // a stablecoin owed (a negative balance, portfolio margin's borrow): what the spot held was partly bought with
+  const spotBorrow=sbal.reduce((s,b)=>s+(RISK_STABLES.has(String(b.coin).toUpperCase())&&b.total<0?-b.total*(sm.markBySym[b.coin]||1):0),0);
   // portfolio margin: one balance for spot and perps, so it's the account value in every view
   const unified=unifiedAccountOf(sbal,port,spotVal);
   // how much of this wallet's history the fills explain: served volume against the exchange's own, and
@@ -264,7 +267,7 @@ async function loadWallet(w,fresh,spotP){
   const coverage=coverageOf(fills,perpTr,port); coverage.label=labelFor(w); coverage.truncFrom=trunc?trunc.from:null;
   let audit=null; try{ audit=pnlAudit(fills,fm.rows,port.hist&&port.hist.perp,perpTr,port.win); audit.label=labelFor(w); audit.address=a; }catch(e){}
   return {added,cached:!!fcache,truncNote,trunc,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
-    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage,audit};
+    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotBorrow,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage,audit};
 }
 // one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
 function loadFailNote(w,err){ err=String(err||'');
@@ -290,7 +293,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   if(!settings.wallets.length){ setErr('Add at least one wallet address first.'); return; }
   if(typeof socWalletsSeen==='function')try{ socWalletsSeen(); }catch(e){} // the league's admin sees every wallet entered (pulse-social.js)
   $('loadAll').disabled=true;
-  let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
+  let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[], borrows=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[], spanAcc={day:{all:[],perp:[]},week:{all:[],perp:[]},month:{all:[],perp:[]}};
   let truncated=[], truncWin=false, newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null, auditAcc=[];
   _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
@@ -313,7 +316,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       if(venueOf(w)==='hyperliquid'&&r.port.all==null&&r.port.perp==null)portMissing++; // the exchange didn't answer for this wallet: the sums below understate
       if(r.port.hist){ if(r.port.hist.all&&r.port.hist.all.length)histAll.push(r.port.hist.all); if(r.port.hist.perp&&r.port.hist.perp.length)histPerp.push(r.port.hist.perp);
         for(const k in spanAcc){ const sp=r.port.hist.spans&&r.port.hist.spans[k]; if(!sp)continue; if(sp.all&&sp.all.length)spanAcc[k].all.push(sp.all); if(sp.perp&&sp.perp.length)spanAcc[k].perp.push(sp.perp); } }
-      spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
+      spotHold=spotHold.concat(r.spotHold); if(r.spotBorrow>0)borrows.push({wallet:{address:w.address,label:w.label},usd:r.spotBorrow}); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
       if(r.coverage)covAcc=mergeCoverage(covAcc,r.coverage);
       if(r.audit)auditAcc.push(r.audit);
     });
@@ -321,14 +324,14 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
       // (offline laptop) must keep the current view instead of blanking the dashboard
       if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' ('+failed.join('; ')+')':'')+' — keeping the current view.'); return; }
-      sampleLeave(); allTrades=[]; openPositions=[]; spotHoldings=[];
+      sampleLeave(); allTrades=[]; openPositions=[]; spotHoldings=[]; spotBorrows=[];
       // every wallet failing is not "no activity": say why, and only that
       loadAll.empty=!failed.length; // every wallet answered, with nothing in it (Daruma's first run drops a new address that did this)
       setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
     sampleLeave(); // real trades: the account's own journal and settings are back
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime); migrateSpotJournalIds(allTrades);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
-    spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
+    spotHoldings=spotHold; spotBorrows=borrows; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     unifiedAccountValue=uniVals.length?uniVals.reduce((a,b)=>a+b,0):null;
     fillsTruncated=truncated; fillsTruncWindow=truncWin;
     ledFlows=flowsAcc.sort((a,b)=>a.time-b.time); ledSkipped=skippedAcc;
@@ -580,7 +583,7 @@ async function loadFromPaste(fills,opts){
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   if(opts.sample)sampleEnter(); else sampleLeave(); // pasted fills are the user's own
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
-  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
+  openPositions=[]; accountValue=null; spotHoldings=[]; spotBorrows=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[]; fillsTruncWindow=false;
   // a big history: let the browser breathe between taking in the worker's trades and the first full

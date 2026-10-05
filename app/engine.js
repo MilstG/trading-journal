@@ -246,6 +246,8 @@ let _fetchHealth={funding:false,ledger:false,twap:false}; // partial-fetch flags
 let dataCoverage=null;
 let dataAudit=null; // per wallet: the fills set against the exchange's own perp P&L curve (pnlAudit)
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
+let spotBorrows=[]; // per wallet {wallet, usd}: stablecoins owed (a negative balance under portfolio margin), what the spot was partly bought with
+const borrowedUsd=()=>spotBorrows.reduce((s,b)=>s+(b.usd||0),0);
 // portfolio-margin wallets' balances (one pool for spot and perps): counted in both accountValue and
 // spotAccountValue, so a combined total takes this off to count them once
 let unifiedAccountValue=null;
@@ -570,20 +572,24 @@ function kellyFromTrades(trades){
 // from positionValue / |size| so no extra API call), aggregate notional by coin (netting
 // offsetting longs/shorts across wallets), gross/skew totals, and a danger list of positions
 // within 10% of their liquidation price. Pure — testable in Node.
+// Spot holdings read as rows beside the perps (spotRiskRows) carry spot:true and the token's own
+// symbol; their uPnl is null when the cost basis is unknown (an airdrop, a transfer in), never the
+// whole value counted as profit.
 function openRiskModel(positions){
   const rows=(positions||[]).filter(p=>p&&isFinite(p.szi)&&p.szi!==0).map(p=>{
     const size=Math.abs(p.szi); const mark=(size>0&&isFinite(p.value)&&p.value>0)?p.value/size:null;
     let liqDist=null;
     if(p.liq!=null&&isFinite(p.liq)&&mark>0) liqDist=Math.abs(p.liq-mark)/mark;
     return {coin:p.coin,dex:p.dex||'',side:p.szi>0?'long':'short',notional:p.value||0,
-      mark,liq:(p.liq!=null&&isFinite(p.liq))?p.liq:null,liqDist,uPnl:p.uPnl||0,lev:p.lev||null,wallet:p.wallet||null};
+      mark,liq:(p.liq!=null&&isFinite(p.liq))?p.liq:null,liqDist,uPnl:p.spot&&p.uPnl==null?null:(p.uPnl||0),lev:p.lev||null,wallet:p.wallet||null,
+      spot:!!p.spot,sym:p.spot?(p.sym||p.coin):null};
   });
   if(!rows.length)return null;
   rows.sort((a,b)=>{ const A=a.liqDist==null?Infinity:a.liqDist, C=b.liqDist==null?Infinity:b.liqDist;
     return A-C || b.notional-a.notional; });
   const gross=rows.reduce((s,r)=>s+r.notional,0);
   const skew=rows.reduce((s,r)=>s+r.notional*(r.side==='short'?-1:1),0);
-  const upnl=rows.reduce((s,r)=>s+r.uPnl,0);
+  const upnl=rows.reduce((s,r)=>s+(r.uPnl||0),0);
   const byCoin={};
   for(const r of rows){ const g=byCoin[r.coin]=byCoin[r.coin]||{coin:r.coin,net:0,gross:0,wallets:new Set(),hip3:!!r.dex};
     g.net+=r.notional*(r.side==='short'?-1:1); g.gross+=r.notional;
@@ -593,6 +599,23 @@ function openRiskModel(positions){
   const danger=rows.filter(r=>r.liqDist!=null&&r.liqDist<0.10);
   return {rows,coins,gross,skew,upnl,positions:rows.length,
     largestShare:(coins.length&&gross>0)?coins[0].gross/gross:0,danger};
+}
+// Spot holdings that carry price risk, as rows for openRiskModel beside the perps: a spot token is as
+// much a long as a perp is (under portfolio margin it is also the margin, often bought with borrowed
+// USDC), so a book that leaves it out understates its biggest exposure. Stablecoins and dust stay out:
+// a holding counts from $100 (minUsd) and from 0.5% of the whole book — the perps' gross (perpGross)
+// and the spot that counts — so a big book isn't padded with memecoin crumbs and a small one keeps its
+// $100 floor. Hyperliquid's wrapped tokens (UBTC, UETH, …) net with their perp under the perp's name,
+// so a perp long and the same coin held spot read as one exposure. Pure.
+const RISK_STABLES=new Set(['USDC','USDT','USDT0','USDH','USDE','USDHL','FEUSD','USDXL','USD']);
+const SPOT_AS_PERP={UBTC:'BTC',UETH:'ETH',USOL:'SOL',UFART:'FARTCOIN',UPUMP:'PUMP'};
+function spotRiskRows(holdings, perpGross, minUsd){
+  minUsd=minUsd==null?100:minUsd;
+  const held=(holdings||[]).filter(h=>h&&!RISK_STABLES.has(String(h.coin||'').toUpperCase())&&+h.total>0&&+h.value>=minUsd);
+  const floor=Math.max(minUsd,0.005*((+perpGross||0)+held.reduce((s,h)=>s+(+h.value),0)));
+  return held.filter(h=>+h.value>=floor)
+    .map(h=>({coin:SPOT_AS_PERP[h.coin]||h.coin,sym:h.coin,dex:'',szi:+h.total,value:+h.value,
+      uPnl:+h.entry>0&&isFinite(h.uPnl)?+h.uPnl:null,liq:null,lev:null,wallet:h.wallet||null,spot:true}));
 }
 // Correlation-aware concentration flag for the open-risk panel. openRiskModel sums per-position
 // risk as if the positions were independent; but perps move together (in risk-off, alts track

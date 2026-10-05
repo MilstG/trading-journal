@@ -38,16 +38,20 @@ function renderPositions(){
     const offset=ne.filter(x=>x.wallets>1 || Math.abs(x.net)<x.gross-1); // hedged or split across wallets
     if(offset.length){ netExpHtml='<br>net by coin '+ne.slice(0,4).map(x=>`${esc(x.coin)} ${x.net>=0?'+':'−'}${fmtUsd(Math.abs(x.net)).replace('$','$')}`).join(' · '); }
   }
+  // the perp view lists perps, but the spot held is still exposure: say where it is counted
+  const heldSpot=view==='perp'?spotRiskRows(spotHoldings,gross):[];
+  const spotNote=heldSpot.length?`<br><span data-tip="Spot you hold isn’t a card in the perp view, but it is exposure all the same (under portfolio margin it is your margin too): Open-position risk below counts it.">+ spot held ${fmtUsd(heldSpot.reduce((s,r)=>s+r.value,0))} (${heldSpot.slice(0,3).map(r=>esc(r.sym)).join(', ')}${heldSpot.length>3?'…':''}) · in risk below</span>`:'';
   const totalCard=`<div class="poscard ${uTot>=0?'long':'short'} pos-total" data-tip="Your open book at a glance: total unrealized PnL, gross exposure (sum of position sizes in $), net directional skew (long notional minus short), and net-per-coin exposure that nets offsetting longs/shorts across wallets. Includes HIP-3 dex positions (their values are in each dex's collateral token, usually USD-pegged). A large skew means the book is one directional bet.">
     <div class="top"><span class="coin">OPEN BOOK <span class="pill">${cards.length} pos</span></span>
     <span class="upnl ${cls(uTot)}">${fmtUsd(uTot)}</span></div>
-    <div class="meta">gross exposure ${fmtUsd(gross)}${(view!=='spot'&&perpsIn.length)?`<br>net skew ${skew>=0?'long ':'short '}${fmtUsd(Math.abs(skew))}`:''}${netExpHtml}</div></div>`;
+    <div class="meta">gross exposure ${fmtUsd(gross)}${(view!=='spot'&&perpsIn.length)?`<br>net skew ${skew>=0?'long ':'short '}${fmtUsd(Math.abs(skew))}`:''}${netExpHtml}${spotNote}</div></div>`;
   strip.classList.remove('hide'); strip.innerHTML=totalCard+cards.join('');
 }
 // Open-position RISK panel: the position strip lists positions; this summarizes them as
 // risk — distance to liquidation per position, aggregate notional by coin (netted across
 // wallets, HIP-3 dexs included), concentration, and a danger callout for anything within
-// 10% of its liquidation price. Perp-only by design: spot holdings have no liq price.
+// 10% of its liquidation price. Spot holdings count too (spotRiskRows: no liq price of their own, but
+// as much a long as a perp — under portfolio margin they are the margin, often bought with borrowed USDC).
 // On-demand correlation clusters for the risk panel: ~90 days of 1d candles per held coin
 // (same cache the benchmark uses), real pairwise correlations, exposure netted per cluster.
 let _riskClusters=null; // {key, res} — keyed on coins AND sizes (see _riskKey)
@@ -96,14 +100,24 @@ async function computeRiskClusters(){
 }
 function renderRiskPanel(){
   const el=$('riskPanel'); if(!el)return;
-  const m=(view!=='spot')?openRiskModel(dexPositions()):null;
+  // the account's risk, whatever the view: spot held is exposure in the perp view too (under portfolio
+  // margin it is what the perps are margined with); the spot view leaves the perps out
+  const perps=(view!=='spot')?dexPositions():[], spots=spotRiskRows(spotHoldings,perps.reduce((s,p)=>s+(p.value||0),0)), m=openRiskModel(perps.concat(spots));
   if(!m){ el.classList.add('hide'); el.innerHTML=''; return; }
+  const nSpot=m.rows.filter(r=>r.spot).length, borrowed=borrowedUsd();
+  // what the book stands on: perp and spot balances, a portfolio-margin account counted once (as renderStats does)
+  const equity=(accountValue==null&&spotAccountValue==null)?null:((accountValue||0)+(spotAccountValue||0)-(unifiedAccountValue||0));
   el.classList.remove('hide');
   const pctf=x=>x==null?'\u2014':(x*100).toFixed(1)+'%';
   const rowStyle='display:grid;grid-template-columns:minmax(90px,1.4fr) 56px 1fr 1fr 1fr 90px 1fr;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px';
   const head=`<div style="${rowStyle};color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em"><span>market</span><span>side</span><span style="text-align:right">notional</span><span style="text-align:right">mark</span><span style="text-align:right">liq</span><span style="text-align:right" data-tip="How far the current mark price is from this position's liquidation price, as a % of mark. Sorted nearest-first \u2014 the top row is your most fragile position.">to liq</span><span style="text-align:right">uPnL</span></div>`;
   const rows=m.rows.map(r=>{
-    const disp=r.dex?esc(r.coin.slice(r.dex.length+1))+' <span class="pill hip3">'+esc(r.dex.toUpperCase())+'</span>':esc(r.coin);
+    const disp=r.spot?`<span${r.sym!==r.coin?' data-tip="Hyperliquid’s wrapped '+esc(r.coin)+': counted with the '+esc(r.coin)+' perp in the net exposure below."':''}>${esc(r.sym)}</span> <span class="pill spot">SPOT</span>`
+      :r.dex?esc(r.coin.slice(r.dex.length+1))+' <span class="pill hip3">'+esc(r.dex.toUpperCase())+'</span>':esc(r.coin);
+    if(r.spot){ const wl=(settings.wallets.length>1&&r.wallet)?' <span style="color:var(--faint);font-size:10px">'+esc(labelFor(r.wallet))+'</span>':'';
+      const noLiq='<span style="text-align:right" data-tip="Spot has no liquidation price of its own. Under portfolio margin the account is liquidated as a whole, so a fall in it moves every perp’s liquidation price closer instead.">\u2014</span>';
+      return `<div style="${rowStyle}"><span>${disp}${wl}</span><span class="pos-t">held</span><span style="text-align:right">${fmtUsd(r.notional)}</span><span style="text-align:right">${r.mark!=null?fmtNum(r.mark):'\u2014'}</span>${noLiq}${noLiq}`
+        +(r.uPnl==null?'<span style="text-align:right;color:var(--faint)" data-tip="No cost basis for these tokens (an airdrop or a transfer in), so no profit figure: their value is all exposure, not all gain.">\u2014</span>':`<span style="text-align:right" class="${cls(r.uPnl)}">${fmtUsd(r.uPnl)}</span>`)+'</div>'; }
     const dCls=r.liqDist==null?'':(r.liqDist<0.10?'neg-t':(r.liqDist<0.25?'':'pos-t'));
     const wl=(settings.wallets.length>1&&r.wallet)?' <span style="color:var(--faint);font-size:10px">'+esc(labelFor(r.wallet))+'</span>':'';
     return `<div style="${rowStyle}"><span>${disp}${wl}</span><span class="${r.side==='long'?'pos-t':'neg-t'}">${r.side}${r.lev?' '+r.lev+'x':''}</span><span style="text-align:right">${fmtUsd(r.notional)}</span><span style="text-align:right">${r.mark!=null?fmtNum(r.mark):'\u2014'}</span><span style="text-align:right">${r.liq!=null?fmtNum(r.liq):'\u2014'}</span><span style="text-align:right" class="${dCls}">${pctf(r.liqDist)}</span><span style="text-align:right" class="${cls(r.uPnl)}">${fmtUsd(r.uPnl)}</span></div>`;
@@ -131,14 +145,17 @@ function renderRiskPanel(){
     const btns=opts.map(p=>`<button class="btn ghost" data-shock="${p}" style="padding:2px 8px;font-size:11px${_shockPct===p?';border-color:#2FD08C;color:var(--text)':''}">${p>0?'+':''}${p}%</button>`).join(' ');
     let out='';
     if(_shockPct!=null){
-      const sc=scenarioShock(m.rows, accountValue, _shockPct);
+      const sc=scenarioShock(m.rows, nSpot?equity:accountValue, _shockPct); // with spot in the book, the account it stands on
       out=`<div style="margin-top:6px;font-size:12px">mark everything ${_shockPct>0?'+':''}${_shockPct}% \u2192 PnL impact <span class="${cls(sc.pnl)}">${fmtUsd(sc.pnl)}</span>${sc.acctPct!=null?' <span style="color:var(--faint)">('+(sc.acctPct>=0?'+':'')+(sc.acctPct*100).toFixed(1)+'% of account)</span>':''}${sc.liqs.length?` \u00b7 <span class="loss"><b>${sc.liqs.length} position${sc.liqs.length===1?'':'s'} liquidate${sc.liqs.length===1?'s':''}</b>: ${sc.liqs.map(l=>esc(l.dex?l.coin.slice(l.dex.length+1):l.coin)).join(', ')}</span>`:' \u00b7 no liquidations'}</div>`;
     }
-    shockHtml=`<div style="margin-top:10px;font-size:11.5px;color:var(--muted)" data-tip="First-order stress test: shift every mark by the chosen % (longs and shorts signed correctly), sum the PnL impact, and check which positions cross their liquidation price at the shocked mark. Ignores funding, fees, and margin-tier interactions \u2014 real liquidation comes a touch earlier. Click a % again to clear.">scenario shock: ${btns}</div>${out}`;
+    shockHtml=`<div style="margin-top:10px;font-size:11.5px;color:var(--muted)" data-tip="First-order stress test: shift every mark by the chosen % (longs and shorts signed correctly, spot held included), sum the PnL impact, and check which positions cross their liquidation price at the shocked mark. Ignores funding, fees, and margin-tier interactions \u2014 real liquidation comes a touch earlier. Click a % again to clear.">scenario shock: ${btns}</div>${out}`;
   }
-  el.innerHTML=`<h3 data-tip="The open book summarized as RISK rather than a list: per-position distance to liquidation (nearest first), net directional exposure by coin netted across wallets (HIP-3 dexs included), and concentration. Live from Hyperliquid \u2014 refreshes with each load.">Open-position risk <span class="hint">${m.positions} position${m.positions===1?'':'s'} \u00b7 gross ${fmtUsd(m.gross)} \u00b7 net ${m.skew>=0?'long':'short'} ${fmtUsd(Math.abs(m.skew))} \u00b7 largest market ${(m.largestShare*100).toFixed(0)}% of book</span></h3>
+  // the book against the account it stands on, and the borrow behind the spot
+  const lev=equity>0?m.gross/equity:null;
+  const bookHtml=(lev!=null||borrowed>0)?`<div style="margin-top:8px;font-size:11.5px;color:var(--muted)" data-tip="Gross exposure (every position and spot holding at its mark, longs and shorts alike) divided by your account equity: how many dollars move for each dollar you have. Borrowed stablecoins are what portfolio margin lent you against your collateral; a fall in what they bought is a loss on borrowed money.">${lev!=null?`gross ${fmtUsd(m.gross)} is <b>${lev.toFixed(1)}\u00d7</b> your account equity (${fmtUsd(equity)})`:''}${borrowed>0?`${lev!=null?' \u00b7 ':''}spot held partly on <b>${fmtUsd(borrowed)} borrowed</b> stablecoins (portfolio margin)`:''}</div>`:'';
+  el.innerHTML=`<h3 data-tip="The open book summarized as RISK rather than a list: per-position distance to liquidation (nearest first), net directional exposure by coin netted across wallets (HIP-3 dexs included), and concentration. Spot held counts too, marked SPOT, from $100 and from 0.5% of the book: a token held is as much a long as a perp, and under portfolio margin it is the margin as well (stablecoins don't count). Live from Hyperliquid \u2014 refreshes with each load.">Open-position risk <span class="hint">${m.positions} position${m.positions===1?'':'s'}${nSpot?' ('+nSpot+' spot)':''} \u00b7 gross ${fmtUsd(m.gross)} \u00b7 net ${m.skew>=0?'long':'short'} ${fmtUsd(Math.abs(m.skew))} \u00b7 largest market ${(m.largestShare*100).toFixed(0)}% of book</span></h3>
     <div style="overflow-x:auto"><div style="min-width:560px">${head}${rows}</div></div>
-    <div style="margin-top:8px;font-size:11.5px;color:var(--muted)">net by coin: ${coinBits||'\u2014'}</div>
+    <div style="margin-top:8px;font-size:11.5px;color:var(--muted)">net by coin: ${coinBits||'\u2014'}</div>${bookHtml}
     ${danger}${concHtml}${clusterHtml}${shockHtml}`;
   const cb=$('riskCorrBtn'); if(cb)cb.onclick=computeRiskClusters;
   el.querySelectorAll('[data-shock]').forEach(b=>b.onclick=()=>{ const p=+b.dataset.shock;
