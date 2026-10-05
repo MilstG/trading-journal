@@ -71,6 +71,20 @@ function createWear(opts) {
   const cfg = p => { const P = PROVIDERS[p]; const id = env[P.env + '_CLIENT_ID'], secret = env[P.env + '_CLIENT_SECRET']; return id && secret ? { id, secret } : null; };
   const user = uid => W.users[uid] = W.users[uid] || { days: {} };
   const originOf = req => opts.originOf ? opts.originOf(req) : null;
+  // generations: a person's (forget) and each connection's (disconnect, a new Apple link). a sign-in
+  // or an upload that awaits checks its stamp is unchanged before writing, so revoked work can't land
+  const gens = new Map();
+  const gen = k => gens.get(k) || 0;
+  const stamp = (uid, p) => gen(uid) + '.' + gen(uid + '|' + p);
+  const revoke = (uid, p) => { gens.set(p ? uid + '|' + p : uid, gen(p ? uid + '|' + p : uid) + 1);
+    for (const [k, v] of states) if (v.uid === uid && (!p || v.provider === p)) states.delete(k); };
+  // the Shortcut's endpoint: hits per IP and per link, and failed links per IP
+  const ipOf = opts.clientIp || (req => (req.socket && req.socket.remoteAddress) || '');
+  const hits = new Map();
+  const recent = (k, ms) => { const r = (hits.get(k) || []).filter(x => now() - x < ms); hits.set(k, r); return r; };
+  const limited = (k, n, ms) => { const r = recent(k, ms); if (r.length >= n) return true; r.push(now());
+    if (hits.size > 20000) for (const [kk, v] of hits) if (!v.length || now() - v[v.length - 1] > 3600000) hits.delete(kk);
+    return false; };
   const redirectUri = (req, p) => { const o = originOf(req); return o ? o + '/api/wear/' + p + '/callback' : null; };
 
   const form = o => Object.entries(o).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
@@ -145,21 +159,31 @@ function createWear(opts) {
       // a link someone else started can't attach your account to theirs
       const ck = /(?:^|;\s*)pulse_wear=([a-f0-9]{32})/.exec(String(req.headers.cookie || ''));
       // back to the check-in either way; a failed sign-in is shown there as the provider's error
-      const back = (ok, why) => { if (!ok && why && st) { user(st.uid).failed = { p, why: String(why).slice(0, 200), at: now() }; save(); }
+      // a sign-in that outlived a disconnect or a forget writes nothing, not even its error
+      const live = () => st && stamp(st.uid, p) === st.gen;
+      const back = (ok, why) => { if (!ok && why && live()) { user(st.uid).failed = { p, why: String(why).slice(0, 200), at: now() }; save(); }
         res.writeHead(302, { Location: '/daruma#checkin' }); res.end(); };
-      if (!st || st.exp < now() || st.provider !== p || !ck || ck[1] !== st.nonce) return back(false);
+      if (!st || st.exp < now() || st.provider !== p || !ck || ck[1] !== st.nonce || !live()) return back(false);
       if (!query.code) return back(false, 'denied');
       try { const c = cfg(p); const t = await tokenCall(p, { grant_type: 'authorization_code', code: String(query.code), redirect_uri: st.redirect, client_id: c.id, client_secret: c.secret });
+        if (!live()) return back(false);
         const u = user(st.uid); t.cid = crypto.randomBytes(6).toString('hex'); /* cid: this connection, so a sync of an older one can't touch it */ u[p] = t; delete u.failed; save(); sync(st.uid, true).catch(() => {}); }
       catch (e) { return back(false, e.message); }
       return back(true);
     }
-    // Apple Health: the Shortcut posts with the personal token in the link
-    if (p === 'apple' && !parts[1] && M === 'POST' && query.t) {
-      const uid = Object.keys(W.users).find(k => W.users[k].apple && W.users[k].apple.h === sha(query.t));
-      if (!uid) return json(res, 401, { error: 'That link was replaced or removed. Copy the new one from Daruma.' });
-      const body = await readBody(req).catch(() => null); if (!body) return json(res, 400, { error: 'Send JSON: {"date":"2026-10-01","hrv":52,"restingHR":55,"sleepHours":7.2}' });
-      const list = Array.isArray(body) ? body.slice(0, 60) : [body], u = user(uid); let n = 0;
+    // Apple Health: the Shortcut posts with its personal token, as Authorization: Bearer or in the link (older Shortcuts)
+    const bearer = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || '')), at = query.t || (p === 'apple' && bearer && bearer[1]);
+    if (p === 'apple' && !parts[1] && M === 'POST' && at) {
+      const ip = ipOf(req), h = String(at).length <= 128 ? sha(at) : '', gone = () => json(res, 401, { error: 'That link was replaced or removed. Copy the new one from Daruma.' });
+      // guessing links from one place, or one link hammering the store, gets turned away early
+      if (recent('bad|' + ip, 600000).length >= 20 || limited('apple|' + ip, 120, 600000) || limited('link|' + h, 30, 3600000)) return json(res, 429, { error: 'Too many uploads. Try again later.' });
+      const uid = Object.keys(W.users).find(k => W.users[k].apple && W.users[k].apple.h === h);
+      if (!uid) { recent('bad|' + ip, 600000).push(now()); return gone(); }
+      const s = stamp(uid, 'apple'), body = await readBody(req).catch(() => null);
+      // the link was replaced, disconnected or its person forgotten while the body arrived
+      const u = W.users[uid]; if (!u || !u.apple || u.apple.h !== h || stamp(uid, 'apple') !== s) return gone();
+      if (!body) return json(res, 400, { error: 'Send JSON: {"date":"2026-10-01","hrv":52,"restingHR":55,"sleepHours":7.2}' });
+      const list = Array.isArray(body) ? body.slice(0, 60) : [body]; let n = 0;
       const today = zoneDay(tzOf(uid), now()), oldest = new Date(Date.parse(today) - 60 * 86400000).toISOString().slice(0, 10);
       for (const b of list) { if (!b || typeof b !== 'object' || Array.isArray(b)) continue;
         let k = today; if (b.date != null) { if (!DAY_RE.test(b.date) || isNaN(Date.parse(b.date + 'T00:00:00Z')) || new Date(b.date + 'T00:00:00Z').toISOString().slice(0, 10) !== b.date) continue; k = b.date; }
@@ -168,8 +192,9 @@ function createWear(opts) {
         if (d.hrv == null && d.sleepH == null && d.rhr == null) continue;
         const hist = Object.keys(u.days).filter(x => x < k && x >= new Date(Date.parse(k) - 30 * 86400000).toISOString().slice(0, 10)).map(x => u.days[x]);
         u.days[k] = Object.assign(d, { score: appleScore(d, hist), src: 'apple' }); n++; }
-      const keep = Object.keys(u.days).sort().slice(-120); for (const x of Object.keys(u.days)) if (!keep.includes(x)) delete u.days[x];
-      save(); return json(res, 200, { ok: true, days: n });
+      // nothing usable, nothing rewritten
+      if (n) { const keep = Object.keys(u.days).sort().slice(-120); for (const x of Object.keys(u.days)) if (!keep.includes(x)) delete u.days[x]; save(); }
+      return json(res, 200, { ok: true, days: n });
     }
     const uid = uidOf(req); if (!uid) return json(res, 401, { error: 'Sign in to Daruma first.' });
     if (!p && M === 'GET') return json(res, 200, status(uid));
@@ -181,15 +206,16 @@ function createWear(opts) {
       const mine = [...states].filter(([, v]) => v.uid === uid); while (mine.length >= 5) states.delete(mine.shift()[0]);
       if (states.size > 5000) return json(res, 503, { error: 'Too many sign-ins in progress. Try again in a few minutes.' });
       const state = crypto.randomBytes(24).toString('hex'), nonce = crypto.randomBytes(16).toString('hex');
-      states.set(state, { uid, provider: p, redirect, nonce, exp: now() + 10 * 60000 });
+      states.set(state, { uid, provider: p, redirect, nonce, exp: now() + 10 * 60000, gen: stamp(uid, p) });
       res.setHeader('Set-Cookie', 'pulse_wear=' + nonce + '; Path=/api/wear; Max-Age=600; HttpOnly; SameSite=Lax' + (redirect.startsWith('https:') ? '; Secure' : ''));
       return json(res, 200, { url: PROVIDERS[p].auth + '?' + form({ response_type: 'code', client_id: c.id, redirect_uri: redirect, scope: PROVIDERS[p].scope, state }) });
     }
-    if ((PROVIDERS[p] || p === 'apple') && !parts[1] && M === 'DELETE') { const u = user(uid); delete u[p];
+    if ((PROVIDERS[p] || p === 'apple') && !parts[1] && M === 'DELETE') { revoke(uid, p); const u = user(uid); delete u[p];
       for (const k of Object.keys(u.days)) if (u.days[k].src === p) delete u.days[k]; save(); return json(res, 200, status(uid)); }
     if (p === 'apple' && parts[1] === 'token' && M === 'POST') {
-      const t = crypto.randomBytes(18).toString('hex'); user(uid).apple = { h: sha(t), at: now() }; save();
-      const o = originOf(req); return json(res, 200, { token: t, url: (o || '') + '/api/wear/apple?t=' + t });
+      const t = crypto.randomBytes(18).toString('hex'); revoke(uid, 'apple'); user(uid).apple = { h: sha(t), at: now() }; save();
+      // endpoint + authorization keep the token out of URLs and logs; url stays for Shortcuts made from it
+      const o = originOf(req); return json(res, 200, { token: t, url: (o || '') + '/api/wear/apple?t=' + t, endpoint: (o || '') + '/api/wear/apple', authorization: 'Bearer ' + t });
     }
     return json(res, 404, { error: 'not found' });
   }
@@ -197,7 +223,7 @@ function createWear(opts) {
     req.on('data', c => { size += c.length; if (size > 64 * 1024) { reject(new Error('too large')); return; } ch.push(c); });
     req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(ch).toString('utf8') || 'null')); } catch (e) { reject(e); } }); req.on('error', reject); });
   // a member who leaves (or is removed) takes their tokens and days with them
-  const forget = uid => { if (W.users[uid]) { delete W.users[uid]; save(); } };
+  const forget = uid => { revoke(uid); if (W.users[uid]) { delete W.users[uid]; save(); } };
   return { handle, sync, status, forget };
 }
 

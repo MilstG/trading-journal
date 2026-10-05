@@ -101,7 +101,8 @@ function collectFiles(dataDir, opts) {
       const r = rel ? rel + '/' + n : n;
       if (!rel && BUNDLE_SKIP.has(n)) continue;
       if (/\.(tmp|bak)$/.test(n)) continue;
-      let st; try { st = fs.statSync(path.join(dataDir, r)); } catch (e) { continue; }
+      // lstat, not stat: a symlink in the data dir is never followed out of it into the bundle
+      let st; try { st = fs.lstatSync(path.join(dataDir, r)); } catch (e) { continue; }
       if (st.isDirectory()) { walk(r); continue; }
       if (!st.isFile()) continue;
       const e = { p: r, n: st.size, m: st.mtimeMs };
@@ -161,14 +162,27 @@ function unpackBundle(gz) {
   }
   return out;
 }
+// Restored files hold secrets (MFA factors, OAuth tokens, the VAPID key): each is written owner-only
+// (0600, new folders 0700) whatever the umask, and never through a symlink that could lead outside.
+const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
+function writePrivate(dest, data) {
+  const fd = fs.openSync(dest, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | NOFOLLOW, 0o600);
+  try { fs.fchmodSync(fd, 0o600); fs.writeFileSync(fd, data); } finally { fs.closeSync(fd); }
+}
 function restoreBundle(gz, dir) {
   const root = path.resolve(dir);
   const files = unpackBundle(gz);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const realRoot = fs.realpathSync(root);
   for (const f of files) {
     const dest = path.resolve(root, f.p);
     if (!dest.startsWith(root + path.sep)) throw new Error('refusing a path outside the target: ' + f.p);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, f.data);
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    const realDir = fs.realpathSync(path.dirname(dest)); // a symlinked folder inside the target is outside it
+    if (realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) throw new Error('refusing a path outside the target: ' + f.p);
+    let ex = null; try { ex = fs.lstatSync(dest); } catch (e) {}
+    if (ex && !ex.isFile()) throw new Error('refusing to write over a non-file: ' + f.p);
+    writePrivate(dest, f.data);
     if (f.m) try { fs.utimesSync(dest, new Date(f.m), new Date(f.m)); } catch (e) {}
   }
   return files.length;
@@ -194,6 +208,7 @@ function sigv4({ method, path: p, query, headers, region, service, accessKeyId, 
   return 'AWS4-HMAC-SHA256 Credential=' + accessKeyId + '/' + scope + ', SignedHeaders=' + names.join(';')
     + ', Signature=' + crypto.createHmac('sha256', kSign).update(sts).digest('hex');
 }
+const secureUrl = u => /^https:\/\//i.test(u) || /^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?(\/|$)/i.test(u);
 function configFrom(env) {
   env = env || process.env;
   const endpoint = String(env.OFFSITE_ENDPOINT || '').replace(/\/+$/, '');
@@ -208,7 +223,8 @@ function configFrom(env) {
   cfg.enabled = missing.length === 0;
   cfg.partial = missing.length > 0 && missing.length < 5; // some set, some not: almost certainly a mistake
   cfg.missing = missing;
-  if (cfg.enabled && !/^https?:\/\//.test(endpoint)) { cfg.enabled = false; cfg.partial = true; cfg.missing = ['endpoint (must start with https://)']; }
+  // the signed requests carry the bucket's credentials: plain http only to this machine (a local test bucket)
+  if (cfg.enabled && !secureUrl(endpoint)) { cfg.enabled = false; cfg.partial = true; cfg.missing = ['endpoint (must start with https://)']; }
   return cfg;
 }
 function createClient(cfg, fetchImpl) {
@@ -300,7 +316,7 @@ function createOffsite({ cfg, dataDir, fetchImpl, maxBundleBytes, log }) {
   };
 }
 
-module.exports = { encrypt, decrypt, sigv4, configFrom, createClient, createOffsite, packBundle, packBundleAsync, unpackBundle, restoreBundle, collectFiles };
+module.exports = { secureUrl, encrypt, decrypt, sigv4, configFrom, createClient, createOffsite, packBundle, packBundleAsync, unpackBundle, restoreBundle, collectFiles };
 
 /* ---------------- CLI ---------------- */
 if (require.main === module) {
@@ -317,12 +333,12 @@ if (require.main === module) {
     } else if (cmd === 'get' && a && b) {
       need('endpoint', 'bucket', 'accessKeyId', 'secretAccessKey', 'passphrase');
       const plain = decrypt(await createClient(cfg).get(a), cfg.passphrase);
-      fs.writeFileSync(b, /\.json\.gz\.enc$/.test(a) && !/\.gz$/.test(b) ? zlib.gunzipSync(plain) : plain);
+      writePrivate(b, /\.json\.gz\.enc$/.test(a) && !/\.gz$/.test(b) ? zlib.gunzipSync(plain) : plain);
       console.log('wrote ' + b);
     } else if (cmd === 'decrypt' && a && b) {
       need('passphrase');
       const plain = decrypt(fs.readFileSync(a), cfg.passphrase);
-      fs.writeFileSync(b, /\.json\.gz\.enc$/.test(a) && !/\.gz$/.test(b) ? zlib.gunzipSync(plain) : plain);
+      writePrivate(b, /\.json\.gz\.enc$/.test(a) && !/\.gz$/.test(b) ? zlib.gunzipSync(plain) : plain);
       console.log('wrote ' + b);
     } else if (cmd === 'restore' && a && b) {
       need('passphrase');

@@ -2,7 +2,7 @@
 // botocore (the official AWS SDK's signer), the DATA_DIR bundle format, and the server
 // wiring end to end against an in-process fake S3 that checks every request's signature.
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +57,9 @@ t('all five settings = on; some = half-configured (warned); none = off; endpoint
   ok(!none.enabled && !none.partial);
   const bad = O.configFrom({ ...full, OFFSITE_ENDPOINT: 'x.example.com' });
   ok(!bad.enabled && bad.partial);
+  // the signed requests carry the bucket's keys: plain http is refused unless the bucket is on this machine
+  ok(!O.configFrom({ ...full, OFFSITE_ENDPOINT: 'http://x.example.com' }).enabled);
+  ok(O.configFrom({ ...full, OFFSITE_ENDPOINT: 'http://127.0.0.1:9000' }).enabled);
 });
 
 console.log('\nDATA_DIR bundle');
@@ -94,6 +97,31 @@ t('a bundle naming a path outside the target is refused', () => {
   const evil = zlib.gzipSync(Buffer.concat([Buffer.from(JSON.stringify({ p: '../escape.txt', n: 1, m: 0 }) + '\n'), Buffer.from('x')]));
   let err = null; try { O.restoreBundle(evil, mkdtempSync(join(tmpdir(), 'ledger-evil-'))); } catch (e) { err = e; }
   ok(err && /outside the target/.test(err.message));
+});
+
+t('restored files are owner-only whatever the umask, and nothing is written or bundled through a symlink', () => {
+  const old = process.umask(0o022);
+  try {
+    const d = fixtureDir(), outside = mkdtempSync(join(tmpdir(), 'ledger-outside-'));
+    writeFileSync(join(outside, 'secret.json'), 'OUTSIDE'); symlinkSync(join(outside, 'secret.json'), join(d, 'linked.json'));
+    const b = O.packBundle(d);
+    ok(!O.unpackBundle(b.buf).some(f => f.p === 'linked.json'), 'a symlink in the data dir is not followed into the bundle');
+    const out = join(mkdtempSync(join(tmpdir(), 'ledger-restore-')), 'new');
+    O.restoreBundle(b.buf, out);
+    eq((statSync(out).mode & 0o777).toString(8), '700');
+    eq((statSync(join(out, 'vault')).mode & 0o777).toString(8), '700');
+    eq((statSync(join(out, 'ledger-data.json')).mode & 0o777).toString(8), '600');
+    eq((statSync(join(out, 'vault', 'm1.json')).mode & 0o777).toString(8), '600');
+    // a symlink already in the target, named like a bundled file or folder, is refused rather than written through
+    const t2 = mkdtempSync(join(tmpdir(), 'ledger-restore-'));
+    symlinkSync(join(outside, 'secret.json'), join(t2, 'ledger-data.json'));
+    let err = null; try { O.restoreBundle(b.buf, t2); } catch (e) { err = e; } ok(err, 'file symlink refused');
+    eq(readFileSync(join(outside, 'secret.json'), 'utf8'), 'OUTSIDE');
+    const t3 = mkdtempSync(join(tmpdir(), 'ledger-restore-'));
+    symlinkSync(outside, join(t3, 'vault'));
+    err = null; try { O.restoreBundle(b.buf, t3); } catch (e) { err = e; } ok(err && /outside the target/.test(err.message), 'folder symlink refused');
+    ok(!existsSync(join(outside, 'm1.json')));
+  } finally { process.umask(old); }
 });
 
 await t('pulse.db ships as one consistent SQLite copy: rows still in the WAL survive a checkpoint mid-bundle, and no -wal/-shm ships', async () => {

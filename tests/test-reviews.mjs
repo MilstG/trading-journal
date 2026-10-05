@@ -157,6 +157,8 @@ try {
     clock += 3600001;
     for (let i = 0; i < 200 && st[st.length - 1] !== 409; i++) { clock += 61000; st.push((await call('/reviews/' + rid + '/comments', { method: 'POST', key: i % 2 ? A : C, body: { text: 'n' + i } })).status); }
     eq(st[st.length - 1], 409); eq((await call('/reviews/' + rid, { key: A })).d.review.comments, 200);
+    eq((await share(A, 'tradeaaa1', { text: 'one more, by sending it again' })).status, 409, 'sending the trade again with a note can’t pass the cap either');
+    eq((await call('/reviews/' + rid, { key: A })).d.review.comments, 200);
     clock += 86400000; st = [];
     for (let i = 0; i < 11; i++) st.push((await share(A, 'daycap' + i)).status);
     eq([st.slice(0, 10).every(s => s === 200), st[10]], [true, 429]);

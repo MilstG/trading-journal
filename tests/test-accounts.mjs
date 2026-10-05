@@ -332,6 +332,57 @@ await t('a merge keeps only what this device changed: other settings and wallets
   eq(C.settings.goals, { monthlyTarget: 42 }); eq(C.journal.t1.notes, 'restored'); eq(C.settings.wallets.map(w => w.address), ['0xa']);
   eq(Object.keys(C.journal), ['t1'], 'an entry the restore removed stays removed');
 });
+await t('a shared browser keeps each profile’s journal apart: nothing shown, merged or synced across profiles; a guest’s joins only by choice', async () => {
+  const src = [line(/const J_KEY=[^\n]*/), line(/const SOC_KEY_STORE=[^\n]*/), line(/const SOC_SEEN_STORE=[^\n]*/), line(/const VAULT_STORE=[^\n]*/),
+    line(/const WS_OWNER_STORE=[^\n]*/), line(/const WS_DEVICE_KEYS=[^\n]*/),
+    ...['wsOwner', 'wsSetOwner', 'wsHas', 'wsDeviceOnly', 'wsCurrent', 'wsSwitch', 'wsSignInTo', 'wsGuestPeek', 'wsGuestImport', 'wsGuestDiscard', 'wsSignOutHere', 'socSignedIn', 'vaultForget', 'vaultUnlock'].map(grabFn)].join('\n').replace(/^const /gm, 'var ');
+  const mem = new Map(), idb = new Map(), ses = new Map(); let reloads = 0, pushed = 0;
+  const c = { JSON, Object, Map, Set, Array, String, Promise, Error, clearTimeout,
+    localStorage: { getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) },
+    sessionStorage: { getItem: k => ses.has(k) ? ses.get(k) : null, setItem: (k, v) => ses.set(k, String(v)), removeItem: k => ses.delete(k) },
+    Store: { get: async k => mem.has(k) ? JSON.parse(mem.get(k)) : null, set: async (k, v) => { mem.set(k, JSON.stringify(v)); } },
+    rawSet: async (k, v) => { mem.set(k, JSON.stringify(v)); }, idbDel: async k => { idb.delete(k); }, cexCredKey: a => 'cexcred:' + a,
+    _sample: null, _jrev: 0, pzS: {}, COACH: {}, PZ_CFG: { rev: 0 }, SOC: { key: null, me: null }, VAULT: { dirty: new Map(), key: null, mid: null },
+    vaultMark: () => {}, vaultDirty: () => false, vaultActive: () => false, vaultSchedule: () => {}, vaultPush: async () => { pushed++; }, vaultSaveLocal: async () => {},
+    vaultSnapS: () => ({}), vaultDerive: async () => 'K', vaultOpen: async (k, b) => b.plain, applySnapshot: async d => { c.journal = d.journal; c.settings = Object.assign({ wallets: [] }, { wallets: d.wallets }); },
+    sampleEnd() {}, renderWallets() {}, loadAll: async () => {}, acctUseClaimedWallet: async () => {}, location: { reload() { reloads++; } },
+    socFetch: async () => ({ blob: { salt: 's', iter: 1, plain: c.vaultData }, rev: 3, member: c.vaultMember }) };
+  vm.createContext(c); vm.runInContext(src + '\nfunction wsReload(){ location.reload(); }\nvar journal={}, settings={wallets:[]};', c);
+  const save = (j, w, extra) => { mem.set('hl_journal_v1', JSON.stringify(j)); mem.set('hl_settings_v3', JSON.stringify(Object.assign({ wallets: w }, extra || {}))); };
+  const local = () => [Object.keys(JSON.parse(mem.get('hl_journal_v1'))), JSON.parse(mem.get('hl_settings_v3')).wallets.map(w => w.address)];
+  // a fresh browser: signing in just takes it, no reload
+  eq(await vm.runInContext('socSignedIn', c)({ key: 'kA', me: { id: 'A' } }), true); eq([reloads, mem.get('pz_ws_owner')], [0, 'A']);
+  // A's journal; then A's key is revoked here (signed out) and B signs in on the same browser
+  save({ a1: { notes: 'A private' } }, [{ address: '0xa' }, { address: 'bybit:k1', label: 'A’s Bybit' }], { goals: { monthlyTarget: 9 }, appearance: 'light' });
+  mem.set('pz_vault', '{"mid":"A","k":"x"}'); c.SOC.key = null;
+  eq(await vm.runInContext('socSignedIn', c)({ key: 'kB', me: { id: 'B' } }, 'Signed in as @b.'), false, 'B’s sign-in reloads into B’s own journal');
+  eq([reloads, mem.get('pz_ws_owner'), mem.get('pz_social_key')], [1, 'B', 'kB']);
+  eq(local(), [[], []], 'B sees none of A’s journal or wallets');
+  const st = JSON.parse(mem.get('hl_settings_v3')); eq([st.goals, st.appearance], [undefined, 'light'], 'A’s goals stay with A; this browser’s appearance stays');
+  ok(!mem.has('pz_vault'), 'A’s sync state isn’t B’s'); eq(ses.get('pz_ws_after'), 'Signed in as @b.');
+  // B opens their synced journal: only B's data, A's never merged in or marked to upload
+  c.vaultData = { journal: { b1: { notes: 'B' } }, wallets: [{ address: '0xb' }] }; c.vaultMember = 'B'; c.SOC.me = { id: 'B' };
+  vm.runInContext('journal={}; settings={wallets:[]};', c);
+  await vm.runInContext('vaultUnlock', c)('pass');
+  eq([Object.keys(c.journal), c.settings.wallets.map(w => w.address), c.VAULT.dirty.size], [['b1'], ['0xb'], 0]);
+  // A signs back in: A's journal comes back exactly, B's is set aside
+  save({ b1: { notes: 'B' } }, [{ address: '0xb' }]);
+  await vm.runInContext('socSignedIn', c)({ key: 'kA', me: { id: 'A' } });
+  eq(local(), [['a1'], ['0xa', 'bybit:k1']]); eq(JSON.parse(mem.get('hl_settings_v3')).goals, { monthlyTarget: 9 }); eq(mem.get('pz_vault'), '{"mid":"A","k":"x"}', 'A’s sync resumes');
+  // sign out and clear: nothing of A left in the browser, exchange key included
+  idb.set('cexcred:bybit:k1', { apiSecret: 's' }); c.SOC.key = 'kA';
+  await vm.runInContext('wsSignOutHere', c)();
+  eq(local(), [[], []]); ok(!idb.has('cexcred:bybit:k1') && !mem.has('pz_vault') && !mem.has('pz_social_key') && !mem.has('pz_ws_owner'));
+  ok(mem.has('pz_ws:B'), 'B’s journal (set aside earlier) is B’s to clear, not A’s');
+  // a guest journals, then signs in as B: kept apart until B chooses to add it
+  save({ g1: { notes: 'guest' } }, [{ address: '0xg' }]);
+  await vm.runInContext('socSignedIn', c)({ key: 'kB', me: { id: 'B' } });
+  eq(local(), [['b1'], ['0xb']], 'B’s own journal, not the guest’s');
+  eq(await vm.runInContext('wsGuestPeek', c)(), { n: 1, w: 1 });
+  vm.runInContext('journal=JSON.parse(localStorage.getItem("hl_journal_v1")); settings=JSON.parse(localStorage.getItem("hl_settings_v3"));', c);
+  eq(await vm.runInContext('wsGuestImport', c)(), 2); eq(local(), [['b1', 'g1'], ['0xb', '0xg']]); ok(!JSON.parse(mem.get('pz_ws:guest') || 'null'), 'brought in once');
+  eq(pushed, 0, 'no profile’s sync was pushed while it wasn’t active');
+});
 t('a cut-off answer from the server is an error, never an empty success that reads as “deleted”', () => {
   ok(grabFn('socFetch').includes("if(r.ok)throw new Error("));
   ok(grabFn('vaultSyncOnOpen').includes("'?have='") && grabFn('vaultSyncOnOpen').includes('if(!d||!d.member)throw'));

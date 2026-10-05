@@ -244,5 +244,24 @@ await t('a failing Claude call surfaces as a readable error, not a crash', async
     eq(r.status, 502); ok(/unreachable: socket hang up/.test((await r.json()).error));
   } finally { await new Promise(res => app.close(res)); }
 });
+await t('the letter spends from the owner’s coach budget: refused once it’s used, failed letters give it back', async () => {
+  let calls = 0, fail = false;
+  const stub = { beta: { messages: { create: async () => { calls++; if (fail) throw new Error('socket hang up');
+    await new Promise(r => setTimeout(r, 100)); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'A steady week.' }] }; } } } };
+  const app = server.createApp({ dataDir: mkdtempSync(join(tmpdir(), 'ledger-coach-')), auth: 'secret', htmlPath: new URL('../ledger.html', import.meta.url).pathname,
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => [] }), coach: { enabled: true, client: stub } });
+  const b = await listen(app);
+  const post = w => fetch(b + '/api/coach/letter/' + w, { method: 'POST', headers: H, body: '{"facts":{"trades":1}}' }).then(async r => ({ status: r.status, d: await r.json() }));
+  try {
+    eq((await fetch(b + '/api/social/admin/config', { method: 'PUT', headers: H, body: JSON.stringify({ coach: { ownerDaily: 2 } }) })).status, 200);
+    fail = true; eq((await post('2026-W38')).status, 502); fail = false;
+    const st = await Promise.all(['2026-W39', '2026-W40', '2026-W41', '2026-W42'].map(post));
+    eq(st.filter(r => r.status === 200).length, 2, 'parallel letters can’t get past the budget'); eq(calls, 3, 'the failed one and two letters');
+    const over = st.find(r => r.status === 429); ok(/today’s 2 coach messages/.test(over.d.error), over.d.error); eq(over.d.remaining, 0);
+    eq((await post('2026-W43')).status, 429); eq(calls, 3, 'the model is not asked once the budget is used');
+    const chat = await fetch(b + '/api/coach/chat', { method: 'POST', headers: H, body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }) });
+    eq(chat.status, 429, 'letters and chat share one budget');
+  } finally { await new Promise(res => app.close(res)); }
+});
 
 report('coach');

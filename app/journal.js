@@ -255,7 +255,7 @@ function renderTable(){
     const j=journal[t.id]||{}; const tags=(j.tags||[]); const R=rFor(t); const ret=retPct(t);
     const jsummary=[j.setup?`<span class="tagchip">${esc(j.setup)}</span>`:'',
       ...tags.slice(0,3).map(x=>`<span class="tagchip">${esc(x)}</span>`),
-      j.rating?`<span class="tagchip" style="color:var(--gold)">${'★'.repeat(j.rating)}</span>`:'',
+      j.rating?`<span class="tagchip" style="color:var(--gold)">${'★'.repeat(Math.max(0,Math.min(5,Math.round(+j.rating)||0)))}</span>`:'',
       (j.mistakes&&j.mistakes.length)?`<span class="tagchip" style="color:var(--loss)">⚑${j.mistakes.length}</span>`:'',
       j.notes?`<span class="tagchip">📝</span>`:''].join('');
     const liqBadge=t.liquidated?` <span class="pill short" data-tip="This trade contains at least one liquidation fill — the position was force-closed by the exchange.">⚠ LIQ</span>`:'';
@@ -330,7 +330,7 @@ function journalRow(t,j,R){
       <div class="field"><label>Tags — comma separated</label>
         <input type="text" data-j="tags" data-id="${esc(t.id)}" value="${esc((j.tags||[]).join(', '))}" placeholder="a-setup, trend, scalp"></div>
       <div class="field"><label>Planned risk ($) — for this trade's R-multiple</label>
-        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
+        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?esc('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
       <div class="field"><label>Trade plan — entry / stop / target <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— scored under Diagnostic → Plan adherence</span>${planTimingBadge(t,j)}</label>
         <div style="display:flex;gap:6px">
           <input type="number" data-j="plan_entry" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.entry)?esc(j.plan.entry):''}" placeholder="entry px" step="any" style="flex:1">
@@ -750,7 +750,7 @@ function renderReviewInner(){
   }
   const costVar=(feeCard||varCard)?`<div class="diag-section"><h2>Costs &amp; variance</h2><div class="diag-grid">${feeCard}${varCard}</div></div>`:'';
 
-  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
+  el.innerHTML=`<div class="diag-section"><h2>Review · ${esc(view)}</h2><p class="lead">Rolling digest for the ${esc(view)} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
    ${progressSectionHtml()}
    ${dayJournalSectionHtml()}
    ${habitsSectionHtml()}
@@ -1589,7 +1589,7 @@ async function toggleArchivePanel(anchor){
       if(!local||!local.fills||!local.fills.length)continue;
       let srvCount=-1; try{ const m=await srvFetch('/api/v1/cache/'+a+'?meta=1'); if(m.ok)srvCount=((await m.json()).fills||{}).count||0; }catch(e){}
       if(srvCount>=local.fills.length)continue;
-      out(`Sending ${labelFor(w)}’s ${local.fills.length} fills to the server…`);
+      out(`Sending ${esc(labelFor(w))}’s ${local.fills.length} fills to the server…`);
       let added=0; for(let i=0;i<local.fills.length;i+=4000){ const r=await srvFetch('/api/v1/cache/'+a,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({fills:local.fills.slice(i,i+4000),twapFull:!!local.twapFull})});
         if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error('sending fills to the server: '+(j.error||('HTTP '+r.status))); } added+=((await r.json()).added||0); }
       note.push(`${labelFor(w)}: ${added} fills sent`); }
