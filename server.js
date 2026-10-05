@@ -97,7 +97,7 @@ function timingSafeEq(a, b) {
 const ENGINE_FNS = [
   // time layer + reconstruction
   'tzParts', 'tzMidnight', 'addDays', 'isPerp', 'newTrade', 'tallyFill',
-  'reconstructTrades', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse',
+  'reconstructTrades', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
   'spotMapsFrom', 'spotFifoLots',
   // stats
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'retPct',
@@ -210,6 +210,9 @@ const gzRead = (file) => {
 };
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const fillId = f => f.tid + '-' + f.oid + '-' + f.time;
+// a combined fill (userFillsByTime aggregates by time) and its pieces (the archive, TWAP slices)
+// must not both stay: engine.js's dedupeFills keeps the one that covers the others
+const cleanFills = (E, fills) => (E && typeof E.dedupeFills === 'function') ? E.dedupeFills(fills) : fills;
 const parseTime = (v) => {
   if (v == null || v === '') return null;
   // 9–10 digits is a Unix time in SECONDS (what most scripts send); longer is milliseconds
@@ -604,6 +607,13 @@ function createApp(opts) {
   // Analytics engine — extracted from the same HTML this server serves.
   const engine = buildEngine(htmlPath, opts.fetchImpl || ((...a) => globalThis.fetch(...a)));
   const E = engine.ctx; // undefined when !engine.ok — every v1 route checks first
+  // Stored fill caches from before dedupeFills may hold a combined fill next to its pieces (an
+  // archive backfill over months the API also served): cleaned once here, on the way up.
+  if (E && typeof E.dedupeFills === 'function') { try {
+    for (const f of fs.readdirSync(fillsDir)) { if (!f.endsWith('.json.gz')) continue; const file = path.join(fillsDir, f), c = gzRead(file);
+      if (!c || c.v !== 1 || !Array.isArray(c.fills)) continue; const d = E.dedupeFills(c.fills);
+      if (d.length !== c.fills.length) { gzWrite(file, Object.assign({}, c, { fills: d, count: d.length, savedAt: Date.now() })); console.log('[ledger] fills ' + f.slice(0, 10) + '…: ' + (c.fills.length - d.length) + ' fills were pieces of a fill already there — removed'); } }
+  } catch (e) { console.log('[ledger] fill cache cleanup: ' + e.message); } }
 
   // mtime-cached: cacheSig, setEngineState and ensureTrades each read the snapshot, which
   // used to mean 2-3 full JSON parses of the whole data blob per request
@@ -787,9 +797,10 @@ function createApp(opts) {
     readFills: a => { const c = readFillCache(a); return c ? c.fills : null; },
     writeFills: (a, found, info) => {
       const c = readFillCache(a); if (!c) throw new Error('no server fill cache for ' + a);
-      const seen = new Set(c.fills.map(fillId)), fills = c.fills.slice(); let added = 0;
+      const seen = new Set(c.fills.map(fillId)); let fills = c.fills.slice(); let added = 0;
       for (const f of found) { const id = fillId(f); if (!seen.has(id)) { seen.add(id); fills.push(f); added++; } }
       fills.sort((x, y) => x.time - y.time);
+      const before = fills.length; fills = cleanFills(E, fills); added -= Math.min(added, before - fills.length);
       const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
       gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: Date.now(), fills,
         archived: { at: Date.now(), n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
@@ -885,6 +896,7 @@ function createApp(opts) {
           for (const f of fr.fills) if (!seen.has(fillId(f))) { seen.add(fillId(f)); fills.push(f); res.newFills++; }
           res.truncated = !!cache.truncated || !!fr.truncated; // a gap found once stays flagged
         } else { fills = fr.fills; res.newFills = fills.length; res.truncated = !!fr.truncated; }
+        { const n0 = fills.length; fills = cleanFills(E, fills); if (fills.length !== n0) res.newFills = Math.max(1, res.newFills - (n0 - fills.length)); }
         const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
         // nothing new: leave the file alone (re-gzipping a big history on every refresh blocks the server)
         if (!cache || body.full || res.newFills || res.truncated !== !!cache.truncated || twapFull !== !!cache.twapFull) { fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, twapFull, fills }); }
@@ -1891,9 +1903,9 @@ function createApp(opts) {
         const rows = body && Array.isArray(body.fills) ? body.fills.filter(f => f && f.tid != null && f.oid != null && isFinite(+f.time) && typeof f.coin === 'string') : null;
         if (!rows) return send(400, { error: 'body.fills must be an array of fills' });
         const a = cacheM[1].toLowerCase(), c = readFillCache(a) || { v: 1, fills: [], truncated: false };
-        const seen = new Set(c.fills.map(fillId)), fills = c.fills.slice(); let added = 0;
+        const seen = new Set(c.fills.map(fillId)); let fills = c.fills.slice(); let added = 0;
         for (const f of rows) { const id = fillId(f); if (!seen.has(id)) { seen.add(id); fills.push(f); added++; } }
-        if (added || !c.savedAt) { fills.sort((x, y) => x.time - y.time);
+        if (added || !c.savedAt) { fills.sort((x, y) => x.time - y.time); const n0 = fills.length; fills = cleanFills(E, fills); added -= Math.min(added, n0 - fills.length);
           gzWrite(fillsFile(a), Object.assign({}, c, { last: fills.reduce((m, f) => f.time > m ? f.time : m, 0), count: fills.length, savedAt: Date.now(), fills, twapFull: !!(c.twapFull || body.twapFull) }));
           _tradesMemo = null; fillMetaMemo.delete(a); }
         return send(200, { ok: true, added, count: fills.length });
