@@ -2617,11 +2617,24 @@ function createApp(opts) {
       return res.end(gz ? f.gz : f.buf);
     }
 
-    // --- built-in documentation: /help (user guide) and /docs (technical reference).
+    // --- built-in documentation: /help (user guide), /docs (technical reference) and /tutorial/ (the Daruma tutorial).
     // No auth: pure documentation, no user data. Served from files next to server.js so
     // they redeploy with the app and stay in step with it.
+    // The Daruma end-user tutorial lives in tutorial/ (index.html plus its screenshots under img/):
+    // /tutorial redirects to /tutorial/ so the page's relative img/ links resolve.
+    if (req.method === 'GET' && url === '/tutorial') { res.writeHead(302, { Location: '/tutorial/' }); return res.end(); }
+    const shot = req.method === 'GET' && /^\/tutorial\/img\/([a-z0-9-]+)\.webp$/.exec(url);
+    if (shot) {
+      fs.readFile(path.join(__dirname, 'tutorial', 'img', shot[1] + '.webp'), (err, buf) => {
+        if (err) return json(res, 404, { error: 'not found' });
+        res.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        res.end(buf);
+      });
+      return;
+    }
     const docFile = req.method === 'GET' && (url === '/help' || url === '/help.html') ? 'help.html'
-      : req.method === 'GET' && (url === '/docs' || url === '/tech.html') ? 'tech.html' : null;
+      : req.method === 'GET' && (url === '/docs' || url === '/tech.html') ? 'tech.html'
+      : req.method === 'GET' && (url === '/tutorial/' || url === '/tutorial/index.html') ? path.join('tutorial', 'index.html') : null;
     if (docFile) {
       fs.readFile(path.join(__dirname, docFile), (err, buf) => {
         if (err) return json(res, 404, { error: docFile + ' not deployed alongside server.js' });

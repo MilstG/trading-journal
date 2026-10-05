@@ -1329,7 +1329,7 @@ function pzConnectHtml(){
       ${settings.wallets.length&&!busy?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map(w=>esc(labelFor(w))).join(', ')}. Add another address, or look around with sample data.</p>`:''}
       <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid or Lighter" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
       ${errHtml}`}</div>
-    <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>
+    <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>${/^https?:$/.test(location.protocol)?'<a class="pz-wl-link" href="/tutorial/">How it works →</a>':''}
       <span class="pz-wl-safe" id="pzWlSafe">${pzI('lock',14)}Read-only. ${cex?'A key that can’t trade or withdraw.':'No wallet connection, no signature, no keys.'}</span></div>
     <p class="pz-fine pz-wl-sync">Your journal ${synced?(SRV.needsAuth?'syncs to this server.':'syncs to this server, which has no access token (AUTH_TOKEN): anyone with the link can read and change it.'):'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</p>
     ${(link?'':acctConnectHtml())||tokenAsk?`<div class="pz-wl-more">
@@ -1388,6 +1388,7 @@ function pzSheetHtml(){
       ${SRV.enabled&&!SRV.needsAuth?'<p class="pz-warn" style="margin-top:10px">This server has no access token set, so everyone who opens this link shares one journal. The owner should set AUTH_TOKEN before sharing it.</p>':''}
       ${tokenAsk?pzTokenHtml():''}</section>
     <section style="display:flex;flex-direction:column;gap:8px">${_deferredInstall?'<button type="button" class="pz-ghost" id="pzInstall">Install Daruma as an app</button>':'<p class="pz-fine">To install: on iPhone tap Share → Add to Home Screen; on Android or desktop use the browser’s Install option.</p>'}
+      ${/^https?:$/.test(location.protocol)?'<a class="pz-ghost" href="/tutorial/">How to use Daruma</a>':''}
       <a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a>${((SRV.enabled&&SRV.token&&!SRV.badAuth)||(typeof SOC!=='undefined'&&SOC.me&&SOC.me.admin))&&/^https?:$/.test(location.protocol)?'<a class="pz-ghost" href="/admin">Admin panel</a>':''}</section>
   </div></div>`;
 }

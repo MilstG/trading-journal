@@ -45,6 +45,26 @@ await t('serves the app HTML at / with no-cache and nosniff', async () => {
   }
   ok(code.includes('initServerSync'), 'the served app is the sync-capable one');
 });
+await t('the Daruma tutorial: /tutorial/ serves the page, its screenshots load, nothing else under it does', async () => {
+  const r0 = await fetch(base + '/tutorial', { redirect: 'manual' });
+  eq(r0.status, 302); eq(r0.headers.get('location'), '/tutorial/');
+  const r = await fetch(base + '/tutorial/');
+  eq(r.status, 200);
+  ok((r.headers.get('content-type') || '').includes('text/html'));
+  ok(/default-src 'none'/.test(r.headers.get('content-security-policy') || ''), 'static docs CSP: no scripts');
+  const body = await r.text();
+  ok(/<title>[^<]*Daruma/.test(body), 'the tutorial page');
+  const imgs = [...new Set([...body.matchAll(/src="img\/([a-z0-9-]+\.webp)"/g)].map(m => m[1]))];
+  ok(imgs.length >= 20, 'screenshots referenced: ' + imgs.length);
+  for (const i of imgs) {
+    const a = await fetch(base + '/tutorial/img/' + i);
+    eq(a.status, 200, i); eq(a.headers.get('content-type'), 'image/webp', i);
+  }
+  eq((await fetch(base + '/tutorial/img/nope.webp')).status, 404);
+  eq((await fetch(base + '/tutorial/img/index.html')).status, 404);
+  eq((await fetch(base + '/tutorial/index.js')).status, 404);
+});
+
 await t('app scripts: only real app/*.js files are served; a stale hash revalidates; 304 on a known ETag', async () => {
   for (const p of ['/app/../server.js', '/app/.hidden.js', '/app/nope.js', '/app/core.json', '/app/%2e%2e%2fserver.js'])
     eq((await fetch(base + p)).status, 404, p);

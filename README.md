@@ -318,6 +318,9 @@ Open `https://your-server/daruma` for a phone-first, gamified view of the same
 data. It's useful with zero effort — everything on the Today screen is read from
 your fills — and gets sharper the more you log.
 
+An end-user tutorial with screenshots of every screen is served at `/tutorial/`
+(`tutorial/index.html`, linked from Daruma's settings sheet and the user guide).
+
 - **Form** (0–100, 50 = your usual): your recent trading against your own earlier
   trading — average trade, win rate, and distance from your 30-day high. "Recent"
   is the last 7 days when they hold 5+ trades, else your last 5 trades.
