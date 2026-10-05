@@ -215,7 +215,11 @@ function lz4Frame(buf, pos, chunks) {
 // The same decoder, streaming: each block is decoded and handed on, and only the last 64 KB of output
 // is kept as history for the next block's matches (LZ4 offsets never reach further back). An hour of
 // the archive is 20–50 MB compressed and several times that decoded; this reads it in a few MB.
-function lz4Stream(buf, onChunk) {
+function lz4Stream(buf, onChunk) { for (const _ of lz4Steps(buf, onChunk)) {} }
+// the same, as a generator that pauses after every block: a caller that must do asynchronous work
+// between blocks (the indexer handing compressed slices to another thread) iterates it with
+// `for await`, so the hour never has to be decoded whole first
+function* lz4Steps(buf, onChunk) {
   const WINDOW = 65536; let pos = 0;
   while (pos + 4 <= buf.length) {
     const magic = buf.readUInt32LE(pos);
@@ -256,6 +260,7 @@ function lz4Stream(buf, onChunk) {
       // keep only the window: the next block may reach back at most 64 KB
       if (op > WINDOW) { out.copy(out, 0, op - WINDOW, op); op = WINDOW; }
       pos = end; if (blockChecksum) pos += 4;
+      yield;
     }
     if (contentChecksum) pos += 4;
   }
@@ -651,4 +656,4 @@ function createArchive(deps) {
   return { configured, cfg, check, sample, backfill, stop, status, diagnose, indexDays, indexFetch, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
 }
 
-module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc, isFill };
+module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, lz4Steps, extractFillsFromObject, lz4Decode, decodeObject, extractFills, normFill, seamWindows, createArchive, amzDate, enc, isFill };

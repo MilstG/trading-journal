@@ -317,6 +317,11 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const c84 = zlib.gunzipSync(r2.members['c84']).toString().trim().split('\n').map(l => JSON.parse(l)); eq(c84.length, 3); ok(c84.every(x => x[0] === ADDR && x[1].coin === 'ETH' && !('user' in x[1])));
   eq(JSON.parse(zlib.gunzipSync(r2.members['aaa']).toString())[1].tid, 5);
   ok(typeof r2.sample === 'string' && r2.sample.startsWith('["2025-05-25'), 'the first line is kept as a sample');
+  // sliced: with a tiny slice size the worker hands members over several times; the day's file (members appended in order) still reads as the same lines
+  const got = {}; let handed = 0;
+  const r3 = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4', async m => { handed++; for (const sh in m) got[sh] = got[sh] ? Buffer.concat([got[sh], m[sh]]) : m[sh]; }, 600);
+  ok(handed >= 3 && r3.slices === handed, 'several slices were handed over: ' + handed + ' / ' + r3.slices); eq(Object.keys(r3.members).length, 0, 'nothing kept when a callback takes the slices');
+  const whole = zlib.gunzipSync(r.members['c84']).toString(), sliced = zlib.gunzipSync(got['c84']).toString(); eq(sliced, whole, 'the sliced shard file holds the same lines in the same order');
   // a day marked done with no fills in it is not indexed
   eq([I.isIndexed({ fills: 0, hours: 24 }), I.isIndexed({ fills: 3 }), I.isIndexed(null)], [false, true, false]);
   const o = I.parseArgs(['build', '--bucket', 'b', '--from', '20250801', '--to', '20250802', '--workers', '2']); eq([o.cmd, o.bucket, o.from, o.to, o.workers, o.prefix], ['build', 'b', '20250801', '20250802', 2, 'index/v1/']);
