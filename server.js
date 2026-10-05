@@ -836,18 +836,21 @@ function createApp(opts) {
   const archive = Archive.createArchive({ env: opts.archiveEnv || process.env, fetchImpl: opts.archiveFetch || opts.fetchImpl, now: opts.now, engine: E || {},
     log: m => console.log('[ledger] ' + m),
     readFills: a => { const c = readFillCache(a); return c ? c.fills : null; },
-    writeFills: (a, found, info) => {
+    writeFills: (a, found, info) => mergeArchived(a, found, info) });
+  function mergeArchived(a, found, info) {
       const c = readFillCache(a); if (!c) throw new Error('no server fill cache for ' + a);
       const seen = new Set(c.fills.map(fillId)); let fills = c.fills.slice(); let added = 0;
       for (const f of found) { const id = fillId(f); if (!seen.has(id)) { seen.add(id); fills.push(f); added++; } }
       fills.sort((x, y) => x.time - y.time);
       const before = fills.length; fills = cleanFills(E, fills); added -= Math.min(added, before - fills.length);
+      if (!added) return { added: 0, count: c.fills.length }; // nothing new: no write, so no device downloads the cache again for it
       const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
-      gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: Date.now(), fills,
-        archived: { at: Date.now(), n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
+      const at = Date.now();
+      gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: at, fills,
+        archived: { at, n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
       _tradesMemo = null; fillMetaMemo.delete(a);
-      return { added, count: fills.length };
-    } });
+      return { added, count: fills.length, at };
+  }
   const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
 
@@ -940,7 +943,8 @@ function createApp(opts) {
         { const n0 = fills.length; fills = cleanFills(E, fills); if (fills.length !== n0) res.newFills = Math.max(1, res.newFills - (n0 - fills.length)); }
         const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
         // nothing new: leave the file alone (re-gzipping a big history on every refresh blocks the server)
-        if (!cache || body.full || res.newFills || res.truncated !== !!cache.truncated || twapFull !== !!cache.twapFull) { fresh(); gzWrite(fillsFile(w.address), { v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, twapFull, fills }); }
+        if (!cache || body.full || res.newFills || res.truncated !== !!cache.truncated || twapFull !== !!cache.twapFull) { fresh(); const arch = (cache && cache.archived) || (old && old.archived); // the archive's note survives a refresh, as its fills do
+          gzWrite(fillsFile(w.address), Object.assign({ v: 1, last, count: fills.length, savedAt: Date.now(), truncated: res.truncated, twapFull, fills }, arch ? { archived: arch } : {})); }
         res.fills = fills.length;
 
         // funding and capital flows: only what's new since the cached watermark (unless a full
@@ -1878,6 +1882,7 @@ function createApp(opts) {
     { method: 'POST', path: '/api/v1/archive/sample', auth: 'full', desc: 'download one hour and show its format and the wallets\' fills in it; body {day?, hour?, key?, wallets?}' },
     { method: 'POST', path: '/api/v1/archive/backfill', auth: 'full', desc: 'merge the wallet\'s archived fills into its cache: from the index by wallet when ARCHIVE_INDEX_BUCKET is set (its whole history there), else the hours its seams need; body {address, maxGB (default 2), dryRun?, scope?: "exits" | "all", source?: "hours" to skip the index}; 413 with the plan when over budget; progress at GET /api/v1/archive' },
     { method: 'POST', path: '/api/v1/archive/stop', auth: 'full', desc: 'stop the running backfill' },
+    { method: 'GET',  path: '/api/v1/archive-fills/:addr', auth: 'full', desc: 'one wallet\'s fills from the index by wallet (ARCHIVE_INDEX_BUCKET), gzipped when accepted: {through, first, last, fills}; ?from=YYYYMMDD reads from that day on. The owner for any wallet (its server cache takes them in too), a Pulse member (X-Pulse-Key) for their own wallets, 6 an hour. How the browser brings old history back on load' },
     { method: 'POST', path: '/api/v1/archive/diagnose', auth: 'full', desc: 'when a check fails: who AWS says the key is, the bucket\'s region, a root listing, the dataset listing and one object read, with their raw answers and a one-line verdict' },
     { method: 'GET',  path: '/api/v1/walkforward', auth: 'read', desc: 'rolling walk-forward expectancy (trailing train / out-of-sample test blocks) vs in-sample; train, step, seed; filters' },
     { method: 'GET',  path: '/api/v1/risk', auth: 'read', desc: 'open-position risk model over last refreshed positions' },
@@ -1893,6 +1898,7 @@ function createApp(opts) {
   ];
 
   /* ---------------- v1 router ---------------- */
+  const ixAsks = new Map(); // member id -> times of their index-fill asks this hour
   async function handleV1(req, res, url, query) {
     const send = (code, obj) => json(res, code, obj);
     const fail = (e) => e && e.code ? send(e.code, { error: e.msg }) : (console.error('[ledger] v1 error:', e), send(500, { error: 'internal error' }));
@@ -1960,6 +1966,30 @@ function createApp(opts) {
         return send(200, summary);
       } catch (e) { return fail(e); }
       finally { clearTimeout(watchdog); _refreshing = false; }
+    }
+
+    // A wallet's archived fills from the index by wallet, for the browser to merge on load (data-io.js:
+    // srvIndexFills) — how old history comes back without anyone pressing Backfill. Our own bucket, a
+    // few MB per wallet and no requester-pays transfer, so it is open to the owner for any wallet and to
+    // a Pulse member for their own (main and mapped) wallets, a few times an hour. ?from=YYYYMMDD reads
+    // from that day on. The owner's server cache, when it has the wallet, takes the fills in too.
+    const ixM = url.match(/^\/api\/v1\/archive-fills\/(0x[0-9a-fA-F]{40})$/);
+    if (ixM) {
+      if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+      const a = ixM[1].toLowerCase(), owner = !!auth && !!req.headers['authorization'] && authOk(req);
+      const m = owner ? null : social.memberOf(req);
+      if (!owner && !(m && social.walletsOf(m).map(x => String(x).toLowerCase()).includes(a))) return send(m ? 403 : 401, { error: 'only the owner, or a member for their own wallets' });
+      if (m) { const now = Date.now(), t = (ixAsks.get(m.id) || []).filter(x => now - x < 3600e3); if (t.length >= 6) return send(429, { error: 'try again later' }); t.push(now); ixAsks.set(m.id, t); }
+      const from = query && /^\d{8}$/.test(String(query.from || '')) ? String(query.from) : null;
+      let r; try { r = await archive.indexFills(a, from); } catch (e) { return send(e.code === 503 ? 503 : 502, { error: e.message }); }
+      // the browser asking already has these: it takes the cache's new archived mark as its own, so its
+      // next load doesn't download the whole server cache again for fills it merged here
+      let archivedAt; if (owner && r.fills.length && readFillCache(a)) { try { const w = mergeArchived(a, r.fills, { index: true, bytes: r.bytes }); if (w.added) archivedAt = w.at; } catch (e) {} }
+      const body = JSON.stringify({ through: r.through, first: r.first, last: r.last, fills: r.fills, archivedAt });
+      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      const out = gz ? await new Promise((ok, no) => zlib.gzip(body, (e, b) => e ? no(e) : ok(b))) : body; // a whole history can be tens of MB: off the event loop
+      res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
+      return res.end(out);
     }
 
     // Hyperliquid's archive on S3 (archive.js): a coverage check, a sample hour, and the backfill

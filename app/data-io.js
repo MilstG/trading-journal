@@ -72,6 +72,28 @@ async function srvArchived(a, fcache){
     for(const f of rows){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fcache.fills.push(f); n++; } }
     fcache.archivedAt=at; return n;
   }catch(e){ return 0; } }
+// Old history from the index by wallet (server.js: /api/v1/archive-fills), with nobody pressing
+// Backfill: the owner's token session, or a Pulse member's key for their own wallets, asks for this
+// wallet's archived fills from the day after the last one merged — the whole history the first time,
+// then only new days, at most every 6 hours and only while that day trails yesterday. Merged by key,
+// so nothing lands twice; dedupeFills sorts out the archive's pieces against the API's combined fills.
+async function srvIndexFills(a, fc){
+  if(typeof SRV==='undefined'||!SRV.enabled)return 0;
+  const owner=typeof srvOwner==='function'&&srvOwner(), key=!owner&&typeof SOC!=='undefined'&&SOC&&SOC.key;
+  if(!owner&&!key)return 0;
+  const ymd=ms=>new Date(ms).toISOString().slice(0,10).replace(/-/g,''), ms=d=>Date.UTC(+d.slice(0,4),+d.slice(4,6)-1,+d.slice(6,8));
+  if(fc.indexThrough&&fc.indexThrough>=ymd(Date.now()-2*864e5))return 0;
+  if(fc.indexTriedAt&&Date.now()-fc.indexTriedAt<6*36e5)return 0;
+  fc.indexTriedAt=Date.now(); fc.indexDirty=true;
+  try{ const path='/api/v1/archive-fills/'+a+(fc.indexThrough?'?from='+ymd(ms(fc.indexThrough)+864e5):'');
+    const r=owner?await srvFetch(path):await fetch(path,{headers:{'X-Pulse-Key':key}}); if(!r.ok)return 0;
+    const j=await r.json(); if(!j||!Array.isArray(j.fills))return 0;
+    const seen=new Set(fc.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time)); let n=0;
+    for(const f of j.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fc.fills.push(f); n++; } }
+    if(j.through&&!(fc.indexThrough>=j.through))fc.indexThrough=j.through;
+    if(j.archivedAt)fc.archivedAt=j.archivedAt; // the server cache took these in: its new mark is ours, no re-download for them
+    return n;
+  }catch(e){ return 0; } }
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
 let _viewAt=0; // when what's on screen was loaded from the exchange (Daruma's offline line says so)
@@ -186,6 +208,9 @@ async function loadWallet(w,fresh,spotP){
     for(const f of fr.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fills.push(f); added++; } }
     if(seededTrunc&&!fr.truncated)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
   } else { fills=fr.fills; added=fills.length; }
+  // old history from the index (srvIndexFills): this load's fills, with the cache's note of how far it reached
+  const ixc={fills,indexThrough:fcache&&fcache.indexThrough,indexTriedAt:fcache&&fcache.indexTriedAt,archivedAt:fcache&&fcache.archivedAt};
+  const indexedNew=await srvIndexFills(a,ixc); added+=indexedNew; // a wallet the API serves nothing for any more included
   const nAll=fills.length; fills=dedupeFills(fills); const removed=nAll-fills.length; // a combined fill and its pieces, served by two sources
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
   // A truncated fetch (from zero: the exchange's window; incremental: a gap between the cache and now
@@ -195,7 +220,7 @@ async function loadWallet(w,fresh,spotP){
   if(trunc)truncNote=truncNoteOf(labelFor(w),trunc);
   // nothing new: the stored copy is already current, so skip re-compressing it
   if(archivedNew)added+=archivedNew;
-  if(!fcache||added>0||removed>0||fcache.seeded||twapFull!==!!fcache.twapFull||JSON.stringify(trunc||null)!==JSON.stringify(fcache.trunc||null)){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt,trunc})); }catch(e){} }
+  if(!fcache||added>0||removed>0||fcache.seeded||ixc.indexDirty||twapFull!==!!fcache.twapFull||JSON.stringify(trunc||null)!==JSON.stringify(fcache.trunc||null)){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:ixc.archivedAt,trunc,indexThrough:ixc.indexThrough,indexTriedAt:ixc.indexTriedAt})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);
