@@ -97,7 +97,7 @@ function timingSafeEq(a, b) {
 const ENGINE_FNS = [
   // time layer + reconstruction
   'tzParts', 'tzMidnight', 'addDays', 'isPerp', 'newTrade', 'tallyFill',
-  'reconstructTrades', 'tradeRow', 'moneyRow', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
+  'reconstructTrades', 'tradeRow', 'moneyRow', 'measured', 'notionalOf', 'holdOf', 'dayNetMap', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
   'spotMapsFrom', 'spotFifoLots',
   // stats
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'retPct',
@@ -1132,7 +1132,7 @@ function createApp(opts) {
     E.journal = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
     // the app's band: the member's fixed $, else the automatic one over every closed trade (as render() does)
     const fx = E.beFixedOf(s);
-    E._be = fx != null ? fx : E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut)); // the band is 5% of the median trade: trade rows, not spot day rows
+    E._be = fx != null ? fx : E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut && !(t.offRecord && !t.isOpen))); // the band is 5% of the median trade: trade rows, not spot day rows
     return { snap, settings: s };
   }
   function applyFilters(trades, q) {
@@ -1186,16 +1186,25 @@ function createApp(opts) {
   }
   // Standard prep: engine state -> filter -> pin _oneR to the filtered closed set,
   // mirroring the client's render() (_oneR = computeOneR(periodTrades())).
+  // A row the app keeps out of every figure: a closed trade whose result the fills can't give (offRecord)
+  // — the same rule as the app's viewFilter / closedTrades / realizedMoney (engine.js).
+  const scored = t => !t.orphan && !(t.offRecord && !t.isOpen);
+  // A query that picks trades one by one (their outcome, a tag, a note) has no money population: a spot
+  // day row is nobody's win and carries no tag. Its sums are then over the trades it picked. (status is a
+  // row filter: a spot day row is never open.)
+  const tradeFilterOn = q => !!(q.outcome || q.tag || q.q);
   function prepare(query) {
     const { settings } = setEngineState(query);
     const { trades, builtAt } = ensureTrades();
     const picked = applyFilters(trades, query);
-    // money rows (perp trades, spot day rows) for sums and curves; trade rows (perp trades, spot positions)
-    // for lists and counts; closed trade rows for the statistics — engine.js: tradeRow / moneyRow
-    const all = picked.filter(E.moneyRow), rows = picked.filter(E.tradeRow);
-    const closed = rows.filter(t => !t.isOpen && !t.movedOut);
+    // money rows (perp trades, spot day rows; the realized part of an open perp trade included) for sums and
+    // curves; trade rows (perp trades, spot positions) for lists and counts; closed trade rows for the
+    // statistics — engine.js: tradeRow / moneyRow / realizedMoney
+    const rows = picked.filter(E.tradeRow);
+    const all = (tradeFilterOn(query) ? rows.filter(t => !t.movedOut) : picked.filter(E.moneyRow)).filter(t => t.closeTime && scored(t));
+    const closed = rows.filter(t => !t.isOpen && !t.movedOut && scored(t));
     E._oneR = E.computeOneR(closed);
-    return { all, rows, closed, picked, settings, builtAt };
+    return { all, rows, closed, picked, settings, builtAt, basis: tradeFilterOn(query) ? 'trades' : 'money' };
   }
   function shapeTrade(t, withEvents) {
     const j = E.journal[t.id] || null;
@@ -1453,8 +1462,8 @@ function createApp(opts) {
     const { trades } = ensureTrades();
     // closed trade rows (perp trades, spot positions) for counts and trade statistics; money rows
     // (perp trades, spot day rows) for every sum — engine.js: tradeRow / moneyRow
-    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut).sort((a, b) => a.closeTime - b.closeTime);
-    const money = trades.filter(t => !t.isOpen && t.closeTime && E.moneyRow(t));
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut && scored(t)).sort((a, b) => a.closeTime - b.closeTime);
+    const money = trades.filter(t => t.closeTime && E.moneyRow(t) && scored(t)); // realized money, an open perp trade's realized part included
     // "today" on the trader's calendar (the app's clock setting), not the container's zone
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
@@ -1528,7 +1537,8 @@ function createApp(opts) {
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
     const todayKey = dayOf(Date.now());
-    let todayNet = 0; for (const t of trades) if (!t.isOpen && t.closeTime && E.moneyRow(t) && dayOf(t.closeTime) === todayKey) todayNet += t.net;
+    const money = trades.filter(t => t.closeTime && E.moneyRow(t) && scored(t)).sort((a, b) => a.closeTime - b.closeTime); // realized money (realizedMoney)
+    let todayNet = 0; for (const t of money) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
     // every cached wallet, not just saved ones — todayNet already covers all cached
     // wallets via ensureTrades, and the two feeding different wallet sets skewed alerts
     let funding24h = 0; const cut = Date.now() - 86400000;
@@ -1536,12 +1546,12 @@ function createApp(opts) {
       if (!ADDR_RE.test(a)) continue;
       const fc = readFundingCache(a);
       if (fc) for (const r of fc.rows) if (r.time >= cut && isFinite(r.usdc)) funding24h += r.usdc; } } catch (e) {}
-    const nets = closed.map(t => t.net);
+    const nets = closed.map(t => t.net), netsM = money.map(t => t.net);
     let currentDD = null, ddP95 = null;
     if (nets.length >= 20) {
-      currentDD = E.currentDD(nets).dd;
+      currentDD = E.currentDD(netsM).dd; // where the realized curve stands: money, as /metrics and /equity read it
       E._srand(E._hashSeed('alerts|' + nets.length));
-      const mc = E.mcMaxDD(nets, mcIters(nets.length, 1000)); if (mc) ddP95 = mc.p95;
+      const mc = E.mcMaxDD(nets, mcIters(nets.length, 1000)); if (mc) ddP95 = mc.p95; // the reshuffle is of trade results
     }
     return { risk: (risk && risk.rows) || [], todayKey, todayNet, funding24h, currentDD, ddP95,
       rulesDailyLoss: (snap.settings && snap.settings.rules && parseFloat(snap.settings.rules.dailyLossLimit)) || 0 };
@@ -1699,8 +1709,8 @@ function createApp(opts) {
     setEngineState({});
     const { trades } = ensureTrades();
     const WEEK = 7 * 86400000;
-    const win = (a, b) => trades.filter(t => !t.isOpen && E.tradeRow(t) && !t.movedOut && t.closeTime >= a && t.closeTime < b); // completed trades
-    const winM = (a, b) => trades.filter(t => !t.isOpen && t.closeTime && E.moneyRow(t) && t.closeTime >= a && t.closeTime < b); // money rows for sums
+    const win = (a, b) => trades.filter(t => !t.isOpen && E.tradeRow(t) && !t.movedOut && scored(t) && t.closeTime >= a && t.closeTime < b); // completed trades
+    const winM = (a, b) => trades.filter(t => t.closeTime && E.moneyRow(t) && scored(t) && t.closeTime >= a && t.closeTime < b); // money rows for sums (realizedMoney)
     const wk = win(monday - WEEK, monday), prev = win(monday - 2 * WEEK, monday - WEEK);
     const wkM = winM(monday - WEEK, monday), prevM = winM(monday - 2 * WEEK, monday - WEEK);
     if (!wk.length && !prev.length && !wkM.length && !prevM.length) return null; // nothing to say — don't write empty reports
@@ -1885,9 +1895,9 @@ function createApp(opts) {
         _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
         const { trades } = ensureTrades();
         summary.trades = {
-          total: trades.filter(t => E.tradeRow(t) && !t.movedOut).length,
-          perp: trades.filter(t => t.market === 'perp').length,
-          spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut).length,
+          total: trades.filter(t => E.tradeRow(t) && !t.movedOut && scored(t)).length,
+          perp: trades.filter(t => t.market === 'perp' && scored(t)).length,
+          spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut && scored(t)).length,
           open: trades.filter(t => t.isOpen).length,
         };
         maybeAlert().catch(e => console.warn('[ledger] alert check failed: ' + e.message)); // fire-and-forget: a manual refresh should trigger the same monitoring
@@ -1987,9 +1997,9 @@ function createApp(opts) {
           try {
             setEngineState(query);
             const { trades, builtAt } = ensureTrades();
-            counts = { total: trades.filter(t => E.tradeRow(t) && !t.movedOut).length,
-              perp: trades.filter(t => t.market === 'perp').length,
-              spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut).length,
+            counts = { total: trades.filter(t => E.tradeRow(t) && !t.movedOut && scored(t)).length,
+              perp: trades.filter(t => t.market === 'perp' && scored(t)).length,
+              spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut && scored(t)).length,
               open: trades.filter(t => t.isOpen).length, builtAt };
           } catch (e) {}
         }
@@ -2031,7 +2041,7 @@ function createApp(opts) {
         setEngineState({});
         const { trades } = ensureTrades();
         // counts are of trade rows (perp trades, spot positions); sums are of money rows (perp trades, spot day rows)
-        const rows = trades.filter(t => E.tradeRow(t) && !t.movedOut), closed = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime);
+        const rows = trades.filter(t => E.tradeRow(t) && !t.movedOut && scored(t)), closed = trades.filter(t => E.moneyRow(t) && t.closeTime && scored(t)); // closed: the realized money (an open perp trade's realized part included)
         m.trades_total = rows.length;
         m.open_trades = rows.filter(t => t.isOpen).length;
         m.net_total = +closed.reduce((s, t) => s + t.net, 0).toFixed(2);
@@ -2083,9 +2093,9 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/stats') {
-        const { all, rows, closed, settings } = prepare(query);
+        const { all, rows, closed, settings, basis } = prepare(query);
         const stats = E.computeStats(closed, all);
-        return send(200, { n: closed.length, openN: rows.filter(t => t.isOpen).length,
+        return send(200, { n: closed.length, openN: rows.filter(t => t.isOpen && !t.orphan).length, basis,
           oneR: E._oneR, beThreshold: E._be, tz: settings.tz, stats });
       }
 
@@ -2095,18 +2105,18 @@ function createApp(opts) {
         let cum = 0;
         const points = chron.map(t => { cum += t.net; return [t.closeTime, +cum.toFixed(6)]; });
         const nets = chron.map(t => t.net);
-        const closedChron = [...closed].sort((a, b) => a.closeTime - b.closeTime);
-        // deterministic seeded shuffle-DD, same seeding idiom as the app's diagnostics tabs
+        const closedChron = [...closed].sort((a, b) => a.closeTime - b.closeTime), tnets = closedChron.map(t => t.net);
+        // deterministic seeded shuffle-DD of the trade results (the app's diagnostics reshuffle trades, not spot days)
         let shuffleDD = null;
-        if (nets.length >= 2) {
-          E._srand(E._hashSeed('api-equity|' + nets.length + '|' + (chron.length ? chron[0].id + '|' + chron[chron.length - 1].id : '')));
-          shuffleDD = E.mcMaxDD(nets, mcIters(nets.length, 2000));
+        if (tnets.length >= 2) {
+          E._srand(E._hashSeed('api-equity|' + tnets.length + '|' + closedChron[0].id + '|' + closedChron[closedChron.length - 1].id));
+          shuffleDD = E.mcMaxDD(tnets, mcIters(tnets.length, 2000));
         }
         return send(200, {
           points,
           daily: E.dailySeriesCalendar(all),
-          currentDD: nets.length ? E.currentDD(nets) : null,
-          underwater: closedChron.length ? E.underwaterStats(closedChron) : null,
+          currentDD: nets.length ? E.currentDD(nets) : null, // the realized curve: money
+          underwater: chron.length ? E.underwaterStats(chron) : null, // time below the high-water mark of that same curve
           shuffleDD,
         });
       }
@@ -2119,7 +2129,7 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/breakdown') {
-        const { closed } = prepare(query);
+        const { closed, all } = prepare(query);
         const by = String(query.by || 'coin').toLowerCase();
         const basis = String(query.basis || 'usd').toLowerCase() === 'pct' ? 'pct' : 'usd';
         const top = Math.max(1, Math.min(50, Math.floor(qnum(query.top, 5))));
@@ -2131,7 +2141,7 @@ function createApp(opts) {
           tag: null,
         }, keyFn = Object.prototype.hasOwnProperty.call(KEYS, by) ? KEYS[by] : undefined; // not '__proto__' or 'constructor'
         if (keyFn === undefined) throw { code: 400, msg: 'by must be coin|dir|market|wallet|tag|dow|hour' };
-        const groups = {};
+        const groups = {}, moneyBy = {};
         const push = (k, t) => (groups[k] = groups[k] || []).push(t);
         for (const t of closed) {
           if (by === 'tag') {
@@ -2139,8 +2149,11 @@ function createApp(opts) {
             if (!tags.length) push('(untagged)', t); else tags.forEach(tg => push(tg, t));
           } else push(keyFn(t), t);
         }
+        // the group's money rows (spot by the day it was realized) carry its net, fees and drawdown; a tag
+        // has no money rows, so there the trades do — the same split as computeStats(closed, money)
+        if (by !== 'tag') for (const t of all) { const k = keyFn(t); (moneyBy[k] = moneyBy[k] || []).push(t); if (!groups[k]) groups[k] = []; }
         const out = Object.entries(groups).map(([key, ts]) => {
-          const s = E.computeStats(ts, ts);
+          const s = E.computeStats(ts, by === 'tag' ? ts : (moneyBy[key] || []));
           const rets = ts.map(t => E.retPct(t)).filter(r => r !== null);
           const sumRet = rets.reduce((a, r) => a + r, 0);
           return { key, n: s.n, net: s.net, fees: s.fees, winRate: s.winRate,
@@ -2245,7 +2258,7 @@ function createApp(opts) {
         if (!flows.length) return send(409, { error: 'no capital-flow caches yet — POST /api/v1/refresh first' });
         flows.sort((a, b) => a.time - b.time);
         const wset = new Set(wallets.map(w => w.address.toLowerCase()));
-        const closedAll = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime // money rows: realized P&L, spot by the day it happened
+        const closedAll = trades.filter(t => E.moneyRow(t) && t.closeTime && scored(t) // money rows: realized P&L, spot by the day it happened, an open perp trade's realized part included
           && (!query.wallet || (t.wallet && wset.has(t.wallet.address.toLowerCase()))));
         const market = readMarket();
         // Equity-based outputs (impliedPnl, xirr) need equity and flows to cover the SAME
@@ -2398,7 +2411,7 @@ function createApp(opts) {
           rows.push([t.id, t.wallet && t.wallet.address, t.wallet && t.wallet.label, t.market, t.coin,
             t.symbol || '', t.dir, t.isOpen ? 1 : 0,
             t.openTime, new Date(t.openTime).toISOString(), t.closeTime, new Date(t.closeTime).toISOString(),
-            t.durationMs, t.maxSize, t.avgEntry, t.avgExit, t.pnl, t.fees, t.funding || 0, t.net,
+            E.holdOf(t), t.maxSize, E.measured(t) ? t.avgEntry : null, t.avgExit, t.pnl, t.fees, t.funding || 0, t.net,
             E.rFor(t), E.retPct(t), t.fills, t.liquidated ? 1 : 0,
             (j.tags || []).join(';'), j.notes || ''].map(csvCell).join(','));
         }
@@ -2515,7 +2528,8 @@ function createApp(opts) {
       const mx = Math.max(...batch.map(f => f.time)); start = mx > start ? mx : mx + 1;
     }
     fills.sort((x, y) => x.time - y.time);
-    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(t => E.tradeRow(t) && !t.movedOut);
+    const built = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])];
+    const trades = built.filter(t => E.tradeRow(t) && !t.movedOut), money = built.filter(t => E.moneyRow(t) && t.closeTime); // trade rows for the measures, money rows for the dollars
     let firstAt = null, ret = null, dd = null, avNow = NaN;
     try { const res = await E.hlPost({ type: 'portfolio', user: a });
       const all = (Array.isArray(res) ? res : []).find(x => x && x[0] === 'allTime'), av = (all && all[1] && all[1].accountValueHistory) || [];
@@ -2527,7 +2541,7 @@ function createApp(opts) {
     if (sum.ok && sum.tw > 1500) return { ok: false, why: 'bot' };
     if (sum.ok) Object.assign(sum, { ret, dd });
     // dollars, for the owner's seed-wallet table only (public on-chain numbers; never in the groups)
-    const from = t - days * 86400000, inWin = trades.filter(x => !x.isOpen && x.closeTime >= from);
+    const from = t - days * 86400000, inWin = money.filter(x => x.closeTime >= from); // the window's realized money (spot by the day it was realized)
     sum.usd = { pnl: Math.round(inWin.reduce((s, x) => s + (x.net || 0), 0)), vol: Math.round(fills.reduce((s, f) => s + (Math.abs(parseFloat(f.sz) * parseFloat(f.px)) || 0), 0)), equity: null, days };
     // the exchange's own account value, which covers portfolio-margin accounts (their perp clearinghouse reads 0);
     // the perp clearinghouse only when that wasn't readable

@@ -132,7 +132,7 @@ t('each recent surface is gated by coachOn()', () => {
     ok(grabFn(fn).includes('coachOn()'), fn);
   ok(html.includes("const ruleCtl=v=>{ if(!v.pid||v.uplift>=0||!coachOn())return'';"), 'miner + rule');
   ok(html.includes("const ruleBtn=(cond&&cond.cid&&dNet>0&&coachOn())"), 'what-if make rule');
-  ok(html.includes("const open=coachOn()?allTrades.filter(t=>t.isOpen):[];"), 'dashboard chips');
+  ok(html.includes("const open=coachOn()?allTrades.filter(t=>t.isOpen&&!t.orphan&&measured(t)):[];"), 'dashboard chips');
   ok(html.includes("const plan=coachOn()?nfPlan(journal[t.id]):null;"), 'replay overlays');
   ok(html.includes("fz.ck||(settings.coachMode!==false&&withCk>=10)"), 'check-in miner family');
   ok(html.includes("_minerCache={key:null,res:null,deep:null}; // the check-in conditions come and go with coach mode"), 'miner cache reset on toggle');

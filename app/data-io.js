@@ -188,8 +188,15 @@ async function loadWallet(w,fresh,spotP){
   // stats and named in the data-health note. Only judged against clearinghouses that answered.
   const live=new Set(ch.positions.map(p=>p.coin)), ok=ch.okDex||new Set(['']);
   for(const t of perpTr){ const dex=/^([A-Za-z0-9_-]+):/.exec(t.coin); t.orphan=!!(t.isOpen&&ok.has(dex?dex[1]:'')&&!live.has(t.coin)); }
+  // A spot position still "open" by its fills whose balance the exchange no longer holds left the
+  // wallet without a sale (a send, staking, a vault): the same MOVED case the engine files when a later
+  // fill reveals the jump, settled here from the live balance instead of waiting for that fill. It is
+  // listed with its badge and never scored as a trade; held again later, it is open again (movedLive).
   const heldUsd=new Map(sbal.map(b=>[b.coin,b.total*(sm.markBySym[b.coin]||0)]));
-  for(const t of spotTr){ t.orphan=!!(t.isOpen&&sbal.length&&!(heldUsd.get(t.symbol)>=1)); }
+  for(const t of spotTr){ t.orphan=false; if(!(t.isOpen||t.movedLive))continue;
+    const gone=sbal.length>0&&!(heldUsd.get(t.symbol)>=1);
+    if(gone){ t.movedLive=true; t.movedOut=true; t.isOpen=false; t.avgExit=null; t.durationMs=t.closeTime-t.openTime; }
+    else if(t.movedLive){ t.movedLive=false; t.movedOut=false; t.isOpen=true; t.durationMs=Date.now()-t.openTime; } }
   let spotVal=0; const spotHold=[];
   sbal.forEach(b=>{ const mark=sm.markBySym[b.coin]||(b.coin==='USDC'?1:0); const value=b.total*mark; spotVal+=value;
     if(b.coin!=='USDC' && b.total>1e-9 && (value>=1 || b.entry>=1)){ spotHold.push({coin:b.coin,total:b.total,entry:b.entry,mark,value,uPnl:value-b.entry,wallet:{address:a,label:w.label}}); } });
@@ -892,9 +899,9 @@ $('exportCsv').onclick=()=>{
   const lines=[head.join(',')];
   for(const t of rows){ const j=journal[t.id]||{}; const R=rFor(t), ret=retPct(t);
     lines.push([new Date(t.openTime).toISOString(),t.closeTime?new Date(t.closeTime).toISOString():'',
-      t.market,dcoin(t),t.dir,t.isOpen?'open':'closed',t.avgEntry,t.avgExit==null?'':t.avgExit,t.maxSize,
+      t.market,dcoin(t),t.dir,t.isOpen?'open':'closed',measured(t)?t.avgEntry:'',t.avgExit==null?'':t.avgExit,t.maxSize,
       t.pnl,t.fees,t.funding||0,t.net,ret==null?'':ret.toFixed(4),R==null?'':R.toFixed(3),
-      t.durationMs?(t.durationMs/60000).toFixed(1):'',j.rating||'',j.setup||'',(j.tags||[]).join('; '),(j.mistakes||[]).join('; '),j.notes||'',
+      holdOf(t)?(holdOf(t)/60000).toFixed(1):'',j.rating||'',j.setup||'',(j.tags||[]).join('; '),(j.mistakes||[]).join('; '),j.notes||'',
       t.wallet?labelFor(t.wallet):''].map(q).join(','));
   }
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});

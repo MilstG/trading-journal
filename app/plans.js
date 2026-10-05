@@ -46,7 +46,7 @@ function pplanMatches(J, trades, now){
   for(const p of L)if(p.tid)used.add(p.tid);
   const has=id=>{ const q=J[id]&&J[id].plan; return !!(q&&parseFloat(q.stop)>0); };
   for(const p of L){ if(p.tid)continue; const ck=planCoinKey(p.coin); let best=null;
-    for(const t of trades||[]){ if((p.dir==='Short'?t.dir!=='Short':t.dir!=='Long'&&t.dir!=='Spot')||used.has(t.id)||has(t.id))continue;
+    for(const t of trades||[]){ if((p.dir==='Short'?t.dir!=='Short':t.dir!=='Long'&&t.dir!=='Spot')||used.has(t.id)||has(t.id)||!measured(t))continue; // a plan attaches to a real entry
       if(!(t.openTime>=p.at-3e5&&t.openTime<=p.at+864e5))continue;
       if(planCoinKey(t.coin)!==ck&&planCoinKey(t.symbol)!==ck)continue;
       if(!best||t.openTime<best.openTime)best=t; }
@@ -76,6 +76,7 @@ function planStopBand(t, p){
 function planVerdict(t, p, e){
   if(!t||t.isOpen)return null;
   if(!p||!(p.stop>0))return {v:'none'};
+  if(!measured(t))return {v:'none'}; // a stand-in entry can't be judged against a plan
   const en=p.entry>0?p.entry:t.avgEntry;
   if(!(t.avgEntry>0)||!(t.avgExit>0)||!(Math.abs(en-p.stop)>0))return {v:'none'};
   const {sg,unit,tol}=planStopBand(t,p);

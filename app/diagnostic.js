@@ -64,13 +64,14 @@ async function addPin(v,basis,famParams){
 }
 // Behavioral signals behind the plain-language findings — shared by the Diagnostic view
 // and the dashboard coach so both always say the same thing. Pure given (closed, stats).
-function behaviorSignals(closed, s){
+// money: the money rows behind s (concentration is a share of net, which is money); without it the trades carry it
+function behaviorSignals(closed, s, money){
   // cost drag: fees as % of gross realized profit (before fees/funding)
   const grossReal = s.net + s.fees - s.fund; // undo costs
   const costDragPct = grossReal>0 ? s.fees/grossReal : null;
 
-  // oversizing
-  const f=sizeBucketFn(closed); const sz={}; closed.forEach(t=>{const k=f(t);(sz[k]=sz[k]||{n:0,net:0});sz[k].n++;sz[k].net+=t.net;});
+  // oversizing: measured rows only (a stand-in entry has no size)
+  const f=sizeBucketFn(closed); const sz={}; closed.forEach(t=>{const k=f(t); if(k==null)return; (sz[k]=sz[k]||{n:0,net:0});sz[k].n++;sz[k].net+=t.net;});
   const big=sz['largest 25%'], small=sz['smallest 25%'];
   const bigExp=big?big.net/big.n:null, smallExp=small?small.net/small.n:null;
   const oversizing=(bigExp!=null&&smallExp!=null&&bigExp<smallExp);
@@ -84,12 +85,12 @@ function behaviorSignals(closed, s){
   const rb=bucketize(closed,'rating').filter(b=>/^★/.test(b.key)).sort((a,b)=>a.key.length-b.key.length);
   let ratingMono=null; if(rb.length>=2){ ratingMono=true; for(let i=1;i<rb.length;i++) if(rb[i].expectancy<rb[i-1].expectancy){ratingMono=false;break;} }
   // concentration
-  const mkts=bucketize(closed,'market'); const topMkt=[...mkts].sort((a,b)=>b.net-a.net)[0];
+  const mkts=bucketize(money||closed,'market'); const topMkt=[...mkts].sort((a,b)=>b.net-a.net)[0];
   const absTot=mkts.reduce((x,b)=>x+Math.abs(b.net),0)||1; const conc=topMkt?topMkt.net/absTot:0;
 
   // --- behavioral: disposition effect (hold winners vs losers) ---
-  const wHold=closed.filter(t=>isWin(t.net)&&t.durationMs>0).map(t=>t.durationMs);
-  const lHold=closed.filter(t=>isLoss(t.net)&&t.durationMs>0).map(t=>t.durationMs);
+  const wHold=closed.filter(t=>isWin(t.net)&&holdOf(t)>0).map(holdOf);
+  const lHold=closed.filter(t=>isLoss(t.net)&&holdOf(t)>0).map(holdOf);
   const avgWHold=wHold.length?_avg(wHold):null, avgLHold=lHold.length?_avg(lHold):null;
   const disposition=(avgWHold!=null&&avgLHold!=null&&avgLHold>avgWHold*1.25);
   // --- tilt: trades opened soon after a loss ---
@@ -98,7 +99,7 @@ function behaviorSignals(closed, s){
   function priorClose(t){ let lo=0,hi=_ct.length-1,idx=-1;
     while(lo<=hi){ const m=(lo+hi)>>1; if(_ct[m]<=t.openTime){idx=m;lo=m+1;} else hi=m-1; }
     while(idx>=0){ if(byClose[idx].id!==t.id) return byClose[idx]; idx--; } return null; }
-  const afterLoss=closed.filter(t=>{ const p=priorClose(t); return p&&isLoss(p.net)&&(t.openTime-p.closeTime)<=TILT_WIN; });
+  const afterLoss=closed.filter(t=>{ if(!measured(t))return false; const p=priorClose(t); return p&&isLoss(p.net)&&(t.openTime-p.closeTime)<=TILT_WIN; }); // a stand-in entry has no entry time
   const afterLossExp=afterLoss.length?afterLoss.reduce((x,t)=>x+t.net,0)/afterLoss.length:null;
   const tilt=(afterLoss.length>=5 && afterLossExp!=null && afterLossExp<s.expectancy);
   // --- overtrading: high-count days vs the rest ---
@@ -120,7 +121,7 @@ function behaviorSignals(closed, s){
 }
 /* ============================ deep scan: states / regime / sizing ============================ */
 function tradeStates(closed){
-  const byOpen=[...closed].sort((a,b)=>a.openTime-b.openTime);
+  const byOpen=[...closed].filter(measured).sort((a,b)=>a.openTime-b.openTime); // entry states need an entry: a stand-in one gets no state
   const byClose=[...closed].sort((a,b)=>a.closeTime-b.closeTime);
   const M=new Map(); let ci=0; const closedBefore=[];
   let dayKeyCur=null, idxDayCtr=0;
@@ -216,7 +217,7 @@ function changePoint(closed,V){ V=V||(t=>t.net);
 function sizeDependence(closed){
   // y is %-of-notional, NOT $: $ net = pct \u00d7 notional, so a positive mean creates a
   // mechanical positive correlation with size in $ terms. Percent isolates decision quality.
-  const pts=closed.map(t=>({x:(t.maxSize||0)*(t.avgEntry||0),y:retPct(t)})).filter(p=>p.x>0&&p.y!==null);
+  const pts=closed.map(t=>({x:notionalOf(t)||0,y:retPct(t)})).filter(p=>p.x>0&&p.y!==null); // measured rows only
   const n=pts.length; if(n<30)return null;
   const rank=a=>{const idx=a.map((v,i)=>[v,i]).sort((p,q)=>p[0]-q[0]);const r=new Array(a.length);
     let i=0; while(i<idx.length){ let j=i; while(j+1<idx.length&&idx[j+1][0]===idx[i][0])j++;
@@ -307,8 +308,8 @@ function _diagDataKey(closed){ let ct=0, ot=0; for(const t of closed){ ct+=t.clo
 // again on the Diagnostic (over the period's — the same trades when the period is "all"): the tab
 // reuses what the coach just computed, and its re-renders reuse their own (_tradesMemo, engine.js).
 function diagScanMemo(closed){ return _tradesMemo('scan',closed,_diagDataKey(closed),()=>diagScan(closed)); }
-function behaviorSignalsMemo(closed,s){ // reads s.net / fees / fund / expectancy besides the trades
-  return _tradesMemo('sig',closed,_diagDataKey(closed)+'|'+[s.net,s.fees,s.fund,s.expectancy].join('|'),()=>behaviorSignals(closed,s)); }
+function behaviorSignalsMemo(closed,s,money){ // reads s.net / fees / fund / expectancy besides the trades
+  return _tradesMemo('sig',closed,_diagDataKey(closed)+'|'+[s.net,s.fees,s.fund,s.expectancy,money?money.length:0].join('|'),()=>behaviorSignals(closed,s,money)); }
 
 /* ============================ compute worker (main-thread offload) ============================ */
 // The two heavy paths — fill→trade reconstruction and the permutation-test miner/deep scan —
@@ -319,7 +320,7 @@ function behaviorSignalsMemo(closed,s){ // reads s.net / fees / fund / expectanc
 // wrappers fall back to the original synchronous code path — identical results, just blocking.
 const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,addedToLoser,dcoin,dispMarket,
   mcMaxDD,fwdMaxDD,edgeSignificance,walkForward,diagMCCompute,
-  tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
+  tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,measured,notionalOf,holdOf,
   reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,dayJKey,checkinPred,minerFams,mineInsights,deepScan});
 const _WORKER_PRELUDE="let settings={tz:'local'}, journal={}, _excM={}, spotMaps={nameByCoin:{}}, _be=50, _rng=Math.random, _progress=null, _pool=null;"+

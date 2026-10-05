@@ -105,7 +105,7 @@ function taxStatementModel(trades,wallets,nowIso){
     const fees=-t.fees, fund=t.funding||0;
     bal+=t.net;
     Y.lines.push({date:dU(t.closeTime),symbol:dcoin(t),market:t.market,dir:t.dir,
-      held:t.durationMs?t.durationMs/86400000:0,pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
+      held:(!t.spotRz&&holdOf(t))?holdOf(t)/86400000:0, /* a spot day row and a stand-in entry have no holding period */pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
       wallet:t.wallet&&(t.wallet.label||(t.wallet.address?t.wallet.address.slice(0,10):''))||''});
     M.n++; if(!t.spotRz){ if(t.net>0)M.wins++; else if(t.net<0)M.losses++; } // a spot day row is a line of realized money, not a trade to rate
     M.pnl+=t.pnl; M.fees+=fees; M.funding+=fund; M.net+=t.net; M.endBal=bal;
@@ -144,7 +144,7 @@ function renderTaxPdfDoc(model){
   // ---- statement summary (per year) ----
   const cols={yr:Mg, n:Mg+92, pnl:Mg+205, fees:Mg+285, fund:Mg+365, net:Mg+445, bal:W-Mg};
   const sumHead=(title)=>{ ensure(40); pdf.rect(Mg-4,y-4,W-2*Mg+8,15); pdf.text(Mg,y,title,{size:8,bold:true,color:dark}); y-=16;
-    pdf.text(cols.yr,y,'TAX YEAR',{size:7,color:gray}); pdf.textR(cols.n,y,'TRADES',{size:7,color:gray});
+    pdf.text(cols.yr,y,'TAX YEAR',{size:7,color:gray}); pdf.textR(cols.n,y,'CLOSES',{size:7,color:gray});
     pdf.textR(cols.pnl,y,'REALIZED PNL',{size:7,color:gray}); pdf.textR(cols.fees,y,'FEES',{size:7,color:gray});
     pdf.textR(cols.fund,y,'FUNDING',{size:7,color:gray}); pdf.textR(cols.net,y,'NET',{size:7,color:gray});
     pdf.textR(cols.bal,y,'CLOSING BAL',{size:7,color:gray}); y-=4; pdf.line(Mg,y,W-Mg,y); y-=11; };
@@ -354,9 +354,9 @@ $('exportTax').onclick=()=>{
   // ONE rectangular table — no embedded summary or comment lines, so every spreadsheet / tax tool parses it cleanly.
   const head=['tax_year','close_date','open_utc','close_utc','holding_days','market','symbol','direction','realized_pnl','fees','funding','net','wallet_label','wallet_address'];
   const lines=[head.join(',')]; const byYear={};
-  for(const t of rows){ const yr=new Date(t.closeTime).getUTCFullYear(); const hold=t.durationMs?(t.durationMs/86400000):0;
+  for(const t of rows){ const yr=new Date(t.closeTime).getUTCFullYear(); const hold=(!t.spotRz&&holdOf(t))?(holdOf(t)/86400000):null; // a spot day row and a stand-in entry have no holding period
     const addr=t.wallet&&t.wallet.address?t.wallet.address:''; const lbl=t.wallet&&t.wallet.label?t.wallet.label:'';
-    lines.push([yr,dateU(t.closeTime),isoU(t.openTime),isoU(t.closeTime),hold.toFixed(2),t.market,dcoin(t),t.dir,
+    lines.push([yr,dateU(t.closeTime),hold==null?'':isoU(t.openTime),isoU(t.closeTime),hold==null?'':hold.toFixed(2),t.market,dcoin(t),t.dir,
       t.pnl.toFixed(2),(-t.fees).toFixed(2),(t.funding||0).toFixed(2),t.net.toFixed(2),lbl,addr].map(q).join(','));
     const b=byYear[yr]||(byYear[yr]={n:0,net:0}); b.n++; b.net+=t.net; }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});

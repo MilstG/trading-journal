@@ -852,7 +852,7 @@ function capitalModel(flows, closed, equityNow, now){
   tw+=prevCap*(now-prevT);
   const spanMs=now-chron[0].time;
   const avgCapital=spanMs>0?tw/spanMs:cap;
-  const closedIn=(closed||[]).filter(t=>!t.isOpen&&t.closeTime>=chron[0].time&&t.closeTime<=now)
+  const closedIn=(closed||[]).filter(t=>t.closeTime>=chron[0].time&&t.closeTime<=now) // the realized money in the window (an open perp trade's realized part included: realizedMoney)
     .sort((x,y)=>x.closeTime-y.closeTime);
   const realized=closedIn.reduce((s,t)=>s+t.net,0);
   const roc=avgCapital>0?realized/avgCapital:null;

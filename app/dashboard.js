@@ -169,7 +169,7 @@ function renderStats(s){
     vh?{pri:1,k:'Net PnL',v:fmtUsd(vh.ver),sign:vh.ver,sub:'Hyperliquid’s figure, unrealized incl. · closed fills '+fmtUsd(vh.rec),
         tip:'Hyperliquid’s own all-time P&L for this view — the figure its app and trackers such as Hyperdash show, unrealized included. It leads here because the fills the exchange still serves don’t tell the whole story'+(vh.gaps?': '+vh.gaps+' position change'+(vh.gaps===1?' has':'s have')+' no fill behind '+(vh.gaps===1?'it':'them'):'')+(vh.share!=null?' (the fills explain '+Math.round(vh.share*100)+'% of your volume)':'')+'. The fill-based sum, '+fmtUsd(vh.rec)+' over '+vh.n+' trades, is what every other statistic is built on. Pick a period to see the fill-based figure for that window.'}
       :{pri:1,k:'Net PnL',v:fmtUsd(s.net),sign:s.net,sub:s.n+' trades'+(openN?' · '+openN+' open':''),tip:'All-in realized PnL (fees and funding included) for closed trades in this view and period.'},
-    {pri:1,k:'Volume',v:fmtUsd(s.volume),sign:0,sub:vh&&exVol>0?'Hyperliquid: '+fmtUsd(exVol,0)+' · fills hold '+Math.round(Math.min(1,fillVol/exVol)*100)+'%':s.n?'≈'+fmtUsd(s.volume/s.n)+'/trade':'total traded',tip:'Total notional traded in this view — every fill\'s size × price summed across entries and exits (maker + taker). A read on turnover and the fee-generating flow you push.'+(vh&&exVol>0?' Hyperliquid\'s own all-time volume is shown for comparison: the share the fills hold is how much of your history they can explain.':'')},
+    {pri:1,k:'Volume',v:fmtUsd(s.volume),sign:0,sub:vh&&exVol>0?'Hyperliquid: '+fmtUsd(exVol,0)+' · fills hold '+Math.round(Math.min(1,fillVol/exVol)*100)+'%':s.mn?'≈'+fmtUsd(s.volume/s.mn)+(view==='perp'?'/trade':'/close'):'total traded',tip:'Total notional traded in this view — every fill\'s size × price summed across entries and exits (maker + taker). A read on turnover and the fee-generating flow you push.'+(vh&&exVol>0?' Hyperliquid\'s own all-time volume is shown for comparison: the share the fills hold is how much of your history they can explain.':'')},
     {pri:1,k:'Unrealized',v:posList.length?fmtUsd(uPnl):'—',sign:uPnl,sub:posList.length+(view==='spot'?' holding':' position')+(posList.length===1?'':'s'),tip:'Mark-to-market PnL on your open positions. Live from Hyperliquid; not part of realized stats.'},
     {pri:1,k:'Win rate',v:(s.winRate*100).toFixed(1)+'%',sign:s.winRate>=0.5?1:-1,sub:s.wins+'W / '+s.losses+'L'+(s.breakeven?' / '+s.breakeven+' B/E':''),tip:'Winning trades ÷ (winners + losers). Trades landing inside ±'+fmtUsd(_be)+' of zero'+(beFixedOf(settings)==null?' (the automatic band: 5% of your median trade\'s net, $0.50–$50)':'')+' are break-even scratches, excluded from both sides. Change the band under ⚙ Settings.'},
     {pri:1,k:'Expectancy',v:fmtUsd(s.expectancy),sign:s.expectancy,sub:'median '+(s.median!=null?fmtUsd(s.median):'—'),tip:'Average net PnL per trade. The median is the middle trade — if the mean is far above the median, a few big winners carry the average.'},
@@ -489,21 +489,21 @@ const DOWN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function holdBucket(ms){ const m=ms/60000; if(m<5)return 'under 5 min'; if(m<60)return '5–60 min'; if(m<240)return '1–4 hours'; if(m<1440)return '4–24 hours'; return 'over a day'; }
 function hourBlock(h){ if(h<6)return '00–06h'; if(h<12)return '06–12h'; if(h<18)return '12–18h'; return '18–24h'; }
 function sizeBucketFn(trades){
-  const ns=trades.map(t=>t.maxSize*t.avgEntry).filter(x=>x>0).sort((a,b)=>a-b);
+  const ns=trades.map(notionalOf).filter(x=>x>0).sort((a,b)=>a-b); // measured rows only: a stand-in entry has no size
   const q=p=>ns.length?ns[Math.min(ns.length-1,Math.floor(p*ns.length))]:0;
   const q1=q(.25),q2=q(.5),q3=q(.75);
-  // trades ranked by $ size (notional) and split into quarters — labels say which quarter a trade falls in
-  return t=>{ const n=t.maxSize*t.avgEntry; return n<=q1?'smallest 25%':n<=q2?'small-mid (25–50%)':n<=q3?'large-mid (50–75%)':'largest 25%'; };
+  // trades ranked by $ size (notional) and split into quarters — labels say which quarter a trade falls in; null: no known size
+  return t=>{ const n=notionalOf(t); if(!(n>0))return null; return n<=q1?'smallest 25%':n<=q2?'small-mid (25–50%)':n<=q3?'large-mid (50–75%)':'largest 25%'; };
 }
 function edgeKeyFn(dim,trades){
-  if(dim==='size'){ const f=sizeBucketFn(trades); return t=>[f(t)]; }
+  if(dim==='size'){ const f=sizeBucketFn(trades); return t=>{ const k=f(t); return k==null?[]:[k]; }; }
   return t=>{ const j=journal[t.id]||{};
     switch(dim){
       case 'dir': return [t.dir];
       case 'market': return [dcoin(t)];
       case 'dow': return [DOWN[tzDow(t.closeTime)]];
       case 'hour': return [hourBlock(tzHour(t.closeTime))];
-      case 'hold': return [holdBucket(t.durationMs)];
+      case 'hold': { const h=holdOf(t); return h==null?[]:[holdBucket(h)]; } // a stand-in entry has no hold
       case 'rating': return [j.rating?'★'.repeat(Math.max(0,Math.min(5,Math.round(+j.rating)||0))):'unrated'];
       case 'setup': return [j.setup?j.setup:'(no setup)'];
       case 'tag': return (j.tags&&j.tags.length)?j.tags:['(untagged)'];
@@ -533,17 +533,19 @@ function bucketize(trades,dim){
 // best/worst are partitioned by sign, never sliced from a shared list, so a market cannot appear
 // in both -- the same contract test-edge-map locks in for partitionConditions. Ties break on key
 // so the order is deterministic across renders.
-function assetContribution(trades,basis,k){
+// trades: trade rows (counts, win rate, expectancy, % return); money: money rows, whose net is the
+// dollars attributed (spot by the day it was realized). Without a money list the trades carry the net.
+function assetContribution(trades,basis,k,money){
   basis=basis==='pct'?'pct':'usd'; k=k||5;
-  const g={};
-  for(const t of trades){ const key=dcoin(t);
-    const b=g[key]||(g[key]={key,n:0,wins:0,losses:0,net:0,sumRet:0,retN:0});
+  const g={}, at=key=>g[key]||(g[key]={key,n:0,wins:0,losses:0,net:0,tnet:0,sumRet:0,retN:0});
+  for(const t of trades){ const b=at(dcoin(t));
     b.n++; if(isWin(t.net))b.wins++; else if(isLoss(t.net))b.losses++;
-    b.net+=t.net; const r=retPct(t); if(r!==null){ b.sumRet+=r; b.retN++; } }
+    b.tnet+=t.net; if(!money)b.net+=t.net; const r=retPct(t); if(r!==null){ b.sumRet+=r; b.retN++; } }
+  if(money)for(const t of money){ at(dcoin(t)).net+=t.net; }
   const rows=Object.values(g).map(b=>({key:b.key,n:b.n,wins:b.wins,losses:b.losses,
     net:b.net,sumRet:b.sumRet,meanRet:b.retN?b.sumRet/b.retN:null,
     winRate:(b.wins+b.losses)?b.wins/(b.wins+b.losses):0,
-    expectancy:b.net/b.n,
+    expectancy:b.n?b.tnet/b.n:null,
     v:basis==='pct'?b.sumRet:b.net}));
   const pos=rows.reduce((a,r)=>a+(r.v>0?r.v:0),0);
   const neg=rows.reduce((a,r)=>a+(r.v<0?-r.v:0),0);
@@ -566,8 +568,8 @@ function assetContribution(trades,basis,k){
     worstShare:neg>0?worst.reduce((a,r)=>a-r.v,0)/neg:0,
     markets:rows.length,others:Math.max(0,rows.length-best.length-worst.length)};
 }
-function assetAttribHtml(closed,basis){
-  const A=assetContribution(closed,basis,5);
+function assetAttribHtml(closed,basis,money){ // closed: trade rows (counts); money: money rows (the dollars attributed)
+  const A=assetContribution(closed,basis,5,money||null);
   if(A.markets<2) return '<p class="lead">Only one market traded in this view \u2014 nothing to rank.</p>';
   const pctB=A.basis==='pct';
   const fV=n=>pctB?((n>=0?'+':'\u2212')+Math.abs(n).toFixed(1)+' pts'):fmtUsd(n);
@@ -592,7 +594,7 @@ function assetAttribHtml(closed,basis){
     </div>
     <p class="mini-note">${A.markets} market${A.markets===1?'':'s'} traded \u00b7 ${A.others} outside these two lists \u00b7 ${fV(A.pos)} made against ${fV(-A.neg)} lost \u00b7 net ${fV(A.total)}${A.netMeaningful?'':' \u2014 net is small next to the gross sides, so per-market \u201c% of net\u201d is suppressed as meaningless here'}${pctB?' \u00b7 return points are per-trade % of position notional, summed \u2014 size-neutral, so a small well-traded market can outrank a large one':' \u00b7 dollars reward size and frequency; switch to % for size-neutral quality'}.</p>`;
 }
-function assetAttribSection(closed){
+function assetAttribSection(closed, money){
   const b=settings.attribBasis==='pct'?'pct':'usd';
   return `<div class="diag-section">
      <h2>Where the money came from <span style="font-size:11px;color:var(--faint);font-weight:400">per-market attribution \u00b7 ranked</span></h2>
@@ -602,17 +604,17 @@ function assetAttribSection(closed){
          <button data-b="usd"${b==='usd'?' class="on"':''}>attribute in $</button><button data-b="pct"${b==='pct'?' class="on"':''}>attribute in %</button>
        </div>
      </div>
-     <div id="attribBox">${assetAttribHtml(closed,b)}</div>
+     <div id="attribBox">${assetAttribHtml(closed,b,money)}</div>
    </div>`;
 }
 // Own toggle, own re-render, own persisted setting: repainting just #attribBox leaves the miner
 // cache and any on-screen scan results untouched, which a full renderDiagnostic would discard.
-function wireAssetAttrib(closed){
+function wireAssetAttrib(closed, money){
   document.querySelectorAll('#attribBasisTog button').forEach(btn=>{
     btn.onclick=async()=>{
       settings.attribBasis=btn.dataset.b; await Store.set(S_KEY,settings);
       document.querySelectorAll('#attribBasisTog button').forEach(x=>x.classList.toggle('on',x===btn));
-      const box=$('attribBox'); if(box)box.innerHTML=assetAttribHtml(closed,btn.dataset.b);
+      const box=$('attribBox'); if(box)box.innerHTML=assetAttribHtml(closed,btn.dataset.b,money);
     };
   });
 }

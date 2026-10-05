@@ -364,7 +364,7 @@ await t('capital: flows classified, time-weighted model, account-wide', async ()
   eq(body.flows, 2); eq(body.skipped, 1);
   near(body.model.netDeposited, 8000);
   near(body.model.totIn, 10000); near(body.model.totOut, 2000);
-  near(body.model.realized, -104.51, 1e-6); // ETH +99.5 and -204, and the spot buy's $0.01 fee; open trades excluded
+  near(body.model.realized, -105.51, 1e-6); // ETH +99.5 and -204, the spot buy's $0.01 fee, and the open BTC trade's realized part so far (its $1 fee): realized money
   ok(body.model.avgCapital > 8000 && body.model.avgCapital < 10000, 'time-weighted between the two levels');
 });
 await t('weekly digest: generated once, listed, fetchable, idempotent', async () => {
@@ -505,9 +505,9 @@ await t('GET /api/v1/metrics returns flat numbers a dashboard can plot', async (
   const { status, body } = await jget('/api/v1/metrics', READ);
   eq(status, 200);
   eq(body.trades_total, 4); eq(body.open_trades, 2); // trade rows: 2 ETH, open BTC, open spot position
-  near(body.net_total, -104.51); // money rows: the spot buy's fee too
+  near(body.net_total, -105.51); // realized money: the spot buy's fee and the open BTC trade's fee so far
   eq(body.trades_today, 0); near(body.net_today, 0); // fixture closes 4-5 days ago
-  near(body.current_drawdown, -204.01); // peak +99.5, then the spot buy's fee and -204 → 204.01 under water
+  near(body.current_drawdown, -205.01); // peak +99.5, then the spot buy's fee, -204 and the open BTC trade's fee so far → 205.01 under water (realized money)
   eq(body.open_positions, 1);
   near(body.gross_exposure, 16000); near(body.net_exposure, 16000); // one long BTC position
   near(body.account_value, 5000);
@@ -519,7 +519,7 @@ await t('?format=prom emits Prometheus exposition text', async () => {
   ok((r.headers.get('content-type') || '').startsWith('text/plain'));
   const text = await r.text();
   ok(text.includes('ledger_trades_total 4'));
-  ok(text.includes('ledger_net_total -104.51'));
+  ok(text.includes('ledger_net_total -105.51'));
   ok(!text.includes('null') && !text.includes('NaN'), 'numbers only');
 });
 await t('buildBotState assembles a truthful snapshot for the Telegram router', async () => {
@@ -530,7 +530,7 @@ await t('buildBotState assembles a truthful snapshot for the Telegram router', a
   ok(st.risk && st.risk.positions === 1, 'one cached BTC position');
   near(st.risk.gross, 16000);
   ok(st.stats30 && st.stats30.n === 2, 'both ETH round trips inside 30d');
-  near(st.stats30.net, -104.51); // sums come from money rows: the spot buy's $0.01 fee too, as /stats and /metrics report
+  near(st.stats30.net, -105.51); // sums come from realized money (the open BTC trade's fee so far included), as /stats and /metrics report
   ok(!('goals' in st), 'no goals configured — router says so');
 });
 

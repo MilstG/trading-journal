@@ -69,7 +69,7 @@ function weeklyReviewSectionHtml(){
   const e=journal[wkKey]||{};
   const inWeek=t=>t.closeTime>=from&&t.closeTime<to&&viewFilter(t);
   const closed=closedTrades(inWeek); // the week's trades: best, worst, count
-  const net=closedMoney(inWeek).reduce((s,t)=>s+t.net,0); // the week's result: money, spot by the day it was realized
+  const net=realizedMoney(inWeek).reduce((s,t)=>s+t.net,0); // the week's result: money, spot by the day it was realized
   const sorted=[...closed].sort((a,b)=>b.net-a.net);
   const best=sorted[0], worst=sorted[sorted.length-1];
   const tl=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span>`:'—';
@@ -161,17 +161,18 @@ function varianceModel(closed, opts){
 // Median entry notional of the last 20 trades vs the 20 before, compared with how much
 // capital actually changed over the same stretch. Sizing that outruns equity is the
 // classic post-win-streak failure. Pure; needs 40 closed trades.
-function riskCreepModel(closed, acctNow){
-  const chron=(closed||[]).filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
+// closed: closed trade rows (measured ones carry the sizes); money: the money rows for the realized change
+function riskCreepModel(closed, acctNow, money){
+  const chron=(closed||[]).filter(t=>!t.isOpen&&t.closeTime&&notionalOf(t)>0).sort((a,b)=>a.closeTime-b.closeTime); // a stand-in entry has no size
   if(chron.length<40)return null;
-  const notional=t=>(t.maxSize||0)*(t.avgEntry||0);
+  const notional=notionalOf;
   const last=chron.slice(-20), prior=chron.slice(-40,-20);
   const m2=nfMedian(last.map(notional)), m1=nfMedian(prior.map(notional));
   if(!(m1>0)||!(m2>0))return null;
   const sizeGrowth=m2/m1-1;
   let eqGrowth=null;
   if(acctNow>0){
-    const netSince=last.reduce((s,t)=>s+t.net,0); // realized change over the last-20 stretch
+    const since=last[0].closeTime, netSince=(money||last).reduce((s,t)=>s+(t.closeTime>=since?t.net:0),0); // realized change over the last-20 stretch: money (spot by the day it was realized)
     const acctThen=acctNow-netSince;
     if(acctThen>0)eqGrowth=acctNow/acctThen-1;
   }
