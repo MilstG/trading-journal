@@ -18,7 +18,7 @@ const PZ_COL_LIGHT={good:'#0A9A63',mid:'#B07D05',low:'#D9481F',none:'#CDD4DD',ri
 const PZ_COL_TS9={good:'#7dff4f',mid:'#ffc94a',low:'#ff6b4a',none:'#1f3a1a',risk:'#4fd8ff',xp:'#7dff4f'};
 const PZ_COL=new Proxy({},{get:(_,k)=>{ const c=typeof document!=='undefined'&&document.body&&document.body.classList; return (c&&c.contains('light')?PZ_COL_LIGHT:c&&c.contains('ts9')?PZ_COL_TS9:PZ_COL_DARK)[k]; }});
 const pzBand=v=>v==null?'none':v>=70?'good':v>=40?'mid':'low';
-const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'Stops written while open',stops:'Stops honored',limit:'Under the loss limit',journal:'Trades journaled'};
+const PZ_PART={plan:'Plan before the first trade',rules:'Rules kept',planned:'Stops written while open',stops:'Stops honored',limit:'Under the loss limit',journal:'Trades journaled',playbook:'Playbook rules kept'};
 
 // Readiness 0–100 from the session check-in (1–5 scales; stress counts inverted, as calm).
 // Weighted sleep .4 · calm .2 · focus .4 over whichever answers were given; null with none.
@@ -1251,11 +1251,24 @@ function pzJournalHtml(D){
 // A setup that names one of your playbooks (your own, or one adopted under Social → Playbooks) brings its
 // checklist into the card: tick the rules you kept. It's saved with the trade only once a box has been
 // touched (leaving it alone records nothing), as {id, ok, of, at}, the full journal's j.pb.
-function pzPbCheckHtml(id, setup){
+// pre: ticks to show instead of the journal's (Plan a trade's, before there is a trade); legend: the words after the name
+function pzPbCheckHtml(id, setup, pre, legend){
   const p=typeof playbookFor==='function'?playbookFor(setup,pbList()):null; if(!p||!p.rules.length)return '';
-  const pb=(journal[id]||{}).pb, ok=new Set(pb&&pb.id===p.id?pb.ok:[]);
-  return `<fieldset class="pz-pbcheck" data-pz-pb="${esc(p.id)}"><legend>${esc(p.name)} playbook${p.src?' · from @'+esc(p.src.h):''} · tick the rules you kept</legend>
-    ${p.rules.map(r=>`<label class="pz-pbr"><input type="checkbox" data-pz-pbr="${esc(r.id)}"${ok.has(r.id)?' checked':''}><span>${esc(r.text)}</span></label>`).join('')}</fieldset>`;
+  const pb=pre||(journal[id]||{}).pb, on=pb&&pb.id===p.id, ok=new Set(on?pb.ok:[]), na=new Set(on&&Array.isArray(pb.na)?pb.na:[]);
+  return `<fieldset class="pz-pbcheck" data-pz-pb="${esc(p.id)}"><legend>${esc(p.name)} playbook${p.src?' · from @'+esc(p.src.h):''} · ${legend||'tick the rules you kept'}${on&&pb.live?' · ticked before the close':''}</legend>
+    ${p.rules.map(r=>`<div class="pz-pbrow${na.has(r.id)?' na':''}"><label class="pz-pbr"><input type="checkbox" data-pz-pbr="${esc(r.id)}"${ok.has(r.id)&&!na.has(r.id)?' checked':''}${na.has(r.id)?' disabled':''}><span>${esc(r.text)}</span></label><button type="button" class="pz-pbna" data-pz-pbna="${esc(r.id)}" aria-pressed="${na.has(r.id)}" aria-label="This rule doesn’t apply to this trade">n/a</button></div>`).join('')}</fieldset>`;
+}
+// what a checklist box holds: {ok, of, na} for playbook p (na only when some rule was marked)
+function pzPbRead(box, p){
+  const na=[...box.querySelectorAll('[data-pz-pbna][aria-pressed="true"]')].map(b=>b.dataset.pzPbna);
+  return {ok:[...box.querySelectorAll('input[data-pz-pbr]')].filter(i=>i.checked&&!na.includes(i.dataset.pzPbr)).map(i=>i.dataset.pzPbr),of:p.rules.map(r=>r.id),...(na.length?{na}:{})};
+}
+// n/a on a rule: out of this trade's grading, and unticked; the box counts as touched
+function pzPbToggleNa(btn){
+  const row=btn.closest('.pz-pbrow'), box=btn.closest('[data-pz-pb]'), on=btn.getAttribute('aria-pressed')!=='true';
+  btn.setAttribute('aria-pressed',String(on)); if(row)row.classList.toggle('na',on);
+  const inp=row&&row.querySelector('input[data-pz-pbr]'); if(inp){ inp.disabled=on; if(on)inp.checked=false; }
+  if(box)box.dataset.touched='1';
 }
 async function pzSaveJournal(sec){
   const id=sec.dataset.pzTrade, rating=pzS.jr[id]||0;
@@ -1264,7 +1277,8 @@ async function pzSaveJournal(sec){
   const t=allTrades.find(x=>x.id===id)||{};
   const j=ensureJ(id); if(setup)j.setup=pzCanonSetup(setup); if(rating)j.rating=rating; delete j.skip; // one spelling per setup, so stats by setup add up
   const box=sec.querySelector('[data-pz-pb][data-touched]'), p=box&&pbList().find(x=>x.id===box.dataset.pzPb);
-  if(p&&playbookFor(j.setup,[p]))j.pb={id:p.id,ok:[...box.querySelectorAll('input[data-pz-pbr]')].filter(i=>i.checked).map(i=>i.dataset.pzPbr),of:p.rules.map(r=>r.id),at:Date.now()};
+  // ticked while the trade was still open (or live from Plan a trade): stays marked live
+  if(p&&playbookFor(j.setup,[p])){ const live=!!((j.pb&&j.pb.id===p.id&&j.pb.live)||t.isOpen); j.pb={id:p.id,...pzPbRead(box,p),at:Date.now(),...(live?{live:true}:{})}; }
   if(note){ const q=tradeQuestion(t,j,_excM[id]).q; j.notes=(j.notes?j.notes+'\n\n':'')+q+'\n'+note; }
   delete pzS.jr[id]; markJEdit(id); await Store.set(J_KEY,journal);
   pzNote('Saved.'); pzRender();
@@ -1467,6 +1481,7 @@ function wirePulse(){
     if(ds.pzCap&&pzS.ck){ const cur=pzS.ck.maxTrades||0; pzS.ck.maxTrades=Math.max(0,Math.min(50,cur+(+ds.pzCap)))||null; const o=$('pzCap'); if(o)o.textContent=pzS.ck.maxTrades||'—'; return; }
     if(ds.pzRate){ const sec=t.closest('[data-pz-trade]'); if(!sec)return; const id=sec.dataset.pzTrade, n=+ds.pzRate;
       pzS.jr[id]=pzS.jr[id]===n?0:n; sec.querySelectorAll('[data-pz-rate]').forEach(b=>b.setAttribute('aria-checked',String(+b.dataset.pzRate===pzS.jr[id]))); pzRoving(t.closest('[role=radiogroup]')); return; }
+    if(ds.pzPbna!==undefined){ pzPbToggleNa(t); return; }
     if(ds.pzJsave!==undefined){ const sec=t.closest('[data-pz-trade]'); if(sec)await pzSaveJournal(sec); return; }
     if(ds.pzJskip!==undefined){ const sec=t.closest('[data-pz-trade]'); if(!sec)return; const id=sec.dataset.pzTrade, tr=allTrades.find(x=>x.id===id);
       await pzSkipJournal([id],'Skipped '+(tr?dispMarket(dcoin(tr))+' '+(tr.dir==='Short'?'short':'long'):'the trade')); return; }

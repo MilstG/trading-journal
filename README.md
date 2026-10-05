@@ -387,7 +387,10 @@ is known), so a typo of a few zeros is caught. The plan waits in your journal (s
 to your next trade on that market and side that opens within 24 hours (a long plan
 also takes a spot buy) — the
 trade's stop and target come from it, it counts as a plan written live, and the
-line becomes the trade's setup if it has none. No trade in 24 hours and it
+line becomes the trade's setup if it has none. When that line names a playbook, its
+checklist appears under the form (tick the rules the plan keeps: the trade gets them as
+ticked before the close) and the target fills in from the playbook's reward-to-risk once the
+entry and the stop are typed (a target you typed yourself is kept). No trade in 24 hours and it
 expires; old plans are cleared after 30 days. A trade that already has a plan
 keeps it. Stats → **Your plans** shows the share of trades with a plan, how
 often you followed it, and one sentence on what not following it cost
@@ -469,17 +472,28 @@ old), and **Toolbox** counts different habits: each library habit, leak plug or
 pattern once, and habits you write yourself as one.
 
 **Playbooks.** Social → **Playbooks** (`#playbooks`) holds your playbooks, the same ones as
-the full journal's Review → Playbooks: a setup's name and its rules, one per line. Write and
+the full journal's Review → Playbooks: a setup's name, its rules one per line, other setup
+names that mean it (*Also matches*, up to six) and the reward-to-risk it aims for. Write and
 edit them here too. When a trade's setup on Daruma's journal card names one (typed, or picked
-from the setup chips), the card shows its rules as a checklist: tick the ones you kept. The
-ticks are saved with the trade only once you've touched a box, so leaving the checklist alone
-records nothing. Each playbook's card then shows what keeping its rules is worth, from your own
-closed trades: kept every rule against broke one, win rate and result per trade (in R where the
-risk is known), and the gap, marked *so far* under 10 trades a side.
+from the setup chips; an alias counts), the card shows its rules as a checklist: tick the ones
+you kept, or mark a rule **n/a** when it didn't apply to that trade (it's left out of the
+grading). The ticks are saved with the trade only once you've touched a box, so leaving the
+checklist alone records nothing; a checklist filled while the trade was open, or in Plan a trade
+before it, is marked *ticked before the close*. Each playbook's card then shows what keeping its
+rules is worth, from your own closed trades: kept every rule against broke one, win rate and
+result per trade (in R where the risk is known), the gap with a 90% bootstrap range once each
+side has five trades (marked *so far* under 10 a side), the rule you break most, the trend
+(the last 10 checked trades against the ones before), and how many were ticked before the close.
+**Plan a trade** shows the checklist too when the line on why names a playbook (tick the rules the
+plan keeps; they go on the trade as ticked before the close) and fills the target from the
+playbook's reward-to-risk once the entry and the stop are typed. The check-in's *Only my setups*
+rule offers **Only my playbooks** in one tap, and a trade tagged with an alias of a chosen playbook
+counts as within it. A day whose trades have a checked playbook is graded on the rules it kept
+(see the process score), the weekly review and the coach hear how the week's checklists went.
 
 **Sharing playbooks.** **Share with the league** on one of your playbooks publishes its name,
-its rules and an optional note (up to 400 characters), with your name; never your trades or how
-it went for you. Members find it under **Shared by members** (`#playbooks/shared`): search by
+its rules, its target reward-to-risk and an optional note (up to 400 characters), with your name;
+never your trades or how it went for you (aliases stay your own). Members find it under **Shared by members** (`#playbooks/shared`): search by
 setup, rule or name, sorted by most adopted, newest, or mentors first, with one playbook's page
 at `#playbooks/<id>`. The feed says "shared a playbook" with a link. **Adopt** copies the
 name and rules into your own playbooks, marked *from @author* (a name you already use gets
@@ -494,7 +508,10 @@ version and every adopter hears about it; their copy shows **Update from @author
 changed ("1 rule added, 1 rule gone"), and **Get the update** takes the new rules and keeps
 their own name for it. Rules that didn't change keep their ids, so ticks already made still
 count; taking the update replaces rules the adopter edited themselves, and the card says so.
-A reworded note alone isn't a new version. **Stop sharing** takes it off the list; copies others
+A reworded note alone isn't a new version. An adopter whose copy has a scorecard can tell the
+author, anonymously, whether it pays for them (**It pays for me** / **Not for me**, taken back
+with a second tap): members browsing it and the author see "N of M adopters say it pays" once
+three have answered, never who. **Stop sharing** takes it off the list; copies others
 adopted stay theirs, marked "no longer shared". Deleting your own copy of a playbook you share
 (in Daruma or the full journal) doesn't stop sharing it: Playbooks lists it as **Still shared**,
 with **Stop sharing** and **Bring it back** (your copy returns under its old id, so ticks count again). A member shares up to 30 playbooks, each with up
@@ -503,10 +520,11 @@ adoptions. The owner switches sharing off, or keeps it to mentors (anyone can st
 removes a playbook under Admin → Feed & reports → Shared playbooks. Routes:
 `GET /playbooks?q=&sort=popular|new|mentors&page=`, `GET /playbooks/mine?have=<ids>` (what you
 share, and which of the ones you adopted are still shared, at which version), `GET /playbooks/<id>`,
-`POST /playbooks {src, name, about, rules}` (share it, or share its changes), `DELETE /playbooks/<id>`,
-`POST /playbooks/<id>/adopt {on}`; the owner's `GET` and `DELETE /admin/playbooks[/<id>]`. Stored in
-`pulse.db` (`playbooks`, `playbook_adopts`); the app's own copy is in your synced settings
-(`settings.playbooks`, with `src: {id, h, v, at}` on an adopted one).
+`POST /playbooks {src, name, about, rules, rr}` (share it, or share its changes), `DELETE /playbooks/<id>`,
+`POST /playbooks/<id>/adopt {on, pays}` (`pays` true / false / null: your anonymous answer, or none);
+the owner's `GET` and `DELETE /admin/playbooks[/<id>]`. Stored in `pulse.db` (`playbooks` with `rr`,
+`playbook_adopts` with `pays`); the app's own copy is in your synced settings (`settings.playbooks`,
+with `src: {id, h, v, at}` on an adopted one, `aliases` and `rr`).
 
 **Readiness from a wearable.** Prep can take readiness from **WHOOP** or
 **Oura** (sign in once; the owner registers an app with each and sets its keys, see
@@ -1181,9 +1199,11 @@ Every trade row expands into a journal entry:
   saves one, spelled the first way, and the tag filter lists each name once.
 - **Setup** — what the trade was (breakout, fade, news…). Your playbook names
   are suggested as you type.
-- **Playbook checklist** — when the setup names one of your playbooks, its rules
-  appear as a checklist. Tick the ones you followed: before you enter (open
-  trades have journal rows) or when you review. Ticks save at once.
+- **Playbook checklist** — when the setup names one of your playbooks (or one of
+  its other names), its rules appear as a checklist. Tick the ones you followed:
+  before you enter (open trades have journal rows) or when you review; mark a rule
+  **n/a** when it didn't apply to this trade. Ticks save at once, and a checklist
+  ticked while the trade was open stays marked *ticked before the close*.
 - **Rating** — 1–5 stars for execution quality, independent of outcome.
 - **Mistake flags** — chased, oversized, no-stop, revenge, fomo, early-exit…
 - **Planned risk ($)** — what 1R was for this trade. Powers R-multiples
@@ -1210,15 +1230,27 @@ is what "written live" is scored on. **Save journal** saves everything at once a
 dashboard with it; closing or reloading the tab saves what's still waiting.
 
 **Playbooks** (Review → Playbooks) are your setups with their rules written down:
-a name ("Breakout retest") and one rule per line ("Wait for the retest", "Stop
-under the range"). For each playbook, the section compares trades that kept
-every rule with trades that broke at least one: count, win rate and result per
-trade (in R where the risk is known, else in dollars). It also shows the gap
-between them ("following the playbook is worth +0.6R per trade") and, per rule,
-how often you keep it and what breaking it cost. Only trades with a ticked
-checklist are graded. A rule you add later doesn't grade older trades, and
-rewording a rule starts its history fresh. Gaps built on fewer than 10 trades a
-side are marked *early*. Playbooks sync across devices and ride backups, and
+a name ("Breakout retest"), one rule per line ("Wait for the retest", "Stop
+under the range"), other setup names that mean it (*Also matches*: "breakout, bo
+retest", up to six, so trades tagged either way get the checklist and count) and,
+optionally, the reward-to-risk it aims for (Daruma's Plan a trade fills the target
+from it; the Plan vs outcome table shows it beside what you planned). For each
+playbook, the section compares trades that kept every rule with trades that broke
+at least one: count, win rate and result per trade (in R where the risk is known,
+else in dollars). It also shows the gap between them ("following the playbook is
+worth +0.6R per trade") with a 90% bootstrap range once each side has five trades,
+the rule you break most, the adherence trend (the last 10 checked trades against the
+ones before), how many checklists were ticked before the close, and, per rule, how
+often you keep it and what breaking it cost. Only trades with a ticked checklist are
+graded; a rule marked n/a on a trade is left out of that trade's grading. A rule you
+add later doesn't grade older trades, and rewording a rule starts its history fresh.
+Gaps built on fewer than 10 trades a side are marked *early*. Trades whose setup
+looks like a playbook without naming it ("breakout" against "Breakout retest") are
+counted under it with a one-click **count them here** that adds the spelling as an
+alias. The weekly review shows the week's adherence in one line ("5 of 8 checked
+trades kept every playbook rule. Broken most: …"), the coach's letter and Daruma's
+coach read the same, and a day with checked playbook trades is graded on the rules
+it kept in the process score. Playbooks sync across devices and ride backups, and
 Daruma offers their names first when you tag a setup, shows the checklist on its journal card,
 and lets you share a playbook with the league or adopt one a member shared (see *Playbooks* and
 *Sharing playbooks* under Daruma); an adopted one says *from @author* here.
@@ -1478,7 +1510,9 @@ It also carries the habit loops:
   trades with a live plan (15), planned stops honored (15; an exit past the stop by
   up to 10% of the risk carried is normal slippage and still honored, the same band
   the plan verdict uses), no entries after the day's loss limit broke (10), trades
-  journaled (20). Parts that don't apply that day drop out of the weighting,
+  journaled (20), and playbook rules kept (10: of the day's trades with a filled-in
+  playbook checklist, the share that kept every rule that applied; a day without one
+  isn't graded on it). Parts that don't apply that day drop out of the weighting,
   and the two planning parts only count from the first day each habit was
   used, so older history isn't graded against habits that didn't exist yet.
   Alongside it, **process vs outcome** sorts the last 60 trading days into

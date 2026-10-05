@@ -470,7 +470,8 @@ function sanitizeSharedPlaybook(b) {
     seen.add(r.id); rules.push({ id: r.id, text }); if (rules.length >= PB_RULES_MAX) break;
   }
   if (!rules.length) return null;
-  return { src: b.src, name, about: cleanPost(typeof b.about === 'string' ? b.about : '', 400), rules };
+  const rr = parseFloat(b.rr); // the reward-to-risk it aims for: optional, 0.1 to 50
+  return { src: b.src, name, about: cleanPost(typeof b.about === 'string' ? b.about : '', 400), rules, rr: rr >= 0.1 && rr <= 50 ? Math.round(rr * 100) / 100 : null };
 }
 // referrals: a member's link brings someone in; once they're active (a claimed wallet no member used before,
 // and activeDays trading days within activeWindow days of joining) the referrer earns referrerXp, the new member
@@ -2449,12 +2450,14 @@ function createSocial(opts) {
   // full: the whole note and every rule with its id (one playbook's page); else a card for the list
   const pbOut = (r, viewer, full) => {
     const a = pbAuthor(r), st = (a && a.stats) || {}, pub = !!a && a.share.profile !== false, rules = pbRules(r), mine = !!viewer && r.member === viewer.id;
-    const ad = viewer && !mine ? q('SELECT at FROM playbook_adopts WHERE playbook = ? AND member = ?').get(r.id, viewer.id) : null;
-    const o = { id: r.id, name: r.name, about: full ? r.about : r.about.slice(0, 200), ruleN: rules.length, version: r.version, at: r.at, updated: r.updated,
+    const ad = viewer && !mine ? q('SELECT at, pays FROM playbook_adopts WHERE playbook = ? AND member = ?').get(r.id, viewer.id) : null;
+    const py = q('SELECT count(*) AS n, count(CASE WHEN pays = 1 THEN 1 END) AS yes FROM playbook_adopts WHERE playbook = ? AND pays IS NOT NULL').get(r.id);
+    const o = { id: r.id, name: r.name, about: full ? r.about : r.about.slice(0, 200), ruleN: rules.length, version: r.version, at: r.at, updated: r.updated, rr: r.rr > 0 ? r.rr : null,
       adopts: r.adopts != null ? r.adopts : q('SELECT count(*) AS n FROM playbook_adopts WHERE playbook = ?').get(r.id).n,
+      pays: { n: py.n, yes: py.yes }, // adopters who answered "does it pay for you?", and how many said yes
       author: a ? { handle: a.handle, av: avUrl(a), level: st.level || 1, title: levelTitle(st.level || 1), mentor: isMentor(a),
         style: pub && a.share.bench !== false && a.bench && a.bench.style ? a.bench.style : null } : null,
-      mine, adopted: ad ? ad.at : null };
+      mine, adopted: ad ? ad.at : null, myPays: ad && ad.pays != null ? !!ad.pays : null };
     if (full) o.rules = rules; else o.preview = rules.slice(0, 3).map(x => x.text);
     if (mine) o.src = r.src;
     return o; };
@@ -3568,12 +3571,15 @@ function createSocial(opts) {
     // GET /playbooks?q=&sort=popular|new|mentors&page=   one page of what members share
     // GET /playbooks/mine?have=<id,id…>   what you share, and which of the shared ones you hold copies of are still shared
     // GET /playbooks/<id>   one, with every rule     POST /playbooks {src, name, about, rules}   share it, or share its changes
-    // DELETE /playbooks/<id>   stop sharing it (copies stay)     POST /playbooks/<id>/adopt {on}   count your copy, or stop
+    // DELETE /playbooks/<id>   stop sharing it (copies stay)     POST /playbooks/<id>/adopt {on, pays}   count your copy (or stop), and say
+    //                                                                  anonymously whether it pays for you (true / false / null to take it back)
     if (head === 'playbooks') {
       if (!S.config.playbooks.on) return json(res, 403, { error: 'Shared playbooks are switched off on this server.' });
       if (parts[1] === 'mine' && !parts[2] && M === 'GET') {
         const ids = [...new Set(String(query.have || '').split(',').filter(x => PB_ID_RE.test(x)))].slice(0, 90), have = {};
-        for (const id of ids) { const r = pbById(id), a = pbAuthor(r); if (r && a) have[id] = { version: r.version, name: r.name, handle: a.handle }; }
+        for (const id of ids) { const r = pbById(id), a = pbAuthor(r); if (!r || !a) continue;
+          const ad = q('SELECT pays FROM playbook_adopts WHERE playbook = ? AND member = ?').get(id, me.id);
+          have[id] = { version: r.version, name: r.name, handle: a.handle, myPays: ad && ad.pays != null ? !!ad.pays : null }; }
         return json(res, 200, { mine: q('SELECT * FROM playbooks WHERE member = ? ORDER BY at').all(me.id).map(r => pbOut(r, me, true)), have,
           canShare: pbCanShare(me), who: S.config.playbooks.who, max: PB_SHARED_MAX }); }
       if (!parts[1] && M === 'GET') {
@@ -3595,20 +3601,20 @@ function createSocial(opts) {
         // its name is the setup adopters type on their trades: two of one member's under one name would be ambiguous
         if (q('SELECT id FROM playbooks WHERE member = ? AND lower(name) = lower(?) AND src != ?').get(me.id, b.name, b.src))
           return json(res, 409, { error: 'You already share a playbook called “' + b.name + '”.' });
-        if (ex && ex.name === b.name && ex.about === b.about && ex.rules === rulesJ) return json(res, 200, { playbook: pbOut(ex, me, true), changed: false });
+        if (ex && ex.name === b.name && ex.about === b.about && ex.rules === rulesJ && (ex.rr > 0 ? ex.rr : null) === b.rr) return json(res, 200, { playbook: pbOut(ex, me, true), changed: false });
         if (!ex && q('SELECT count(*) AS n FROM playbooks WHERE member = ?').get(me.id).n >= PB_SHARED_MAX)
           return json(res, 409, { error: 'You share ' + PB_SHARED_MAX + ' playbooks. Stop sharing one to share another.' });
         if (dayLimit(me, 'pbLog', PB_SHARES_PER_DAY)) return json(res, 429, { error: 'That’s a lot of sharing today. Try again tomorrow.' });
         let id;
         if (ex) { id = ex.id;
-          // the version counts what adopters would take: the name and rules (a reworded note alone isn't news)
-          const news = ex.name !== b.name || ex.rules !== rulesJ;
-          q('UPDATE playbooks SET name = ?, about = ?, rules = ?, updated = ?, version = version + ? WHERE id = ?').run(b.name, b.about, rulesJ, now(), news ? 1 : 0, id);
+          // the version counts what adopters would take: the name, rules and target (a reworded note alone isn't news)
+          const news = ex.name !== b.name || ex.rules !== rulesJ || (ex.rr > 0 ? ex.rr : null) !== b.rr;
+          q('UPDATE playbooks SET name = ?, about = ?, rules = ?, rr = ?, updated = ?, version = version + ? WHERE id = ?').run(b.name, b.about, rulesJ, b.rr, now(), news ? 1 : 0, id);
           if (news) { const to = q('SELECT member FROM playbook_adopts WHERE playbook = ?').all(id).map(x => own(S.members, x.member) ? S.members[x.member] : null).filter(Boolean);
             for (const o of to) notify(o, 'playbook', '@' + me.handle + ' updated the “' + b.name + '” playbook you adopted. Get the update under Playbooks.', { title: 'A playbook you use changed', url: '/daruma#playbooks/' + id });
             if (to.length) save(...to); } }
         else { id = crypto.randomBytes(6).toString('hex');
-          q('INSERT INTO playbooks (id, member, src, at, updated, version, name, about, rules) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)').run(id, me.id, b.src, now(), now(), b.name, b.about, rulesJ);
+          q('INSERT INTO playbooks (id, member, src, at, updated, version, name, about, rules, rr) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)').run(id, me.id, b.src, now(), now(), b.name, b.about, rulesJ, b.rr);
           pushEvent(me, { type: 'playbook', text: 'shared a playbook', quote: b.name, data: { pb: id } }); }
         save(me); return json(res, 200, { playbook: pbOut(pbById(id), me, true), changed: true }); }
       const r = pbById(arg), a = pbAuthor(r);
@@ -3626,6 +3632,7 @@ function createSocial(opts) {
           if (!(me.pbAdopted && me.pbAdopted[r.id])) { me.pbAdopted = Object.assign({}, me.pbAdopted, { [r.id]: now() });
             const k = Object.keys(me.pbAdopted); if (k.length > 200) for (const x of k.sort((p, z) => me.pbAdopted[p] - me.pbAdopted[z]).slice(0, k.length - 200)) delete me.pbAdopted[x];
             notify(a, 'playbook', '@' + me.handle + ' adopted your “' + r.name + '” playbook.', { title: 'Your playbook was adopted', url: '/daruma#playbooks/' + r.id }); save(me, a); } }
+        if (body.on !== false && 'pays' in body) q('UPDATE playbook_adopts SET pays = ? WHERE playbook = ? AND member = ?').run(body.pays === true ? 1 : body.pays === false ? 0 : null, r.id, me.id);
         return json(res, 200, { playbook: pbOut(pbById(r.id), me, true) }); }
       return json(res, 404, { error: 'not found' });
     }

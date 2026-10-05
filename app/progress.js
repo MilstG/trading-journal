@@ -133,7 +133,7 @@ function personalBests(days, streak, stopsBest, journalBest, nowWeek){
   ];
 }
 const GRADE=v=>v==null?null:v>=0.9?'A':v>=0.75?'B':v>=0.6?'C':v>=0.4?'D':'F';
-const PART_NAME={plan:'Plan before the first entry',rules:'Rules kept',planned:'Stops written live',stops:'Stops honored',limit:'Loss limit respected',journal:'Trades journaled'};
+const PART_NAME={plan:'Plan before the first entry',rules:'Rules kept',planned:'Stops written live',stops:'Stops honored',limit:'Loss limit respected',journal:'Trades journaled',playbook:'Playbook rules kept'};
 // One month's process report card: an overall grade, a grade per habit, and the change vs the
 // previous month that had trading days. No dollar amounts, by design — it's made to be shared.
 function monthlyReport(days, month){

@@ -172,8 +172,10 @@ function pzPlanCheck(key){
   const e=journal['day:'+key]||{}, R=e.rules||{}, out=[];
   const opened=allTrades.filter(t=>t.openTime&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
   const add=(k,ok,detail)=>out.push({k,label:PZ_RULE_LABEL[k],ok,detail}), lab=(k,label,ok,detail)=>out.push({k,label,ok,detail});
-  if(Array.isArray(R.setups)&&R.setups.length){ const want=new Set(R.setups.map(s=>s.toLowerCase())), tagged=opened.filter(t=>journal[t.id]&&journal[t.id].setup);
-    const off=tagged.filter(t=>!want.has(String(journal[t.id].setup).trim().toLowerCase())), un=opened.length-tagged.length;
+  // a setup is within the rule by name, or by naming the same playbook (an alias of a chosen playbook counts)
+  if(Array.isArray(R.setups)&&R.setups.length){ const pbs=pbList(), want=new Set(R.setups.map(s=>s.toLowerCase())), wantPb=new Set(R.setups.map(s=>playbookFor(s,pbs)).filter(Boolean).map(p=>p.id)), tagged=opened.filter(t=>journal[t.id]&&journal[t.id].setup);
+    const within=s=>want.has(s.toLowerCase())||(()=>{ const p=playbookFor(s,pbs); return !!p&&wantPb.has(p.id); })();
+    const off=tagged.filter(t=>!within(String(journal[t.id].setup).trim())), un=opened.length-tagged.length;
     add('setups',!opened.length?null:off.length?false:un?null:true,R.setups.join(', ')+(off.length?' — '+off.length+' trade'+(off.length===1?'':'s')+' outside them':'')+(un?' · '+un+' not tagged yet':'')); }
   if(/^\d{2}:\d{2}$/.test(R.until||'')){ const [h,m]=R.until.split(':').map(Number), late=opened.filter(t=>{ const p=tzParts(t.openTime); return p.h*60+p.min>h*60+m; });
     add('until',!opened.length?null:!late.length,R.until+(late.length?' — '+late.length+' entr'+(late.length===1?'y':'ies')+' after':'')); }
@@ -202,6 +204,7 @@ function pzRulesFormHtml(ck){
   const nSet=(chosen.length?1:0)+(N?1:0)+(R.wait>0?1:0)+(R.noAdd?1:0)+(/^\d{2}:\d{2}$/.test(R.until||'')?1:0)+(R.maxPos>0?1:0);
   return `<details class="pz-card pz-kv pz-rules"${pzS.rulesOpen?' open':''}><summary><b class="pz-kvh">Rules for today</b><span class="pz-sub" style="font-size:12px">${nSet?nSet+' set':'none yet'} · checked from your fills</span></summary>
     ${row(PZ_RULE_LABEL.setups,'Trades tagged with anything else count as off-plan',`<div class="pz-chiprow pz-wrapr">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-rule="setups" data-v="${esc(x)}" aria-pressed="${chosen.includes(x)}">${esc(x)}</button>`).join('')}</div>
+      ${(()=>{ const pbs=pbList().map(p=>p.name); return pbs.length&&pbs.some(n=>!chosen.includes(n))?`<button type="button" class="pz-linkbtn" data-pz-rule="setupsAll" style="align-self:flex-start">Only my playbooks (${pbs.length})</button>`:''; })()}
       <div class="pz-addrow"><label for="pzSetupAdd" class="pz-sr">Add a setup</label><input type="text" id="pzSetupAdd" maxlength="40" placeholder="Add your own setup" autocomplete="off"><button type="button" class="pz-ghost pz-sm" id="pzSetupAddGo">Add</button></div>`)}
     ${row(PZ_RULE_LABEL.lossStreak,'',seg('lossStreak',[[0,'Off'],[2,'2'],[3,'3']],N))}
     ${row(PZ_RULE_LABEL.wait,'Before the next entry',seg('wait',[[0,'Off'],[15,'15m'],[30,'30m'],[60,'1h']],R.wait||0))}
@@ -469,6 +472,12 @@ function pzCoachFacts(D){
     slipCost30:(()=>{ const c=pzSlipCost(g.days.filter(d=>d.key>=k30)); return {cleanTrades:c.cleanN,cleanAvg:r(c.cleanAvg),slipTrades:c.slipN,slipAvg:r(c.slipAvg),bySlip:Object.keys(c.by).map(k=>({slip:PZ_BEH[k],trades:c.by[k].n,net:r(c.by[k].net)}))}; })(),
     leaks30:pzLeakMap(g,30).slice(0,4).map(x=>({slip:x.label,trades:x.n,cost:r(x.cost),previous30:x.prevN,plugging:x.plug?{since:x.plug.from,cleanWeeks:x.plug.cleanRun,done:x.plug.done}:null})),
     habits:habitsList().slice(0,8).map(h=>{ const s=pzHabitStreak(h,ctx,g.nowWeek); return {habit:habitSentence(h),streak:s.current,best:s.best,kept:s.kept,of:s.total}; }),
+    // the setups with written rules: what keeping them is worth, the rule broken most, and whether adherence is improving
+    playbooks:(()=>{ try{ const L=pbList(); if(!L.length)return []; const w=g=>g?Math.round(g.v*100)/100+(g.unit==='R'?'R':' USD')+' per trade':null;
+      return playbookStats(ctx.closed,journal,L,rFor).slice(0,8).map(s=>{ const p=L.find(x=>x.id===s.id)||{}; return {setup:s.name,aliases:p.aliases||[],rules:(p.rules||[]).map(r=>r.text),targetRR:p.rr||null,trades:s.n,checked:s.checked,tickedBeforeClose:s.live,
+        keptEveryRule:{trades:s.kept.n,avg:r(s.kept.exp),winRate:r(s.kept.wr)},brokeARule:{trades:s.broke.n,avg:r(s.broke.exp),winRate:r(s.broke.wr)},followingItIsWorth:w(pbGap(s.kept,s.broke)),
+        ruleBrokenMost:s.mostBroken?{rule:s.mostBroken.text,brokenOn:s.mostBroken.broke,of:s.mostBroken.graded}:null,
+        adherenceTrend:s.trend.earlier.n>=5?{recentKeptEvery:r(s.trend.recent.rate),recentTrades:s.trend.recent.n,earlierKeptEvery:r(s.trend.earlier.rate),earlierTrades:s.trend.earlier.n}:null}; }); }catch(err){ return []; } })(),
     challenge:g.current?{challenge:habitSentence(g.current.ch.spec),kept:g.current.res.filter(x=>x.kept).length,days:g.current.res.length,status:g.current.status}:null,
     findings:(ctx.findings||[]).filter(f=>f.tone!=='info').slice(0,6).map(f=>({type:f.tone,title:f.title,action:f.action,evidence:f.evidence,confidence:confWords(f.conf)})),
     goodMoments7:pzGoodMoments(g,pzAddDays(D.todayK,-6)).slice(0,8).map(m=>m.key+': '+m.text),
@@ -488,7 +497,8 @@ function pzCoachDetail(D){
   return {trades:closed.map(t=>{ const j=journal[t.id]||{}, p=tzParts(t.openTime||t.closeTime);
       return {date:dayKey(t.closeTime),opened:String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0'),market:dispMarket(dcoin(t)),side:t.dir,
         holdMin:t.openTime?Math.round((t.closeTime-t.openTime)/60000):null,size:Math.round(Math.abs((+t.maxSize||0)*(+t.avgEntry||0))),net:Math.round(t.net*100)/100,
-        slips:slipOf[t.id]||[],rating:j.rating||null,setup:j.setup||null,note:j.notes?String(j.notes).slice(-300):null}; }),
+        slips:slipOf[t.id]||[],rating:j.rating||null,setup:j.setup||null,note:j.notes?String(j.notes).slice(-300):null,
+        ...(()=>{ const p=j.pb&&playbookFor(j.setup,pbList()), g=p&&pbGrade(j.pb,p); return g?{playbook:p.name,rulesBroken:g.broke.map(id=>(p.rules.find(x=>x.id===id)||{}).text).filter(Boolean),rulesKept:g.graded.length-g.broke.length,of:g.graded.length,tickedBeforeClose:g.live}:{}; })()}; }),
     reviews:Object.keys(journal).filter(k=>k.startsWith('day:')&&journal[k]&&journal[k].eod&&k.slice(4)>=pzAddDays(D.todayK,-7)).sort().map(k=>({date:k.slice(4),...journal[k].eod}))};
 }
 async function pzCoachSend(text){
@@ -938,6 +948,7 @@ async function pzGrowthAction(t){
     if(ds.pzRule&&pzS.ck){ const R=pzS.ck.rules=pzS.ck.rules||{}, k=ds.pzRule;
       if(k==='stop2'||k==='noAdd'){ R[k]=!R[k]; t.setAttribute('aria-checked',String(R[k])); }
       else if(k==='lossStreak'||k==='wait'){ R[k]=+ds.v||0; if(k==='lossStreak')R.stop2=false; t.parentNode.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===t))); }
+      else if(k==='setupsAll'){ R.setups=[...new Set([...(Array.isArray(R.setups)?R.setups:[]),...pbList().map(p=>p.name)])].slice(0,12); pzS.rulesOpen=true; pzRender(); }
       else { const a=R[k]=Array.isArray(R[k])?R[k]:[], v=ds.v, i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); t.setAttribute('aria-pressed',String(i<0)); }
       return true; }
     if(t.id==='pzSetupAddGo'&&pzS.ck){ const inp=$('pzSetupAdd'), v=pzCanonSetup(inp&&inp.value||''); if(!v)return true;

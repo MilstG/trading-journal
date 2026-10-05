@@ -67,8 +67,12 @@ try {
     // +10 KB raw / +4 KB gzipped: seams in the fill history (TWAP paging, off-record trades, fill coverage, the verified headline)
     // Oct 2026 (audit 5): the verified figure judged against the open book, the seam opened from flat, the
     // TWAP content key and the partial-portfolio guard — about 3 KB raw, mostly comments, on both screens.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2000, 680],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1655, 558],
+    // Oct 2026: playbooks that shape the next trade — the checklist in Plan a trade with live ticks, a rule marked n/a,
+    // aliases, a target reward-to-risk, the bootstrap range / most-broken rule / trend on the scorecard, adherence in the
+    // day score, the weekly review and the coach's facts, and the anonymous "it pays for me" count: about 14 KB raw /
+    // 5 KB gzipped on both screens (2014 / 1672 raw, 684 / 564 gzipped).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2030, 690],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1690, 570],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
