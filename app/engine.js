@@ -1369,6 +1369,38 @@ function verifiedCurveFor(mkt, from, to){
   for(const k of ['day','week','month']){ const c=pick(spans[k]); if(c&&c[0][0]<=from)return curveSlice(c,from,to); }
   const c=pick(h); return c?curveSlice(c,from,to):null;
 }
+// Where a fill-based total and the exchange's part company. Hyperliquid's archive begins on
+// ARCHIVE_FROM; fills older than that come only from the API's own, finite memory, so a gap in them
+// is history no source serves any more. The exchange's curve at that date against the fills' net up
+// to it says how much of a difference is that, and how much is since (funding the API thins out,
+// open positions' marks, or fills the archive could still close). null without the exchange's curve.
+function reconcileSplit(trades, mkt, at){
+  at=at||Date.UTC(2025,4,25); // 2025-05-25: the first day of hl-mainnet-node-data's node_fills
+  const h=hlPnl&&hlPnl.hist&&(mkt==='perp'?hlPnl.hist.perp:hlPnl.hist.all); if(!h||!h.length)return null;
+  let ex=0; for(const p of h){ if(p[0]<=at)ex=p[1]; else break; } // the curve's value at `at` (0 when the account is younger)
+  let rec=0, n=0; for(const t of trades){ if(!t.isOpen&&t.closeTime<at){ rec+=t.net; n++; } }
+  return {at, pre:rec-ex, n, ex, rec};
+}
+// A plain word, with no figures, on why figures built from fills may not match the exchange's own:
+// the fills still have seams; or part of the history is older than anything still served (the
+// archive begins 2025-05-25, the API forgets) and the two agree since; or they differ for another
+// reason. The detail (the split, the deltas) lives in the reconciliation panel. null when there is
+// nothing to say. Perp-only, like the reconciliation: spot never leads with the exchange's figure.
+function historyNote(){
+  const cov=typeof dataCoverage!=='undefined'?dataCoverage:null, seams=!!(cov&&cov.gaps>0);
+  const SEAMS='Some fills are missing from this wallet’s history, so figures built from fills can differ from Hyperliquid’s own. The verified figure is the exchange’s.';
+  const OLDER='Part of this wallet’s history is older than anything Hyperliquid still serves, so figures built from fills can differ from the exchange’s own. The verified figure is the exchange’s.';
+  const GAP='Figures built from fills differ from Hyperliquid’s own for this wallet. A Shift-click on Refresh forces a full re-fetch; if it persists, trust the verified figure.';
+  if(seams)return {kind:'seams',text:SEAMS};
+  const perp=hlPnl&&hlPnl.perp; if(perp==null||hlPnl.partial)return null;
+  const hl=t=>typeof candleVenue==='function'?!candleVenue(t):true;
+  const rows=allTrades.filter(t=>hl(t)&&moneyRow(t)&&t.market==='perp'&&!(t.orphan||(t.offRecord&&!t.isOpen)));
+  const pd=rows.reduce((s,t)=>s+t.net,0)-perp, lim=Math.max(2500,Math.abs(perp)*0.05);
+  if(Math.abs(pd)<=lim)return null;
+  const sp=reconcileSplit(rows,'perp'), pre=sp?sp.pre:0;
+  if(sp&&Math.abs(pre)>Math.max(500,Math.abs(pd)*0.1))return {kind:Math.abs(pd-pre)<=lim?'older':'older+',text:Math.abs(pd-pre)<=lim?OLDER:OLDER+' Some recent fills may be missing too: a Shift-click on Refresh forces a full re-fetch.'};
+  return {kind:'gap',text:GAP};
+}
 // the deepest fall from a high on a curve of [time, value] points
 function curveDrawdown(curve){ let peak=-Infinity, dd=0, at=null; for(const [t,v] of (curve||[])){ if(v>peak)peak=v; const d=v-peak; if(d<dd){ dd=d; at=t; } } return {dd, at, peak:isFinite(peak)?peak:0}; }
 function verifiedFigure(mkt){
