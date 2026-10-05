@@ -1680,7 +1680,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
       <span id="hdrsum" class="hdrsum hide"></span>
       <button class="btn ghost hide" id="installSide" title="Install Ledger as an app"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>Install app</span></button>
       <button class="btn ghost" id="walletsBtn">Wallets ▾</button>
-      <button class="btn primary" id="loadAll" data-tip="Load / refresh every wallet and exchange. Fills are cached locally, so a refresh only fetches what's new since last time. Shift-click to force a full re-fetch.">Load all</button>
+      <button class="btn primary" id="loadAll" data-tip="Load / refresh every wallet and exchange. Fills are cached locally, so a refresh only fetches what's new since last time. Shift-click (or Export &amp; tools → Full refetch) reads every fill again.">Load all</button>
     </div>
     <nav class="side-links" aria-label="More"><a href="daruma">Daruma view</a><a href="admin" target="_blank" rel="noopener">Admin</a><a href="help" target="_blank" rel="noopener">User guide</a></nav>
   </header>
@@ -1843,6 +1843,7 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
       <button class="linkish" id="backupAll">Backup all</button>
       <button class="linkish hide" id="backupSrv" data-tip="Store the same full backup on the sync server (kept: newest 10, gzipped). Covers what daily snapshots don't — fill caches beyond the API's history cap.">Backup to server</button>
       <button class="linkish" id="autoBtn" data-tip="Auto-refresh: while this tab is open, re-fetch new fills every 3 minutes and automatically lock in MAE/MFE measurements for freshly closed trades. Incremental — only new activity is fetched.">⟳ auto: on</button>
+      <button class="linkish" id="fullRefetch" data-tip="Read every fill the exchange still serves again, from the start, and merge it into the cached history (nothing cached is lost). For a gap after an earlier load. A history that starts at the exchange’s 10,000-fill window can’t be refetched past it: only the archive has older fills.">Full refetch</button>
       <button class="linkish" id="clearCandles" data-tip="Candles fetched for MAE/MFE excursions are cached in this browser (IndexedDB) and quietly become the largest thing stored. Clearing is safe — candles re-fetch on the next run, and completed MAE/MFE measurements are saved separately and kept.">Clear candle cache</button>
       <button class="linkish hide" id="installPWA" data-tip="Install Ledger as an app (available when the page is served over http/https and your browser supports it).">Install app</button>
       <button class="linkish hide" id="helpBtn" data-tip="The built-in user guide: every view, the journaling habits, backups, alerts, and the Telegram bot — served by your own deployment.">Help</button>

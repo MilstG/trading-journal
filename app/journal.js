@@ -86,7 +86,7 @@ function guardrailSignals(){
     if(unplanned.length)
       out.push({type:'unplanned',txt:`<b>${unplanned.length}</b> open position${unplanned.length===1?' has':'s have'} no written stop (${unplanned.slice(0,3).map(t=>esc(dispMarket(dcoin(t))))
         .join(', ')}${unplanned.length>3?', \u2026':''}). Open the trade row and fill <b>entry / stop / target</b> now \u2014 a plan written while the trade is live counts; one written after the close is hindsight.`}); }
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // a result the fills can't give is no evidence
+  const closed=allTrades.filter(t=>closedTrade(t)&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // a result the fills can't give is no evidence; trades, not spot day rows (sizing, after-loss)
   if(closed.length<20)return out;
   const now=Date.now();
   // sizing creep vs capital
@@ -330,7 +330,7 @@ function journalRow(t,j,R){
       <div class="field"><label>Tags — comma separated</label>
         <input type="text" data-j="tags" data-id="${esc(t.id)}" value="${esc((j.tags||[]).join(', '))}" placeholder="a-setup, trend, scalp"></div>
       <div class="field"><label>Planned risk ($) — for this trade's R-multiple</label>
-        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?esc('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
+        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${esc(_oneR>0?'default '+(+_oneR.toFixed(2))+((settings.rBasis||'avgloss')==='fixed'?'':' (avg loss)'):'e.g. 100')}" min="0" step="any"></div>
       <div class="field"><label>Trade plan — entry / stop / target <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— scored under Diagnostic → Plan adherence</span>${planTimingBadge(t,j)}</label>
         <div style="display:flex;gap:6px">
           <input type="number" data-j="plan_entry" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.entry)?esc(j.plan.entry):''}" placeholder="entry px" step="any" style="flex:1">
@@ -511,7 +511,9 @@ function jReadDrawer(id,nums){
   const fresh=!journal[id], j=ensureJ(id), before=JSON.stringify(j);
   j.notes=g('notes').value;
   if(g('setup'))j.setup=g('setup').value;
-  if(g('tags'))j.tags=parseTags(g('tags').value);
+  if(g('tags')){ j.tags=parseTags(g('tags').value);
+    // once the field is left (or saved), show what was kept: "beta, Trend, trend" is saved as "beta, Trend"
+    if(nums&&document.activeElement!==g('tags'))g('tags').value=j.tags.join(', '); }
   let err='';
   if(nums){
     if(g('risk')){ const v=parseFloat(g('risk').value); j.risk=v>0?v:null; }
@@ -624,7 +626,7 @@ function renderInner(){
   applyBeBand();
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
-  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll.filter(tradeRow)); renderGuardrails();
+  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll,pt); renderDowHour(pt); // money by day, trades counted by close day; the heatmap places closed trades (ptAll's trade rows left spot out) renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
   if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
   else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
@@ -651,30 +653,32 @@ function renderHeaderSummary(){
 }
 function renderTape(){
   const el=$('tape'); if(!el)return;
-  const closedAll=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // off-record results would misstate today's total
+  // trades for the chips and the count, money for today's total: a spot sell is one position and one day row
+  const ok=t=>!t.orphan&&!t.offRecord; // off-record results would misstate today's total
+  const closedAll=allTrades.filter(t=>closedTrade(t)&&ok(t)).sort((a,b)=>b.closeTime-a.closeTime);
   if(!closedAll.length){ el.classList.add('hide'); return; }
   const day0=tzMidnight(Date.now()); // same "today" as the tripwire and daily analytics
   const today=closedAll.filter(t=>t.closeTime>=day0);
-  const tNet=today.reduce((s,t)=>s+t.net,0);
+  const tNet=allTrades.filter(t=>closedMoney(t)&&ok(t)&&t.closeTime>=day0).reduce((s,t)=>s+t.net,0);
   const fmtT=ms=>{ const p=tzParts(ms); // tz-toggle clock — the "TODAY" cut is tz-aware, so the printed times must be too
     return ms>=day0 ? String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0')
     : (p.mo+1)+'/'+p.day; };
   const chip=t=>`<span class="tp">${fmtT(t.closeTime)} <b>${esc(dispMarket(dcoin(t)))}</b> <b class="${isBE(t.net)?'':(t.net>=0?'up':'dn')}">${isBE(t.net)?'B/E':(t.net>=0?'+':'−')+'$'+Math.abs(t.net).toFixed(0)}</b></span>`;
   // closed trades only, so say so — and name today's entries still open (the unplanned nudge counts those too)
   const openN=allTrades.filter(t=>t.isOpen&&t.openTime>=day0).length, openTxt=openN?` · ${openN} OPENED TODAY, STILL OPEN`:'';
-  const sum=today.length?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} closed trade${today.length===1?'':'s'}${openTxt}</span>`:`<span class="tp sum">NO CLOSED TRADES TODAY${openTxt} · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
+  const sum=today.length||Math.abs(tNet)>=0.005?`<span class="tp sum">TODAY ${tNet>=0?'+':'−'}$${Math.abs(tNet).toFixed(0)} · ${today.length} closed trade${today.length===1?'':'s'}${openTxt}</span>`:`<span class="tp sum">NO CLOSED TRADES TODAY${openTxt} · LAST ${Math.min(12,closedAll.length)} SHOWN</span>`;
   el.classList.remove('hide');
   el.innerHTML=sum+closedAll.slice(0,12).map(chip).join('');
 }
 function renderPulse(){
   const el=$('pulse'); const inv=allTrades.filter(viewFilter);
   if(!inv.length){ el.classList.add('hide'); return; }
-  const now=Date.now();
-  const win=(from)=>{ const xs=inv.filter(t=>t.closeTime>=from&&t.closeTime<=now);
-    return {net:xs.reduce((s,t)=>s+t.net,0), n:xs.length}; };
+  const now=Date.now(), money=inv.filter(moneyRow), trades=inv.filter(closedTrade); // spot once: its day rows for money, its positions for the count
+  const win=(from)=>{ const xs=money.filter(t=>t.closeTime>=from&&t.closeTime<=now);
+    return {net:xs.reduce((s,t)=>s+t.net,0), n:trades.filter(t=>t.closeTime>=from&&t.closeTime<=now).length, any:xs.length>0}; };
   const spans=[['Today',win(tzMidnight(now))],['7D',win(now-7*86400000)],['30D',win(now-30*86400000)]];
   el.classList.remove('hide');
-  el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
+  el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.any?cls(v.net):''}">${v.any?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
 }
 function renderReview(){
   jFlush(); // a day / week answer still waiting for its autosave is saved before the form is rebuilt
@@ -951,7 +955,7 @@ function pbToggleNa(btn){
 let _pbEdit=null; // playbook id being edited, 'new', or null
 function playbooksSectionHtml(){
   const list=pbList();
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const closed=allTrades.filter(t=>closedTrade(t)&&viewFilter(t));
   const stats=playbookStats(closed,journal,list,rFor), near=pbNearSetups(closed,journal,list);
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const pct=x=>x==null?'—':Math.round(x*100)+'%';
@@ -1275,7 +1279,7 @@ function monthlyGoalModel(closed, goals, now){
 }
 function goalsSectionHtml(){
   const g=settings.goals||{};
-  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)); // both spot kinds: the model sums money rows and counts trade rows
   const m=monthlyGoalModel(allClosed,g);
   const inp=(id,val,ph,tip)=>`<div class="field"><label data-tip="${esc(tip)}">${ph}</label><input type="number" id="${id}" min="0" step="any" value="${val>0?esc(val):''}"></div>`;
   let progress='<p class="lead">Set a goal to see this month tracked against it. Goals are commitments made calmly — the month holds you to them.</p>';
@@ -1543,7 +1547,7 @@ function renderDataHealth(){
   const el=$('dataHealth'); if(!el)return;
   const items=[];
   if(Array.isArray(fillsTruncated)&&fillsTruncated.length)
-    items.push('fill history truncated for '+fillsTruncated.map(esc).join(', ')+' (Shift-click Load all for a full refetch)');
+    items.push('fill history truncated for '+fillsTruncated.map(esc).join(', ')+(typeof fillsTruncWindow!=='undefined'&&fillsTruncWindow?' · older fills are only in Hyperliquid’s archive'+(srvOwner()?'':' (the server’s owner can recover them)'):''));
   if(_fetchHealth.funding)items.push('funding history partial — net PnL may be missing funding for this load');
   if(_fetchHealth.twap)items.push('TWAP fill history partial — TWAP-executed trades may be missing for this load');
   // seams: position changes with no fill behind them — fills the exchange no longer serves. Said once,
@@ -1558,18 +1562,24 @@ function renderDataHealth(){
   if(_fetchHealth.ledger)items.push('capital-flow history partial — return-on-capital may be incomplete');
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
   const orph=allTrades.filter(t=>t.orphan);
-  if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
+  if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Full refetch reads the fills again');
   // a server to recover from: the archive panel (check, sample, backfill, the index) stays reachable
   // here whether or not there is anything to warn about — once the seams are closed, the strip is the
   // one place that says so, and the panel is still how the index and other wallets are looked after
   const canArc=srvOwner(); // the owner's token session only: the archive spends their AWS budget
-  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+(cov&&cov.gaps?'Recover from the archive…':'Archive…')+'</button>':'';
+  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+((cov&&cov.gaps)||(typeof fillsTruncWindow!=='undefined'&&fillsTruncWindow)?'Recover from the archive…':'Archive…')+'</button>':'';
+  // the full refetch without Shift (a phone has none); not for the 10,000-fill window alone, which no refetch passes
+  const refBtn=settings.wallets.length&&(orph.length||_fetchHealth.funding||_fetchHealth.twap||fillsTruncated.some(x=>!/10,000 fills/.test(x)))?' <button class="df-btn" id="dhRefetch" style="margin-left:6px" data-tip="Read every fill the exchange still serves again and merge it into the cached history; nothing cached is lost.">Full refetch</button>':'';
   if(!items.length&&!canArc){ el.classList.add('hide'); el.innerHTML=''; delete el.dataset.ok; return; }
   el.classList.remove('hide');
-  if(!items.length){ el.dataset.ok='1';
-    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov&&cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
-  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+arcBtn; }
+  // the check is the reconstruction's against Hyperliquid wallets' fills: nothing loaded that way (pasted
+  // fills, sample data, Lighter or a CEX alone) means nothing was checked, so no tick
+  if(!items.length&&cov){ el.dataset.ok='1';
+    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
+  else if(!items.length){ delete el.dataset.ok; el.innerHTML='<b>Data health:</b> no Hyperliquid fills loaded to check'+arcBtn; }
+  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+refBtn+arcBtn; }
   const b=$('arcOpen'); if(b)b.onclick=()=>toggleArchivePanel($('dataHealth'));
+  const rb=$('dhRefetch'); if(rb)rb.onclick=()=>fullRefetch();
 }
 // Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server
 // (archive.js): a coverage check (what the archive holds, what the seams need, what it would cost), a

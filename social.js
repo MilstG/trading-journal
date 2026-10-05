@@ -1493,14 +1493,14 @@ function createSocial(opts) {
   // over the last 20 trading days (the app's own taStanding, app/features/trader-age.js). Under the
   // bar, or without a verified Trader Age, there are 14 days of grace; a lapse needs a trading day
   // in them, so a break freezes it. Worked out whenever it's asked, since time passes without new
-  // stats. The owner (their own profile), their admins and fully unlocked members are never locked.
+  // stats. The owner's admins and fully unlocked members are never locked.
   const standingOn = () => !!(opts.taStanding && opts.traderAge && S.config.standing.on);
   // verified Trader Age from fills alone (Discipline and steadiness); a record from before it had one falls back
   const taFills = m => m && m.ta ? m.ta.fills || m.ta : null;
   const standingCfgOut = () => { const c = S.config.standing; return { on: standingOn(), bar: c.bar, grace: c.grace, years: opts.taStanding ? opts.taStanding.years(c.bar) : null }; };
   const fmtYears = y => !(y > 0) ? '—' : y < 1 ? Math.max(1, Math.round(y * 12)) + ' months' : (y < 10 ? y.toFixed(1) : String(Math.round(y))) + ' years';
   const PERKS = 'duels, competitions, the leaderboards and the coach’s full allowance';
-  const standingExempt = m => !!(m.admin || m.unlocked || m.owner); // m.owner: the profile the server's owner uses (GET /me with the access token)
+  const standingExempt = m => !!(m.admin || m.unlocked);
   const standingOf = m => {
     if (!m || !standingOn()) return { state: 'off', since: null };
     // read from fills alone (m.ta.fills): the app-reported parts of Trader Age don't hold standing up
@@ -3279,9 +3279,7 @@ function createSocial(opts) {
     me.lastSeen = now();
     if (now() - (me.seenSaved || 0) > 600000) { me.seenSaved = now(); save(me); } // last seen is written at most every ten minutes
 
-    if (head === 'me' && M === 'GET') { holdSweep();
-      // the owner's own profile: their app sends the access token with this read, and the owner keeps every perk
-      if (!me.owner && adminConfigured && req.headers['authorization'] && authOk(req)) { me.owner = true; save(me); } return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 }); } // the wallet counts only live holds
+    if (head === 'me' && M === 'GET') { holdSweep(); return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 }); } // the wallet counts only live holds
 
     // ---- inbox: nudges, mentor notes, season results ----
     if (head === 'inbox' && M === 'GET') return json(res, 200, { items: (me.inbox || []).slice().reverse().map(x => Object.assign({}, x, { unread: x.at > (me.inboxRead || 0) })) });
