@@ -333,8 +333,13 @@ next run resumes where it stopped; it just runs longer that time.
    (the default; "Terminate" would delete the machine the first time it finishes).
 3. **The schedule.** EventBridge → **Scheduler** → Create schedule, in Tokyo: *Recurring*, cron
    `30 1,13 * * ? *` (01:30 and 13:30 UTC), flexible window off → Target: *All APIs* → **Amazon
-   EC2** → **StartInstances**, input `{"InstanceIds": ["i-…your instance id…"]}` → let it create a
-   new execution role → Create. Hyperliquid uploads each hour with a lag of an hour or two: a day
+   EC2** → **StartInstances**, input `{"InstanceIds": ["i-…your instance id…"]}` → Permissions: *Use
+   existing role* (the console can't create one for an "All APIs" target). Make it once in IAM →
+   Roles → Create role → *Custom trust policy*, principal `scheduler.amazonaws.com`, action
+   `sts:AssumeRole`; no managed policies; name `hl-index-wake`; then on the role → Add permissions →
+   Create inline policy allowing `ec2:StartInstances` on
+   `arn:aws:ec2:ap-northeast-1:*:instance/i-…your instance id…`. Back on the schedule, refresh the
+   role list, pick it → Create. Hyperliquid uploads each hour with a lag of an hour or two: a day
    still short of hours is left for the next run rather than marked finished short, so the 13:30 run
    completes the day the 01:30 run saw partly, and the index trails the exchange by half a day at most.
 4. Check it the next day: Check coverage shows the index's last day as yesterday, and EC2 → the
