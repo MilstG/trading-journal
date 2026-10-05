@@ -1660,25 +1660,17 @@ function renderReconcile(){
   // Perp-only on purpose: spot gaps are expected (unknown cost basis on transfers/airdrops).
   const wEl=$('reconWarn');
   if(wEl){
-    const pd=(perp!=null)?recLive-perp:null;
     // Only alarm on a genuinely material gap. Small perp reconstruction differences are
     // routine (funding attribution timing, fills near the pagination boundary) and are
     // already shown quietly by the per-line "recon" tag — the banner is reserved for the
     // case where enough trades are missing/mis-attributed to actually distort analytics.
-    const material=pd!=null && !hlPnl.partial && Math.abs(pd)>Math.max(2500,Math.abs(perp)*0.05); // a wallet the exchange didn't answer for isn't a gap in the fills
-    // seams explain the gap and the data-health line says so: no second banner for the same thing
-    const seams=!!(dataCoverage&&dataCoverage.gaps>0);
-    if(material&&!seams){
-      wEl.classList.remove('hide');
-      // the usual cause on an old account: its first weeks traded before the earliest fill still served
-      const hlPerp=hlOnly.filter(t=>t.market==='perp'), first=hlPerp.reduce((m,t)=>t.openTime<m?t.openTime:m,Infinity);
-      const pre=historyBeforeFills(hlPnl.hist&&hlPnl.hist.perp,first), ymd=ms=>new Date(ms).toISOString().slice(0,10);
-      wEl.innerHTML=`<b>\u26a0 Reconstruction check:</b> the fill-based perp PnL (${fmtUsd(recPerp)}${uPerp?', '+fmtUsd(uPerp)+' open':''}) differs from Hyperliquid's verified figure (${fmtUsd(perp)}) by <b>${pd>=0?'+':''}${fmtUsd(pd)}</b>. `+(pre
-        ?`Hyperliquid's record of this account starts <b>${ymd(pre.start)}</b>, but the earliest perp fill it still serves is <b>${ymd(pre.first)}</b>: trades in between count in its figure and in none of the fills. They can't be rebuilt \u2014 the exchange no longer serves them and its archive starts in May 2025. Trust the verified number for all time; per-trade stats cover ${ymd(pre.first)} on.`
-        :`Some trades' PnL may not be captured \u2014 a Shift-click on Refresh forces a full re-fetch; if the gap persists, trust the verified number and treat per-trade analytics as approximate.`)
-        +(dataAudit?' <button class="df-btn" id="auditOpen" style="margin-left:6px">Audit…</button>':'');
-      const ab=$('auditOpen'); if(ab)ab.onclick=toggleAuditPanel;
-    } else wEl.classList.add('hide');
+    // one plain sentence, no figures (engine.js: historyNote); seams are the data-health strip's to say,
+    // and the deltas themselves are in the reconciliation panel below
+    const note=typeof historyNote==='function'?historyNote():null;
+    if(note&&note.kind!=='seams'){ wEl.classList.remove('hide'); wEl.innerHTML=(note.kind==='gap'||note.kind==='older+'?'<b>\u26a0 Reconstruction check:</b> ':'<b>\u24d8 Older history:</b> ')+esc(note.text)
+      +(dataAudit?' <button class="df-btn" id="auditOpen" style="margin-left:6px" data-tip="Your fills and funding against Hyperliquid’s own perp curve: where the difference opened, the recent day / week / month side by side, and the funding check.">Audit…</button>':'');
+      const ab=$('auditOpen'); if(ab)ab.onclick=toggleAuditPanel; }
+    else wEl.classList.add('hide');
   }
   if(activeTab==='diag' || (hlPnl.all==null && hlPnl.perp==null)){ el.classList.add('hide'); return; }
   const delta=(hl,rec)=>{ if(hl==null)return ''; const d=rec-hl; const mat=Math.abs(d)>Math.max(50,Math.abs(hl)*0.01);

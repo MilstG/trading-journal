@@ -183,7 +183,7 @@ t('the gap is judged like with like: open trades’ realized and the positions�
 });
 
 t('the exchange’s curves: summed across wallets as a step series, per market, with their drawdown', () => {
-  vm.runInContext(['sumSeries', 'verifiedCurve', 'curveDrawdown', 'historyBeforeFills', 'isPerp', 'pnlAudit'].map(grabFn).join('\n'), ctx);
+  vm.runInContext(['sumSeries', 'verifiedCurve', 'curveDrawdown', 'reconcileSplit', 'curveSlice', 'verifiedCurveFor', 'moneyRow', 'historyNote', 'isPerp', 'pnlAudit'].map(grabFn).join('\n'), ctx);
   // the audit: fills and funding summed at each of the exchange's points; a step that stays is P&L the fills don't hold
   { const D = 86400e3, T = Date.UTC(2026, 0, 1);
     const fills = [{ coin: 'BTC', closedPnl: '0', fee: '1', sz: '1', px: '100', time: T + D }, { coin: 'BTC', closedPnl: '50', fee: '1', sz: '1', px: '150', time: T + 2 * D },
@@ -197,15 +197,34 @@ t('the exchange’s curves: summed across wallets as a step series, per market, 
     eq(a.before, { start: T - 30 * D, first: T + D, at: T + 3 * D, gap: 400 }, 'the fills already 400 ahead of the curve at its first point after the first fill');
     eq(a.windows.week, { from: T + 5 * D, hlPnl: -15, hlVlm: 100, fillsPnl: -15, fillsVlm: 100 });
     const big = ctx.pnlAudit(fills, [], [[T, 0], [T + 3 * D, -2000]], [], null, T + 3 * D); eq(big.steps.map(x => x.delta), [2048]); }
-  // an account whose record opens weeks before the earliest fill served: named with both dates; days apart, or no curve, is nothing
-  const D = 86400e3, J19 = Date.UTC(2024, 5, 19), A11 = Date.UTC(2024, 7, 11);
-  eq(ctx.historyBeforeFills([[J19, 0], [J19 + 14 * D, -3939]], A11), { start: J19, first: A11 });
-  eq([ctx.historyBeforeFills([[A11 - 2 * D, 0]], A11), ctx.historyBeforeFills([], A11), ctx.historyBeforeFills(null, A11), ctx.historyBeforeFills([[J19, 0]], Infinity)], [null, null, null, null]);
   eq(ctx.sumSeries([[[1, 10], [3, 30]], [[2, 5], [3, 6]]]), [[1, 10], [2, 15], [3, 36]], 'each wallet’s latest value so far, summed at every time');
   eq(ctx.sumSeries([[[1, 1]]]), [[1, 1]]); eq(ctx.sumSeries([]), []);
   ctx.hlPnl = { all: 100, perp: 40, hist: { all: [[1, 0], [2, 100]], perp: [[1, 0], [2, 40]] } };
   eq(ctx.verifiedCurve('perp'), [[1, 0], [2, 40]]); eq(ctx.verifiedCurve('combined'), [[1, 0], [2, 100]]); eq(ctx.verifiedCurve('spot'), [[1, 0], [2, 60]]);
-  ctx.hlPnl = { all: 1, perp: 1, hist: null }; eq(ctx.verifiedCurve('perp'), null);
+  // the split: the exchange stood at −70k when the archive begins; the fills closed before then sum to −39k → +31k is history no source serves
+  const A = Date.UTC(2025, 4, 25);
+  ctx.hlPnl = { all: 0, perp: 0, hist: { perp: [[A - 90 * 86400e3, -20000], [A - 10 * 86400e3, -70000], [A + 50 * 86400e3, 150000]], all: [] } };
+  const tr = [{ closeTime: A - 60 * 86400e3, net: -39000 }, { closeTime: A + 1, net: 500 }, { isOpen: true, closeTime: A - 5, net: 9 }];
+  const sp = ctx.reconcileSplit(tr, 'perp'); eq([sp.pre, sp.n, sp.ex, sp.rec], [31000, 1, -70000, -39000]);
+  eq(ctx.reconcileSplit(tr, 'perp', A - 100 * 86400e3).ex, 0, 'an account younger than the date has nothing before it');
+  // a period's slice of the exchange's curve: cut and rebased at from; the densest span that reaches back wins
+  eq(ctx.curveSlice([[0, 10], [5, 20], [10, 50], [20, 80]], 5, 10), [[5, 0], [10, 30]]); eq(ctx.curveSlice([[0, 10], [20, 80]], 5, null), [[5, 0], [20, 70]], 'rebased on the point standing at from');
+  eq(ctx.curveSlice([[0, 10]], null, null), null);
+  ctx.hlPnl = { hist: { perp: [[0, 0], [100, 10], [200, 30]], all: [[0, 0], [100, 20], [200, 50]], spans: { week: { perp: [[150, 20], [175, 25], [200, 30]], all: [] } } } };
+  eq(ctx.verifiedCurveFor('perp', null, null), [[0, 0], [100, 10], [200, 30]], 'all time: the whole curve');
+  eq(ctx.verifiedCurveFor('perp', 150, null), [[150, 0], [175, 5], [200, 10]], 'a period the week span reaches: the denser span, rebased');
+  eq(ctx.verifiedCurveFor('perp', 50, null), [[50, 0], [100, 10], [200, 30]], 'a period only the all-time curve reaches');
+  ctx.hlPnl = { all: 1, perp: 1, hist: null }; eq(ctx.verifiedCurve('perp'), null); eq(ctx.verifiedCurveFor('perp', 50, null), null); eq(ctx.reconcileSplit(tr, 'perp'), null);
+  // the plain note: seams first; then old history when the gap is before the archive and the two agree since; a bare gap otherwise; nothing when they agree
+  const P = t => Object.assign({ market: 'perp', isOpen: false }, t);
+  ctx.dataCoverage = { gaps: 3 }; ctx.allTrades = []; eq(ctx.historyNote().kind, 'seams');
+  ctx.dataCoverage = { gaps: 0 }; ctx.hlPnl = { perp: 145000, hist: { perp: [[A - 90 * 86400e3, -20000], [A - 10 * 86400e3, -70000], [A + 50 * 86400e3, 150000]] } };
+  ctx.allTrades = [P({ closeTime: A - 60 * 86400e3, net: -39000 }), P({ closeTime: A + 86400e3, net: 216000 })]; // 177k from fills vs 145k: +32k, all of it before the archive
+  eq(ctx.historyNote().kind, 'older'); ok(/older than anything Hyperliquid still serves/.test(ctx.historyNote().text) && !/\$/.test(ctx.historyNote().text), 'plain words, no figures');
+  ctx.allTrades = [P({ closeTime: A - 60 * 86400e3, net: -39000 }), P({ closeTime: A + 86400e3, net: 260000 })]; eq(ctx.historyNote().kind, 'older+', 'old history and a gap since');
+  ctx.allTrades = [P({ closeTime: A - 60 * 86400e3, net: -70000 }), P({ closeTime: A + 86400e3, net: 260000 })]; eq(ctx.historyNote().kind, 'gap', 'nothing before the archive explains it');
+  ctx.allTrades = [P({ closeTime: A - 60 * 86400e3, net: -70000 }), P({ closeTime: A + 86400e3, net: 216000 })]; eq(ctx.historyNote(), null, 'within the band: nothing to say');
+  ctx.allTrades = [P({ closeTime: A + 86400e3, net: 260000, market: 'spot', spotRz: true })]; ctx.hlPnl = { perp: 0, hist: null }; eq(ctx.historyNote(), null, 'spot rows never count against the perp figure');
   const d = ctx.curveDrawdown([[1, 0], [2, 50], [3, -20], [4, 10], [5, -40]]); eq([d.dd, d.at, d.peak], [-90, 5, 50]);
 });
 
