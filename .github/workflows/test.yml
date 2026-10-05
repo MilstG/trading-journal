@@ -1,9 +1,15 @@
-# Runs the full suite on every push and PR. The suites are offline (the exchange is
+# Runs the full suite on every PR and on main. The suites are offline (the exchange is
 # mocked) and dependency-free, so this is just node + the repo. Node 22.13+ for node:sqlite.
+# A push to a PR's branch runs once (as the PR), not twice (as a push and as the PR), and a
+# newer push cancels the run it replaces: the runners this repo gets go to the latest commit.
 name: tests
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
