@@ -1406,8 +1406,8 @@ function pzSheetHtml(){
 function pzNote(m, kind){
   pzS.note=m?{m,kind:kind||''}:null;
   const el=$('pzNote'); if(!el)return;
-  // the first-run and loading screens show an error (and the loading line) in place: a toast too would say it twice
-  if(!allTrades.length&&$('pzView')){ pzRender(); if(kind==='err'||(kind==='busy'&&_loading)){ el.textContent=''; clearTimeout(pzNote._t); return; } }
+  // the first-run and loading screens show the message in place; an error there isn't toasted too (it said it twice)
+  if(!allTrades.length&&$('pzView')){ pzRender(); if(kind==='err'){ el.textContent=''; clearTimeout(pzNote._t); return; } }
   el.className='pz-note'+(kind==='err'?' err':'');
   el.innerHTML=m?(kind==='busy'?'<span class="pz-spin"></span>':'')+esc(m):'';
   // messages go by themselves (errors stay a little longer), or with a tap, or when you change screens

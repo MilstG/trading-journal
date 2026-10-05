@@ -74,8 +74,14 @@ try {
     // Oct 2026: the perp P&L audit (engine.js pnlAudit, the panel in journal.js), the Audit button on the reconciliation
     // note, and the owner-only archive: about 10 KB raw / 3 KB gzipped on both screens
     // (2040 / 1698 raw, 692 / 572 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2045, 695],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1705, 575],
+    // Oct 2026 (beta 6, the full journal): spot counted once on every surface (closedMoney / closedTrade and the
+    // readers that use them), the truncation record kept in the fill cache, a Full refetch that merges, the
+    // Diagnostic verdict that says when it speaks for the fills only, the curve kept to the account it covers,
+    // the phone and tablet trades table and the equity axes: about 18 KB raw / 6 KB gzipped on the journal,
+    // a third of it comments, ~8 KB raw / 3 KB gzipped of it on Daruma too. Measured with the same week's
+    // Daruma and server fixes in the tree: 2086 / 1742 raw, 707 / 587 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2095, 712],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1750, 590],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
