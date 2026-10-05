@@ -29,6 +29,7 @@ const SOURCE_BUCKET = process.env.SOURCE_BUCKET || 'hl-mainnet-node-data';
 const REGION = process.env.AWS_REGION || 'ap-northeast-1';
 const NEW_FROM = '20250727', OLD_FROM = '20250525'; // node_fills_by_block begins; node_fills (same format) before it
 const SHARD = addr => String(addr).slice(2, 5).toLowerCase(); // 0x + 3 hex = 4,096 shards
+const SLICE_BYTES = +process.env.SLICE_MB * 1048576 || 24 * 1048576; // lines held per worker before they are compressed and handed over
 const dayStr = ms => { const d = new Date(ms); return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0'); };
 const dayMs = s => Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
 const sourcePrefix = day => (day >= NEW_FROM ? 'node_fills_by_block/hourly/' : 'node_fills/hourly/') + day + '/';
@@ -37,10 +38,21 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 /* ---------------- one hour, in a worker: download, decode, split by shard ---------------- */
 // Returns {hour, fills, bytes, members: {shard: gzip member}}: each shard's lines as one gzip member,
 // so the main thread appends it to the shard's file (concatenated members are one valid gzip stream).
-async function splitHour(src, key) {
+async function splitHour(src, key, onMembers, sliceBytes) {
   const buf = await src.get(key, { maxBytes: 2 * 1024 * 1024 * 1024 });
-  const parts = new Map(); let fills = 0, lines = 0, sample = null; const shapes = {};
-  const keep = (addr, fill, shape) => { shapes[shape] = (shapes[shape] || 0) + 1; const sh = SHARD(addr); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } arr.push(JSON.stringify([addr, fill])); fills++; };
+  const LIMIT = sliceBytes || SLICE_BYTES;
+  let parts = new Map(), held = 0; let fills = 0, lines = 0, sample = null, slices = 0; const shapes = {}; let members = {};
+  // the lines gathered so far, one gzip member per shard: handed to onMembers (the main thread
+  // appends them to the day's files) or kept when there is no callback. Called every LIMIT bytes
+  // of lines and at the end, so an hour of 300k fills never sits in memory whole — the first
+  // build died of that (the kernel killed node at 3.6 GB on a 4 GB machine).
+  const flush = async () => { if (!parts.size) return; const m = {};
+    for (const [sh, arr] of parts) m[sh] = zlib.gzipSync(arr.join('\n') + '\n', { level: 6 });
+    parts = new Map(); held = 0; slices++;
+    if (onMembers) await onMembers(m); else for (const sh in m) members[sh] = members[sh] ? Buffer.concat([members[sh], m[sh]]) : m[sh]; };
+  const pending = []; // flushes queued by the synchronous walk; awaited in order below
+  const keep = (addr, fill, shape) => { shapes[shape] = (shapes[shape] || 0) + 1; const sh = SHARD(addr); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } const line = JSON.stringify([addr, fill]); arr.push(line); held += line.length; fills++;
+    if (held >= LIMIT) { const snap = parts; parts = new Map(); held = 0; pending.push(snap); } };
   // the same walk as archive.js's extractFills: [address, fill] pairs (under "events" or anywhere a
   // few levels deep), {user, fill} objects, and fills carrying their user — so the older dataset's
   // lines land in the index too, whatever wraps them
@@ -59,21 +71,23 @@ async function splitHour(src, key) {
     let j; try { j = JSON.parse(s); } catch (e) { return; }
     walk(j, 0);
   };
-  // the same line splitter as extractFillsFromObject, over the streaming decoder
+  // the decoder is synchronous: it is run in steps of its output so the queued slices can be
+  // compressed and handed over between steps instead of piling up until the end
+  const drain = async () => { while (pending.length) { const snap = pending.shift(); const was = parts; parts = snap; await flush(); parts = was; } };
   let rest = '';
   const feed = chunk => { let s = 0; for (let i = 0; i < chunk.length; i++) if (chunk[i] === 10) { onLine(rest + chunk.toString('utf8', s, i)); rest = ''; s = i + 1; } if (s < chunk.length) rest += chunk.toString('utf8', s); };
-  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x184D2204) A.lz4Stream(buf, feed);
-  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) feed(zlib.gunzipSync(buf));
-  else feed(buf);
+  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x184D2204) { for await (const _ of A.lz4Steps(buf, feed)) await drain(); }
+  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { feed(zlib.gunzipSync(buf)); await drain(); }
+  else { feed(buf); await drain(); }
   if (rest) onLine(rest);
-  const members = {};
-  for (const [sh, arr] of parts) members[sh] = zlib.gzipSync(arr.join('\n') + '\n', { level: 6 });
-  return { key, lines, fills, bytes: buf.length, members, shapes, sample };
+  await drain(); await flush();
+  return { key, lines, fills, bytes: buf.length, members, shapes, sample, slices };
 }
 if (!isMainThread) {
   const src = A.s3Client({ bucket: SOURCE_BUCKET, region: REGION, credentials: A.roleCredentials() });
   parentPort.on('message', async key => {
-    try { const r = await splitHour(src, key); parentPort.postMessage({ ok: true, r }, Object.values(r.members).map(b => b.buffer)); }
+    try { const r = await splitHour(src, key, async m => { parentPort.postMessage({ slice: true, key, members: m }, Object.values(m).map(b => b.buffer)); });
+      parentPort.postMessage({ ok: true, r }); }
     catch (e) { parentPort.postMessage({ ok: false, key, error: e.message }); }
   });
 }
@@ -109,26 +123,31 @@ async function main() {
   // the workers
   const workers = Array.from({ length: o.workers }, () => new Worker(__filename));
   const idle = workers.slice(); const waiting = [];
-  const run = key => new Promise((resolve, reject) => { const go = w => { const onMsg = m => { w.off('message', onMsg); idle.push(w); if (waiting.length) waiting.shift()(idle.pop()); m.ok ? resolve(m.r) : reject(new Error(m.error)); }; w.on('message', onMsg); w.postMessage(key); };
+  let appendTo = null; // the day's directory; slices arriving from the workers are appended there
+  const streamed = new Set(); // hours that have handed over at least one slice: not retried in place (their lines would land twice), the day is redone instead
+  const run = key => new Promise((resolve, reject) => { const go = w => { const onMsg = m => {
+      if (m.slice) { streamed.add(m.key); for (const sh in m.members) fs.appendFileSync(path.join(appendTo, sh + '.jsonl.gz'), Buffer.from(m.members[sh])); return; }
+      w.off('message', onMsg); idle.push(w); if (waiting.length) waiting.shift()(idle.pop()); m.ok ? resolve(m.r) : reject(new Error(m.error)); }; w.on('message', onMsg); w.postMessage(key); };
     idle.length ? go(idle.pop()) : waiting.push(go); });
   let total = { days: 0, hours: 0, fills: 0, bytes: 0 }, emptyDays = 0; const t0 = Date.now();
-  try {
-    for (const day of days) {
+  const redoDays = [];
+  const pass = async (list, redo) => {
+    for (const day of list) { streamed.clear();
       const done = await doneSummary(idx, o.prefix + 'd/' + day + '/_done');
       if (done && isIndexed(done)) { log(day + ' already indexed'); continue; }
       if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
       const hours = (await src.list(sourcePrefix(day))).keys.filter(k => /\/\d{1,2}(\.lz4)?$/.test(k.key)).sort((a, b) => +(/\/(\d+)/.exec(a.key.slice(-7))[1]) - +(/\/(\d+)/.exec(b.key.slice(-7))[1]));
       if (!hours.length) { log(day + ': no files in the archive'); continue; }
-      const dir = path.join(o.work, day); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+      const dir = path.join(o.work, day); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true }); appendTo = dir;
       const sum = { day, hours: 0, fills: 0, bytes: 0, lines: 0, failed: [], shapes: {}, sample: null }; const td = Date.now();
       // every hour of the day through the workers; each result is appended to the day's shard files as it lands
       await Promise.all(hours.map(async h => {
-        let r = null; for (let attempt = 0; attempt < 3 && !r; attempt++) { try { r = await run(h.key); } catch (e) { if (attempt === 2) { sum.failed.push(h.key + ': ' + e.message); log('  ' + h.key + ' failed: ' + e.message); } } }
+        let r = null; for (let attempt = 0; attempt < 3 && !r; attempt++) { try { r = await run(h.key); } catch (e) { if (attempt === 2 || streamed.has(h.key)) { sum.failed.push(h.key + ': ' + e.message); log('  ' + h.key + ' failed: ' + e.message); break; } } }
         if (!r) return;
-        for (const sh in r.members) fs.appendFileSync(path.join(dir, sh + '.jsonl.gz'), Buffer.from(r.members[sh]));
+        for (const sh in r.members) fs.appendFileSync(path.join(dir, sh + '.jsonl.gz'), Buffer.from(r.members[sh])); // (none when the worker streamed them)
         sum.hours++; sum.fills += r.fills; sum.bytes += r.bytes; sum.lines += r.lines; for (const k in r.shapes) sum.shapes[k] = (sum.shapes[k] || 0) + r.shapes[k]; if (!sum.sample && r.sample) sum.sample = r.sample;
       }));
-      if (sum.failed.length) { log(day + ': ' + sum.failed.length + ' hour(s) failed — the day is left unmarked, run again'); continue; }
+      if (sum.failed.length) { log(day + ': ' + sum.failed.length + ' hour(s) failed — the day is left unmarked' + (redo ? ', run again' : ' and will be tried once more at the end')); fs.rmSync(dir, { recursive: true, force: true }); if (!redo) redoDays.push(day); continue; }
       // a day of the archive always has fills; none found means the lines have a shape the walk
       // doesn't know — say what a line looks like, leave the day unmarked, and give up after a few
       if (sum.lines && !sum.fills) { emptyDays++; log(day + ': ' + sum.hours + ' hours, ' + sum.lines + ' lines, but no fills recognised in them — the day is left unmarked. A line looks like: ' + (sum.sample || '(empty)'));
@@ -147,8 +166,9 @@ async function main() {
       await idx.put(o.prefix + 'progress.json', Buffer.from(JSON.stringify({ lastDay: day, lastSummary: sum, run: total, startedAt: new Date(t0).toISOString(), at: sum.at })), 'application/json');
       fs.rmSync(dir, { recursive: true, force: true });
       log(day + ': ' + sum.hours + ' hours, ' + sum.fills.toLocaleString('en-US') + ' fills, ' + (sum.bytes / 1048576).toFixed(0) + ' MB read, ' + up + ' shards (' + (upBytes / 1048576).toFixed(0) + ' MB) in ' + sum.seconds + 's');
-    }
-  } finally { for (const w of workers) w.terminate(); }
+    } };
+  try { await pass(days, false); if (redoDays.length) { log('second pass over ' + redoDays.length + ' day(s) that failed'); await pass(redoDays.slice(), true); } }
+  finally { for (const w of workers) w.terminate(); }
   log('done: ' + total.days + ' day(s), ' + total.hours + ' hours, ' + total.fills.toLocaleString('en-US') + ' fills, ' + (total.bytes / 1073741824).toFixed(1) + ' GB read in ' + Math.round((Date.now() - t0) / 60000) + ' min');
 }
 if (isMainThread) { if (require.main === module) main().catch(e => { console.error(e.message || e); process.exit(1); }); }

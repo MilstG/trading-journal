@@ -241,7 +241,11 @@ yours in the same region (~$0.023/GB-month) and read by the server with the same
    script below with your bucket and your Ledger server's address. It installs Node, fetches the two
    files from your server, builds the index, and installs a daily timer that indexes yesterday.
 4. Watch: Data health → Recover from the archive → **Check coverage** shows the index's days as
-   they land (`progress.json`); or EC2 → the instance → Monitor and troubleshoot → Get system log.
+   they land (`progress.json`: its "last day" is the build's position); or EC2 → the instance →
+   Monitor and troubleshoot → Get system log, where the script reports each step and the build log's
+   first lines. A running build keeps the CPU near 100%. The build runs as a systemd service that
+   restarts where it left off if it dies (each finished day is marked in the bucket), and the
+   workers hand their output over in slices, so an hour of 300k fills needs well under 1 GB.
 5. **Railway → Variables**: `ARCHIVE_INDEX_BUCKET=hl-fills-index-<yourname>`,
    `ARCHIVE_INDEX_REGION=ap-northeast-1`. From then on **Backfill** reads a wallet's whole history
    from the index (every day it has, a few MB) instead of hunting hours; `source: "hours"` on the
@@ -256,12 +260,32 @@ yours in the same region (~$0.023/GB-month) and read by the server with the same
 INDEX_BUCKET=hl-fills-index-yourname
 LEDGER=https://your-app.up.railway.app
 say() { echo "hl-index: $*" | tee /dev/console; }
+# swap, as a safety net: without it a busy hour that outgrows RAM gets the build killed outright
+fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile && echo '/swapfile none swap sw 0 0' >>/etc/fstab && say "swap on"
 dnf install -y nodejs20 >/var/log/indexer-install.log 2>&1 || dnf install -y nodejs >>/var/log/indexer-install.log 2>&1
 NODE=$(command -v node || ls /usr/bin/node-* 2>/dev/null | head -1); say "node is ${NODE:-MISSING} $($NODE -v 2>/dev/null)"
 mkdir -p /opt/hl-index && cd /opt/hl-index
 for f in archive.js archive-indexer.js; do
   if curl -fSL -o "$f" "$LEDGER/archive/$f" 2>/tmp/curl.err; then say "fetched $f ($(wc -c <"$f") bytes)"; else say "FAILED to fetch $LEDGER/archive/$f: $(cat /tmp/curl.err)"; fi
 done
+# the one-time build, as a service that restarts where it left off if it ever dies
+cat >/etc/systemd/system/hl-index-build.service <<EOF
+[Unit]
+Description=Hyperliquid fills index: the one-time build
+After=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+[Service]
+Type=simple
+WorkingDirectory=/opt/hl-index
+Environment=INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index
+ExecStart=$NODE /opt/hl-index/archive-indexer.js build --workers 2
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/var/log/hl-index-build.log
+StandardError=append:/var/log/hl-index-build.log
+EOF
+# the daily catch-up (yesterday and any of the last 7 days still missing)
 cat >/etc/systemd/system/hl-index-daily.service <<EOF
 [Service]
 Type=oneshot
@@ -276,10 +300,8 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-systemctl daemon-reload && systemctl enable --now hl-index-daily.timer
-# the one-time build, in the background; its log is /var/log/hl-index-build.log
-INDEX_BUCKET=$INDEX_BUCKET WORKDIR=/var/tmp/hl-index nohup $NODE /opt/hl-index/archive-indexer.js build --workers 2 >/var/log/hl-index-build.log 2>&1 &
-say "build started (pid $!) into s3://$INDEX_BUCKET"
+systemctl daemon-reload && systemctl enable --now hl-index-daily.timer && systemctl start hl-index-build.service
+say "build started as hl-index-build.service into s3://$INDEX_BUCKET (log: /var/log/hl-index-build.log)"
 # two minutes in, copy the build log's tail to the system log, so progress or the error shows there
 (sleep 120; echo "hl-index: build log after 2 min:"; tail -n 15 /var/log/hl-index-build.log) >/dev/console 2>&1 &
 ```
