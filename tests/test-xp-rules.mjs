@@ -16,7 +16,7 @@ const grabConst = name => { const i = html.indexOf('const ' + name + '='); if (i
 let clock = Date.UTC(2026, 9, 1, 15); // Thu 2026-10-01 15:00Z, ISO week 2026-W40 (Mon 09-28)
 class FDate extends Date { constructor(...a) { if (!a.length) super(clock); else super(...a); } static now() { return clock; } }
 const ctx = vm.createContext({ Date: FDate, Math, console, Set, Map, Object, JSON, Array, String, Number, Promise, isFinite, Infinity, setTimeout });
-const FNS = ['gameContext', 'pzEarned', 'pzEarnedRecord', 'pzBadgeStub', 'pzEarnedBadges', 'pzHabitResAll', 'pzGoalKeys', 'pzAdoptKeys', 'pzPluggedKeys',
+const FNS = ['tradeRow', 'gameContext', 'pzEarned', 'pzEarnedRecord', 'pzBadgeStub', 'pzEarnedBadges', 'pzHabitResAll', 'pzGoalKeys', 'pzAdoptKeys', 'pzPluggedKeys',
   'xpLedger', 'disciplineStreak', 'isoWeekOfKey', 'nthKey', 'gameAchievements', 'challengeResults', 'challengeStatus', 'levelFor', 'pzLevelCfg', 'pzXpCfg',
   'personalBests', 'disciplineSaved', 'ruleFollowThrough', 'habitsList', 'habitById', 'habitSentence', 'habitDayResults', 'habitProgress', 'habitSummary',
   'isoWeekKey', 'lastCompletedWeekRange', 'tzParts', 'tzMidnight', 'addDays', 'dateBound', 'pzBadgeCatalog', 'pzPlugs', 'pzPlugState', 'isoWeekMondayKey',

@@ -146,6 +146,7 @@ html{scroll-behavior:smooth}
   <ul>
     <li>Click a trade row to expand it: the fill-by-fill history, a <b>replay chart</b> with your entries and exits marked on real candles (plus your planned stop and target as dotted lines, and ✕ marks at the worst and best prices while the trade was on), and the journal editor. <b>Replay</b> plays the chart forward a candle at a time; <b>⇤ ⇥</b> (or Shift+← →) jump fill to fill, showing the position size, average entry, unrealised and realised P&amp;L after each fill, with your plan and note underneath. ← → step a bar, Space plays.</li>
     <li>Open positions appear alongside closed trades and are marked as such; their PnL updates as prices move.</li>
+    <li><b>Spot</b> is counted flat-to-zero: a position opens when a balance leaves zero and closes when it returns there (dust aside). Partial sells stay inside it, so a stack you nibble around for months is one open position, not a trade a day. What a sell realized still counts on the day it happened in Net PnL, the calendar and the equity curve. A balance that left without a sell (a transfer, staking) ends its position with a <b>MOVED</b> badge and is kept out of the statistics.</li>
     <li>Partial or truncated histories are flagged per trade rather than silently blended in.</li>
   </ul>
 </section>

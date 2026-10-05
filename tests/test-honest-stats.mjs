@@ -153,7 +153,7 @@ t('strict band: a trade exactly at the band is decided, not a scratch', () => {
 t('the server classifies exactly like the app (shims and the outcome filter)', () => {
   for (const l of BE_LINES) eq(line(serverSrc, l), line(html, l));
   ok(serverSrc.includes("outcome === 'win' && !(t.net > 0 && t.net >= be)") && serverSrc.includes("outcome === 'be' && !(Math.abs(t.net) < be || t.net === 0)"));
-  ok(serverSrc.includes("'autoBeBand', 'beFixedOf'") && serverSrc.includes('E.autoBeBand(ensureTrades().trades)'));
+  ok(serverSrc.includes("'autoBeBand', 'beFixedOf'") && serverSrc.includes('E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut))'), 'the band is taken over trade rows, as the app does');
 });
 t('auto band: 5% of the median |net|, clamped $0.50–$50, open trades ignored', () => {
   // the beta report: a +$50 (+20%) winner was "B/E" and a −$41 loss neither win nor loss

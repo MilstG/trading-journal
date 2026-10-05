@@ -159,7 +159,7 @@ function renderStats(s){
   // fills that can't tell the whole story (journal.js: verifiedHeadline): the exchange's own all-time figure leads
   const vh=typeof verifiedHeadline==='function'?verifiedHeadline():null;
   // with the exchange's figure leading, its own curve gives the drawdown too — the fill-based one measures a history with its exits missing
-  const vc=vh?verifiedCurve(view):null, vdd=vc?curveDrawdown(vc):null;
+  const vc=typeof verifiedCurveFor==='function'?verifiedCurveFor(view,periodFrom(),rangeActive()?customRange.to:null):null, vdd=vc?curveDrawdown(vc):null;
   const cov=dataCoverage, exVol=cov&&(view==='perp'?cov.exchPerpVlm:cov.exchVlm), fillVol=cov&&(view==='perp'?cov.perpVol:cov.perpVol+cov.spotVol);
   // nothing in this view: one line instead of a wall of $0.00 and 0.0% cards
   if(!s.n&&!openN&&!posList.length){ const what=view==='combined'?'trades':view+' trades', when=rangeActive()?' in this date range':period?' in the last '+period+' days':'';
@@ -174,7 +174,7 @@ function renderStats(s){
     {pri:1,k:'Win rate',v:(s.winRate*100).toFixed(1)+'%',sign:s.winRate>=0.5?1:-1,sub:s.wins+'W / '+s.losses+'L'+(s.breakeven?' / '+s.breakeven+' B/E':''),tip:'Winning trades ÷ (winners + losers). Trades landing inside ±'+fmtUsd(_be)+' of zero'+(beFixedOf(settings)==null?' (the automatic band: 5% of your median trade\'s net, $0.50–$50)':'')+' are break-even scratches, excluded from both sides. Change the band under ⚙ Settings.'},
     {pri:1,k:'Expectancy',v:fmtUsd(s.expectancy),sign:s.expectancy,sub:'median '+(s.median!=null?fmtUsd(s.median):'—'),tip:'Average net PnL per trade. The median is the middle trade — if the mean is far above the median, a few big winners carry the average.'},
     {pri:1,k:'Profit factor',v:pf,sign:s.profitFactor>=1?1:-1,sub:'payoff '+payoff+' · b/e WR '+(s.breakevenWR*100).toFixed(0)+'%',tip:'Gross profit ÷ gross loss (1.5+ solid, 2+ strong). Sub: average win ÷ average loss, and the win rate needed to break even at that payoff.'},
-    vdd?{pri:1,k:'Max drawdown',v:fmtUsd(vdd.dd),sign:vdd.dd<0?-1:0,sub:'Hyperliquid’s curve · '+(vdd.at?'low '+new Date(vdd.at).toISOString().slice(0,10):'peak to trough'),tip:'Largest peak-to-trough fall of Hyperliquid’s own all-time P&L curve (account-based, unrealized included, about one point a week — a fall inside a week can be deeper). It stands in for the fill-based drawdown here because the fills are missing exits; pick a period for the trade-by-trade figure.'}
+    vdd?{pri:1,k:'Max drawdown',v:fmtUsd(vdd.dd),sign:vdd.dd<0?-1:0,sub:'equity, Hyperliquid’s curve · '+(vdd.at?'low '+new Date(vdd.at).toISOString().slice(0,10):'peak to trough')+' · fills '+fmtUsd(s.maxDD),tip:'Largest peak-to-trough fall of Hyperliquid’s own all-time P&L curve (account-based, unrealized included, about one point a week — a fall inside a week can be deeper). It stands in for the fill-based drawdown here because the fills are missing exits; pick a period for the trade-by-trade figure.'}
     :{pri:1,k:'Max drawdown',v:fmtUsd(s.maxDD),sign:s.maxDD<0?-1:0,sub:(s.maxDDpct!=null?ddPctOfBest(s.maxDDpct):'peak to trough'),tip:'Largest peak-to-trough drop in cumulative PnL for this view. The % is that drop as a share of your best-ever cumulative profit (the all-time high of the PnL curve, deposit/withdrawal independent), not of the peak it fell from. Hyperliquid\'s own app shows an account-value drawdown instead, which deposits and withdrawals distort — this PnL-based figure is the honest one.'},
     {pri:1,k:'Sharpe',v:s.sharpe!=null?s.sharpe.toFixed(2):'—',sign:s.sharpe!=null?(s.sharpeLo>0?1:s.sharpe<0?-1:0):0,sub:s.sharpe!=null?('95% CI '+s.sharpeLo.toFixed(1)+'–'+s.sharpeHi.toFixed(1)+' · '+s.sharpeN+'d'):'need ≥2 days',tip:'Annualized Sharpe of daily NET PnL over calendar days (flat days included), risk-free 0. Sub shows the 95% CI (Lo 2002) and day count — if the band spans 0, the estimate is not yet reliable. In-sample, not walk-forward.'},
     {k:'Avg R',v:s.avgR!=null?(s.avgR>=0?'+':'')+s.avgR.toFixed(2)+'R':'—',sign:s.avgR,sub:s.rCount?('1R='+(settings.rBasis==='fixed'?fmtUsd(parseFloat(settings.riskDefault)||0):'avg loss')+' · Σ'+(s.totalR>=0?'+':'')+s.totalR.toFixed(1)+'R'):'no losses yet',tip:'Average R-multiple = net PnL ÷ 1R. Default 1R = your average losing trade (auto). Change the basis under ⚙ Settings, or set risk per trade in the journal. +0.3R and up is healthy.'},
@@ -197,7 +197,7 @@ function renderStats(s){
 
 /* ============================ calendar heatmap ============================ */
 function renderCalendar(trades){
-  const map={}; trades.forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].net+=t.net; map[k].n++; });
+  const map={}; trades.forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].net+=t.net; if(tradeRow(t))map[k].n++; }); // money by day; the count is of trades
   // process mode: same cells, colored by the day's process score instead of its PnL
   const proc=settings.calMode==='process'&&coachOn()?{}:null;
   if(proc){ try{ for(const d of coachContext().days)proc[d.key]=d; }catch(e){} } // colored only where this period has trades
@@ -365,22 +365,30 @@ function bar(canvas,labels,data,opt={}){ const G=opt.groups;
 // Hyperliquid's own all-time P&L curve in place of the fill-based one (engine.js: verifiedCurve), when the
 // verified figure leads: a trade-by-trade curve with its exits missing isn't an equity curve. The caption
 // under the chart's title says which one is drawn.
-function renderVerifiedEquity(curve){
+// the period's start for the exchange's curve: the custom range's, else now minus the period, else all time
+function periodFrom(){ return rangeActive()?customRange.from:(period?Date.now()-period*86400000:null); }
+// Equity: Hyperliquid's own mark-to-market P&L for the view and period (unrealized included, spot
+// holdings marked) with the realized-from-fills running total beside it, stepped at the same times.
+function renderEquityBoth(curve, allv){
+  const chron=[...allv].sort((a,b)=>a.closeTime-b.closeTime);
+  let k=0, cum=0; const real=curve.map(([t])=>{ while(k<chron.length&&chron[k].closeTime<=t){ cum+=chron[k].net; k++; } return cum; });
   const ctx=$('equity').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,260), G=themeGreen();
   g.addColorStop(0,G+'29'); g.addColorStop(1,G+'00');
-  const idx=decimateIdx(curve.map(p=>p[1])), T=pickIdx(curve.map(p=>p[0]),idx), Y=pickIdx(curve.map(p=>p[1]),idx);
+  const idx=decimateIdx(curve.map(p=>p[1])), T=pickIdx(curve.map(p=>p[0]),idx), Y=pickIdx(curve.map(p=>p[1]),idx), R=pickIdx(real,idx);
   let hi=-Infinity; const dd=Y.map(v=>{ if(v>hi)hi=v; return v-hi; });
-  charts.eq=new Chart(ctx,{type:'line',data:{labels:T.map(fmtDate),datasets:[{data:Y,borderColor:G,borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' Hyperliquid P&L '+fmtUsd(c.parsed.y),
-      afterLabel:c=>[dd[c.dataIndex]<0?' '+fmtUsd(dd[c.dataIndex])+' below the high so far':' At a new high']}}},scales:scales(),interaction:{intersect:false,mode:'index'}}});
-  explain(charts.eq,'Hyperliquid’s own all-time P&L curve (account-based, unrealized included, about one point a week). It is drawn because the fills can’t give a whole curve for this wallet; pick a period for the trade-by-trade curve.');
+  charts.eq=new Chart(ctx,{type:'line',data:{labels:T.map(fmtDate),datasets:[
+      {label:'Equity',data:Y,borderColor:G,borderWidth:1.6,fill:true,backgroundColor:g,tension:.1,pointRadius:0,pointHoverRadius:4},
+      {label:'Realized from fills',data:R,borderColor:'rgba(139,147,255,.9)',borderWidth:1.2,borderDash:[4,3],fill:false,tension:0,stepped:true,pointRadius:0,pointHoverRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:11}}},tooltip:{callbacks:{label:c=>' '+(c.datasetIndex?'Realized from fills ':'Equity ')+fmtUsd(c.parsed.y),
+      afterLabel:c=>c.datasetIndex?[]:[dd[c.dataIndex]<0?' '+fmtUsd(dd[c.dataIndex])+' below the high so far':' At a new high']}}},scales:scales(),interaction:{intersect:false,mode:'index'}}});
+  explain(charts.eq,'Equity is Hyperliquid’s own mark-to-market P&L for this view and period (unrealized included, spot holdings marked, about one point a week over all time and denser for shorter periods). The dashed line is the running total of what the fills realized, stepped at each close — spot by the day it was realized.');
 }
 function renderCharts(closed, allv){
   allv=allv||closed;
   destroyCharts();
-  const vh=typeof verifiedHeadline==='function'?verifiedHeadline():null, vcurve=vh?verifiedCurve(view):null;
-  const cap=$('eqCaption'); if(cap)cap.textContent=vcurve?'Hyperliquid’s own all-time P&L (unrealized included) — pick a period for the fill-based curve':'cumulative net PnL, all-in (fees + funding)';
-  if(vcurve){ renderVerifiedEquity(vcurve); renderOtherCharts(closed,allv); return; }
+  const eqc=typeof verifiedCurveFor==='function'?verifiedCurveFor(view,periodFrom(),rangeActive()?customRange.to:null):null;
+  const cap=$('eqCaption'); if(cap)cap.textContent=eqc?'Hyperliquid’s mark-to-market P&L (unrealized included) · dashed: realized from fills':'cumulative realized P&L from fills, all-in (fees + funding)';
+  if(eqc){ renderEquityBoth(eqc,allv); renderOtherCharts(closed,allv); return; }
   renderEquityCurve(allv); renderOtherCharts(closed,allv);
 }
 function renderEquityCurve(allv){

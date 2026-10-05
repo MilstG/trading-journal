@@ -263,7 +263,7 @@ function renderTable(){
     const gapBadge=t.offRecord?` <span class="pill be" data-tip="Incomplete: ${esc(fmtNum(t.gapSz||0))} of this position was ${t.isOpen?'moved':'closed'} in fills Hyperliquid no longer serves (TWAP slices older than ~3 months, or history past its retention). The net shown is only what the served fills realized, so this trade is left out of every statistic. See Data health.">INCOMPLETE</span>`
       :t.gaps?` <span class="pill be" data-tip="${esc(fmtNum(t.gapSz||0))} of this position was ${t.openSz>0?'added':'opened'} in fills Hyperliquid no longer serves, so the entry price and size are partial; the result is the exchange’s own and counts.">PARTIAL</span>`
       :t.partialHistory?` <span class="pill be" data-tip="This position was ${t.openSz>0?'partly ':''}opened before the fill history begins, so the entry is ${t.openSz>0?'only the part that was served':'unknown'} and no return % is shown; the result is the exchange’s own and counts.">PARTIAL</span>`:'';
-    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction (or emptied via a transfer/withdrawal). Net shown is realized so far.">OPEN</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge+gapBadge;
+    const side=(t.isOpen?`<span class="pill open" data-tip="Position still open in this reconstruction. Net shown is realized so far.">OPEN</span>`:t.movedOut?`<span class="pill be" data-tip="This spot balance left without a sell (a transfer, staking, a send), so the position ended there. Listed for the record; not a completed trade, so it is kept out of the statistics.">MOVED</span>`:(isBE(t.net)?`<span class="pill be" data-tip="Break-even scratch: net PnL inside ±${esc(fmtUsd(_be))} of zero. Not counted as a win or a loss.">B/E</span> <span class="pill ${t.dir.toLowerCase()}" style="opacity:.7">${t.dir}</span>`:`<span class="pill ${t.dir.toLowerCase()}">${t.dir}</span>`))+liqBadge+gapBadge;
     return `<tr class="trow ${expandedId===t.id?'expanded':''}" data-id="${esc(t.id)}" tabindex="0" role="button" aria-expanded="${expandedId===t.id?'true':'false'}" aria-label="${esc(dispMarket(dcoin(t)))} ${t.dir}${t.isOpen?' open':''}, net ${fmtUsd(t.net)}. Activate to ${expandedId===t.id?'collapse':'expand'} journal.">
       <td class="l num">${fmtDate(t.openTime)}</td>
       <td class="l" style="font-weight:600">${esc(dispMarket(dcoin(t)))}${(multi&&t.wallet)||candleVenue(t)?`<div style="margin-top:3px">${candleVenue(t)&&!(t.wallet&&!t.wallet.label&&multi)?`<span class="tagchip">${esc(VENUE_NAMES[t.venue])}</span>`:''}${multi&&t.wallet?`<span class="tagchip">${esc(labelFor(t.wallet))}</span>`:''}</div>`:''}</td><td class="l">${side}</td>
@@ -590,7 +590,7 @@ function restoreDrafts(list){
 // (all markets, so a view switch never moves it). The auto band is a median: cached per trade list.
 let _beAutoM={trades:null,n:-1,v:null};
 function applyBeBand(){ const fx=beFixedOf(settings);
-  if(fx==null&&(_beAutoM.trades!==allTrades||_beAutoM.n!==allTrades.length))_beAutoM={trades:allTrades,n:allTrades.length,v:autoBeBand(allTrades)};
+  if(fx==null&&(_beAutoM.trades!==allTrades||_beAutoM.n!==allTrades.length))_beAutoM={trades:allTrades,n:allTrades.length,v:autoBeBand(allTrades.filter(t=>tradeRow(t)&&!t.movedOut))}; // the median trade: trade rows, not spot day rows
   _be=fx!=null?fx:_beAutoM.v; syncBeInput(); }
 // Settings: the input holds the fixed $ (empty = auto) and the label says what auto works out to
 function syncBeInput(){ const i=$('beThresh'), a=$('beAuto'); if(!i)return; const fx=beFixedOf(settings);
@@ -624,7 +624,7 @@ function renderInner(){
   applyBeBand();
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
-  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll); renderGuardrails();
+  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll.filter(tradeRow)); renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
   if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
   else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
@@ -723,7 +723,7 @@ function renderReviewInner(){
   if(!focus.length) focus.push(sumNet(wk)>=0?`Steady week — net ${fmtUsd(sumNet(wk))} with no red flags in the guardrails. Keep executing your process.`:`A red week (${fmtUsd(sumNet(wk))}) but within normal variance. Review the losing trades below for process breaks vs. bad luck.`);
   // costs & variance: fee-tier economics + what normal-bad looks like at your own edge
   const bp=x=>{const s=(x*1e4).toFixed(1);return (s.endsWith('.0')?s.slice(0,-2):s)+' bp';};
-  const fee=feeTierModel(allTrades.filter(t=>!candleVenue(t)&&!(t.orphan||(t.offRecord&&!t.isOpen)))); // the Hyperliquid fee tier counts Hyperliquid volume only
+  const fee=feeTierModel(allTrades.filter(t=>!candleVenue(t)&&moneyRow(t)&&!(t.orphan||(t.offRecord&&!t.isOpen)))); // the Hyperliquid fee tier counts Hyperliquid volume only, once (money rows)
   let feeCard='';
   if(fee){
     const fmtVol=v=>v>=1e9?'$'+(v/1e9).toFixed(2)+'B':v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmtUsd(v).replace('.00','');
@@ -1559,11 +1559,16 @@ function renderDataHealth(){
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
   const orph=allTrades.filter(t=>t.orphan);
   if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
-  if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
+  // a server to recover from: the archive panel (check, sample, backfill, the index) stays reachable
+  // here whether or not there is anything to warn about — once the seams are closed, the strip is the
+  // one place that says so, and the panel is still how the index and other wallets are looked after
+  const canArc=srvOwner(); // the owner's token session only: the archive spends their AWS budget
+  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+(cov&&cov.gaps?'Recover from the archive…':'Archive…')+'</button>':'';
+  if(!items.length&&!canArc){ el.classList.add('hide'); el.innerHTML=''; delete el.dataset.ok; return; }
   el.classList.remove('hide');
-  // seams, and a server to do it from: the fills behind them may still be in Hyperliquid's archive (archive.js)
-  const canArc=cov&&cov.gaps&&srvOwner(); // the owner's token session only: the archive spends their AWS budget
-  el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+(canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">Recover from the archive…</button>':'');
+  if(!items.length){ el.dataset.ok='1';
+    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov&&cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
+  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+arcBtn; }
   const b=$('arcOpen'); if(b)b.onclick=()=>toggleArchivePanel($('dataHealth'));
 }
 // Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server
@@ -1643,7 +1648,7 @@ function renderReconcile(){
   const el=$('reconcile');
   const all=hlPnl.all, perp=hlPnl.perp, spot=(all!=null&&perp!=null)?all-perp:null;
   // all-time reconstructed sums (incl. open positions' realized) for apples-to-apples deltas
-  const hlOnly=allTrades.filter(t=>!candleVenue(t)&&!(t.orphan||(t.offRecord&&!t.isOpen))); // Hyperliquid's figure covers Hyperliquid wallets only
+  const hlOnly=allTrades.filter(t=>!candleVenue(t)&&moneyRow(t)&&!(t.orphan||(t.offRecord&&!t.isOpen))); // Hyperliquid's figure covers Hyperliquid wallets only; money rows, so spot is counted once
   const recPerp=hlOnly.filter(t=>t.market==='perp').reduce((s,t)=>s+t.net,0);
   const recSpot=hlOnly.filter(t=>t.market==='spot').reduce((s,t)=>s+t.net,0);
   const recAll=recPerp+recSpot;

@@ -203,7 +203,7 @@ t('a full exit that leaves dust closes the spot trade', () => {
   // buy 29744.5 (the fee comes out of the tokens: 29744.410718 arrive), sell 29744.4 -> 0.0107 left
   const fills = [SF('B', 29744.5, 0.5, NOW - 5 * H, 0, 0, 0.089282, 'UXPL', 1), SF('A', 29744.4, 0.6, NOW - 2 * H, 29744.410718, 2974.4, 1.2, 'USDC', 2)];
   const tr = reconstructTrades(fills, 'a', 'spot');
-  eq(tr.filter(x => !x.isOpen).length, 1, 'closed'); eq(tr.filter(x => x.isOpen).length, 0, 'no phantom open position for the dust');
+  eq(tr.filter(x => x.spotPos && !x.isOpen).length, 1, 'closed'); eq(tr.filter(x => x.isOpen).length, 0, 'no phantom open position for the dust'); eq(tr.filter(x => x.spotRz).length, 1, 'one day row: the buy and the sell fell on the same day');
 });
 t('spot buy fees in the token are priced in dollars and not subtracted twice', () => {
   const fills = [SF('B', 7716, 0.0023, NOW - 5 * H, 0, 0, 7716 * 0.001, 'UPUMP', 1), SF('A', 7708.284, 0.003, NOW - 2 * H, 7708.284, 5.39, 0.02, 'USDC', 2)];
@@ -211,16 +211,46 @@ t('spot buy fees in the token are priced in dollars and not subtracted twice', (
   ok(Math.abs(x.fees - (7.716 * 0.0023 + 0.02)) < 1e-9, 'fees in dollars, not 7.7 tokens counted as $7.7: ' + x.fees);
   ok(Math.abs(x.net - (5.39 - 0.02)) < 1e-9, 'closedPnl already holds the buy fee; only the sell fee comes off: ' + x.net);
 });
-t('selling part of a spot position realizes a closed trade; the rest stays open', () => {
+t('spot runs flat-to-zero: a grid around a held balance is one open position, never a trade a day', () => {
+  // buy 10, sell 10, three times before noon UTC, then once more the next day — around 1000 already held
+  const D = Date.UTC(2026, 5, 15, 9), fills = []; let i = 0, pos = 1000;
+  const cycle = (t0, px) => { fills.push(SF('B', 10, px, t0, pos, 0, 0.01, 'USDC', ++i)); pos += 10; fills.push(SF('A', 10, px + 0.1, t0 + 10 * 60e3, pos, 1, 0.01, 'USDC', ++i)); pos -= 10; };
+  cycle(D, 1); cycle(D + H, 1); cycle(D + 2 * H, 1); cycle(D + 30 * H, 1);
+  const tr = reconstructTrades(fills, 'a', 'spot'), posns = tr.filter(x => x.spotPos), rz = tr.filter(x => x.spotRz);
+  eq(posns.length, 1, 'one position'); const P = posns[0];
+  ok(P.isOpen && P.partialHistory, 'still held, opened from a balance the fills never saw'); eq([P.fills, P.openSz, P.closeSz, +P.pnl.toFixed(2), +P.fees.toFixed(2)], [8, 40, 40, 4, 0.08]);
+  eq(tr.filter(x => !x.isOpen && x.spotPos).length, 0, 'no closed trades out of a stack that never went flat');
+  // the money: one day row per day, by the day the sells happened
+  eq(rz.length, 2); const [d1, d2] = rz.sort((a, b) => a.openTime - b.openTime);
+  eq([d1.fills, d1.openSz, d1.closeSz, +d1.pnl.toFixed(2), +d1.fees.toFixed(2), d1.openTime, d1.closeTime], [6, 30, 30, 3, 0.06, D, D + 2 * H + 10 * 60e3]);
+  eq([d2.fills, +d2.pnl.toFixed(2), d2.openTime], [2, 1, D + 30 * H]);
+  ok(rz.every(x => !x.isOpen && x.dir === 'Spot' && x.market === 'spot' && /:spot:@210:rz:\d+$/.test(x.id)), 'day rows are closed money rows with day ids');
+  ok(P.id.endsWith(':spot:@210:' + D), 'the position is keyed by its first fill');
+  // conservation: what the day rows carry is exactly what the positions carry
+  const sum = (a, k) => a.reduce((n, x) => n + (x[k] || 0), 0);
+  for (const k of ['pnl', 'fees', 'fills', 'openSz', 'closeSz', 'openNotional', 'closeNotional']) near(sum(rz, k), sum(posns, k), 1e-9, k + ' conserved');
+});
+t('a full exit is a round trip; a partial sell stays inside the position; its money lands on its day', () => {
   const fills = [SF('B', 10, 2, NOW - 9 * H, 0, 0, 0.01, 'USDC', 1), SF('A', 4, 2.5, NOW - 6 * H, 10, 2, 0.01, 'USDC', 2),
     SF('B', 5, 3, NOW - 3 * H, 6, 0, 0.01, 'USDC', 3)];
-  const tr = reconstructTrades(fills, 'a', 'spot'), closed = tr.filter(x => !x.isOpen), open = tr.filter(x => x.isOpen);
-  eq([closed.length, open.length], [1, 1]);
-  eq(closed[0].closeSz, 4); ok(Math.abs(closed[0].pnl - 2) < 1e-9); ok(Math.abs(closed[0].avgEntry - 2) < 1e-9 && Math.abs(closed[0].avgExit - 2.5) < 1e-9);
-  ok(Math.abs(open[0].openSz - 11) < 1e-9, 'the 6 still held plus the 5 bought'); ok(new Set(tr.map(x => x.id)).size === 2, 'distinct ids');
-  // still holding at the end, after a sale: the sale is realized too
-  const tail = reconstructTrades(fills.slice(0, 2), 'a', 'spot');
-  eq([tail.filter(x => !x.isOpen).length, tail.filter(x => x.isOpen).length], [1, 1]);
+  const tr = reconstructTrades(fills, 'a', 'spot'), posns = tr.filter(x => x.spotPos);
+  eq(posns.length, 1); const P = posns[0];
+  ok(P.isOpen && !P.partialHistory, 'opened from zero, still held'); eq([P.openSz, P.closeSz, +P.pnl.toFixed(2)], [15, 4, 2]);
+  near(P.avgEntry, (10 * 2 + 5 * 3) / 15, 1e-9, 'average entry over every buy');
+  // sell the rest: the position closes at zero and becomes a trade
+  const all = reconstructTrades(fills.concat([SF('A', 11, 3, NOW - H, 11, 8, 0.02, 'USDC', 4)]), 'a', 'spot'), closed = all.filter(x => x.spotPos && !x.isOpen);
+  eq(closed.length, 1); near(closed[0].pnl, 10, 1e-9); near(closed[0].avgExit, (4 * 2.5 + 11 * 3) / 15, 1e-9); eq(closed[0].fills, 4); ok(!closed[0].movedOut && closed[0].durationMs === 8 * H);
+  eq(all.filter(x => x.spotPos && x.isOpen).length, 0, 'nothing left open');
+});
+t('a balance that leaves without a sell ends its position as MOVED, not as a trade; one that moves while held is noted', () => {
+  // buy 10 from zero; next fill starts from zero again without a sell: the 10 were sent elsewhere
+  const fills = [SF('B', 10, 2, NOW - 9 * H, 0, 0, 0.02, 'USDC', 1), SF('B', 3, 2, NOW - 5 * H, 0, 0, 0.01, 'USDC', 2)];
+  const tr = reconstructTrades(fills, 'a', 'spot'), posns = tr.filter(x => x.spotPos).sort((a, b) => a.openTime - b.openTime);
+  eq(posns.length, 2); ok(!posns[0].isOpen && posns[0].movedOut && posns[0].balanceMoved, 'the first ended by its balance leaving'); eq([posns[0].openSz, posns[0].closeSz, posns[0].pnl], [10, 0, 0]);
+  ok(posns[1].isOpen && !posns[1].movedOut, 'the second is a fresh position from zero');
+  // 20 more arrive by transfer while 10 are held: the position carries on from the exchange's own balance, noted
+  const t2 = reconstructTrades([SF('B', 10, 2, NOW - 9 * H, 0, 0, 0.02, 'USDC', 1), SF('A', 4, 3, NOW - 5 * H, 30, 4, 0.01, 'USDC', 2)], 'a', 'spot').filter(x => x.spotPos);
+  eq(t2.length, 1); ok(t2[0].isOpen && t2[0].balanceMoved && !t2[0].movedOut && !t2[0].gaps, 'noted, still open, not a seam');
 });
 t('spot names and marks: tokens by their index, prices by the pair they belong to', () => {
   const meta = { tokens: [{ name: 'USDC', index: 0 }, { name: 'HYPE', index: 150 }, { name: 'MAX', index: 333 }],
