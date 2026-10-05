@@ -188,7 +188,12 @@ function socBoot(){
   try{ socWalletsSeen(); }catch(e){}
   socFetch('/config').then(c=>{ SOC.cfg=c; pzApplyCfg(c); if(!SOC.key)return;
     socMeWatch();
-    return socFetch('/me').then(d=>{ SOC.me=d.me; SOC.share=d.share; PZ_CFG.rev++; },e=>{
+    return socFetch('/me').then(async d=>{ SOC.me=d.me; SOC.share=d.share; PZ_CFG.rev++;
+      if(wsOwner()&&wsOwner()!==d.me.id){ await wsSwitch(d.me.id); wsReload(); return; } // someone else's journal is here: set it aside
+      if(!wsOwner())wsSetOwner(d.me.id); // from before journals were kept apart: what's here is this profile's
+      await wsGuestPeek();
+      let after=null; try{ after=sessionStorage.getItem(WS_AFTER_STORE); sessionStorage.removeItem(WS_AFTER_STORE); }catch(_){}
+      if(after!==null){ if(after)pzNote(after); if(PZ)acctAfterSignIn().catch(()=>{}); } },e=>{
       if(e.status===401||e.status===403){ SOC.key=null; vaultForget(); try{ localStorage.removeItem(SOC_KEY_STORE); }catch(_){} if(e.status===403)pzNote(e.message,'err'); } }); })
     .catch(()=>{}).finally(()=>{ if(PZ)pzRender(); else if(typeof allTrades!=='undefined'&&allTrades.length)render(); });
 }
@@ -528,7 +533,7 @@ function socAccountHtml(D){
   if(!socAvailable()||!SOC.me)return `<a class="pz-back" href="#social">${pzI('back',20)}Social</a>${socSocialHtml(D)}`;
   const sync=(SRV.token&&!SRV.badAuth)?'':socVaultCardHtml();
   return `${back}${pzHead('@'+SOC.me.handle,'Account')}
-  <div class="pz-wide"><div class="pz-col">${socClaimCardHtml()}${socPasskeysCardHtml()}${socDevicesCardHtml()}</div>
+  <div class="pz-wide"><div class="pz-col">${wsGuestCardHtml()}${socClaimCardHtml()}${socPasskeysCardHtml()}${socDevicesCardHtml()}</div>
   <div class="pz-col">${sync}
     <section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Leave the league</b><p class="pz-sub" style="font-size:13px">Deletes your profile, posts and competition entries from this server. Your journal isn’t touched.</p><button type="button" class="pz-ghost pz-sm" id="socLeave" style="color:var(--pz-err-t);border-color:var(--pz-err-b)">Leave and delete my profile</button></section>
   </div></div>`;
@@ -1285,6 +1290,9 @@ async function socAction(t){
         SOC.joining=true; t.disabled=true; let r;
         try{ r=await socFetch('/join',{method:'POST',body:JSON.stringify({handle:h,invite:inv,share,address:socAddressFor(share),skip:SOC.joinSkip||[],visitor:socWasVisitor(),ref:socRefCode()})}); }
         finally{ SOC.joining=false; t.disabled=false; }
+        // a guest's journal becomes the new profile's (it's whoever is at this browser); a signed-out profile's is set aside
+        if(wsOwner()&&wsOwner()!==r.me.id){ await wsSwitch(r.me.id); try{ localStorage.setItem(SOC_KEY_STORE,r.key); sessionStorage.setItem(WS_AFTER_STORE,'Welcome, @'+r.me.handle+'.'); }catch(e){} wsReload(); return true; }
+        wsSetOwner(r.me.id);
         vaultForget(); COACH.tried=false; COACH.msgs=null; SOC.key=r.key; try{ localStorage.setItem(SOC_KEY_STORE,r.key); }catch(e){}
         SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.cache={}; SOC.lastSent='';
         SOC.joinSkip=null; try{ localStorage.removeItem(SOC_INVITE_STORE); localStorage.removeItem(SOC_REF_STORE); }catch(e){}
@@ -1299,6 +1307,7 @@ async function socAction(t){
         done(taken?'Saved — without your wallet: another profile claimed it, so its numbers can’t count for you.':'Saved.'); return true; }
       case 'socLeave': { if(!confirm('Leave the league and delete your profile, posts and competition entries? Your journal isn’t touched.'))return true;
         await socFetch('/me',{method:'DELETE'}); SOC.key=null; SOC.me=null; PZ_CFG.rev++; SOC.share=null; SOC.cache={}; vaultForget(); try{ localStorage.removeItem(SOC_KEY_STORE); }catch(e){}
+        wsSetOwner(null); // "your journal isn't touched": it stays here, now a guest's
         location.hash='#social'; done('You left the league.'); return true; }
     }
   }catch(e){ pzNote(e.message,'err'); return true; }
@@ -1336,11 +1345,14 @@ async function socWalletSign(purpose){
   catch(e){ throw new Error(e&&e.code===4001?'You cancelled the signature.':'Your wallet couldn’t sign: '+(e&&e.message||e)); }
   return Object.assign(await socFetch('/'+purpose+'/finish',{method:'POST',body:JSON.stringify({nonce:st.nonce,signature})}),{address:acct});
 }
-function socSignedIn(r){
+// false: the page is reloading into the profile's own journal (the caller stops there)
+async function socSignedIn(r, note){
+  if(await wsSignInTo(r.me.id,note)){ SOC.key=r.key; try{ localStorage.setItem(SOC_KEY_STORE,r.key); }catch(e){} wsReload(); return false; }
   COACH.tried=false; COACH.status=null; COACH.msgs=null; PZ_CFG.rev++;
   if(VAULT.mid&&r.me&&r.me.id!==VAULT.mid)vaultForget(); // another profile: its sync isn't this one's
   SOC.key=r.key; try{ localStorage.setItem(SOC_KEY_STORE,r.key); }catch(e){}
   SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.cache={}; SOC.lastSent='';
+  return true;
 }
 // After signing in on a device: offer the synced journal if there is one, else read the claimed wallet.
 async function acctAfterSignIn(){
@@ -1355,12 +1367,76 @@ async function acctUseClaimedWallet(){
   else pzRender();
 }
 
+// ---- whose journal this browser holds ----
+// The journal, wallets and settings here belong to one profile at a time, or to a guest (no profile).
+// Signing in as someone else sets them aside under their owner and brings out that profile's (empty
+// the first time), so on a shared browser one person's journal is never shown to, merged into or
+// synced to another's profile. A guest's journal joins a profile only when they choose to bring it in.
+const WS_OWNER_STORE='pz_ws_owner', WS_PREFIX='pz_ws:', WS_AFTER_STORE='pz_ws_after';
+const WS_DEVICE_KEYS=['autoRefresh','pzTiltNotify','appearance','colorway','theme','tzZone']; // this browser's, whoever is signed in
+function wsOwner(){ try{ return localStorage.getItem(WS_OWNER_STORE)||null; }catch(e){ return null; } }
+function wsSetOwner(id){ try{ if(id)localStorage.setItem(WS_OWNER_STORE,id); else localStorage.removeItem(WS_OWNER_STORE); }catch(e){} }
+function wsHas(w){ return !!(w&&((w.j&&Object.keys(w.j).length)||(w.s&&w.s.wallets&&w.s.wallets.length)||w.v)); }
+function wsDeviceOnly(s){ const o={wallets:[],riskDefault:null}; for(const k of WS_DEVICE_KEYS)if(s&&s[k]!==undefined)o[k]=s[k]; return o; }
+async function wsCurrent(){ let v=null; try{ v=localStorage.getItem(VAULT_STORE); }catch(e){} return {j:await Store.get(J_KEY)||{},s:await Store.get(S_KEY)||{},v}; }
+// Sets this browser's journal aside under its owner and brings out `to`'s (null: the guest's). true = switched
+async function wsSwitch(to){
+  const from=wsOwner(); if(from===(to||null))return false;
+  if(typeof _sample!=='undefined'&&_sample)sampleEnd();
+  const cur=await wsCurrent(); if(wsHas(cur))await rawSet(WS_PREFIX+(from||'guest'),cur);
+  const next=await Store.get(WS_PREFIX+(to||'guest'))||{};
+  journal=next.j||{}; settings=Object.assign({},next.s||{},wsDeviceOnly(cur.s),{wallets:(next.s&&next.s.wallets)||[]});
+  if(!next.s)settings.riskDefault=null;
+  await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
+  try{ if(next.v)localStorage.setItem(VAULT_STORE,next.v); else localStorage.removeItem(VAULT_STORE); }catch(e){}
+  await rawSet(WS_PREFIX+(to||'guest'),null); wsSetOwner(to||null);
+  return true;
+}
+function wsReload(){ location.reload(); }
+// Before taking on profile `to` here: true when the page reloads into that profile's own journal
+async function wsSignInTo(to, note){
+  const from=wsOwner();
+  if(from===to)return false;
+  if(!from&&!wsHas(await wsCurrent())&&!wsHas(await Store.get(WS_PREFIX+to))){ wsSetOwner(to); return false; } // a fresh browser: nothing to keep apart
+  if(from&&VAULT.key&&VAULT.mid===from&&vaultActive()&&vaultDirty())await vaultPush(); // the last edits reach their own profile first
+  await wsSwitch(to);
+  try{ sessionStorage.setItem(WS_AFTER_STORE,note||''); }catch(e){}
+  return true;
+}
+// a guest's journal set aside at sign-in: how much is there (shown with an offer to bring it in)
+async function wsGuestPeek(){ const g=await Store.get(WS_PREFIX+'guest');
+  pzS.wsGuest=wsHas(g)?{n:Object.keys(g.j||{}).length,w:((g.s&&g.s.wallets)||[]).length}:null; return pzS.wsGuest; }
+// The member chose to bring it in: entries and wallets they don't have yet join their journal (and its sync)
+async function wsGuestImport(){
+  const g=await Store.get(WS_PREFIX+'guest'); if(!wsHas(g)){ pzS.wsGuest=null; return 0; }
+  let n=0; for(const id in g.j||{})if(!(id in journal)){ journal[id]=g.j[id]; vaultMark(id); n++; }
+  const wk=w=>String(w&&w.address).toLowerCase(); let nw=0;
+  for(const w of (g.s&&g.s.wallets)||[])if(w&&typeof w.address==='string'&&!settings.wallets.some(x=>wk(x)===wk(w))){ settings.wallets.push(w); nw++; }
+  await rawSet(J_KEY,journal); _jrev++; await Store.set(S_KEY,settings); await rawSet(WS_PREFIX+'guest',null); pzS.wsGuest=null;
+  if(vaultDirty())vaultSchedule();
+  return n+nw;
+}
+async function wsGuestDiscard(){ const g=await Store.get(WS_PREFIX+'guest');
+  for(const w of (g&&g.s&&g.s.wallets)||[])if(/^(bybit|binance):/.test(String(w.address)))await idbDel(cexCredKey(w.address));
+  await rawSet(WS_PREFIX+'guest',null); pzS.wsGuest=null; }
+// Sign out here and leave nothing of this profile in the browser (its synced copy stays on the server)
+async function wsSignOutHere(){
+  const me=wsOwner(), cur=await wsCurrent();
+  if(typeof _sample!=='undefined'&&_sample)sampleEnd();
+  for(const w of (cur.s&&cur.s.wallets)||[])if(/^(bybit|binance):/.test(String(w.address)))await idbDel(cexCredKey(w.address)); // exchange keys too
+  journal={}; settings=wsDeviceOnly(cur.s); await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
+  if(me)await rawSet(WS_PREFIX+me,null);
+  vaultForget(); SOC.key=null; SOC.me=null;
+  try{ for(const k of [SOC_KEY_STORE,WS_OWNER_STORE,SOC_SEEN_STORE])localStorage.removeItem(k); }catch(e){}
+}
+
 // ---- the encrypted journal ----
 async function vaultLoadLocal(){
   try{ const v=JSON.parse(localStorage.getItem(VAULT_STORE)||'null');
     if(v&&v.k&&v.salt&&v.mid&&vaultCan()){ VAULT.key=await crypto.subtle.importKey('raw',unvb64(v.k),{name:'AES-GCM'},true,['encrypt','decrypt']);
       VAULT.salt=v.salt; VAULT.rev=+v.rev||0; VAULT.mid=v.mid; VAULT.dirty=new Map((v.dirty||[]).map(id=>[id,1]));
-      VAULT.base=v.base===undefined?vaultSnapS():v.base; VAULT.sGen=v.sDirty?1:0; VAULT.sSent=0; } }catch(e){}
+      VAULT.base=v.base===undefined?vaultSnapS():v.base; VAULT.sGen=v.sDirty?1:0; VAULT.sSent=0;
+      if(!wsOwner())wsSetOwner(v.mid); } }catch(e){}
 }
 async function vaultSaveLocal(){ if(!VAULT.key)return;
   try{ localStorage.setItem(VAULT_STORE,JSON.stringify({k:vb64(await crypto.subtle.exportKey('raw',VAULT.key)),salt:VAULT.salt,rev:VAULT.rev,mid:VAULT.mid,
@@ -1477,17 +1553,20 @@ async function vaultEnable(pass, replace){
   const sentBase=vaultSnapS(), blob=await vaultSeal(key,salt,vaultPayload());
   const r=await socFetch('/vault',{method:'PUT',body:JSON.stringify({rev:d.rev||0,blob})});
   VAULT.key=key; VAULT.salt=salt; VAULT.rev=r.rev; VAULT.mid=d.member||(SOC.me&&SOC.me.id); VAULT.dirty=new Map(); VAULT.base=sentBase; VAULT.sGen=VAULT.sSent=0; VAULT.err=null; await vaultSaveLocal();
+  wsSetOwner(VAULT.mid);
   if(SOC.me)SOC.me.vault={rev:r.rev,size:blob.ct.length,at:r.at};
 }
-// Open the synced copy here. Anything only on this device is kept alongside it (theirs wins per entry).
+// Open the synced copy here. Anything this profile has only on this device is kept alongside it (theirs
+// wins per entry); another profile's or a guest's journal is set aside first, never merged in.
 async function vaultUnlock(pass){
   const d=await socFetch('/vault'); if(!d.blob)throw new Error('There’s no synced journal for this profile yet.');
   const key=await vaultDerive(pass,d.blob.salt,d.blob.iter);
   let data; try{ data=await vaultOpen(key,d.blob); }catch(e){ throw new Error('That passphrase doesn’t open your synced journal.'); }
   sampleEnd(); // kept below: the account's, not the sample's
+  const mid=d.member||(SOC.me&&SOC.me.id); if(mid&&wsOwner()!==mid)await wsSwitch(mid);
   const mineJ=journal||{}, mineW=settings.wallets||[];
   await applySnapshot(data);
-  VAULT.key=key; VAULT.salt=d.blob.salt; VAULT.rev=d.rev; VAULT.mid=d.member||(SOC.me&&SOC.me.id); VAULT.dirty=new Map(); VAULT.base=vaultSnapS(); VAULT.sGen=VAULT.sSent=0; VAULT.err=null;
+  VAULT.key=key; VAULT.salt=d.blob.salt; VAULT.rev=d.rev; VAULT.mid=mid; VAULT.dirty=new Map(); VAULT.base=vaultSnapS(); VAULT.sGen=VAULT.sSent=0; VAULT.err=null;
   for(const id in mineJ)if(!(id in journal)){ journal[id]=mineJ[id]; VAULT.dirty.set(id,1); }
   for(const w of mineW)if(!settings.wallets.some(x=>String(x.address).toLowerCase()===String(w.address).toLowerCase())){ settings.wallets.push(w); VAULT.sGen++; }
   await rawSet(J_KEY,journal); await rawSet(S_KEY,settings); await vaultSaveLocal();
@@ -1515,7 +1594,7 @@ function acctConnectHtml(){
     <div class="pz-field"><label for="vaultPass" style="font-size:13px">Sync passphrase</label><input type="password" id="vaultPass" autocomplete="current-password"></div>
     <button type="button" class="pz-cta" id="vaultUnlock">Open my journal</button><button type="button" class="pz-ghost pz-sm" id="vaultSkip">Skip — start without it</button></section>`;
   if(SOC.me){ const a=SOC.me.claimedAddress, known=a&&settings.wallets.some(w=>String(w.address).toLowerCase()===a);
-    return `<p class="pz-fine">Signed in as @${esc(SOC.me.handle)}.${a?'':' Add your wallet address above to load your trades.'}</p>${a&&!known?`<button type="button" class="pz-ghost" id="acctLoadClaimed">Load my claimed wallet (${esc(walletShort(a))})</button>`:''}`; }
+    return `${wsGuestCardHtml()}<p class="pz-fine">Signed in as @${esc(SOC.me.handle)}.${a?'':' Add your wallet address above to load your trades.'}</p>${a&&!known?`<button type="button" class="pz-ghost" id="acctLoadClaimed">Load my claimed wallet (${esc(walletShort(a))})</button>`:''}`; }
   return `<details class="pz-acct"${pzS.acctOpen?' open':''}><summary class="pz-fine" style="cursor:pointer">Already use Daruma on another device? Sign in</summary>
     <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
     ${pkAvailable()?'<button type="button" class="pz-ghost" id="socPkLogin">Sign in with a passkey</button><p class="pz-fine">Face ID, a fingerprint or your device PIN — once you’ve added a passkey under Account on a signed-in device.</p>':''}
@@ -1563,13 +1642,20 @@ function socPasskeysCardHtml(){
     ${list.map(k=>`<div class="pz-wl"><span>${esc(k.name)} <span class="pz-fine">· added ${esc(socAgo(k.at))}${k.lastUsed?' · last used '+esc(socAgo(k.lastUsed)):''}</span></span><button type="button" class="pz-ghost pz-sm" data-pk-del="${esc(k.id)}" aria-label="Remove passkey ${esc(k.name)}">Remove</button></div>`).join('')}
     ${pkAvailable()?'<button type="button" class="pz-ghost pz-sm" id="socPkAdd">Add a passkey on this device</button>':'<p class="pz-fine">This browser can’t make passkeys here (they need a secure https page and a recent browser).</p>'}</section>`;
 }
+// a journal kept on this browser from before signing in: it joins this profile only if they say so
+function wsGuestCardHtml(){ const g=pzS.wsGuest; if(!g||!SOC.me)return '';
+  const what=[g.n?g.n+' journal entr'+(g.n===1?'y':'ies'):'',g.w?g.w+' wallet'+(g.w===1?'':'s'):''].filter(Boolean).join(' and ')||'a journal';
+  return `<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">A journal from before you signed in</b>
+    <p class="pz-sub" style="font-size:13px">This browser also holds ${esc(what)} made here without a profile. It’s kept apart from @${esc(SOC.me.handle)}’s journal. Add it only if it’s yours.</p>
+    <button type="button" class="pz-ghost pz-sm" id="wsGuestIn">Add it to my journal</button><button type="button" class="pz-ghost pz-sm" id="wsGuestDrop">Remove it from this browser</button></section>`; }
 function socDevicesCardHtml(){
   const me=SOC.me, L=SOC.link&&SOC.link.exp>Date.now()?SOC.link:null;
   return `<section class="pz-card" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:15px">Your devices</b>
     <p class="pz-sub" style="font-size:13px">Signed in on ${me.devices||1} device${(me.devices||1)===1?'':'s'}. On a new device, sign in with ${[(me.passkeys||[]).length?'a passkey':'',me.claimed?'your wallet':''].filter(Boolean).join(' or ')||'a one-time code from here'}${(me.passkeys||[]).length||me.claimed?', or a one-time code from here':''}.</p>
     ${L?`<div class="pz-code" aria-live="polite"><b style="font-family:var(--pz-num);font-size:26px;letter-spacing:.12em">${esc(L.code.slice(0,5)+' '+L.code.slice(5))}</b><span class="pz-fine">On the other device open Daruma, choose “Already use Daruma on another device?” and enter this code. It works once, for 10 minutes.</span></div>`
       :'<button type="button" class="pz-ghost pz-sm" id="socLinkNew">Add a device</button>'}
-    ${(me.devices||1)>1?'<button type="button" class="pz-ghost pz-sm" id="socSignOutOthers">Sign out other devices</button>':''}</section>`;
+    ${(me.devices||1)>1?'<button type="button" class="pz-ghost pz-sm" id="socSignOutOthers">Sign out other devices</button>':''}
+    <button type="button" class="pz-ghost pz-sm" id="socSignOutHere">Sign out and clear this device</button></section>`;
 }
 function socVaultCardHtml(){
   const me=SOC.me;
@@ -1602,16 +1688,16 @@ async function acctAction(t){
       return true; }
     case 'socPkLogin': { pzS.acctOpen=true; pzNote('Follow your device’s prompt…','busy');
       let r; try{ r=await pkLogin(); }catch(e){ if(e&&e.name==='NotAllowedError'){ pzNote('Cancelled.'); return true; } throw e; }
-      socSignedIn(r); pzNote('Signed in as @'+r.me.handle+'.'); await acctAfterSignIn(); return true; }
+      if(!await socSignedIn(r,'Signed in as @'+r.me.handle+'.'))return true; pzNote('Signed in as @'+r.me.handle+'.'); await acctAfterSignIn(); return true; }
     case 'socClaim': { pzNote('Waiting for your wallet…','busy'); const r=await socWalletSign('claim'); SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null;
       const known=settings.wallets.some(w=>String(w.address).toLowerCase()===r.address);
       done('Claimed '+walletShort(r.address)+'. It’s locked to your profile.'+(known?'':' It isn’t one of the wallets Daruma reads — add it in Settings to see its trades.')); return true; }
     case 'socUnclaim': { if(!confirm('Release this wallet? Anyone could name it again, and you’d lose wallet sign-in until you claim it again.'))return true;
       const r=await socFetch('/claim/release',{method:'POST'}); SOC.me=r.me; PZ_CFG.rev++; done('Wallet released.'); return true; }
-    case 'socWalletLogin': { pzS.acctOpen=true; pzNote('Waiting for your wallet…','busy'); const r=await socWalletSign('login'); socSignedIn(r);
+    case 'socWalletLogin': { pzS.acctOpen=true; pzNote('Waiting for your wallet…','busy'); const r=await socWalletSign('login'); if(!await socSignedIn(r,'Signed in as @'+r.me.handle+'.'))return true;
       pzNote('Signed in as @'+r.me.handle+'.'); await acctAfterSignIn(); return true; }
     case 'socLinkGo': { pzS.acctOpen=true; const c=($('socLinkIn')||{value:''}).value.trim(); if(!c)return true;
-      const r=await socFetch('/link/finish',{method:'POST',body:JSON.stringify({code:c})}); socSignedIn(r); pzS.linkCode=null; if($('socLinkIn'))$('socLinkIn').value='';
+      const r=await socFetch('/link/finish',{method:'POST',body:JSON.stringify({code:c})}); if(!await socSignedIn(r,'Signed in as @'+r.me.handle+'.'))return true; pzS.linkCode=null; if($('socLinkIn'))$('socLinkIn').value='';
       pzNote('Signed in as @'+r.me.handle+'.'); await acctAfterSignIn(); return true; }
     case 'socLinkNew': { const r=await socFetch('/link/start',{method:'POST'}); SOC.link={code:r.code,exp:r.expiresAt};
       setTimeout(()=>{ if(SOC.link&&SOC.link.code===r.code){ SOC.link=null; if(pzTab()==='account')pzRender(); } },10*60000); pzRender(); return true; }
@@ -1631,6 +1717,13 @@ async function acctAction(t){
     case 'vaultUnlock': { const p=pass(); if(!p)return true; pzNote('Opening your journal…','busy');
       await vaultUnlock(p); clearPass(); pzNote('Your journal is open on this device and syncs from here on.'); socStale(); pzRender(); return true; }
     case 'vaultSkip': case 'acctLoadClaimed': await acctUseClaimedWallet(); return true;
+    case 'wsGuestIn': { const n=await wsGuestImport(); done(n?'Added to your journal'+(VAULT.key?' (it syncs from here on).':'.'):'Nothing new to add.'); if(settings.wallets.length)loadAll({auto:true}); return true; }
+    case 'wsGuestDrop': { if(!confirm('Remove the journal made here without a profile? This can’t be undone.'))return true; await wsGuestDiscard(); done('Removed.'); return true; }
+    case 'socSignOutHere': {
+      if(!confirm('Sign out on this device and remove your journal, wallets, exchange keys and settings from this browser?'+(VAULT.key?' Your synced copy stays on the server.':' Your journal isn’t synced: export a backup first if you want to keep it.')))return true;
+      if(VAULT.key&&vaultActive()&&vaultDirty()){ pzNote('Syncing your last changes…','busy'); await vaultPush();
+        if(vaultDirty()&&!confirm('Some changes haven’t synced yet and will be lost. Sign out anyway?')){ pzRender(); return true; } }
+      await wsSignOutHere(); wsReload(); return true; }
     case 'vaultOff': vaultForget(); done('This device stopped syncing. The synced copy is still on the server.'); return true;
     case 'vaultDelete': { if(!confirm('Delete the synced copy from the server? This device keeps its journal; other devices stop syncing.'))return true;
       await socFetch('/vault',{method:'DELETE'}); vaultForget(); if(SOC.me)SOC.me.vault=null; done('Synced copy deleted.'); return true; }
