@@ -1657,6 +1657,10 @@ function renderReconcile(){
   const recPerp=hlOnly.filter(t=>t.market==='perp').reduce((s,t)=>s+t.net,0);
   const recSpot=hlOnly.filter(t=>t.market==='spot').reduce((s,t)=>s+t.net,0);
   const recAll=recPerp+recSpot;
+  // the exchange's figure is account-based, unrealized included: the open positions' marks go in the
+  // fills' side too (as verifiedFigure does), or a large open position reads as a gap of its own
+  const uPerp=openPositions.filter(p=>!p.venue||p.venue==='hyperliquid').reduce((s,p)=>s+(p.uPnl||0),0);
+  const recLive=recPerp+uPerp;
   // integrity banner: perp reconstruction vs Hyperliquid's verified figure, on EVERY tab.
   // Perp-only on purpose: spot gaps are expected (unknown cost basis on transfers/airdrops).
   const wEl=$('reconWarn');
@@ -1668,7 +1672,9 @@ function renderReconcile(){
     // one plain sentence, no figures (engine.js: historyNote); seams are the data-health strip's to say,
     // and the deltas themselves are in the reconciliation panel below
     const note=typeof historyNote==='function'?historyNote():null;
-    if(note&&note.kind!=='seams'){ wEl.classList.remove('hide'); wEl.innerHTML=(note.kind==='gap'||note.kind==='older+'?'<b>\u26a0 Reconstruction check:</b> ':'<b>\u24d8 Older history:</b> ')+esc(note.text); }
+    if(note&&note.kind!=='seams'){ wEl.classList.remove('hide'); wEl.innerHTML=(note.kind==='gap'||note.kind==='older+'?'<b>\u26a0 Reconstruction check:</b> ':'<b>\u24d8 Older history:</b> ')+esc(note.text)
+      +(dataAudit?' <button class="df-btn" id="auditOpen" style="margin-left:6px" data-tip="Your fills and funding against Hyperliquid’s own perp curve: where the difference opened, the recent day / week / month side by side, and the funding check.">Audit…</button>':'');
+      const ab=$('auditOpen'); if(ab)ab.onclick=toggleAuditPanel; }
     else wEl.classList.add('hide');
   }
   if(activeTab==='diag' || (hlPnl.all==null && hlPnl.perp==null)){ el.classList.add('hide'); return; }
@@ -1677,6 +1683,49 @@ function renderReconcile(){
   const item=(k,v,d)=>`<div class="ritem"><span class="rk">${k}</span><span class="rv ${v!=null?cls(v):''}">${v!=null?fmtUsd(v):'—'}</span>${d||''}</div>`;
   el.classList.remove('hide');
   el.innerHTML=`<span class="rlab" data-tip="Hyperliquid's own account P&L figures, as its app reports them — always all time, whatever period or filter is picked above. “recon” is how far the fill-based sum is from each; a large gap means fills are missing, and the verified number is the one to trust. Drawdown lives in Stats / Diagnostic.">Verified · Hyperliquid all-time · doesn’t follow the period</span>`+
-    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recPerp))+item('Spot + vaults',spot,delta(spot,recSpot))+
-    (hlPnl.partial?`<span class="ritem" style="color:var(--gold)" data-tip="Hyperliquid didn’t answer the portfolio request for at least one wallet this load, so these sums cover only the wallets it did. Load all again.">⚠ a wallet is missing from these</span>`:'');
+    item('Total PnL',all,delta(all,recAll))+item('Perps',perp,delta(perp,recLive))+item('Spot + vaults',spot,delta(spot,recSpot))+
+    (hlPnl.partial?`<span class="ritem" style="color:var(--gold)" data-tip="Hyperliquid didn’t answer the portfolio request for at least one wallet this load, so these sums cover only the wallets it did. Load all again.">⚠ a wallet is missing from these</span>`:'')+
+    (dataAudit?`<button class="linkish" id="auditOpen2" data-tip="Where the fills and Hyperliquid’s perp figure part ways: its own P&L curve set against your fills and funding at each of its points, the recent day / week / month side by side, and the funding check.">Audit</button>`:'');
+  const a2=$('auditOpen2'); if(a2)a2.onclick=toggleAuditPanel;
+  if($('auditPanel'))renderAuditPanel();
+}
+// The perp P&L audit (engine.js: pnlAudit), per wallet: what the fills add up to and from what, the
+// funding check, the account's record before its first fill, the recent windows side by side, and the
+// dates where the gap to Hyperliquid's own curve moved.
+function toggleAuditPanel(){
+  const p=$('auditPanel'); if(p){ p.remove(); return; }
+  const host=$('reconcile'); if(!host)return;
+  const el=document.createElement('div'); el.id='auditPanel'; el.className='reconwarn'; el.style.cssText='margin-top:-6px;margin-bottom:12px;font-size:12.5px;line-height:1.55';
+  host.insertAdjacentElement('afterend',el); renderAuditPanel();
+}
+function renderAuditPanel(){
+  const el=$('auditPanel'); if(!el)return;
+  if(!dataAudit){ el.innerHTML='<b>Perp P&amp;L audit</b> — Load all to run it. <button class="df-btn" id="auditClose">Close</button>'; $('auditClose').onclick=toggleAuditPanel; return; }
+  const ymd=ms=>new Date(ms).toISOString().slice(0,10), sg=v=>`<span class="${cls(v)}">${v>=0?'+':''}${fmtUsd(v)}</span>`;
+  const uOf=a=>openPositions.filter(p=>(!p.venue||p.venue==='hyperliquid')&&p.wallet&&p.wallet.address&&p.wallet.address.toLowerCase()===String(a).toLowerCase()).reduce((s,p)=>s+(p.uPnl||0),0);
+  const one=a=>{
+    const real=a.closed-a.fees+a.funding, u=uOf(a.address);
+    const hl=a.points.length?a.points[a.points.length-1].hl:null, gap=hl!=null?real+u-hl:null;
+    const unf=a.funding-a.fundingAttributed;
+    const rows=[];
+    rows.push(`${a.fills.toLocaleString('en-US')} perp fills${a.first?' from '+ymd(a.first):''}: closed P&amp;L ${fmtUsd(a.closed)} − fees ${fmtUsd(a.fees)} ${a.funding<0?'−':'+'} funding ${fmtUsd(Math.abs(a.funding))} (${a.fundingRows.toLocaleString('en-US')} payments) = <b>${fmtUsd(real)}</b> realized${u?`, ${sg(u)} open`:''}`
+      +(hl!=null?` · Hyperliquid: <b>${fmtUsd(hl)}</b> · difference ${sg(gap)}`:''));
+    rows.push(Math.abs(unf)<100?`Funding: every payment lands on a trade (${fmtUsd(a.fundingAttributed)} on trades).`
+      :`Funding: ${sg(unf)} of the ${fmtUsd(a.funding)} paid lands on no trade’s window, so the trades’ net leaves it out (the line above counts it).`);
+    if(a.before)rows.push(`<b>Before the first fill:</b> Hyperliquid’s record starts ${ymd(a.before.start)}, the earliest fill it still serves is ${ymd(a.before.first)}.`
+      +(a.before.gap!=null?` At its first point after that (${ymd(a.before.at)}) the fills already stand ${sg(a.before.gap)} from its curve: roughly the P&amp;L made before the first fill, give or take what was still open then.`:'')
+      +` That P&amp;L is in its figure and in no fill; neither the exchange nor its archive (from May 2025) still has those fills.`);
+    const W=a.windows, wl={day:'24 h',week:'7 days',month:'30 days'};
+    const wrows=['day','week','month'].filter(k=>W[k]).map(k=>{ const w=W[k], sh=w.hlVlm>0?Math.round(Math.min(9.99,w.fillsVlm/w.hlVlm)*100)+'%':'—';
+      return `<tr><td>${wl[k]}</td><td style="text-align:right">${fmtUsd(w.hlPnl)}</td><td style="text-align:right">${fmtUsd(w.fillsPnl)}</td><td style="text-align:right">${fmtUsd(w.hlVlm,0)}</td><td style="text-align:right">${fmtUsd(w.fillsVlm,0)}</td><td style="text-align:right">${sh}</td></tr>`; }).join('');
+    if(wrows)rows.push(`<table style="width:100%;max-width:680px;border-collapse:collapse;margin:4px 0"><tr style="color:var(--muted)"><td>window</td><td style="text-align:right" data-tip="Hyperliquid’s perp P&amp;L over the window, the change in open positions’ unrealized included.">Hyperliquid P&amp;L</td><td style="text-align:right" data-tip="What the fills realized in the window: closed P&amp;L − fees + funding.">fills realized</td><td style="text-align:right">Hyperliquid volume</td><td style="text-align:right">fills volume</td><td style="text-align:right">held</td></tr>${wrows}</table><div style="color:var(--muted);font-size:11.5px">Volume held near 100% means every fill of the window is here. P&amp;L differs by the change in your open positions’ unrealized over the window.</div>`);
+    const st=a.steps;
+    rows.push(st.length?`<b>Where the difference moved</b> (the fills minus Hyperliquid’s curve, between two of its points; a move that comes back later is an open position’s unrealized, one that stays is P&amp;L the fills don’t hold):`
+      +`<div style="max-height:320px;overflow:auto;max-width:540px"><table style="width:100%;border-collapse:collapse;margin:4px 0"><tr style="color:var(--muted)"><td>between</td><td style="text-align:right">moved</td><td style="text-align:right">difference after</td></tr>`
+      +st.map(x=>`<tr><td>${ymd(x.from)} → ${ymd(x.to)}</td><td style="text-align:right">${sg(x.delta)}</td><td style="text-align:right">${sg(x.gap)}</td></tr>`).join('')+'</table></div>'
+      :'The difference never moved by $1,000 between two of Hyperliquid’s points.');
+    return `<div style="margin-top:8px"><b>${esc(a.label)}</b><br>`+rows.join('<br>')+'</div>';
+  };
+  el.innerHTML='<b>Perp P&amp;L audit</b> — your fills and funding against Hyperliquid’s own perp curve. <button class="df-btn" id="auditClose">Close</button>'+dataAudit.map(one).join('');
+  $('auditClose').onclick=toggleAuditPanel;
 }
