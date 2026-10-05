@@ -453,11 +453,11 @@ details>summary{list-style-position:inside}
         <div style="min-width:200px">${sel('insBy',BY,UI.ins.by,' aria-label="Split by"')}</div></div>
       <p class="muted small">Medians per segment. Click one to look at it. Segments under ${X.minSeg} members show their size only.</p>
       <div class="scroll"><table><thead><tr><th>Segment</th><th>Members</th><th>Discipline</th><th>Journaled</th><th>Win rate</th><th>Profit factor</th><th>Return 30d</th><th>Seen 7d</th></tr></thead><tbody>
-      ${X.breakdown.map(g=>`<tr${g.key!=null&&filterable.includes(UI.ins.by)?` class="click" data-insset="${esc(UI.ins.by)}" data-insval="${esc(g.key)}" tabindex="0"`:''}><td><b>${esc(g.label)}</b></td><td>${fmt(g.n)}</td>
+      ${pager('insby:'+UI.ins.by,X.breakdown).items.map(g=>`<tr${g.key!=null&&filterable.includes(UI.ins.by)?` class="click" data-insset="${esc(UI.ins.by)}" data-insval="${esc(g.key)}" tabindex="0"`:''}><td><b>${esc(g.label)}</b></td><td>${fmt(g.n)}</td>
         ${g.small?'<td colspan="6" class="muted small">too few to show</td>':`<td>${insVal('disc30',g.med.disc30,M)}</td><td>${insVal('journal30',g.med.journal30,M)}</td><td>${insVal('wr',g.med.wr,M)}</td><td>${insVal('pf',g.med.pf,M)}</td><td>${insVal('ret',g.med.ret,M)}</td><td>${g.active7}%</td>`}</tr>`).join('')}
-      </tbody></table></div></section>`;
+      </tbody></table></div>${pager('insby:'+UI.ins.by,X.breakdown).html}</section>`;
     const coh=`<section class="card"><h2>By month joined</h2><div class="scroll"><table><thead><tr><th>Joined</th><th>Members</th><th>Synced</th><th>Seen in 30 days</th><th>Seen in 7 days</th></tr></thead><tbody>
-      ${X.cohorts.map(c=>`<tr><td>${esc(c.month)}</td><td>${fmt(c.joined)}</td><td>${pctOf(c.synced,c.joined)}</td><td>${pctOf(c.active30,c.joined)}</td><td>${pctOf(c.active7,c.joined)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No members yet.</td></tr>'}</tbody></table></div></section>`;
+      ${pager('cohorts',X.cohorts).items.map(c=>`<tr><td>${esc(c.month)}</td><td>${fmt(c.joined)}</td><td>${pctOf(c.synced,c.joined)}</td><td>${pctOf(c.active30,c.joined)}</td><td>${pctOf(c.active7,c.joined)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No members yet.</td></tr>'}</tbody></table></div>${pager('cohorts',X.cohorts).html}</section>`;
     const SORTS=[['disc30','Discipline, best first'],['slipping','Slipping (Discipline down 10+)'],['wr','Win rate'],['pf','Profit factor'],['ret','30-day return'],['journal30','Days journaled'],['xp','XP'],['lastSeen','Last seen']];
     const mem=`<section class="card"><div class="ch"><h2>Members</h2>
         <div style="min-width:220px">${sel('insSort',SORTS,UI.ins.sort,' aria-label="Sort members"')}</div></div>
@@ -530,7 +530,7 @@ details>summary{list-style-position:inside}
     if(NOUNS[sub])return (M==='DELETE'?'deleted':M==='PUT'||id?'edited':'created')+' a '+NOUNS[sub];
     return what; }
   function vAdmins(){
-    const admins=D.members.filter(m=>m.admin), log=(D.log||[]).slice(0,UI.logAll?200:8);
+    const admins=D.members.filter(m=>m.admin), log=pager('adlog',D.log||[]).items;
     return `<section class="card"><div class="ch"><h2>Admins <span class="sub2">· ${admins.length+1}</span></h2>
         ${ME.owner?`<button class="fit" id="adminToggle">${UI.adminAdd?'Close':'Add admin'}</button>`:''}</div>
       <p class="muted small" style="margin:0">Admins can do everything in this panel except add or remove admins. They sign in with their own profile, never your access token, so your journal and the server stay yours.</p>
@@ -538,10 +538,10 @@ details>summary{list-style-position:inside}
         <p class="hint">Already a member? Open their page and tick “Admin” under Access instead.</p></div>`:''}
       ${UI.code&&UI.code.admin&&!UI.member?codeBox(UI.code):''}
       <div class="scroll" style="margin-top:10px"><table><tbody><tr><td><b>Owner</b> <span class="pill ok">access token</span></td><td class="muted small">${ME.owner?'you':''}</td><td></td></tr>
-        ${admins.map(m=>`<tr><td><a href="${mlink(m)}"><b>@${esc(m.handle)}</b></a> ${m.adminMade&&!m.keys?'<span class="pill">not signed in yet</span>':''}${m.banned?'<span class="pill ban">suspended</span>':''}</td><td class="muted small">last seen ${esc(ago(m.lastSeen))}${ME.id===m.id?' · you':''}</td>
-          <td>${ME.owner?`<div class="row fit" style="align-items:center"><button class="sm fit" data-adcode="${esc(m.id)}">New sign-in link</button><button class="sm danger fit" data-unadmin="${esc(m.id)}">Remove admin</button></div>`:''}</td></tr>`).join('')}</tbody></table></div>
+        ${pager('admins',admins).items.map(m=>`<tr><td><a href="${mlink(m)}"><b>@${esc(m.handle)}</b></a> ${m.adminMade&&!m.keys?'<span class="pill">not signed in yet</span>':''}${m.banned?'<span class="pill ban">suspended</span>':''}</td><td class="muted small">last seen ${esc(ago(m.lastSeen))}${ME.id===m.id?' · you':''}</td>
+          <td>${ME.owner?`<div class="row fit" style="align-items:center"><button class="sm fit" data-adcode="${esc(m.id)}">New sign-in link</button><button class="sm danger fit" data-unadmin="${esc(m.id)}">Remove admin</button></div>`:''}</td></tr>`).join('')}</tbody></table></div>${pager('admins',admins).html}
       ${(D.log||[]).length?`<h3>Recent admin activity</h3><div class="scroll"><table><tbody>${log.map(x=>`<tr><td class="small"><b>${esc(x.by==='owner'?'Owner':x.by)}</b> <span class="muted">${esc(logWords(x.what))}</span></td><td class="muted small n nw">${esc(ago(x.at))}</td></tr>`).join('')}</tbody></table></div>
-        ${(D.log||[]).length>8?`<button class="sm" id="logAll">${UI.logAll?'Show less':'Show all'}</button>`:''}`:''}
+        ${pager('adlog',D.log||[]).html}`:''}
     </section>`;
   }
   function vMembers(){
@@ -699,7 +699,7 @@ details>summary{list-style-position:inside}
   function vLeagues(){
     const ed=UI.leagueEdit, L0=ed&&ed!=='new'?D.leagues.find(x=>x.id===ed):null;
     return `${ed?leagueForm(L0):''}
-      ${D.leagues.map(L=>{ const out=D.members.filter(m=>!L.roster.some(r=>r.id===m.id));
+      ${pager('leagues',D.leagues).items.map(L=>{ const out=D.members.filter(m=>!L.roster.some(r=>r.id===m.id));
         return `<section class="card"><div class="lcard"><div><h2 style="margin:0">${esc(L.name)} <span class="muted">#${L.num}</span></h2>
           <div class="chips" style="margin:8px 0">${[esc(L.metricLabel),L.period==='month'?'Monthly':'Weekly',L.tiers?'Tiers':'',L.open?'Listed':'Unlisted',L.inviteRequired?'Invite code':'',L.autoJoin?'Auto-join':'',L.season?'Season: '+L.season.label:''].filter(Boolean).map(x=>`<span class="pill">${x}</span>`).join('')}</div>
           ${L.desc?`<p class="muted" style="margin:0">${esc(L.desc)}</p>`:''}</div>
@@ -707,7 +707,7 @@ details>summary{list-style-position:inside}
           <details style="margin-top:10px"${UI.rosterOpen===L.id?' open':''}><summary>${L.roster.length} member${L.roster.length===1?'':'s'}</summary>
             <div class="chips" style="margin-top:10px">${pager('roster:'+L.id,L.roster).items.map(r=>`<span class="pill">@${esc(r.handle)}${L.tiers?' · '+TIERS[r.tier]:''} <button class="x" data-lgrm="${esc(L.id)}" data-mid="${esc(r.id)}" aria-label="Remove @${esc(r.handle)}">×</button></span>`).join('')||'<span class="muted">Nobody yet.</span>'}</div>${pager('roster:'+L.id,L.roster).html}
             ${out.length?`<div class="row" style="margin-top:10px;align-items:center"><div>${sel('lgAdd_'+L.id,out.map(m=>[m.id,'@'+m.handle]),'',' aria-label="Member to add"')}</div><button class="sm fit" data-lgadd="${esc(L.id)}">Add</button></div>`:''}
-          </details></section>`; }).join('')}`;
+          </details></section>`; }).join('')}${pager('leagues',D.leagues).html}`;
   }
 
   // ---------------- competitions ----------------
@@ -770,8 +770,8 @@ details>summary{list-style-position:inside}
       <div class="actions"><button class="fit" id="lvPreview">Preview</button><button class="primary fit" id="lvSave">Save levels</button></div>
       <p class="hint">Nobody loses XP — only where the levels fall changes. Members’ apps pick it up when they next open Daruma.</p></section>
       <section class="card"><h2>Preview${UI.levelDraft?' <span class="pill">not saved</span>':''}</h2><div class="scroll"><table class="lvtbl"><thead><tr><th>Level</th><th>Starts at</th><th>Title</th><th>Members</th></tr></thead><tbody>
-        ${rows.map(([n,s,t])=>{ const k=D.members.filter(m=>!m.banned&&m.xp>=s&&m.xp<levelStart(pc,n+1)).length; return `<tr><td>${n}</td><td>${fmt(s)} XP</td><td>${esc(t)}</td><td class="muted">${k||''}</td></tr>`; }).join('')}
-      </tbody></table></div></section></div>
+        ${pager('levels',rows).items.map(([n,s,t])=>{ const k=D.members.filter(m=>!m.banned&&m.xp>=s&&m.xp<levelStart(pc,n+1)).length; return `<tr><td>${n}</td><td>${fmt(s)} XP</td><td>${esc(t)}</td><td class="muted">${k||''}</td></tr>`; }).join('')}
+      </tbody></table></div>${pager('levels',rows).html}</section></div>
       <section class="card"><h2>How members earn XP</h2>
         <p class="hint" style="margin-top:0">Per day unless noted. Set any to 0 to stop paying it.</p>
         <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">${Object.keys(XP_LABELS).map(k=>field('xp_'+k,XP_LABELS[k][0],`<input id="xp_${k}" type="number" min="0" max="${k==='discipline'?5:1000}" step="${k==='discipline'?0.1:5}" value="${x[k]}">`,XP_LABELS[k][1]?esc(XP_LABELS[k][1]):'')).join('')}</div>
@@ -839,7 +839,7 @@ details>summary{list-style-position:inside}
       <div class="actions"><button class="primary" id="mrSave">Save rates</button></div>
       ${P?`<h3 style="margin:18px 0 6px">The pool</h3>
         <p style="margin:0"><b>${fmt(P.xp)} XP</b> <span class="muted">in the pool · ${fmt(P.total)} taken in so far · ${fmt(P.held.n)} XP held for ${P.held.c} trade${P.held.c===1?'':'s'} waiting on a review</span></p>
-        ${log.length?`<div class="scroll"><table><thead><tr><th>When</th><th>From</th><th>To</th><th>Paid</th><th>Pool</th></tr></thead><tbody>${log.slice(0,20).map(l=>`<tr><td class="muted">${esc(new Date(l.at).toLocaleString())}</td><td>${l.from?'@'+esc(l.from):'<span class="muted">deleted</span>'}</td><td>${l.to?'@'+esc(l.to):'<span class="muted">deleted</span>'}</td><td>${fmt(l.fee)} XP</td><td>${fmt(l.xp)} XP</td></tr>`).join('')}</tbody></table></div>`
+        ${log.length?`<div class="scroll"><table><thead><tr><th>When</th><th>From</th><th>To</th><th>Paid</th><th>Pool</th></tr></thead><tbody>${pager('pool',log).items.map(l=>`<tr><td class="muted">${esc(new Date(l.at).toLocaleString())}</td><td>${l.from?'@'+esc(l.from):'<span class="muted">deleted</span>'}</td><td>${l.to?'@'+esc(l.to):'<span class="muted">deleted</span>'}</td><td>${fmt(l.fee)} XP</td><td>${fmt(l.xp)} XP</td></tr>`).join('')}</tbody></table></div>${pager('pool',log).html}`
           :'<p class="hint">Nothing yet: the pool takes its share when a paid review is marked reviewed.</p>'}`:''}</section>`;
   }
   const levelBody=()=>({mode:val('lvMode'),base:val('lvBase'),thresholds:val('lvTable'),titles:lines(val('lvTitles'))});
@@ -950,7 +950,7 @@ details>summary{list-style-position:inside}
           ${num('rfPRx','Referrer’s bonus (XP)',P.referrerXp,'',0,5000)}${num('rfPEx','Welcome bonus (XP)',P.refereeXp,'',0,5000)}${num('rfPPct','Share (%)',P.sharePct,'',0,50)}</div>
         <p class="hint">Today someone joining gets: ${fmt(T.rx)} XP for the referrer, ${fmt(T.ex)} XP welcome, ${T.pct}% for ${T.wk} weeks${T.promo?' — <b>'+esc(T.promo)+'</b>':''}.</p>
         <div class="actions"><button class="primary" id="rfSave">Save</button></div></section>
-      <section class="card"><h2>Top earners</h2>${R.earners.length?R.earners.slice(0,15).map(x=>`<div class="ev"><div><b>@${esc(x.handle)}</b></div><span class="muted">${fmt(x.xp)} XP</span></div>`).join(''):'<p class="muted">Nobody yet.</p>'}
+      <section class="card"><h2>Top earners</h2>${R.earners.length?pager('earners',R.earners).items.map(x=>`<div class="ev"><div><b>@${esc(x.handle)}</b></div><span class="muted">${fmt(x.xp)} XP</span></div>`).join('')+pager('earners',R.earners).html:'<p class="muted">Nobody yet.</p>'}
         <h3>Links of their own</h3>${pgL.items.map(l=>`<div class="ev"><div><b>${esc(l.code)}</b> <span class="muted small">@${esc(l.handle||'?')}${l.label?' · '+esc(l.label):''} · ${fmt(l.visits)} visits · ${fmt(l.joins)} joins</span></div><button class="sm danger" data-delref="${esc(l.code)}">Remove</button></div>`).join('')||'<p class="muted">None yet.</p>'}${pgL.html}</section></div>
       <section class="card"><h2>Referrals</h2>${pgR.items.length?`<table><thead><tr><th>Joined</th><th>Member</th><th>Invited by</th><th>Status</th><th>Shared</th><th></th></tr></thead><tbody>${pgR.items.map(r=>`<tr>
         <td class="small">${esc(new Date(r.at).toISOString().slice(0,10))}</td><td>@${esc(r.handle)}${r.terms.promo?` <span class="pill">${esc(r.terms.promo)}</span>`:''}</td><td>@${esc(r.by||'?')} <span class="muted small">${esc(r.code)}</span></td>
@@ -964,12 +964,12 @@ details>summary{list-style-position:inside}
     :`${esc(e.text)}${e.quote?`<div class="muted">“${esc(e.quote)}”</div>`:''}`;
   function vFeed(){
     const pc=D.ov.config.posts||{on:true,plans:true,images:true}, pbc=D.ov.config.playbooks||{on:true,who:'all'};
-    const reports=D.reports.length?D.reports.map(r=>`<div class="ev"><div><span class="pill warnp">${r.n} report${r.n===1?'':'s'}</span> ${r.why.length?`<span class="muted small">“${r.why.map(esc).join('” · “')}”</span>`:''}
+    const reports=D.reports.length?pager('reports',D.reports).items.map(r=>`<div class="ev"><div><span class="pill warnp">${r.n} report${r.n===1?'':'s'}</span> ${r.why.length?`<span class="muted small">“${r.why.map(esc).join('” · “')}”</span>`:''}
         ${r.comment?`<div><b>@${esc(r.comment.handle||'?')}</b> commented: ${esc(r.comment.text)}</div><div class="muted small">on @${esc(r.post.handle||'?')}’s post</div>`:`<div><b>@${esc(r.post.handle||'?')}</b> ${r.post.post?'· '+esc(r.post.post.kind):''}</div>${postBody(r.post)}`}
         <div class="muted small">${esc(ago(r.at))}</div></div>
         <div class="stack" style="gap:6px"><button class="sm danger" data-rep="${esc(r.id)}" data-a="remove">Remove ${r.comment?'comment':'post'}</button><button class="sm" data-rep="${esc(r.id)}" data-a="dismiss">Keep</button></div></div>`).join('')
       :'<p class="muted">Nothing reported. Members can report a post or comment from its page.</p>';
-    return `<section class="card"><h2>Reports</h2>${reports}</section>
+    return `<section class="card"><h2>Reports</h2>${reports}${pager('reports',D.reports).html}</section>
       <div class="two"><section class="card"><h2>Announcement</h2>
       <p class="muted" style="margin:0 0 8px">Posts to everyone’s feed from the league.</p>
       <textarea id="ann" rows="3" maxlength="280" placeholder="Survivor starts Monday — set your loss limit in Prep." aria-label="Announcement"></textarea>
@@ -983,9 +983,9 @@ details>summary{list-style-position:inside}
       ${box('pbOn','Members can share playbooks and adopt others’',pbc.on,'A setup’s name, a note and its rules, with the member’s name. Never trades or results. Adopting copies it into the member’s own journal.')}
       <label class="inline" for="pbWho" style="gap:8px">Who can share ${sel('pbWho',[['all','Every member with a profile'],['mentors','Mentors only']],pbc.who)}</label>
       <div class="actions"><button id="pbSave">Save</button></div>
-      <div style="max-height:320px;overflow:auto">${D.playbooks.length?D.playbooks.map(x=>`<div class="ev"><div><b>${esc(x.name)}</b> <span class="muted small">@${esc(x.handle||'?')} · ${x.ruleN} rule${x.ruleN===1?'':'s'} · ${x.adopts} adopted · v${x.version}</span>
+      <div style="max-height:320px;overflow:auto">${D.playbooks.length?pager('playbooks',D.playbooks).items.map(x=>`<div class="ev"><div><b>${esc(x.name)}</b> <span class="muted small">@${esc(x.handle||'?')} · ${x.ruleN} rule${x.ruleN===1?'':'s'} · ${x.adopts} adopted · v${x.version}</span>
         ${x.about?`<div class="muted small" style="white-space:pre-wrap">${esc(x.about)}</div>`:''}<ol class="small" style="margin:4px 0 0;padding-left:18px">${x.rules.map(r=>`<li>${esc(r.text)}</li>`).join('')}</ol></div>
-        <button class="sm danger" data-delpb="${esc(x.id)}">Remove</button></div>`).join(''):'<p class="muted" style="margin:0">None shared yet.</p>'}</div></section>
+        <button class="sm danger" data-delpb="${esc(x.id)}">Remove</button></div>`).join(''):'<p class="muted" style="margin:0">None shared yet.</p>'}</div>${pager('playbooks',D.playbooks).html}</section>
       <section class="card"><h2>Recent feed</h2><div style="max-height:620px;overflow:auto">
       ${pager('events',D.events).items.map(e=>`<div class="ev"><div><b>${e.admin?'League':'@'+esc(e.handle)}</b> ${postBody(e)}<div class="muted small">${esc(ago(e.at))} · ${e.kudos} kudos${e.post?' · '+e.post.comments+' comment'+(e.post.comments===1?'':'s'):''}</div></div><button class="sm danger" data-delev="${esc(e.id)}">Remove</button></div>`).join('')||'<p class="muted">Nothing posted yet.</p>'}
       </div>${pager('events',D.events).html}</section></div>`;
@@ -1085,7 +1085,7 @@ details>summary{list-style-position:inside}
         ${B.seedList.length?seedTable(B,L)+(B.seedList.length<total?`<p class="hint">The ${fmt(B.seedList.length)} newest of ${fmt(total)} are listed.</p>`:''):''}
       </section>
       <section class="card"><h2>Peer groups</h2>
-        ${B.groups.length?`<div class="scroll"><table><thead><tr><th>Group</th><th class="n">Traders</th><th>Improved</th></tr></thead><tbody>${B.groups.slice(0,60).map(g=>`<tr><td>${esc(dimName(g))}</td><td class="n">${fmt(g.n)}</td><td>${esc(g.imp||'—')}</td></tr>`).join('')}</tbody></table></div>${B.improvers.length?'<p>What improvers changed: '+B.improvers.map(esc).join(' · ')+'</p>':''}
+        ${B.groups.length?`<div class="scroll"><table><thead><tr><th>Group</th><th class="n">Traders</th><th>Improved</th></tr></thead><tbody>${pager('bgroups',B.groups).items.map(g=>`<tr><td>${esc(dimName(g))}</td><td class="n">${fmt(g.n)}</td><td>${esc(g.imp||'—')}</td></tr>`).join('')}</tbody></table></div>${pager('bgroups',B.groups).html}${B.improvers.length?'<p>What improvers changed: '+B.improvers.map(esc).join(' · ')+'</p>':''}
           <p class="hint">Biggest first${B.groups.length>60?'; 60 of '+fmt(B.groups.length)+' shown':''}. Combinations with fewer than ${fmt(B.min)} traders aren’t listed: those traders are compared with a wider group.</p>`
           :`<p class="muted" style="margin:0">No group has ${fmt(B.min)} traders yet (${fmt(B.contributors)} contributors so far). Add seed wallets above to get started.</p>`}</section>`;
   }
@@ -1107,7 +1107,7 @@ details>summary{list-style-position:inside}
       <td>${d.status==='pending'||d.status==='active'?`<button class="sm fit" data-duelcancel="${esc(d.id)}">Cancel</button>`:''}</td></tr>`;
     return `${tiles([['Running',fmt(k.active)],['Waiting for an answer',fmt(k.pending),'a challenge waits 48 hours'],['Finished, last 30 days',fmt(k.done30),fmt(k.declined)+' declined'],['Group duels open',fmt(X.pods?X.pods.open:0)]])}
       <section class="card">
-        ${X.open.length?`<div class="ch"><h2>Running and waiting <span class="sub2">· ${X.open.length}</span></h2></div><div class="scroll"><table><thead><tr><th>Who</th><th>On</th><th>Dates</th><th>Status</th><th></th></tr></thead><tbody>${X.open.map(row).join('')}</tbody></table></div>
+        ${X.open.length?`<div class="ch"><h2>Running and waiting <span class="sub2">· ${X.open.length}</span></h2></div><div class="scroll"><table><thead><tr><th>Who</th><th>On</th><th>Dates</th><th>Status</th><th></th></tr></thead><tbody>${pager('dopen',X.open).items.map(row).join('')}</tbody></table></div>${pager('dopen',X.open).html}
           <p class="hint">Cancelling ends a duel without a result: nobody wins, loses or gets XP, and both are told.</p>`:'<h2>Running and waiting</h2><p class="muted" style="margin:0">No duels running or waiting.</p>'}</section>
       <div class="two">
       <section class="card"><h2>Settings</h2>
@@ -1131,9 +1131,9 @@ details>summary{list-style-position:inside}
       ${riskCard(X.risk)}
       ${potCard(X.pots)}
       ${LD?`<section class="card"><h2>Ladder season: ${esc(LD.season.label)}</h2><p class="muted small">${esc(LD.season.start)} → ${esc(LD.season.end)} · ${fmt(LD.listed)} on the ladder${LD.last?' · last podium ('+esc(LD.last.label)+'): '+LD.last.podium.map(h=>'@'+esc(h)).join(', '):''}</p>
-        ${LD.top.length?`<div class="scroll"><table><thead><tr><th>#</th><th>Who</th><th>Points this season</th><th>Rating</th><th>Duels</th></tr></thead><tbody>${LD.top.map((r,i)=>`<tr><td>${i+1}</td><td>@${esc(r.handle)}</td><td>${r.gain>0?'+':''}${fmt(r.gain)}</td><td>${fmt(r.r)}</td><td>${fmt(r.n)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No rated duels this season yet.</p>'}</section>`:''}
+        ${LD.top.length?`<div class="scroll"><table><thead><tr><th>#</th><th>Who</th><th>Points this season</th><th>Rating</th><th>Duels</th></tr></thead><tbody>${pager('ladder',LD.top).items.map((r,i)=>`<tr><td>${(UI.pages.ladder||0)*10+i+1}</td><td>@${esc(r.handle)}</td><td>${r.gain>0?'+':''}${fmt(r.gain)}</td><td>${fmt(r.r)}</td><td>${fmt(r.n)}</td></tr>`).join('')}</tbody></table></div>${pager('ladder',LD.top).html}`:'<p class="muted">No rated duels this season yet.</p>'}</section>`:''}
       <section class="card"><h2>Recent results</h2>
-        ${X.recent.length?`<div class="scroll"><table><thead><tr><th>Who</th><th>On</th><th>Dates</th><th>Result</th><th></th></tr></thead><tbody>${X.recent.map(row).join('')}</tbody></table></div>`:'<p class="muted" style="margin:0">No finished duels yet.</p>'}</section>
+        ${X.recent.length?`<div class="scroll"><table><thead><tr><th>Who</th><th>On</th><th>Dates</th><th>Result</th><th></th></tr></thead><tbody>${pager('drecent',X.recent).items.map(row).join('')}</tbody></table></div>${pager('drecent',X.recent).html}`:'<p class="muted" style="margin:0">No finished duels yet.</p>'}</section>
       </div></div>`;
   }
   // the drawdown rules: what happens past an event's cap, per format, and the caps members pick from
@@ -1246,7 +1246,7 @@ details>summary{list-style-position:inside}
     else if(t.id==='lvMode'){ UI.levelDraft=levelDraft(); render(); }
     else if(t.id==='fGuestOff'){ $('fGuest').disabled=t.checked; if(!t.checked)$('fGuest').focus(); }
     else if(t.id&&/^rc_\d+_b$/.test(t.id)){ keepRoutines(); UI.fresh=true; render(); } });
-  window.ADM={api,note,render,esc,fmt,ago,field,box,sel,tiles}; // for the Beta access screen (admin-beta-ui.js)
+  window.ADM={api,note,render,esc,fmt,ago,field,box,sel,tiles,pager}; // for the Beta access screen (admin-beta-ui.js)
   document.addEventListener('click',async ev=>{
     const qa=ev.target.closest('a[data-open]'); if(qa){ UI.open=qa.dataset.open; return; }
     const sg=ev.target.closest('tr[data-insset]'); if(sg){ UI.ins.f[sg.dataset.insset]=sg.dataset.insval; loadIns().then(render); return; } // a segment row: look at it
@@ -1288,7 +1288,6 @@ details>summary{list-style-position:inside}
       if(!ADDR.test(ad))return note('That isn’t a wallet address (0x and 40 hex characters).',true); if(!tm)return note('Pick a member by name.',true);
       return act(()=>api('/members/'+encodeURIComponent(tm.id),{body:{action:'link',address:ad}}),'Mapped to @'+tm.handle+'.'); }
     if(id==='adminToggle'){ UI.adminAdd=!UI.adminAdd; UI.code=null; return render(); }
-    if(id==='logAll'){ UI.logAll=!UI.logAll; return render(); }
     if(id==='adCreate'){ const handle=val('adHandle').trim().replace(/^@/,''); if(!handle)return note('Give them a name.',true);
       const r=await act(()=>api('/members',{body:{handle,admin:true,unlocked:true,leagues:[]}}),'Admin added.');
       if(r&&r.code){ UI.adminAdd=false; UI.code={id:r.id,handle,code:r.code,admin:true}; render(); } return; }

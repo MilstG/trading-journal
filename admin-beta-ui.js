@@ -5,9 +5,10 @@
 //
 //   - The mode: on or off, whether profiles from before keep access, whether the docs stay public, how long
 //     new invites last, and the line under the beta page's title.
-//   - Invites: made in batches (one per name, or a number of them). A code is shown once, when it's made,
-//     with its /join# link: the server keeps only its hash. Each one is withdrawn while unused, or replaced
-//     by a new one (the old link stops working).
+//   - Invites: made in batches (one per name, or a number of them), each a code and its /join# link. A waiting
+//     one's code and link can be copied again from the list (the server keeps the code until it's used).
+//     Any invite can be deleted (its link dies and it leaves the list), expired ones cleared at once, and a
+//     lost or expired one replaced by a new link (the old one stops working).
 (function () {
   'use strict';
   let st = null, loading = false, fresh = null, busy = false, filter = 'all';
@@ -24,18 +25,20 @@
   function rows() {
     const list = st.invites.filter(x => filter === 'all' || (filter === 'closed' ? x.state === 'expired' || x.state === 'revoked' : x.state === filter));
     if (!list.length) return '<p class="muted" style="margin:0">' + (st.invites.length ? 'None here.' : 'No invites yet. Make the first ones above.') + '</p>';
-    return `<div class="scroll"><table><thead><tr><th>For</th><th>Code</th><th>Made</th><th>Expires</th><th>Status</th><th aria-label="Actions"></th></tr></thead><tbody>${list.slice(0, 300).map(x => {
+    const pg = A().pager('invites:' + filter, list); // ten at a time, like every list in the panel
+    return `<div class="scroll"><table><thead><tr><th>For</th><th>Code</th><th>Made</th><th>Expires</th><th>Status</th><th aria-label="Actions"></th></tr></thead><tbody>${pg.items.map(x => {
       const [label, cls] = STATE[x.state] || [x.state, ''];
       const who = x.used ? (x.used.handle ? `<a href="#members/${esc(encodeURIComponent(x.used.id))}">@${esc(x.used.handle)}</a>` : '<span class="muted">deleted profile</span>') + ' · ' + esc(day(x.used.at)) : '';
-      const acts = (x.state === 'open' ? `<button class="sm danger fit" data-btrev="${esc(x.id)}">Withdraw</button>` : '') +
-        (x.state !== 'used' ? `<button class="sm fit" data-btnew="${esc(x.id)}">New link</button>` : '');
-      return `<tr><td><b>${esc(x.note || '—')}</b>${x.unlocked ? ' <span class="pill xp">unlocked</span>' : ''}</td><td><code>••••-${esc(x.tail)}</code></td><td class="nw">${esc(day(x.at))}<div class="muted small">${esc(x.by || '')}</div></td>
-        <td class="nw">${x.state === 'used' ? '—' : esc(day(x.exp))}</td><td class="nw"><span class="pill ${cls}">${esc(label)}</span> ${who}</td><td class="n nw"><div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">${acts}</div></td></tr>`; }).join('')}</tbody></table></div>`;
+      const acts = (x.code ? `<button class="sm fit" data-btcode="${esc(x.code)}">Copy code</button><button class="sm fit" data-btlink="${esc(x.code)}">Copy link</button>` : '') +
+        (x.state !== 'used' ? `<button class="sm fit" data-btnew="${esc(x.id)}">New link</button>` : '') +
+        `<button class="sm danger fit" data-btdel="${esc(x.id)}" data-st="${esc(x.state)}" aria-label="Delete ${esc(x.note ? 'the invite for ' + x.note : 'this invite')}">Delete</button>`;
+      return `<tr><td><b>${esc(x.note || '—')}</b>${x.unlocked ? ' <span class="pill xp">unlocked</span>' : ''}</td><td><code>${x.code ? esc(x.code) : '••••-' + esc(x.tail)}</code></td><td class="nw">${esc(day(x.at))}<div class="muted small">${esc(x.by || '')}</div></td>
+        <td class="nw">${x.state === 'used' ? '—' : esc(day(x.exp))}</td><td class="nw"><span class="pill ${cls}">${esc(label)}</span> ${who}</td><td class="n nw"><div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">${acts}</div></td></tr>`; }).join('')}</tbody></table></div>${pg.html}`;
   }
   function freshBox() {
     if (!fresh || !fresh.length) return '';
     return `<div class="sub" style="margin-top:14px;border-color:#1F4A36"><b>${fresh.length === 1 ? 'Invite ready' : fresh.length + ' invites ready'}</b>
-      <p class="hint" style="margin:2px 0 10px">Copy ${fresh.length === 1 ? 'it' : 'them'} now and send each one yourself (Telegram, DM, email). Only a fingerprint of each code is kept, so this is the one time ${fresh.length === 1 ? 'the link' : 'the links'} can be shown. Each works once.</p>
+      <p class="hint" style="margin:2px 0 10px">Send each one yourself (Telegram, DM, email). Each works once. Until it’s used you can copy its code or link again from the list below.</p>
       ${fresh.map((f, i) => `<div class="row" style="align-items:center;flex-wrap:nowrap;gap:8px;padding:6px 0;border-top:1px solid var(--line)"><b class="fit" style="min-width:60px">${esc(f.note || 'Invite ' + (i + 1))}</b>
         <code style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(linkOf(f.code))}">${esc(linkOf(f.code))}</code><button class="sm fit" data-btcopy="${i}">Copy</button></div>`).join('')}
       <div class="row" style="gap:8px;margin-top:8px">${fresh.length > 1 ? '<button class="sm fit" id="btCopyAll">Copy all</button>' : ''}<button class="sm fit" id="btDone">Done</button></div></div>`;
@@ -65,7 +68,8 @@
       <section class="card" style="margin-top:16px"><div class="ch"><h2>Invites</h2><div class="row" style="gap:6px;flex:1 1 auto;justify-content:flex-end">${[['all', 'All', st.counts.all], ['open', 'Waiting', st.counts.open], ['used', 'Activated', st.counts.used], ['closed', 'Expired', st.counts.closed]]
         .map(([k, l, n]) => `<button class="sm fit${filter === k ? ' primary' : ''}" data-btf="${k}" aria-pressed="${filter === k}">${l} ${n}</button>`).join('')}</div></div>
         ${rows()}
-        <p class="hint">“New link” replaces a lost or expired invite; an unused one it replaces stops working. To shut out someone who already activated, suspend or delete them under Members, or sign them out of every device there.</p></section>`;
+        ${st.counts.closed ? `<div class="row" style="margin-top:12px"><button class="sm fit" id="btClear">Clear ${F.fmt(st.counts.closed)} expired</button></div>` : ''}
+        <p class="hint">“Delete” kills an invite’s link and takes it off the list. “New link” replaces a lost or expired invite (the old link stops working). Deleting an activated invite only tidies the list: to shut out someone who already activated, suspend or delete them under Members, or sign them out of every device there.</p></section>`;
   }
 
   const copy = t => navigator.clipboard ? navigator.clipboard.writeText(t).then(() => A().note('Copied.'), () => A().note('Couldn’t copy: select the link and copy it.', true)) : A().note('Select the link and copy it.', true);
@@ -89,7 +93,12 @@
     if (b.id === 'btCopyAll' && fresh) return copy(fresh.map((f, i) => (f.note || 'Invite ' + (i + 1)) + ': ' + linkOf(f.code)).join('\n'));
     if (b.id === 'btDone') { fresh = null; return A().render(); }
     if (d.btf) { filter = d.btf; return A().render(); }
-    if (d.btrev) { if (!confirm('Withdraw this invite? Its link stops working.')) return; return run(() => A().api('/beta/invites/' + encodeURIComponent(d.btrev), { body: { action: 'revoke' } }), 'Invite withdrawn.'); }
+    if (d.btcode) return copy(d.btcode);
+    if (d.btlink) return copy(linkOf(d.btlink));
+    if (d.btdel) { if (!confirm(d.st === 'open' ? 'Delete this invite? Its link stops working at once and it leaves the list.' : d.st === 'used' ? 'Take this invite off the list? The profile it made keeps its access.' : 'Take this invite off the list?')) return;
+      return run(() => A().api('/beta/invites/' + encodeURIComponent(d.btdel), { body: { action: 'delete' } }), d.st === 'open' ? 'Invite deleted: its link no longer works.' : 'Removed from the list.'); }
+    if (b.id === 'btClear') { if (!confirm('Take every expired and withdrawn invite off the list?')) return;
+      return run(() => A().api('/beta/invites/clear', { body: {} }), 'Expired invites cleared.'); }
     if (d.btnew) return run(async () => { const r = await A().api('/beta/invites/' + encodeURIComponent(d.btnew), { body: { action: 'replace' } }); fresh = [r]; });
   });
   window.ABETA = { view };

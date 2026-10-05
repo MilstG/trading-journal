@@ -823,12 +823,13 @@ function createSocial(opts) {
     revoked: 'This invite was withdrawn. Ask the person who invited you for a new one.' };
   const newInvite = (o, by) => { let code = ''; for (const b of crypto.randomBytes(10)) code += INVITE_ABC[b % 32];
     const id = crypto.randomBytes(6).toString('hex'), days = clampNum(o.ttlDays, 1, 90) || S.config.beta.ttlDays;
-    S.beta.invites[id] = { id, h: sha(code), tail: code.slice(-4), note: cleanText(o.note, 40), at: now(), exp: now() + Math.round(days) * 86400000, by,
+    // the code itself is kept while the invite waits, so the panel can copy it again; it goes once used, withdrawn or deleted
+    S.beta.invites[id] = { id, h: sha(code), code, tail: code.slice(-4), note: cleanText(o.note, 40), at: now(), exp: now() + Math.round(days) * 86400000, by,
       unlocked: !!o.unlocked, leagues: o.leagues !== false, used: null, usedAt: 0, revoked: 0 };
     const all = Object.values(S.beta.invites); // the oldest closed ones go first once there are too many
     if (all.length > MAX_INVITES) for (const x of all.filter(x => inviteState(x) !== 'open').sort((a, b) => a.at - b.at).slice(0, all.length - MAX_INVITES)) delete S.beta.invites[x.id];
     return { id, note: S.beta.invites[id].note, code: inviteShow(code), expiresAt: S.beta.invites[id].exp }; };
-  const useInvite = (x, m) => { x.used = m.id; x.usedAt = now(); m.betaInvite = x.id; touch('beta'); };
+  const useInvite = (x, m) => { x.used = m.id; x.usedAt = now(); delete x.code; m.betaInvite = x.id; touch('beta'); };
   // the wallet whose on-chain numbers count for this member: any address they gave, or, when the
   // owner requires claims, only a wallet they proved is theirs by signing
   // … and, when the owner approves wallets, only an address the owner approved
@@ -2722,7 +2723,7 @@ function createSocial(opts) {
       // ---- private beta: the mode, and the single-use invites (a code is shown once, when it's made: only its hash is kept) ----
       if (sub === 'beta' && !parts[2] && M === 'GET') {
         const inv = Object.values(S.beta.invites).sort((a, b) => b.at - a.at).map(x => { const st = inviteState(x), u = x.used && own(S.members, x.used) ? S.members[x.used] : null;
-          return { id: x.id, note: x.note, tail: x.tail, at: x.at, exp: x.exp, by: x.by, state: st, unlocked: !!x.unlocked, leagues: x.leagues !== false,
+          return { id: x.id, note: x.note, tail: x.tail, code: st === 'open' && x.code ? inviteShow(x.code) : null, at: x.at, exp: x.exp, by: x.by, state: st, unlocked: !!x.unlocked, leagues: x.leagues !== false,
             used: x.used ? { id: x.used, handle: u ? u.handle : null, at: x.usedAt } : null, revoked: x.revoked || 0 }; });
         const n = k => inv.filter(x => x.state === k).length;
         return json(res, 200, { config: S.config.beta, active: betaOn(), invites: inv, counts: { all: inv.length, open: n('open'), used: n('used'), closed: n('expired') + n('revoked') },
@@ -2744,15 +2745,22 @@ function createSocial(opts) {
         const out = []; for (let i = 0; i < n; i++) out.push(newInvite({ note: names[i] || '', ttlDays: body.ttlDays, unlocked: body.unlocked === true, leagues: body.leagues !== false }, who.by));
         save('beta'); return json(res, 200, { ok: true, invites: out });
       }
-      if (sub === 'beta' && parts[2] === 'invites' && parts[3] && !parts[4] && M === 'POST') { // {action: revoke | replace}
+      // POST /admin/beta/invites/clear: every expired and withdrawn invite off the list
+      if (sub === 'beta' && parts[2] === 'invites' && parts[3] === 'clear' && !parts[4] && M === 'POST') {
+        let n = 0; for (const x of Object.values(S.beta.invites)) if (['expired', 'revoked'].includes(inviteState(x))) { delete S.beta.invites[x.id]; n++; }
+        save('beta'); return json(res, 200, { ok: true, removed: n });
+      }
+      if (sub === 'beta' && parts[2] === 'invites' && parts[3] && !parts[4] && M === 'POST') { // {action: revoke | delete | replace}
         const x = own(S.beta.invites, parts[3]) ? S.beta.invites[parts[3]] : null; if (!x) return json(res, 404, { error: 'no such invite' });
         const st = inviteState(x);
         if (body.action === 'revoke') { if (st !== 'open') return json(res, 409, { error: 'Only an unused invite can be withdrawn.' });
-          x.revoked = now(); save('beta'); return json(res, 200, { ok: true }); }
+          x.revoked = now(); delete x.code; save('beta'); return json(res, 200, { ok: true }); }
+        // delete: off the list, and its link dies with it (a profile it made keeps its access)
+        if (body.action === 'delete') { delete S.beta.invites[x.id]; save('beta'); return json(res, 200, { ok: true }); }
         if (body.action === 'replace') { if (st === 'used') return json(res, 409, { error: 'That invite was used: the profile it made signs in with a passkey, wallet or sign-in code now.' });
-          if (st === 'open') x.revoked = now(); // the old link stops working
+          delete S.beta.invites[x.id]; // the old link stops working, and the new one takes its place on the list
           const r = newInvite({ note: x.note, unlocked: x.unlocked, leagues: x.leagues }, who.by); save('beta'); return json(res, 200, Object.assign({ ok: true }, r)); }
-        return json(res, 400, { error: 'action is revoke or replace' });
+        return json(res, 400, { error: 'action is revoke, delete or replace' });
       }
       if (sub === 'members' && !parts[2] && M === 'POST') { // the owner adds someone; they sign in with the code it returns
         if (body.admin && !who.owner) return json(res, 403, { error: 'Only the owner can add admins.' });

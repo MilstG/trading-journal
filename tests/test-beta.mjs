@@ -75,7 +75,7 @@ try {
   });
 
   let inv, inv2, newKey, newCookie;
-  await t('invites: made in a batch, one per name; the code is shown once and only its hash is kept', async () => {
+  await t('invites: made in a batch, one per name; a waiting one’s code can be copied again from the list', async () => {
     eq((await call('/admin/beta/invites', { body: { count: 1 } })).status, 401);
     eq((await admin('/beta/invites', { body: { count: 51 } })).status, 400);
     const r = await admin('/beta/invites', { body: { names: ['Ana', 'Ben'], ttlDays: 7 } });
@@ -84,8 +84,8 @@ try {
     eq(inv.expiresAt, clock + 7 * 86400000);
     const l = (await admin('/beta')).d;
     eq(l.counts, { all: 2, open: 2, used: 0, closed: 0 }); eq(l.invites[0].tail, codeOf(inv.code).slice(-4));
-    const raw = JSON.stringify(app._social.state().beta);
-    ok(!raw.includes(codeOf(inv.code)) && !raw.includes(codeOf(inv2.code)), 'no code is stored in the clear');
+    eq(l.invites.find(x => x.note === 'Ana').code, inv.code, 'the list has the code of a waiting invite');
+    eq((await call('/admin/beta', { key: 'nope' })).status, 401, 'and only the panel sees it');
     eq(l.existing, 1, '@early came before the beta');
   });
 
@@ -108,7 +108,8 @@ try {
     const again = await call('/join', { body: { handle: 'someone_else', beta: inv.code } }); eq(again.status, 403); eq(again.d.state, 'used');
     eq((await call('/beta/check', { body: { code: inv.code } })).status, 410);
     const x = (await admin('/beta')).d.invites.find(i => i.note === 'Ana');
-    eq(x.state, 'used'); eq(x.used.handle, 'ana_trades');
+    eq(x.state, 'used'); eq(x.used.handle, 'ana_trades'); eq(x.code, null, 'a used invite’s code is gone');
+    ok(!JSON.stringify(app._social.state().beta).includes(codeOf(inv.code)), 'from the server too, not only the list');
     eq((await admin('/members')).d.members.find(m => m.handle === 'ana_trades').joinedWith, 'beta');
     // an open invite link, already in: straight to Daruma
     eq((await page('/join', newCookie)).location, '/daruma');
@@ -166,11 +167,30 @@ try {
     const fresh = await admin('/beta/invites', { body: { count: 1 } }); const f = fresh.d.invites[0];
     eq((await admin('/beta/invites/' + f.id, { body: { action: 'revoke' } })).status, 200);
     eq((await call('/beta/check', { body: { code: f.code } })).d.state, 'revoked');
+    eq((await admin('/beta')).d.invites.find(x => x.id === f.id).code, null, 'a withdrawn invite’s code is gone');
     const rep = await admin('/beta/invites/' + c.id, { body: { action: 'replace' } }); eq(rep.status, 200); ok(rep.d.code && rep.d.code !== c.code);
+    ok(!(await admin('/beta')).d.invites.some(x => x.id === c.id), 'the new link takes the old one’s place on the list');
+    eq((await call('/beta/check', { body: { code: c.code } })).status, 404, 'and the old link is dead');
     eq((await call('/join', { body: { handle: 'late_one', beta: rep.d.code } })).status, 200);
     const used = (await admin('/beta')).d.invites.find(x => x.state === 'used');
     eq((await admin('/beta/invites/' + used.id, { body: { action: 'replace' } })).status, 409, 'a used invite isn’t replaced');
     eq((await admin('/beta/invites/nope', { body: { action: 'revoke' } })).status, 404);
+  });
+
+  await t('deleting an invite kills its link and takes it off the list; expired ones clear at once', async () => {
+    const [k] = (await admin('/beta/invites', { body: { names: ['Kill me'] } })).d.invites;
+    eq((await call('/beta/check', { body: { code: k.code } })).status, 200);
+    eq((await call('/admin/beta/invites/' + k.id, { body: { action: 'delete' } })).status, 401);
+    eq((await admin('/beta/invites/' + k.id, { body: { action: 'delete' } })).status, 200);
+    ok(!(await admin('/beta')).d.invites.some(x => x.id === k.id), 'off the list');
+    eq((await call('/join', { body: { handle: 'killed_link', beta: k.code } })).d.state, 'unknown', 'the link no longer works');
+    // deleting a used invite only tidies the list: the profile it made keeps its access
+    const used = (await admin('/beta')).d.invites.find(x => x.note === 'Ana');
+    eq((await admin('/beta/invites/' + used.id, { body: { action: 'delete' } })).status, 200);
+    eq((await call('/access', { method: 'POST', body: {}, key: newKey })).status, 200, '@ana_trades still gets in');
+    const before = (await admin('/beta')).d.counts; ok(before.closed >= 2, JSON.stringify(before));
+    const cl = await admin('/beta/invites/clear', { body: {} }); eq(cl.status, 200); eq(cl.d.removed, before.closed);
+    const after = (await admin('/beta')).d; eq(after.counts.closed, 0); eq(after.counts.open, before.open); eq(after.counts.used, before.used);
   });
 
   await t('suspending, or an admin’s “sign out all devices”, ends page access at once', async () => {
@@ -232,7 +252,7 @@ try {
     await new Promise(res => app.close(res)); app._social.close();
     app = mk(); B = await listen(app);
     ok(!(await page('/', newCookie)).gate); ok((await page('/')).gate);
-    eq((await admin('/beta')).d.counts.used, 4);
+    eq((await admin('/beta')).d.counts.used, 3, 'four were used; Ana’s was taken off the list');
     const cfg = (await admin('/beta')).d.config; eq(cfg.by, 'owner'); ok(cfg.since > 0, 'who switched it on, and when, are kept');
   });
 
