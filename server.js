@@ -1584,7 +1584,7 @@ function createApp(opts) {
     const z = zonedDayHour(now, zone);
     const J = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
     // only trades from the last ~day can be "today": skip formatting the whole history
-    const today = trades.filter(t => !t.isOpen && t.closeTime && t.closeTime > now - 36 * 3600e3
+    const today = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut && t.closeTime > now - 36 * 3600e3
       && zonedDayHour(t.closeTime, zone).day === z.day);
     const de = J['day:' + z.day];
     return { dayKey: z.day, hour: z.hour, tradesToday: today.length,
@@ -1694,7 +1694,7 @@ function createApp(opts) {
     setEngineState({});
     const { trades } = ensureTrades();
     const WEEK = 7 * 86400000;
-    const win = (a, b) => trades.filter(t => !t.isOpen && t.closeTime >= a && t.closeTime < b);
+    const win = (a, b) => trades.filter(t => !t.isOpen && E.tradeRow(t) && !t.movedOut && t.closeTime >= a && t.closeTime < b); // completed trades
     const wk = win(monday - WEEK, monday), prev = win(monday - 2 * WEEK, monday - WEEK);
     if (!wk.length && !prev.length) return null; // nothing to say — don't write empty reports
     const sumNet = a => a.reduce((x, t) => x + t.net, 0);
@@ -2070,8 +2070,8 @@ function createApp(opts) {
         let id; try { id = decodeURIComponent(tradeM[1]); } catch (e) { throw { code: 400, msg: 'malformed percent-encoding in id' }; }
         const t = trades.find(x => x.id === id);
         if (!t) return send(404, { error: 'no trade with id ' + id });
-        const closed = trades.filter(x => !x.isOpen);
-        E._oneR = E.computeOneR(closed);   // 1R basis over the full closed set for a single lookup
+        const closed = trades.filter(x => !x.isOpen && E.tradeRow(x) && !x.movedOut);
+        E._oneR = E.computeOneR(closed);   // 1R basis over the full closed set of completed trades, for a single lookup
         return send(200, shapeTrade(t, true));
       }
 
@@ -2474,7 +2474,7 @@ function createApp(opts) {
     // attributeFunding sets each trade's net (P&L − fees); funding rows aren't fetched here — they
     // barely move one trade's result and never decide whether it was a loss by more than $1
     const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
-    const closed = trades.filter(t => !t.isOpen && t.closeTime && !t.movedOut);
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut);
     // days on the member's own clock (the zone their app reports), so both sides score the same days
     return E.pzBehaviorDays(closed, { dayOf: zoneDay(tz || 'UTC'), isLoss: n => n < -1 /* same fixed rule as the app's PZ_LOSS */ })
       .map(d => ({ k: d.key, s: d.score, n: d.n, f: Object.keys(d.flags || {}).filter(x => d.flags[x] > 0) }));

@@ -312,7 +312,7 @@ async function autoRatchet(){
     const now=Date.now();
     let persisted=null; try{ persisted=await idbGet('excRows'); }catch(e){}
     const have=(persisted&&persisted.v===1&&persisted.rows)||{};
-    const recent=allTrades.filter(t=>!t.isOpen&&t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0
+    const recent=closedTrades(t=>t.avgEntry>0&&(t.maxSize||0)*(t.avgEntry||0)>0 // completed trades: no spot day rows, no balance that merely left
       &&t.closeTime>now-21*86400e3&&!have[t.id]&&!_ratchetTried.has(t.id));
     if(!recent.length)return;
     // the newest 25 per run: the rest follow on the next refresh instead of queueing a hundred candle requests at start

@@ -773,7 +773,7 @@ function processContext(trades, rulePreds){
 let _inboxSkip=new Set();
 function inboxSectionHtml(){
   if(!coachOn())return '';
-  const inbox=journalInbox(allTrades.filter(viewFilter),journal).filter(t=>!_inboxSkip.has(t.id));
+  const inbox=journalInbox(allTrades.filter(t=>viewFilter(t)&&tradeRow(t)&&!t.movedOut),journal).filter(t=>!_inboxSkip.has(t.id)); // trades to journal: not spot day rows, not a balance that left
   const st=journalStreak(allTrades.filter(viewFilter),journal,dayKey,dayKey(Date.now()));
   const streakTxt=`<span class="sr-note" data-tip="Consecutive trading days on which every closed trade has a setup, tag, rating, note or mistake flag. Today only counts once it's complete — it never breaks the streak while you're still trading.">streak ${st.current} day${st.current===1?'':'s'} · best ${st.best}</span>`;
   if(!inbox.length) return `<div class="diag-section"><h2>Journal inbox <span style="font-size:11px;color:var(--faint);font-weight:400">last 30 days</span> ${streakTxt}</h2>
