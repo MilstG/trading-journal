@@ -1562,7 +1562,7 @@ function renderDataHealth(){
   if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
   el.classList.remove('hide');
   // seams, and a server to do it from: the fills behind them may still be in Hyperliquid's archive (archive.js)
-  const canArc=cov&&cov.gaps&&typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
+  const canArc=cov&&cov.gaps&&srvOwner(); // the owner's token session only: the archive spends their AWS budget
   el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+(canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">Recover from the archive…</button>':'');
   const b=$('arcOpen'); if(b)b.onclick=()=>toggleArchivePanel($('dataHealth'));
 }
@@ -1575,6 +1575,7 @@ let _arcTimer=null;
 // check, a diagnose or a running backfill stays reachable once the seams are gone); anchored below either.
 async function toggleArchivePanel(anchor){
   let p=$('arcPanel'); if(p){ p.remove(); clearTimeout(_arcTimer); return; }
+  if(!srvOwner())return;
   const host=(anchor&&anchor.nodeType===1?anchor:null)||$('dataHealth'); if(!host)return;
   p=document.createElement('div'); p.id='arcPanel'; p.className='reconwarn'; p.style.cssText='margin-top:-6px;margin-bottom:12px';
   host.insertAdjacentElement('afterend',p);

@@ -1887,8 +1887,10 @@ function createApp(opts) {
     }
 
     // Hyperliquid's archive on S3 (archive.js): a coverage check, a sample hour, and the backfill
-    // that recovers the fills behind a wallet's seams. Owner token, like the caches it writes.
+    // that recovers the fills behind a wallet's seams. Owner token, like the caches it writes, and never
+    // on an open server: there anyone with the URL could spend the AWS budget.
     if (url === '/api/v1/archive' || url.startsWith('/api/v1/archive/')) {
+      if (!auth) return send(403, { error: 'the archive needs AUTH_TOKEN set on the server — without it anyone with the URL could run backfills billed to your AWS account' });
       if (!authOk(req)) return send(401, { error: 'unauthorized' });
       const act = url.slice('/api/v1/archive'.length).replace(/^\//, '');
       if (!act) return req.method === 'GET' ? send(200, archive.status()) : send(405, { error: 'method not allowed' });

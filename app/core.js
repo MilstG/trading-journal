@@ -529,6 +529,9 @@ async function initServerSync(){
 // the server locks an address out after too many wrong tokens (AUTH_FAIL_MAX): say so, and for how long
 const srvLockMsg=d=>{ const s=+(d.headers&&d.headers.get('retry-after'))||0;
   return 'Locked out: too many wrong tokens from this network — try again'+(s?' in about '+Math.max(1,Math.ceil(s/60))+' min':' in a few minutes')+'.'; };
+// The owner's session: a server that has an AUTH_TOKEN, and this browser holds it and the server took it.
+// An open server (no AUTH_TOKEN) never counts: anyone with the URL would be the owner there.
+function srvOwner(){ return SRV.enabled&&SRV.needsAuth&&!!SRV.token&&!SRV.badAuth; }
 async function connectServerToken(){
   const inp=$('srvTok'); if(!inp)return;
   const tok=inp.value.trim(); if(!tok)return;
@@ -652,7 +655,7 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
     const open=SRV.needsAuth?'':`<span style="color:var(--loss)" data-tip="Set AUTH_TOKEN on the server (README-deploy.md, step 3: a long random string) and restart it. The app then asks for it once per browser.">⚠ This server has no AUTH_TOKEN — anyone with the URL can read and change your journal</span>`;
     const both=SRV.conflicts?`<span style="color:var(--gold)" data-tip="${esc(jConflictMsg(SRV.conflicts))}">⚠ ${SRV.conflicts} note${SRV.conflicts===1?'':'s'} edited on two devices — both versions kept</span>`:'';
     el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>${open}${both}
-      <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days), and the full backups made with Backup to server. Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>${typeof toggleArchivePanel==='function'?'<button class="df-btn" id="srvArchive" data-tip="Hyperliquid’s node-data archive on S3: check coverage, diagnose the AWS key, fetch a sample hour, run or watch a backfill of the fills the public API no longer serves.">Archive</button>':''}`;
+      <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days), and the full backups made with Backup to server. Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>${srvOwner()&&typeof toggleArchivePanel==='function'?'<button class="df-btn" id="srvArchive" data-tip="Hyperliquid’s node-data archive on S3: check coverage, diagnose the AWS key, fetch a sample hour, run or watch a backfill of the fills the public API no longer serves.">Archive</button>':''}`;
     $('srvSaveNow').onclick=writeServer;
     { const ab=$('srvArchive'); if(ab)ab.onclick=()=>toggleArchivePanel($('datafile')); }
     $('srvHist').onclick=toggleSnapHistory;
