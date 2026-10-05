@@ -4162,7 +4162,7 @@ function createSocial(opts) {
   xpSyncAll(); // every member's XP from its ledger, under the weights and levels as they are now
   save(); // what loading filled in (defaults, league numbers) is written once, so a restart reads the same
   seedSchedule(); // seed wallets still waiting from before a restart
-  return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
+  return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, walletsOf: m => walletsOf(m), state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
 }
 
 module.exports = { createSocial, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, shownBadges, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,

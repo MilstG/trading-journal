@@ -247,7 +247,10 @@ yours in the same region (~$0.023/GB-month) and read by the server with the same
    restarts where it left off if it dies (each finished day is marked in the bucket), and the
    workers hand their output over in slices, so an hour of 300k fills needs well under 1 GB.
 5. **Railway → Variables**: `ARCHIVE_INDEX_BUCKET=hl-fills-index-<yourname>`,
-   `ARCHIVE_INDEX_REGION=ap-northeast-1`. From then on **Backfill** reads a wallet's whole history
+   `ARCHIVE_INDEX_REGION=ap-northeast-1`. From then on every load brings old history back by itself:
+   the browser asks `GET /api/v1/archive-fills/<wallet>` (the owner for any wallet, a Pulse member for
+   their own) for the wallet's archived fills — the whole history once, then only new days — and
+   merges them; nobody presses anything. **Backfill** still reads a wallet's whole history
    from the index (every day it has, a few MB) instead of hunting hours; `source: "hours"` on the
    endpoint still takes the old path.
 6. When the build is done, switch to the schedule below: a machine that starts twice a day,

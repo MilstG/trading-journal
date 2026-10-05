@@ -350,6 +350,31 @@ await t('backfill reads the wallet’s shard for every day of the index and merg
     const h = await call(b3, '/api/v1/archive/backfill', { address: ADDR, source: 'hours', maxGB: 1 }); eq(h.body.total, 0, 'no seams left to hunt');
   } finally { app3.close(); }
 });
+await t('archive-fills: the owner for any wallet (its cache takes them in), a member for their own wallets only, a few an hour; ?from reads on', async () => {
+  const dir4 = mkdtempSync(join(tmpdir(), 'ledger-archive4-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir4, 'fills'), { recursive: true });
+  writeFileSync(join(dir4, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: SEAM_AT + 60e3, count: 3, savedAt: Date.now(), truncated: false, fills: seamFills })));
+  const app4 = createApp({ dataDir: dir4, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'my-hl-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' } });
+  const b4 = await listen(app4);
+  const get = async (p, h) => { const r = await fetch(b4 + p, { headers: h || {} }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+  try {
+    const o = await get('/api/v1/archive-fills/' + ADDR, { Authorization: 'Bearer owner' });
+    eq([o.status, o.body.through, o.body.first, o.body.last], [200, '20260617', '20260615', '20260617'], JSON.stringify(o.body).slice(0, 300));
+    ok(o.body.fills.some(f => f.tid === 7777) && o.body.fills.length === 4, 'the wallet’s whole history from the index: ' + o.body.fills.length);
+    const full = await call(b4, '/api/v1/cache/' + ADDR); ok(full.body.fills.fills.some(f => f.tid === 7777), 'the owner’s server cache took the lost close in');
+    ok(full.body.fills.archived && full.body.fills.archived.n === 1, 'and notes it, so the owner’s other devices merge it');
+    const later = await get('/api/v1/archive-fills/' + ADDR + '?from=20260617', { Authorization: 'Bearer owner' }); eq([later.body.fills.length, later.body.through], [0, '20260617'], 'from the day after: nothing new');
+    eq((await get('/api/v1/archive-fills/' + ADDR)).status, 401, 'nobody: no');
+    const join = async (address) => (await (await fetch(b4 + '/api/social/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ handle: 'm' + Math.random().toString(36).slice(2, 8) }, address ? { address } : {})) })).json()).key;
+    const mine = await join(ADDR), other = await join('0x' + 'b'.repeat(40));
+    const m = await get('/api/v1/archive-fills/' + ADDR, { 'X-Pulse-Key': mine }); eq([m.status, m.body.fills.length], [200, 4], 'a member, for their own wallet');
+    eq((await get('/api/v1/archive-fills/' + ADDR, { 'X-Pulse-Key': other })).status, 403, 'a member, for someone else’s: no');
+    for (let k = 0; k < 5; k++) await get('/api/v1/archive-fills/' + ADDR, { 'X-Pulse-Key': mine });
+    eq((await get('/api/v1/archive-fills/' + ADDR, { 'X-Pulse-Key': mine })).status, 429, 'six an hour');
+  } finally { app4.close(); }
+});
 // the archive on its own, with a cache writer that records what it was asked to write
 const arch = (env, fetchImpl) => { const writes = [];
   const a = A.createArchive({ env: Object.assign({ ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'my-hl-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' }, env || {}),
@@ -505,6 +530,28 @@ await t('the archive is read by name: the first day is found by probing, the sea
     eq([st.job.state, st.job.done, st.job.fills, st.job.added], ['done', 4, 1, 1]);
     eq(st.naming, { pad: false, ext: '' }); ok(r.body.archive.note, 'says the days were probed');
   } finally { app2.close(); DENY_LIST = false; }
+});
+
+await t('the browser asks for old history on load: the whole of it once, then from the day after, every 6 hours at most, the owner or a member', async () => {
+  const { grabFn: g } = makeExtractor(readAppSource(join(here, '..', 'ledger.html')));
+  const asked = [];
+  const ctx = { Date, Set, JSON, SRV: { enabled: true }, owner: true, SOC: { key: 'k1' },
+    reply: { through: '20261003', fills: [{ tid: 1, oid: 1, time: 5 }, { tid: 2, oid: 2, time: 6 }] } };
+  ctx.srvOwner = () => ctx.owner;
+  ctx.srvFetch = async p => { asked.push(['owner', p]); return { ok: true, json: async () => ctx.reply }; };
+  ctx.fetch = async (p, o) => { asked.push([o.headers['X-Pulse-Key'], p]); return { ok: true, json: async () => ctx.reply }; };
+  vm.createContext(ctx); vm.runInContext(g('srvIndexFills'), ctx);
+  const A = '0x' + 'c'.repeat(40), fc = { fills: [{ tid: 1, oid: 1, time: 5 }] };
+  eq(await ctx.srvIndexFills(A, fc), 1, 'the fill it had is not added twice'); eq(fc.indexThrough, '20261003'); ok(fc.indexDirty && fc.indexTriedAt > 0);
+  eq(asked.pop(), ['owner', '/api/v1/archive-fills/' + A], 'the whole history the first time');
+  eq(await ctx.srvIndexFills(A, fc), 0); eq(asked.length, 0, 'not again within 6 hours');
+  fc.indexTriedAt = Date.now() - 7 * 3600e3; fc.indexThrough = '20260101';
+  await ctx.srvIndexFills(A, fc); eq(asked.pop(), ['owner', '/api/v1/archive-fills/' + A + '?from=20260102'], 'from the day after the last one merged');
+  const fresh = { fills: [], indexThrough: new Date(Date.now() - 864e5).toISOString().slice(0, 10).replace(/-/g, '') };
+  eq(await ctx.srvIndexFills(A, fresh), 0); eq(asked.length, 0, 'an index through yesterday: nothing to ask');
+  ctx.owner = false; const mc = { fills: [] };
+  eq(await ctx.srvIndexFills(A, mc), 2); eq(asked.pop(), ['k1', '/api/v1/archive-fills/' + A], 'a Pulse member asks with their key');
+  ctx.SOC = { key: null }; eq(await ctx.srvIndexFills(A, { fills: [] }), 0); eq(asked.length, 0, 'neither the owner nor a member: nothing');
 });
 
 report();

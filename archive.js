@@ -450,6 +450,23 @@ function createArchive(deps) {
     if (halt instanceof Error) throw halt;
     return { fills, days: days.length, files, missing, bytes, first: d.first, last: d.last, incomplete: d.incomplete.filter(inRange), stopped: halt === 'stopped' };
   }
+  // One wallet's archived fills straight out of the index, for a browser to merge (no job, no server
+  // cache): the finished days from `fromDay` on, and `through`, the last day before the first hole the
+  // index still has from there, so the caller asks from the day after it next time and a hole filled
+  // later is read then. Concurrent asks for the same wallet and day share one read.
+  const inflight = new Map();
+  function indexFills(addr, fromDay) {
+    if (!ix) return Promise.reject(Object.assign(new Error('no index bucket is configured (ARCHIVE_INDEX_BUCKET)'), { code: 503 }));
+    const key = addr + '|' + (fromDay || ''); if (inflight.has(key)) return inflight.get(key);
+    const p = (async () => {
+      const d = await indexDays();
+      if (!d || !d.last) return { fills: [], through: null, first: null, last: null, bytes: 0 };
+      const r = await indexFetch(addr, fromDay, null, { index: d, maxGB: 1 });
+      const prev = day => dayKeyOf(hourOf(ymd(day) - 86400e3));
+      return { fills: r.fills, through: r.incomplete.length ? prev(r.incomplete[0]) : d.last, first: d.first, last: d.last, bytes: r.bytes };
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, p); return p;
+  }
   const overBudget = (maxGB, what) => Object.assign(new Error(what + ' passed the ' + maxGB + ' GB budget — raise maxGB to go ahead'), { code: 413 });
   const need = () => { if (!configured) { const e = new Error('the archive isn’t configured: set ARCHIVE_AWS_KEY_ID and ARCHIVE_AWS_SECRET on the server (an AWS key with s3:GetObject and s3:ListBucket on ' + cfg.bucket + ')'); e.code = 503; throw e; } };
   const gb = b => b / 1073741824, cost = b => +(gb(b) * cfg.costPerGB).toFixed(2);
@@ -717,7 +734,7 @@ function createArchive(deps) {
   }
   function stop() { if (job && job.state === 'running') { job.state = 'stopped'; job.finishedAt = Date.now(); } return job; }
   const status = () => ({ configured, bucket: cfg.bucket, prefix: cfg.prefix, region: s3 ? s3.region() : null, costPerGB: cfg.costPerGB, maxWindowDays: cfg.maxDays, noList, naming, index: ix ? { bucket: cfg.indexBucket, prefix: cfg.indexPrefix } : null, lastCheck, job });
-  return { configured, cfg, check, sample, backfill, stop, status, diagnose, indexDays, indexFetch, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
+  return { configured, cfg, check, sample, backfill, stop, status, diagnose, indexDays, indexFetch, indexFills, plan: (addr, fills, d, scope) => { need(); return plan(addr, fills, d, scope); } };
 }
 
 module.exports = { signV4, s3Client, callerIdentity, listOwnBuckets, roleCredentials, lz4Stream, lz4Steps, extractFillsFromObject, lz4Decode, decodeObject, gunzipCapped, xxh32, extractFills, normFill, seamWindows, createArchive, amzDate, enc, isFill, doneSummary, isIndexed };
