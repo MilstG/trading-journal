@@ -1115,7 +1115,13 @@ action. Sections:
   (unless claimed), **map more wallets** to them by hand (or make one their main wallet,
   the one their numbers are read from), **boost XP** (or correct it) with a reason they see, fully unlock,
   their coach allowance, leagues and tiers, award or take back reward badges, a new
-  sign-in code, suspend or delete. Members' addresses are visible to you; others see them only if the member chose to show theirs.
+  sign-in code, suspend or delete.
+  - **High Ninja:** a role you give from the member's Access card (owner or admins). It
+    puts the High Ninja badge and a gold star ring round their picture on their profile,
+    a gold star by their name in the feed and People, and makes them fully unlocked
+    while they hold it. They hear about it in their inbox, and the feed says so when they
+    share to it. Taking the role away leaves their own **Fully unlocked** switch as you
+    set it. Filter the list by **High Ninjas**. Members' addresses are visible to you; others see them only if the member chose to show theirs.
   - **Several at once:** tick members, or everyone on the page, then **Verify
     wallets**, **Unverify wallets**, **Suspend**, **Restore** or **Delete**.
     Deleting 5 or more asks you to type DELETE. Admins can't act on other admins

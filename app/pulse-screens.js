@@ -726,9 +726,9 @@ function socInboxHtml(){
   if(!SOC.me)return '';
   const st=typeof taStandingMe==='function'&&taStandingMe(), bannerUp=!!(st&&!st.exempt&&['slipping','unverified','lapsed'].includes(st.state));
   const c=socGet('inbox','/inbox',60000), L=c&&c.d?c.d.items.filter(x=>x.unread&&!(bannerUp&&x.kind==='standing')):[]; if(!L.length)return '';
-  const ico={partner:'social',mentor:'coach',season:'medal',duel:'medal',claim:'shield'};
+  const ico={partner:'social',mentor:'coach',season:'medal',duel:'medal',claim:'shield',role:'shuriken'};
   return `<section class="pz-card pz-kv" aria-label="New for you"><div class="pz-kvrow"><b class="pz-kvh">New for you</b><button type="button" class="pz-linkbtn" id="socInboxRead">Mark read</button></div>
-    ${L.slice(0,4).map(x=>`<div class="pz-nowrow"><span style="color:${x.kind==='mentor'?PZ_COL.xp:x.kind==='season'?'#F4C04E':PZ_COL.risk}">${pzI(ico[x.kind]||'bolt',16)}</span><span><b style="font-size:13px;font-weight:600">${esc(x.text)}</b>${x.kind==='claim'&&SOC.me.needsClaim?' <a class="pz-link" href="#account" style="min-height:0;font-size:13px">Claim my wallet ›</a>':''}<span class="pz-sub" style="display:block;font-size:11px">${x.day?'About '+esc(dayLabel(x.day))+' · ':''}${socAgo(x.at)}</span></span></div>`).join('')}</section>`;
+    ${L.slice(0,4).map(x=>`<div class="pz-nowrow"><span style="color:${x.kind==='mentor'?PZ_COL.xp:x.kind==='season'||x.kind==='role'?'#F4C04E':PZ_COL.risk}">${pzI(ico[x.kind]||'bolt',16)}</span><span><b style="font-size:13px;font-weight:600">${esc(x.text)}</b>${x.kind==='claim'&&SOC.me.needsClaim?' <a class="pz-link" href="#account" style="min-height:0;font-size:13px">Claim my wallet ›</a>':''}<span class="pz-sub" style="display:block;font-size:11px">${x.day?'About '+esc(dayLabel(x.day))+' · ':''}${socAgo(x.at)}</span></span></div>`).join('')}</section>`;
 }
 
 // notes your mentors left, in full, newest first (the evening review is where you read them)
