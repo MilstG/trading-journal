@@ -37,13 +37,13 @@ const put = async (rev, snapshot) => (await fetch(BASE + '/api/data', { method: 
 const otherDevice = async fn => { const cur = await get(); const s = JSON.parse(JSON.stringify(cur.snapshot)); fn(s); eq(await put(cur.rev, s), 200); };
 
 // One browser: its own localStorage (kept across a "reload"), the server's token remembered.
-function device(store) {
+function device(store, extra) {
   store = store || new Map([['srv_token', TOKEN]]);
   const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
   const ctx = { console, URL, JSON, Math, Date, Map, Set, Object, Array, String, Number, Promise, Error, Blob, Response,
     setTimeout, clearTimeout, queueMicrotask, localStorage, window: {}, navigator: {}, location: { protocol: 'http:' },
     document: { querySelector: () => null, head: { appendChild() {} }, createElement: () => ({}) },
-    fetch: (p, o) => fetch(BASE + p, o), status: [], errs: [] };
+    fetch: (p, o) => fetch(BASE + p, o), status: [], errs: [], ...(extra || {}) };
   vm.createContext(ctx);
   vm.runInContext(CORE + `
     function renderDatafile(){} function renderWallets(){} function vaultMark(){} function vaultSchedule(){}
@@ -247,6 +247,27 @@ await t('fills without startPosition get it derived: buy 1 @100, sell 1 @110 is 
   const full = [{ coin: 'ETH', time: T, side: 'B', sz: '2', px: '10', startPosition: '5', closedPnl: '0' }];
   eq(pasteDeriveFills(full), 0); eq(full[0].startPosition, '5');
   ok(grabFn('loadFromPaste').includes('pasteDeriveFills(fills)'), 'every paste goes through it');
+});
+
+console.log('\nA big save goes gzipped');
+await t('a snapshot over 16 KB is sent gzipped (CompressionStream) and the server keeps exactly what was sent; a small one goes plain', async () => {
+  const sent = [];
+  const A = device(null, { CompressionStream, DecompressionStream,
+    fetch: (p, o) => { if (o && o.method === 'PUT') sent.push({ enc: (o.headers || {})['Content-Encoding'] || null, bytes: typeof o.body === 'string' ? o.body.length : o.body.byteLength }); return fetch(BASE + p, o); } });
+  await A.run('boot()');
+  const r = await A.run(`(async()=>{ for(let i=0;i<400;i++){ const k='perp|0xabc|BTC|'+(1.7e12+i*6e5); journal[k]={notes:'Entered on the retest, sized half. '+i,tags:['breakout'],rating:3}; markJEdit(k); }
+    return await writeServer(); })()`);
+  eq(r, 'ok');
+  const last = sent[sent.length - 1]; eq(last.enc, 'gzip');
+  const plainLen = JSON.stringify({ rev: 0, snapshot: A.eval('snapshot()') }).length;
+  ok(last.bytes * 5 < plainLen, 'several times smaller: ' + last.bytes + ' bytes for ' + plainLen);
+  eq((await get()).snapshot.journal, A.eval('journal'), 'what the server keeps is this device’s journal, entry for entry');
+  const B = device(); await B.run('boot()'); // and another device reads it back
+  eq(B.eval('journal'), A.eval('journal'));
+  // a small save stays plain
+  const C = device(null, { CompressionStream, fetch: (p, o) => { if (o && o.method === 'PUT') sent.push({ enc: (o.headers || {})['Content-Encoding'] || null }); return fetch(BASE + p, o); } });
+  await C.run('boot()'); await C.run(`(async()=>{ journal={'day:2026-10-01':{review:'short'}}; markJEdit('day:2026-10-01'); return writeServer(); })()`);
+  eq(sent[sent.length - 1].enc, null);
 });
 
 app.close();

@@ -344,6 +344,17 @@ function srvBaseSave(){ try{ localStorage.setItem(SRV_BASE,JSON.stringify(_lastS
 function srvBaseRead(){ try{ const b=JSON.parse(localStorage.getItem(SRV_BASE)||'null'); return b&&typeof b==='object'?b:null; }catch(e){ return null; } }
 function srvFetch(p,o){ o=o||{}; o.headers=Object.assign({},o.headers);
   if(SRV.token)o.headers['Authorization']='Bearer '+SRV.token; return fetch(p,o); }
+// The PUT of a save. A big snapshot goes gzipped: thousands of notes and the saved MAE/MFE rows are
+// megabytes of JSON (~15× less gzipped), sent whole on every save, and a phone's upload was the slow
+// part. The server unpacks it (server.js, /api/data); one that answers 400/415 to it (an older one)
+// gets the plain body once. Small saves, and browsers without CompressionStream, go plain.
+async function srvPutData(txt){
+  const plain=()=>srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},body:txt});
+  if(txt.length<16384)return plain();
+  const gz=await gzipBytes(txt); if(!gz)return plain();
+  const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json','Content-Encoding':'gzip'},body:gz});
+  return r.status===400||r.status===415?plain():r;
+}
 // Resolves to what happened: 'ok' (the server has it), 'conflict' (a 409, merged; the merge is on its
 // way out), 'auth', 'error', 'busy' (a save was in flight: this one runs after it), 'off'.
 async function writeServer(){
@@ -358,7 +369,7 @@ async function writeServer(){
     const body={rev:SRV.rev,snapshot:snap}; if(sentRestore)body.restore=true; // the server keeps a copy of what a restore replaces
     if(SRV.storeId)body.storeId=SRV.storeId; if(SRV.at)body.at=SRV.at; // the version this copy was made on: a replaced store answers 409, never takes it blind
     const sent=JSON.stringify(body); // once saved, the base the next conflict merges against
-    const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},body:sent});
+    const r=await srvPutData(sent);
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return 'auth'; }
     if(r.status===429){ syncFailed(srvLockMsg(r),(+r.headers.get('retry-after')||0)*1000); return 'error'; } // locked out: retry when it ends
     if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
@@ -1031,19 +1042,23 @@ function mapClearinghouse(s,dex){
 }
 async function fetchPositions(addr, hip3Dexs){
   let positions=[], accountValue=null; const okDex=new Set(); // which clearinghouses actually answered
+  // every clearinghouse asked at once (one after another, each HIP-3 dex added a round trip to every
+  // load), then read in the same order as before: the main dex, then each HIP-3 dex as listed
+  const ask=dex=>hlPost(dex?{type:'clearinghouseState',user:addr,dex}:{type:'clearinghouseState',user:addr}).then(s=>({s}),e=>({e}));
+  const [main,...dexes]=await Promise.all([ask(''),...(hip3Dexs||[]).map(ask)]);
   try{
-    const s=await hlPost({type:'clearinghouseState',user:addr});
+    if(main.e)throw main.e; const s=main.s;
     positions=mapClearinghouse(s,''); okDex.add('');
     // main-dex USDC equity only; HIP-3 margin is siloed per dex and may be non-USDC collateral,
     // so it is deliberately NOT summed into account value.
     accountValue=s.marginSummary?parseFloat(s.marginSummary.accountValue):null;
   }catch(e){}
-  for(const dex of (hip3Dexs||[])){
+  (hip3Dexs||[]).forEach((dex,i)=>{
     try{
-      const s=await hlPost({type:'clearinghouseState',user:addr,dex});
+      if(dexes[i].e)throw dexes[i].e; const s=dexes[i].s;
       positions=positions.concat(mapClearinghouse(s,dex)); okDex.add(dex);
     }catch(e){} // a dead/renamed dex shouldn't sink the whole load
-  }
+  });
   return {positions,accountValue,okDex};
 }
 // Pure builder so the mapping logic is testable. Fill coins name spot pairs "@N" where N is

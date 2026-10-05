@@ -23,7 +23,6 @@
 @font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url(app/fonts/inter-500.woff2) format('woff2')}
 @font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url(app/fonts/inter-600.woff2) format('woff2')}
 </style>
-<script src="app/chart.umd.js" data-only="journal"></script>
 <style>
 /* ================================================================
    LEDGER — Terminal design system (single source of truth)
@@ -1958,6 +1957,9 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
   </div>
 </div>
 
+<!-- Chart.js loads with the app's parts, not in the page head: a script there held the first paint until
+     its 205 KB arrived and ran (~2.4 s on a throttled phone). Nothing before this line draws a chart. -->
+<script src="app/chart.umd.js" data-only="journal"></script>
 <script src="app/core.js"></script>
 <script src="app/venues.js"></script>
 <script src="app/engine.js"></script>

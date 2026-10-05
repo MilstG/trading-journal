@@ -379,4 +379,27 @@ await t('server exits 0 on SIGTERM (graceful redeploy)', async () => {
   ok(code === 0, `expected exit 0, got ${code}`);
 });
 
+console.log('\nServer: brotli for the page and its scripts');
+await t('a br-accepting browser gets brotli once it is built (gzip until then), the same bytes unpacked, under the same ETag', async () => {
+  const http = await import('node:http'), zlib = await import('node:zlib');
+  const s = makeServer(''); const b = await listen(s.app), port = new URL(b).port;
+  const get = (p, ae) => new Promise((res, rej) => http.get({ host: '127.0.0.1', port, path: p, headers: ae ? { 'accept-encoding': ae } : {} }, x => {
+    const c = []; x.on('data', d => c.push(d)); x.on('end', () => res({ status: x.statusCode, h: x.headers, buf: Buffer.concat(c) })); }).on('error', rej));
+  try {
+    const page = await get('/daruma', 'gzip');
+    const src = /<script src="(app\/pulse\.js\?v=[0-9a-f]+)"/.exec(page.buf.length ? zlib.gunzipSync(page.buf).toString() : '')[1];
+    for (const p of ['/daruma', '/' + src]) {
+      const first = await get(p, 'gzip, deflate, br');
+      eq(first.h['content-encoding'], 'gzip', p + ': the first br request is answered with gzip while brotli builds');
+      let br = first; for (let i = 0; i < 100 && br.h['content-encoding'] !== 'br'; i++) { await new Promise(r => setTimeout(r, 30)); br = await get(p, 'gzip, deflate, br'); }
+      eq(br.h['content-encoding'], 'br', p + ': then brotli');
+      const plain = await get(p, '');
+      eq(plain.h['content-encoding'], undefined, 'no Accept-Encoding: the file as is');
+      ok(zlib.brotliDecompressSync(br.buf).equals(plain.buf) && zlib.gunzipSync(first.buf).equals(plain.buf), p + ': one file, three encodings');
+      ok(br.buf.length < first.buf.length, p + ': brotli is smaller (' + br.buf.length + ' < ' + first.buf.length + ')');
+      eq([br.h.etag, br.h.vary], [plain.h.etag, 'Accept-Encoding']);
+    }
+  } finally { s.app.close(); }
+});
+
 report();

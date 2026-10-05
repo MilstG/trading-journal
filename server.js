@@ -795,15 +795,20 @@ function createApp(opts) {
   // server is open (unchanged from before) and this distinction is moot.
   const readOk = (req) => authOk(req)
     || (!!readAuth && !lockedOut(req) && timingSafeEq(req.headers['authorization'] || '', 'Bearer ' + readAuth));
+  // A body of 1 KB or more goes gzipped to a client that takes it (every browser): the journal
+  // (/api/data) is megabytes of JSON for a big one, as is the admin's member list for a big league,
+  // and either is 10–20× smaller gzipped. Done in place (gzip costs a fraction of the JSON work).
   const json = (res, code, obj) => {
     const body = JSON.stringify(obj);
+    const req = res.req, gz = body.length >= 1024 && !!req && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
     const write = () => {
-      res.writeHead(code, {
+      const vary = gz ? [res.getHeader('Vary'), 'Accept-Encoding'].filter(Boolean).join(', ') : null;
+      res.writeHead(code, Object.assign({
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
-      });
-      res.end(body);
+      }, gz ? { 'Content-Encoding': 'gzip', 'Vary': vary } : {}));
+      res.end(gz ? zlib.gzipSync(body, { level: body.length > 1e6 ? 3 : 6 }) : body);
     };
     // Flat 300ms on every 401: turns online brute-force of the bearer tokens from
     // thousands of guesses/second into three per second, at zero cost to real clients
@@ -1012,7 +1017,20 @@ function createApp(opts) {
   // hash; the HTML is sent with every <script src="app/x.js"> rewritten to "app/x.js?v=<hash>", so
   // browsers can keep those for a year and still pick up a new deploy at once.
   const appDir = path.join(path.dirname(htmlPath), 'app');
-  const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash}
+  // Brotli for a browser that takes it (all of them over HTTPS): ~14% under gzip -9 for this code, about
+  // 80 KB less for Daruma's first open. Quality 11 takes ~0.3 s on the biggest file, so it's built in the
+  // background the first time a file is asked for with br; that request (and any until it's ready) gets gzip.
+  const brOf = (f) => {
+    if (f.br === undefined) { f.br = null;
+      zlib.brotliCompress(f.buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: f.buf.length } },
+        (e, out) => { if (!e && out.length < f.gz.length) f.br = out; }); }
+    return f.br;
+  };
+  // [Content-Encoding or null, body] for a {buf, gz} file and this request's Accept-Encoding
+  const encodedFile = (req, f) => { const ae = req.headers['accept-encoding'] || '';
+    const br = /\bbr\b/.test(ae) ? brOf(f) : null;
+    return br ? ['br', br] : /\bgzip\b/.test(ae) ? ['gzip', f.gz] : [null, f.buf]; };
+  const _appFiles = new Map(); // name -> {mtime, size, buf, gz, hash, br}
   const appFile = (name) => {
     if (!/^(?:features\/)?[a-z0-9][a-z0-9.-]*\.js$/.test(name)) return null; // app/ or app/features/ only: no other paths, no dotfiles
     const file = path.join(appDir, name);
@@ -2681,7 +2699,7 @@ function createApp(opts) {
       return res.end();
     }
     if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/daruma' || url === '/keel' || url === '/pulse')) {
-      // the page is ~0.3 MB (its code is in app/*.js, below): sent gzipped, and a browser that already has this
+      // the page is ~0.3 MB (its code is in app/*.js, below): sent compressed (brOf), and a browser that already has this
       // version gets a 304 instead of the whole file on every open
       const shell = appShell(url === '/daruma' || url === '/keel' || url === '/pulse' ? 'keel' : 'journal');
       if (shell.error) return json(res, 500, { error: shell.error });
@@ -2690,9 +2708,9 @@ function createApp(opts) {
         // no other site can frame the journal (a <meta> tag can't say this; browsers ignore it there)
         'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" };
       if ((req.headers['if-none-match'] || '') === shell.etag) { res.writeHead(304, head); return res.end(); }
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-      res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
-      return res.end(gz ? shell.gz : shell.buf);
+      const [enc, body] = encodedFile(req, shell);
+      res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
+      return res.end(body);
     }
 
     // --- the app's scripts (app/*.js): long-lived when asked for by their current hash
@@ -2712,9 +2730,9 @@ function createApp(opts) {
       const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
         'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-      res.writeHead(200, gz ? Object.assign(head, { 'Content-Encoding': 'gzip' }) : head);
-      return res.end(gz ? f.gz : f.buf);
+      const [enc, body] = encodedFile(req, f);
+      res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
+      return res.end(body);
     }
 
     // --- built-in documentation: /help (user guide), /docs (technical reference) and /tutorial/ (the Daruma tutorial).
@@ -3091,8 +3109,13 @@ function createApp(opts) {
         });
         req.on('end', () => {
           if (aborted) return;
-          let body;
-          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          let raw = Buffer.concat(chunks), body;
+          // the app sends a big snapshot gzipped (writeServer): unpacked here, never past MAX_BODY
+          if (/^\s*gzip\s*$/i.test(req.headers['content-encoding'] || '')) {
+            try { raw = zlib.gunzipSync(raw, { maxOutputLength: MAX_BODY }); }
+            catch (e) { return e && e.code === 'ERR_BUFFER_TOO_LARGE' ? json(res, 413, { error: 'payload too large' }) : json(res, 400, { error: 'invalid gzip body' }); }
+          } else if (req.headers['content-encoding'] && !/^\s*identity\s*$/i.test(req.headers['content-encoding'])) return json(res, 415, { error: 'unsupported content encoding' });
+          try { body = JSON.parse(raw.toString('utf8')); }
           catch (e) { return json(res, 400, { error: 'invalid JSON' }); }
           if (!body || typeof body !== 'object' || typeof body.rev !== 'number'
               || !body.snapshot || typeof body.snapshot !== 'object')

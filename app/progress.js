@@ -273,10 +273,13 @@ function pzPluggedKeys(plugs){ const by=new Map();
 
 // ---- everything the progress panel needs, memoized with the coach context ----
 let _gameMemo={key:null,g:null};
+// what the game reads besides its coach context (whose key leads): gameContext's memo key, and gameWarm's check
+function _gameKey(){ return _coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(typeof SOC!=='undefined'&&SOC.me?SOC.me.xp:'')+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length; }
+// true when a gameContext() call would be a memo hit (the every-trade coach context current, then the game)
+function gameWarm(){ return _coachMemoAll.key===_coachKey(true).key&&_gameMemo.key===_gameKey(); }
 function gameContext(){
   const ctx=coachContext(true); // every trade, independent of the view and dex filters (AUDIT-4 X10)
-  const keyOf=()=>_coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(typeof SOC!=='undefined'&&SOC.me?SOC.me.xp:'')+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length;
-  const key=keyOf();
+  const key=_gameKey();
   if(_gameMemo.key===key)return _gameMemo.g;
   const X=pzXpCfg();
   const now=Date.now(), nowWeek=isoWeekOfKey(dayKey(now));
@@ -385,7 +388,7 @@ function gameContext(){
   // leaves trades out, and could find a clean day the account as a whole didn't have
   let whole=0; for(const t of allTrades)if(tradeRow(t)&&!t.movedOut&&!(t.orphan||(t.offRecord&&!t.isOpen)))whole++;
   if(Object.keys(add).length&&ctx.trades.length===whole)pzEarnedRecord(add);
-  _gameMemo={key:keyOf(),g}; return g;
+  _gameMemo={key:_gameKey(),g}; return g; // after the run: what it recorded in the award ledger is in the key
 }
 // New since the start of this week — feeds the coach's wins row.
 function gameWins(g){

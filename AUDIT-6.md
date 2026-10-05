@@ -1,8 +1,10 @@
 # Sixth-pass audit: the last beta round and a performance walk — October 5, 2026
 
 > **Status: addressed.** Every finding below is fixed with a regression test, except the few
-> listed under "Left as they are" with the reasoning. All unit suites (95), the size budget and
-> the three browser suites (`e2e/run.mjs`, `e2e/sync.mjs`, `e2e/heavy.mjs`) green at the merged revision.
+> listed under "Left as they are" with the reasoning; the performance work (P1–P4) landed with its
+> results pinned identical. 95 suites / 1,524 tests, the size budget and the three browser suites
+> (`e2e/run.mjs` 42, `e2e/sync.mjs` 3, `e2e/heavy.mjs` 10 at ~18k and at ~31k trades) green at the
+> merged revision.
 
 Scope: the whole product one last time before release, the way users will meet it, plus a fresh
 review of everything merged since AUDIT-5 (PRs 110–115: the archive's token session and indexer,
@@ -207,6 +209,71 @@ stack trace.
 everything, `2026-02-31` became March 3) — a 400 naming the allowed values now (S6);
 `/api/v1/journal/__proto__` answered 200 (S7); HEAD got 404 everywhere GET got 200, so uptime
 monitors saw the site down (S8); the Members empty state was cut off at 360 px (S9).
+
+## Performance
+
+Measured in Chromium against the real server: synthetic heavy wallets served page by page by a fake
+Hyperliquid (the sample history scaled to ~18k and ~31k trades, as AUDIT-4 did), a real wallet with
+two HIP-3 dexes over the live API, and a phone profile (4× CPU, Slow 4G). Before = the revision this
+round started from (8055df5), same scripts. Every screen's text was dumped with a fixed clock and
+fixed fills before and after (the journal's dashboard, Review, Diagnostic with its Monte Carlo,
+Project and coach at 18k; all twelve Daruma screens plus XP, level, streak and challenge at 31k):
+identical.
+
+| What | Before | After |
+|---|---|---|
+| Daruma first load at 31k on a phone, longest main-thread task | **10.7 s** | **1.8 s** |
+| Daruma reload at 31k on a phone: data drawn / longest task | 8.9 s / 6.8 s | 2.5–2.8 s / 1.6–2.2 s |
+| Daruma import, longest task (18k / 31k) | 1,179 / 1,728 ms | 212–255 / 337–388 ms |
+| Journal reload at 31k, longest task | 0.92–1.32 s | 0.45–0.55 s |
+| Journal import incl. the first coach, longest task (18k / 31k) | 722 / 1,051 ms | ~490 / ~515 ms |
+| Journal cold load on a phone: first paint with content | 2,416 ms | **868 ms** |
+| Bytes on a cold load, journal / Daruma (phone) | 749 / 581 KB | 656 / 504 KB |
+| `GET /api/data` on the wire, 2k / 10k / 31k journal entries | 568 KB / 2.84 MB / 8.83 MB | 28 / 142 / 440 KB |
+| `PUT /api/data` (every journal save), same sizes | 568 KB / 2.84 MB / 8.83 MB | 28 / 132 / 409 KB |
+| A real wallet with two HIP-3 dexes: refresh with nothing new | 1.33–1.94 s | 0.97–1.64 s |
+
+**P1. Daruma built a cold game in one block.** On a big account (5,000+ trades) whose game is out of
+date (new fills, a journal save, a new day), the screen on show now stays while the coach context's
+heaviest parts and then the game are built in idle steps, into the same memos a direct call fills;
+should a step throw, the draw builds the game itself as before. The tilt check, which forced the
+whole build at once, runs just before that draw. The week's challenge is picked after the screen is
+built (it forced a second build mid-draw). The memo keys moved verbatim into `_coachKey` / `_gameKey`
+so "is the game warm" can be asked without building it (`gameWarm`, pinned against `gameContext()`'s
+own memo hits in `test-xp-rules`).
+
+**P2. The journal's first coach on a big account is staged** the same way (`coachStaged`), where it
+was one ~1.4 s task at 31k.
+
+**P3. The journal travels compressed.** JSON answers of 1 KB or more go gzipped to a client that
+takes it; the app sends snapshots of 16 KB or more gzipped (`srvPutData`) and falls back to a plain
+body if an older server answers 400/415. The server unpacks under the same `MAX_BODY` cap (413 past
+it, 400 for bad gzip, 415 for any other encoding; nothing is saved). The page and its scripts get
+brotli once compressed in the background (~14% under gzip), gzip until then; ETags unchanged.
+
+**P4. First paint and the network.** Chart.js moved from `<head>` to just before `core.js` (order
+unchanged, nothing earlier draws). The main and HIP-3 clearinghouses are asked at once, read in the
+old order with the old error handling (`test-perf-paths` compares it with the sequential version
+over 40 seeded runs with out-of-order answers and failures).
+
+`e2e/heavy.mjs` gains three budgets (import's longest task, Daruma's longest task, Daruma drawn) and
+passes at 18k and at 31k (`HEAVY=10x30`). Idle cost (a visible tab ~1.4 s of CPU in 200 s, a hidden
+one ~0.2 s and no requests), memory (flat over 30 renders and 30 tab switches) and interactions
+(filters 32–58 ms, opening a trade ~130 ms, the worst keystroke 24 ms) were measured and left alone.
+
+**Still slow, ranked — not fixed in this round:**
+1. Daruma's first content on a phone arrives after ~5.5 s: the dial waits for ~500 KB of script. A
+   skeleton or more load-on-first-use would help.
+2. Daruma at 31k on a phone still has 1.6–2.2 s idle steps (`behaviorSignals` ~0.8 s; `gameContext`
+   1.3–2 s, mostly the badge catalog, behaviour days and the Trader Age history).
+3. The journal's 3-minute auto-refresh costs 450–585 ms of main thread at 31k with nothing new,
+   ~300 ms of it rebuilding nine Chart.js charts.
+4. A page reload unpacks the fill cache twice (~170 ms, ~750 ms on a phone) and re-renders even when
+   nothing changed.
+5. Daruma Trends' first visit after a data change: ~2.2 s on a phone (`routineVsResults`, `peerMine`).
+6. Daruma screen switches 250–650 ms on a phone; risk, load and form are recomputed over every trade.
+7. The server's `PUT /api/data` holds the event loop ~400–450 ms for a 31k-entry snapshot.
+8. League boards are rebuilt per request, linear in members: ~75–90 ms at 10,000 members.
 
 ## Left as they are
 

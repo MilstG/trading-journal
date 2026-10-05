@@ -630,7 +630,9 @@ function renderInner(){
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
   renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll,pt); renderDowHour(pt); // money by day, trades counted by close day; the heatmap places closed trades (ptAll's trade rows left spot out) renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
-  if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  // (a big account's first one is staged too: built in one idle callback it was a ~1.4 s task at 31k trades)
+  if(_coachFirst&&!(allTrades.length>=5000&&typeof requestIdleCallback==='function')){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
+  else if(_coachFirst){ _coachFirst=false; coachStaged(); }
   else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
   renderTripwire(); renderEdge(pt);
   const coins=[...new Set(allTrades.filter(viewFilter).map(dcoin))].sort(); const csel=$('fCoin'),cur=csel.value;

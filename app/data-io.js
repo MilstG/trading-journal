@@ -326,7 +326,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     // record (the ids told are kept on this device; it used to repeat on every open)
     if(PZ){ const m=orphanNoteOnce(allTrades.filter(t=>t.orphan)); if(m)pzNote(m); }
     // new fills for today: check them for a tilt pattern before drawing (the banner shows on this render)
-    if(PZ){ try{ pzTiltAlertCheck(); }catch(e){ console.warn('tilt alerts',e); } pzRender(); } }
+    if(PZ){ pzBeforeDraw(()=>{ try{ pzTiltAlertCheck(); }catch(e){ console.warn('tilt alerts',e); } }); pzRender(); } }
   // measuring excursions fetches candles: wait until the browser is idle so it never competes with the first paint
   if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }

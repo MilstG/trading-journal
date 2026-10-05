@@ -1421,8 +1421,31 @@ function pzRoving(scope){ if(!scope)return;
     const R=[...g.querySelectorAll('[role=radio]')], on=R.find(b=>b.getAttribute('aria-checked')==='true')||R[0]; for(const b of R)b.tabIndex=b===on?0:-1; } }
 // "5 min ago", "3h ago", "2 days ago"
 function pzAgoTxt(at){ const m=Math.round((Date.now()-at)/60000); return m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+'h ago':Math.round(m/1440)+' days ago'; }
+// Big accounts (5,000+ trades): when the game's inputs changed (new fills, a journal save, a new day), its
+// context is rebuilt in idle steps (the every-trade coach context, then the game) and the screen is
+// drawn once they're in. Built inside pzRender it was one task of 7–11 s at 31k trades on a throttled
+// phone. The screen on show stays until then; calls meanwhile join the build. The draw after it reads
+// the memos (the same objects a direct call builds); should the game still be cold then (a step threw),
+// that draw builds it itself as before, so an error shows as it always did.
+// The coach context's three heaviest parts go first, one step each, into the memos it reads them from
+// (computeStatsMemo, diagScanMemo, behaviorSignalsMemo: hits need equal trades and inputs, so the
+// context then takes exactly what it would have computed). pzBeforeDraw's work runs just before the draw.
+var _pzStage=0, _pzStaged=false, _pzPre=[]; // var: pzRender may run before this line has (a load-time caller)
+function pzStage(){ if(_pzStage)return; _pzStage=1; const W={};
+  const steps=[()=>{ const {trades}=_coachKey(true), closed=trades.filter(t=>!t.isOpen&&t.closeTime); if(closed.length>=5){ W.closed=closed; W.s=computeStatsMemo(closed,trades); } },
+    ()=>{ if(W.s)diagScanMemo(W.closed); }, ()=>{ if(W.s)behaviorSignalsMemo(W.closed,W.s); },
+    ()=>coachContext(true), ()=>gameContext()];
+  const next=()=>requestIdleCallback(()=>{ const f=steps.shift();
+    if(!f){ _pzStage=0; for(const g of _pzPre.splice(0))try{ g(); }catch(e){ console.warn(e); } _pzStaged=true; pzRender(); return; }
+    try{ f(); }catch(e){ console.warn(e); } next(); },{timeout:1000});
+  next(); }
+function pzStaging(){ return allTrades.length>=5000&&typeof requestIdleCallback==='function'&&(!!_pzStage||!gameWarm()); }
+// f, before the next draw: now, or (a big account's game being rebuilt in steps) once the build is in
+function pzBeforeDraw(f){ if(pzStaging()){ _pzPre.push(f); pzStage(); } else f(); }
 function pzRender(){
   if(!PZ)return; const view=$('pzView'); if(!view)return;
+  if(_pzStaged)_pzStaged=false;
+  else if(pzStaging()){ pzStage(); return; }
   try{ socVisitPing(); }catch(e){}
   // keep what's typed across re-renders (a background sync or auto-refresh can land mid-edit)
   const root=$('pz'), keep={}; root.querySelectorAll('input[id],textarea[id]').forEach(el=>{ keep[el.id]=el.value; });
@@ -1434,7 +1457,6 @@ function pzRender(){
   if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
     try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Daruma hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
-    ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{});
     socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
     const feat=pzFeatTab(tab);
@@ -1446,7 +1468,10 @@ function pzRender(){
     // offline: say what's on screen is the last load (the refresh failing otherwise only shows as a passing note)
     const off=typeof navigator!=='undefined'&&navigator.onLine===false?`<p class="pz-offline" role="status">Offline · showing your last load${typeof _viewAt!=='undefined'&&_viewAt?', '+pzAgoTxt(_viewAt):''}</p>`:'';
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${off}${body}</main>`;
-    socSync(D.g); }
+    socSync(D.g);
+    // the week's challenge, once a week on the first draw: picked after this screen is built, as the journal's
+    // coach does (renderCoach), so writing it (a journal change) doesn't rebuild the game in the middle of this draw
+    ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{}); }
   view.innerHTML=html;
   for(const el of view.querySelectorAll('.pz-chiprow:not(.pz-wrapr)'))el.classList.toggle('pz-scrolls',el.scrollWidth>el.clientWidth+4);
   pzQuietMount(allTrades.length?_pzLastD:null);

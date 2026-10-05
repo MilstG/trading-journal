@@ -80,8 +80,14 @@ try {
     // the phone and tablet trades table and the equity axes: about 18 KB raw / 6 KB gzipped on the journal,
     // a third of it comments, ~8 KB raw / 3 KB gzipped of it on Daruma too. Measured with the same week's
     // Daruma and server fixes in the tree: 2086 / 1742 raw, 707 / 587 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2095, 712],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1750, 590],
+    // Oct 2026: the performance pass — Daruma's game built in idle steps (pzStage), the journal's first coach
+    // staged, gzipped saves (srvPutData), the clearinghouses asked at once — about 6 KB raw / 2 KB gzipped on
+    // both screens, half of it comments (2046 / 1704 raw, 694 / 574 gzipped). Browsers over HTTPS now get
+    // these files brotli'd (server.js brOf), ~14% under the gzipped sizes counted here.
+    // Merged, with the server's sync fixes (store id, merge on a replaced store, Open existing on a backup) in
+    // app/core.js too: 2090 / 1746 raw, 709 / 588 gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2100, 714],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1755, 592],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
