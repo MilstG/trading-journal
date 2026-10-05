@@ -14,7 +14,7 @@ const ctx = { Math, Object, Array, String, Number, JSON, isFinite, Date, Set, Ma
   setTimeout, Promise, Error, setStatus(){}, _fetchHealth: { funding: false, ledger: false, twap: false } };
 vm.createContext(ctx);
 vm.runInContext('const sleep=ms=>new Promise(r=>setTimeout(r,0));\n' +
-  ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'coverageOf', 'fetchAllFills', 'fetchTwapFills'].map(grabFn).join('\n'), ctx);
+  ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'coverageOf', 'dedupeFills', 'fetchAllFills', 'fetchTwapFills'].map(grabFn).join('\n'), ctx);
 
 const T0 = Date.UTC(2026, 5, 1);
 let tid = 0;
@@ -22,6 +22,27 @@ let tid = 0;
 const F = (coin, side, sz, px, time, start, closedPnl = 0, fee = 0) =>
   ({ coin, side, sz: String(sz), px: String(px), time, startPosition: String(start), closedPnl: String(closedPnl), fee: String(fee), feeToken: 'USDC', tid: ++tid, oid: ++tid, crossed: true, dir: side === 'B' ? 'Open Long' : 'Close Long', hash: '0x1' });
 const perp = fills => ctx.attributeFunding(ctx.reconstructTrades(fills, '0xw', 'perp'), []);
+
+console.log('\nOne fill served at two granularities');
+t('a combined fill and its pieces: the pieces go, touching pieces stay, other orders and other ms are untouched', () => {
+  const oid = 5000, T = T0 + 60e3;
+  const agg = Object.assign(F('kBONK', 'A', 180995, 0.00002, T, 22967667), { oid, tid: 'agg' });
+  const piece = Object.assign(F('kBONK', 'A', 100709, 0.00002, T, 22887381), { oid, tid: 'p2' }); // 22967667−80286: the second piece
+  const other = Object.assign(F('kBONK', 'A', 500, 0.00002, T, 22786672), { oid: oid + 1 }); // another order, same ms
+  const twapA = Object.assign(F('ETH', 'B', 0.34, 2500, T + 1, 10), { oid: 7 }), twapB = Object.assign(F('ETH', 'B', 0.34, 2500, T + 1, 10.34), { oid: 7 }); // one slice in two touching fills
+  const spotA = Object.assign(F('@107', 'B', 0.34, 37.2, T + 2, 27070.1199), { oid: 9 }), spotB = Object.assign(F('@107', 'B', 0.34, 37.2, T + 2, 27070.4597), { oid: 9 }); // the fee in the token bought shifts the start a hair
+  const input = [piece, agg, other, twapA, twapB, spotA, spotB];
+  const out = ctx.dedupeFills(input);
+  eq(out.map(f => f.tid), [agg.tid, other.tid, twapA.tid, twapB.tid, spotA.tid, spotB.tid], 'only the covered piece is dropped; order kept');
+  ok(ctx.dedupeFills([agg]) .length === 1 && ctx.dedupeFills([]).length === 0);
+  // the pieces alone (older than the API serves) all stay: nothing combined to cover them
+  const p1 = Object.assign(F('kBONK', 'A', 80286, 0.00002, T, 22967667), { oid, tid: 'p1' });
+  eq(ctx.dedupeFills([p1, piece]).length, 2);
+  // and the chain reads clean with the piece gone: no seam where the double count used to put one
+  const before = F('kBONK', 'B', 22967667, 0.00002, T - 1000, 0);
+  const seams = tr => tr.reduce((n, t) => n + (t.gaps || 0), 0);
+  ok(seams(perp([before, agg, piece])) > 0, 'with the piece the position jumps'); eq(seams(perp(ctx.dedupeFills([before, agg, piece]))), 0);
+});
 
 console.log('\nSeams in the fills');
 t('a position closed off the record ends its trade there; the next entry is a trade of its own', () => {

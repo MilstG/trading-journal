@@ -302,6 +302,25 @@ await t('an index bucket that does not exist yet: check says so, and backfill fa
     eq([s.job.state, s.job.done, s.job.fills, s.job.added], ['done', 4, 1, 1], JSON.stringify(s.job));
   } finally { app4.close(); }
 });
+await t('the server never keeps a combined fill next to its pieces: PUT, archive merge and the startup pass all clean it', async () => {
+  const dir5 = mkdtempSync(join(tmpdir(), 'ledger-archive5-'));
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync(join(dir5, 'fills'), { recursive: true });
+  const T = T0 + 5 * H, oid = 4242;
+  const agg = { coin: 'ETH', px: '1000', sz: '3', side: 'B', time: T, startPosition: '0', dir: 'Open Long', closedPnl: '0', hash: '0xa', oid, crossed: true, fee: '1', tid: 1, feeToken: 'USDC' };
+  const p2 = Object.assign({}, agg, { sz: '2', startPosition: '1', tid: 2, hash: '0x' + '0'.repeat(64) }); // the archive's second piece of the same order
+  // a stored cache that already holds both: cleaned on the way up
+  writeFileSync(join(dir5, 'fills', ADDR + '.json.gz'), zlib.gzipSync(JSON.stringify({ v: 1, last: T, count: 2, savedAt: Date.now(), truncated: false, fills: [agg, p2] })));
+  const app5 = createApp({ dataDir: dir5, auth: 'owner', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch });
+  const b5 = await listen(app5);
+  try {
+    let full = await call(b5, '/api/v1/cache/' + ADDR); eq(full.body.fills.fills.map(f => f.tid), [1], 'the startup pass removed the piece');
+    // PUT the piece again: merged by id it is new, by position it is covered — not kept
+    const pr = await fetch(b5 + '/api/v1/cache/' + ADDR, { method: 'PUT', headers: FULL, body: JSON.stringify({ fills: [p2] }) }); const put = { status: pr.status, body: await pr.json() };
+    eq([put.status, put.body.added, put.body.count], [200, 0, 1], JSON.stringify(put.body));
+    full = await call(b5, '/api/v1/cache/' + ADDR); eq(full.body.fills.fills.length, 1);
+  } finally { app5.close(); }
+});
 await t('the indexer splits an hour into shards as gzip members; its arguments and day arithmetic', async () => {
   const I = (await import('../archive-indexer.js')).default || createRequire(import.meta.url)('../archive-indexer.js');
   const r = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4');
