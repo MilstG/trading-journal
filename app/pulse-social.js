@@ -1445,6 +1445,8 @@ async function wsSignOutHere(){
   if(me)await rawSet(WS_PREFIX+me,null);
   vaultForget(); SOC.key=null; SOC.me=null;
   try{ for(const k of [SOC_KEY_STORE,WS_OWNER_STORE,SOC_SEEN_STORE])localStorage.removeItem(k); }catch(e){}
+  // the private beta's access cookie goes too: in beta mode this browser is back at the beta page
+  try{ await fetch('/api/social/access',{method:'DELETE',credentials:'same-origin'}); }catch(e){}
 }
 
 // ---- the encrypted journal ----

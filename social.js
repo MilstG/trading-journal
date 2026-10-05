@@ -503,6 +503,30 @@ function sanitizeRefCfg(b, prev) {
   }
   return o;
 }
+// beta: private beta mode. While on, only an activated profile (or the owner) opens the journal and Daruma;
+// a profile is activated by a single-use invite from the admin panel. keepExisting: profiles made before
+// (any that didn't come by an invite) keep their access; publicDocs: /help, /docs and /tutorial stay open;
+// ttlDays: how long a new invite lasts; message: the line under the beta page's title; since/by: who
+// switched it on, and when.
+const DEFAULT_BETA = { on: false, keepExisting: true, publicDocs: true, ttlDays: 14, message: '', since: 0, by: '' };
+function sanitizeBetaCfg(b, prev) {
+  const o = Object.assign({}, DEFAULT_BETA, prev || {});
+  if (b && typeof b === 'object') {
+    for (const k of ['on', 'keepExisting', 'publicDocs']) if (typeof b[k] === 'boolean') o[k] = b[k];
+    const d = b.ttlDays == null || b.ttlDays === '' ? null : clampNum(b.ttlDays, 1, 90); if (d != null) o.ttlDays = Math.round(d);
+    if (typeof b.message === 'string') o.message = cleanText(b.message, 300);
+  }
+  return { on: !!o.on, keepExisting: !!o.keepExisting, publicDocs: !!o.publicDocs, ttlDays: Math.round(clampNum(o.ttlDays, 1, 90) || 14),
+    message: cleanText(o.message, 300), since: Math.max(0, +o.since || 0), by: cleanText(o.by, 40) };
+}
+// an invite code: 10 characters from 32 that can't be misread (no 0/O, 1/I), shown as XXXX-XXXX-XX
+const INVITE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const inviteNorm = s => String(s == null || typeof s === 'object' ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+const inviteShow = c => c.slice(0, 4) + '-' + c.slice(4, 8) + '-' + c.slice(8);
+const MAX_INVITES = 5000;
+const ACCESS_COOKIE = 'daruma_access';
+const cookieOf = (req, name) => { for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('=');
+  if (i > 0 && p.slice(0, i).trim() === name) return p.slice(i + 1).trim(); } return ''; };
 const POST_KINDS = ['trade', 'plan', 'note'];
 const TRADE_STATUS = ['planned', 'open', 'closed', 'cancelled'];
 const COIN_RE = /^[A-Za-z0-9@/:._-]{1,24}$/;
@@ -611,7 +635,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts', 'refLinks', 'refWallets'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts', 'refLinks', 'refWallets', 'beta'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -644,6 +668,12 @@ function createSocial(opts) {
   S.config.duels = Duels.sanitizeDuelCfg(S.config.duels, null);
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
   S.config.pots = Pots.sanitizePotCfg(S.config.pots, null);
+  S.config.beta = sanitizeBetaCfg(S.config.beta, null);
+  // the private beta's invites by id ({id, h: sha256 of the code, tail, note, at, exp, by, unlocked, leagues,
+  // used: member id, usedAt, revoked: when}) and the key its access cookies are signed with (made once)
+  if (!S.beta || typeof S.beta !== 'object' || Array.isArray(S.beta)) S.beta = {};
+  if (!S.beta.invites || typeof S.beta.invites !== 'object' || Array.isArray(S.beta.invites)) S.beta.invites = {};
+  if (typeof S.beta.secret !== 'string' || S.beta.secret.length < 64) S.beta.secret = crypto.randomBytes(32).toString('hex');
   // XP moved between two members, by calendar month: {'2026-10': {'idA|idB': what the first id gained}}
   if (!S.pairFlow || typeof S.pairFlow !== 'object' || Array.isArray(S.pairFlow)) S.pairFlow = {};
   // what deleted profiles owed, by wallet: {'0x…': {id, xp (negative), at}}; a profile whose verified XP comes
@@ -754,6 +784,50 @@ function createSocial(opts) {
     return m && (m.keyHash === h || (Array.isArray(m.keyHashes) && m.keyHashes.includes(h))) ? m : null; };
   const addKey = m => { const key = crypto.randomBytes(24).toString('hex');
     m.keyHashes = [...(Array.isArray(m.keyHashes) ? m.keyHashes : []), sha(key)].slice(-MAX_KEYS); reindex(); return key; };
+  // ---- private beta (S.config.beta): server.js asks gate.allows(req) before serving the journal, Daruma or
+  // their scripts. A page load can't carry the member key (it lives in localStorage and goes as a header), so
+  // access rides on a cookie: HttpOnly, an HMAC (S.beta.secret) of one device key's hash, or of the owner's
+  // token. Signing that device out, suspending or deleting the profile, or a new AUTH_TOKEN ends it at once;
+  // the cookie never authorizes an API call, only opening the pages.
+  const betaOn = () => adminConfigured && !!S.config.beta.on;
+  // a profile that may come in while beta mode is on: one an invite activated, one the owner made, an admin,
+  // or (unless the owner switched that off) any profile from before
+  const betaAllowed = m => !!m && !m.banned && (S.config.beta.keepExisting || m.joinedWith === 'beta' || !!m.betaInvite || !!m.adminMade || !!m.admin);
+  const accessMac = s => crypto.createHmac('sha256', S.beta.secret).update(s).digest('base64url').slice(0, 32);
+  const ownerTag = typeof opts.ownerTag === 'string' ? opts.ownerTag : '';
+  const accessOfCookie = c => {
+    const p = String(c || '').split('.');
+    if (p[0] === 'o' && p.length === 2 && ownerTag && sameText(p[1], accessMac('o|' + ownerTag))) return { owner: true };
+    if (p[0] === 'm' && p.length === 3 && Object.prototype.hasOwnProperty.call(S.members, p[1])) {
+      const m = S.members[p[1]]; if (m.banned || (betaOn() && !betaAllowed(m))) return null;
+      for (const kh of [m.keyHash, ...(Array.isArray(m.keyHashes) ? m.keyHashes : [])]) if (kh && sameText(p[2], accessMac('m|' + m.id + '|' + kh))) return { member: m }; }
+    return null; };
+  // who this request is, for the beta: the access cookie, else a member key or the owner's token sent with it
+  const accessOf = req => {
+    const c = cookieOf(req, ACCESS_COOKIE), byC = c ? accessOfCookie(c) : null; if (byC) return byC;
+    const m = req.headers['x-pulse-key'] ? byKey(req) : null; if (m && !m.banned && (!betaOn() || betaAllowed(m))) return { member: m };
+    if (adminConfigured && req.headers['authorization'] && authOk(req)) return { owner: true };
+    return null; };
+  const https = req => !!(req.socket && req.socket.encrypted) || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https';
+  const setAccessCookie = (req, res, v) => res.setHeader('Set-Cookie', ACCESS_COOKIE + '=' + v + '; Path=/; HttpOnly; SameSite=Lax; ' +
+    (v ? 'Max-Age=34560000' : 'Max-Age=0') + (https(req) ? '; Secure' : ''));
+  // a device just signed in with `key`: it gets the access cookie when the profile may come in
+  const grantAccess = (req, res, m, key) => { if (key && (!betaOn() || betaAllowed(m))) setAccessCookie(req, res, 'm.' + m.id + '.' + accessMac('m|' + m.id + '|' + sha(key))); };
+  const inviteBy = code => { const c = inviteNorm(code); if (c.length < 10) return null; const h = sha(c);
+    return Object.values(S.beta.invites).find(x => x.h === h) || null; };
+  const inviteState = x => !x ? 'unknown' : x.used ? 'used' : x.revoked ? 'revoked' : x.exp < now() ? 'expired' : 'open';
+  const INVITE_ERR = { unknown: 'That invite code isn’t right. Check it against the message you were sent.',
+    used: 'This invite has already been used. Each invite activates one profile, once: if that was you, sign in instead.',
+    expired: 'This invite has expired. Ask the person who invited you for a new one.',
+    revoked: 'This invite was withdrawn. Ask the person who invited you for a new one.' };
+  const newInvite = (o, by) => { let code = ''; for (const b of crypto.randomBytes(10)) code += INVITE_ABC[b % 32];
+    const id = crypto.randomBytes(6).toString('hex'), days = clampNum(o.ttlDays, 1, 90) || S.config.beta.ttlDays;
+    S.beta.invites[id] = { id, h: sha(code), tail: code.slice(-4), note: cleanText(o.note, 40), at: now(), exp: now() + Math.round(days) * 86400000, by,
+      unlocked: !!o.unlocked, leagues: o.leagues !== false, used: null, usedAt: 0, revoked: 0 };
+    const all = Object.values(S.beta.invites); // the oldest closed ones go first once there are too many
+    if (all.length > MAX_INVITES) for (const x of all.filter(x => inviteState(x) !== 'open').sort((a, b) => a.at - b.at).slice(0, all.length - MAX_INVITES)) delete S.beta.invites[x.id];
+    return { id, note: S.beta.invites[id].note, code: inviteShow(code), expiresAt: S.beta.invites[id].exp }; };
+  const useInvite = (x, m) => { x.used = m.id; x.usedAt = now(); m.betaInvite = x.id; touch('beta'); };
   // the wallet whose on-chain numbers count for this member: any address they gave, or, when the
   // owner requires claims, only a wallet they proved is theirs by signing
   // … and, when the owner approves wallets, only an address the owner approved
@@ -2527,6 +2601,8 @@ function createSocial(opts) {
     try { arg = decodeURIComponent(arg); } catch (e) { return json(res, 400, { error: 'bad path' }); }
     ensureWeek(); ensureSeasons(); refTick();
 
+    // private beta: what a visitor without a profile sends (a counted visit, wallets entered, a referral link) waits for an invite
+    if (betaOn() && (head === 'visit' || head === 'seen' || head === 'ref') && !accessOf(req)) return json(res, 403, { error: 'Daruma is invite-only for now.', beta: true });
     // a device using Pulse without a profile today (it asks once a day; one address counts once a day too)
     if (head === 'visit' && !parts[1] && M === 'POST') {
       const day = utcDayKey(now()), k = day + '|' + sha(ipOf(req) || '');
@@ -2562,6 +2638,7 @@ function createSocial(opts) {
     }
     if (head === 'config' && M === 'GET')
       return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
+        beta: betaOn() ? { on: true, message: S.config.beta.message } : { on: false },
         unlocks: S.config.unlocks, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
@@ -2639,6 +2716,41 @@ function createSocial(opts) {
           leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, mentor: !!m.mentor, admin: !!m.admin, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), standing: standingOn() ? standingOf(m).state : null, mentorXp: m.mentorXp ? (mentorXpOut(m) || {}).total || 0 : 0, createdAt: m.createdAt, lastSeen: m.lastSeen || null,
           av: avUrl(m), bio: m.bio || '',
           money: m.money && m.money.ret != null ? { ret: m.money.ret, dd: m.money.dd } : null })) });
+      // ---- private beta: the mode, and the single-use invites (a code is shown once, when it's made: only its hash is kept) ----
+      if (sub === 'beta' && !parts[2] && M === 'GET') {
+        const inv = Object.values(S.beta.invites).sort((a, b) => b.at - a.at).map(x => { const st = inviteState(x), u = x.used && own(S.members, x.used) ? S.members[x.used] : null;
+          return { id: x.id, note: x.note, tail: x.tail, at: x.at, exp: x.exp, by: x.by, state: st, unlocked: !!x.unlocked, leagues: x.leagues !== false,
+            used: x.used ? { id: x.used, handle: u ? u.handle : null, at: x.usedAt } : null, revoked: x.revoked || 0 }; });
+        const n = k => inv.filter(x => x.state === k).length;
+        return json(res, 200, { config: S.config.beta, active: betaOn(), invites: inv, counts: { all: inv.length, open: n('open'), used: n('used'), closed: n('expired') + n('revoked') },
+          // profiles from before (not by an invite, not made by the owner, not admins): who "keep access" covers
+          existing: members().filter(m => !m.banned && m.joinedWith !== 'beta' && !m.betaInvite && !m.adminMade && !m.admin).length });
+      }
+      if (sub === 'beta' && !parts[2] && M === 'PUT') {
+        const c = S.config.beta, was = c.on;
+        if (body.ttlDays != null && body.ttlDays !== '' && clampNum(body.ttlDays, 1, 90) !== +body.ttlDays) return json(res, 400, { error: 'Invites last 1 to 90 days (not ' + JSON.stringify(body.ttlDays) + ').' });
+        S.config.beta = sanitizeBetaCfg(body, c);
+        if (S.config.beta.on && !was) { S.config.beta.since = now(); S.config.beta.by = who.by; }
+        save('config'); return json(res, 200, { ok: true, config: S.config.beta });
+      }
+      if (sub === 'beta' && parts[2] === 'invites' && !parts[3] && M === 'POST') { // {names?: [...], count?, ttlDays?, unlocked?, leagues?}
+        const names = Array.isArray(body.names) ? body.names.map(x => cleanText(x, 40)).filter(Boolean) : [];
+        const n = names.length || (Number.isInteger(+body.count) && body.count !== '' && body.count !== null ? +body.count : 0);
+        if (!n || n > 50 || names.length > 50) return json(res, 400, { error: 'Make 1 to 50 invites at a time.' });
+        if (body.ttlDays != null && body.ttlDays !== '' && clampNum(body.ttlDays, 1, 90) !== +body.ttlDays) return json(res, 400, { error: 'Invites last 1 to 90 days.' });
+        const out = []; for (let i = 0; i < n; i++) out.push(newInvite({ note: names[i] || '', ttlDays: body.ttlDays, unlocked: body.unlocked === true, leagues: body.leagues !== false }, who.by));
+        save('beta'); return json(res, 200, { ok: true, invites: out });
+      }
+      if (sub === 'beta' && parts[2] === 'invites' && parts[3] && !parts[4] && M === 'POST') { // {action: revoke | replace}
+        const x = own(S.beta.invites, parts[3]) ? S.beta.invites[parts[3]] : null; if (!x) return json(res, 404, { error: 'no such invite' });
+        const st = inviteState(x);
+        if (body.action === 'revoke') { if (st !== 'open') return json(res, 409, { error: 'Only an unused invite can be withdrawn.' });
+          x.revoked = now(); save('beta'); return json(res, 200, { ok: true }); }
+        if (body.action === 'replace') { if (st === 'used') return json(res, 409, { error: 'That invite was used: the profile it made signs in with a passkey, wallet or sign-in code now.' });
+          if (st === 'open') x.revoked = now(); // the old link stops working
+          const r = newInvite({ note: x.note, unlocked: x.unlocked, leagues: x.leagues }, who.by); save('beta'); return json(res, 200, Object.assign({ ok: true }, r)); }
+        return json(res, 400, { error: 'action is revoke or replace' });
+      }
       if (sub === 'members' && !parts[2] && M === 'POST') { // the owner adds someone; they sign in with the code it returns
         if (body.admin && !who.owner) return json(res, 403, { error: 'Only the owner can add admins.' });
         const handle = cleanText(body.handle, 20).replace(/^@/, '');
@@ -2707,6 +2819,11 @@ function createSocial(opts) {
           if (!m.mentor) refundHolds('mentor = ?', [m.id], () => 'isn’t a mentor here any more.'); }
         else if (a === 'unlock' || a === 'lock') m.unlocked = a === 'unlock'; // every feature, theme and the bigger coach allowance
         else if (a === 'coachreset') coachReset(m); // today's count back to zero, for the profile and its wallet
+        else if (a === 'passkeys') { // a lost or stolen device: its passkeys stop signing in (they add new ones once back in)
+          const n = (m.passkeys || []).length; m.passkeys = []; extra = { removed: n };
+          if (n) notify(m, 'account', 'An admin removed your passkeys. Add a new one under Account so you can sign in on your other devices.', { title: 'Your passkeys were reset', url: '/daruma#account' }); }
+        else if (a === 'signout') { // every device signed out at once (sign-in codes the owner already made still work)
+          m.keyHash = null; m.keyHashes = []; reindex(); for (const [k, l] of links) if (l.memberId === m.id) links.delete(k); }
         else if (a === 'link' || a === 'unlink' || a === 'primary') { // map wallets to this member by hand
           const ad = typeof body.address === 'string' && ADDR_RE.test(body.address.trim()) ? body.address.trim().toLowerCase() : null;
           if (!ad) return json(res, 400, { error: 'That isn’t a wallet address (0x and 40 hex characters).' });
@@ -3090,9 +3207,15 @@ function createSocial(opts) {
       // without AUTH_TOKEN the owner's journal (wallets included) is open to anyone with the link:
       // the league stays closed until the owner protects it
       if (!adminConfigured) return json(res, 403, { error: 'The owner needs to set an access token on the server before the league can open.' });
+      // private beta: a single-use invite from the admin panel, in place of the open door and the shared code
+      const beta = betaOn(); let inv = null;
+      if (beta) { if (limited(req, 'beta', 30, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
+        inv = inviteBy(body.beta); const st = inviteState(inv);
+        if (st !== 'open') return json(res, 403, { error: INVITE_ERR[st], state: st, beta: true }); }
+      else {
       if (!S.config.open) return json(res, 403, { error: 'This league isn’t taking new members right now.' });
       if (S.config.inviteCode && limited(req, 'invite', 20, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
-      if (S.config.inviteCode && !sameText(cleanText(body.invite, 40), S.config.inviteCode)) return json(res, 403, { error: 'That invite code isn’t right.' });
+      if (S.config.inviteCode && !sameText(cleanText(body.invite, 40), S.config.inviteCode)) return json(res, 403, { error: 'That invite code isn’t right.' }); }
       if (members().length >= MAX_MEMBERS) return json(res, 403, { error: 'The league is full.' });
       const ip = ipOf(req);
       const recent = (joinTimes.get(ip) || []).filter(t => now() - t < 3600000);
@@ -3104,7 +3227,8 @@ function createSocial(opts) {
       if (claimedBy(address) || mappedTo(address)) address = null; // someone proved that wallet is theirs, or the owner mapped it to someone: joining still works, without it
       const key = crypto.randomBytes(24).toString('hex'), id = crypto.randomBytes(6).toString('hex');
       const m = { id, handle, keyHash: sha(key), createdAt: now(), lastSeen: now(), tier: 0, share: sanitizeShare(body.share),
-        address, stats: null, weekXp: {}, money: null, banned: false, joinedWith: S.config.inviteCode ? 'invite' : 'open' };
+        address, stats: null, weekXp: {}, money: null, banned: false, joinedWith: beta ? 'beta' : S.config.inviteCode ? 'invite' : 'open' };
+      if (inv) { useInvite(inv, m); if (inv.unlocked) m.unlocked = true; } // the invite is spent here, with the profile it made
       // came by a member's link: the referral, on the terms of the day they joined
       const rf = refCfg().on && typeof body.ref === 'string' ? refResolve(body.ref) : null;
       if (rf) { m.ref = { by: rf.m.id, code: rf.code, at: now(), t: refTermsNow(), st: 'pending', paid: {} };
@@ -3112,12 +3236,13 @@ function createSocial(opts) {
         notify(rf.m, 'referral', '@' + handle + ' joined through your invite. It counts once they’re active: a claimed wallet and ' + m.ref.t.ad + ' trading days in their first ' + m.ref.t.aw + '.', { title: 'Someone joined with your link', url: '/daruma#invite' }); save(rf.m); }
       S.members[id] = m; S.follows[id] = []; reindex();
       const skip = new Set(Array.isArray(body.skip) ? body.skip.map(String) : []); // rankings the new member chose not to join
-      for (const L of Object.values(S.leagues)) if (L.autoJoin && !skip.has(L.id)) joinLeague(L, m);
+      if (!inv || inv.leagues !== false) for (const L of Object.values(S.leagues)) if (L.autoJoin && !skip.has(L.id)) joinLeague(L, m);
       recent.push(now()); joinTimes.set(ip, recent);
       if (body.visitor === true) bumpVisit('conv', utcDayKey(now()));
       if (joinTimes.size > 1000) for (const [k, v] of joinTimes) if (!v.length || now() - v[v.length - 1] > 3600000) joinTimes.delete(k); // addresses an hour quiet
       if (m.share.feed) pushEvent(m, { type: 'join', text: 'joined the league' });
-      save(m, 'follows', 'leagues'); refreshMoney(m, true); refreshBehavior(m, true);
+      save(m, 'follows', 'leagues', ...(inv ? ['beta'] : [])); refreshMoney(m, true); refreshBehavior(m, true);
+      grantAccess(req, res, m, key);
       return json(res, 200, { key, me: publicMember(m, m), share: m.share, walletTaken: !address && !!body.address, ref: m.ref ? refOut(m) : null });
     }
 
@@ -3178,7 +3303,7 @@ function createSocial(opts) {
       const m = members().find(x => x.claimed === p.address);
       if (!m) return json(res, 404, { error: 'No profile has claimed this wallet yet. Join first, then claim it under Profile & privacy.' });
       if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
-      const key = addKey(m); m.lastSeen = now(); save(m);
+      const key = addKey(m); m.lastSeen = now(); save(m); grantAccess(req, res, m, key);
       return json(res, 200, { key, me: publicMember(m, m), share: m.share });
     }
     // ---------- passkeys: sign in ----------
@@ -3209,7 +3334,7 @@ function createSocial(opts) {
         try { const r = WebAuthn.verifyAssertion(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId, requireUv: true }, pk); pk.signCount = r.signCount; }
         catch (e) { return json(res, 403, { error: 'That passkey didn’t check out (' + e.message + ').' }); }
         pk.lastUsed = now();
-        const key = addKey(m); m.lastSeen = now(); save();
+        const key = addKey(m); m.lastSeen = now(); save(); grantAccess(req, res, m, key);
         return json(res, 200, { key, me: publicMember(m, m), share: m.share });
       }
     }
@@ -3226,7 +3351,7 @@ function createSocial(opts) {
       const m = own(S.members, l.memberId) ? S.members[l.memberId] : null;
       if (!m) return json(res, 400, { error: 'That code didn’t work.' });
       if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
-      const key = addKey(m); m.lastSeen = now(); save(m);
+      const key = addKey(m); m.lastSeen = now(); save(m); grantAccess(req, res, m, key);
       return json(res, 200, { key, me: publicMember(m, m), share: m.share });
     }
 
@@ -3239,6 +3364,36 @@ function createSocial(opts) {
       if (!owner && lockedFor(bm, 'peers')) return json(res, 403, { error: 'Traders like you unlocks at level ' + lockedFor(bm, 'peers') + '.' });
       const dims = {}; for (const k of Bench.DIM_KEYS) if (typeof query[k] === 'string' && own(Bench.DIMS[k], query[k])) dims[k] = query[k];
       return json(res, 200, Object.assign(benchOut(benchNow(), dims), bm ? { mine: { share: bm.share.bench !== false, have: !!bm.bench, at: bm.bench ? bm.bench.at : null } } : {}));
+    }
+
+    // ---------- private beta: the beta page (beta.html) checks an invite, and gets this device its access cookie ----------
+    // POST /access: a member key (X-Pulse-Key) or the owner's token in, the cookie out; DELETE /access: the cookie
+    // goes (signing out). A profile the beta doesn't let in is told to redeem an invite (needsInvite).
+    if (head === 'access' && !parts[1]) {
+      if (M === 'DELETE') { setAccessCookie(req, res, ''); return json(res, 200, { ok: true }); }
+      if (M !== 'POST') return json(res, 405, { error: 'method not allowed' });
+      if (!adminConfigured) return json(res, 403, { error: 'The owner needs to set an access token on the server first.' });
+      if (req.headers['authorization']) { if (!authOk(req)) return json(res, 401, { error: 'That access token isn’t right.' });
+        setAccessCookie(req, res, 'o.' + accessMac('o|' + ownerTag)); return json(res, 200, { ok: true, owner: true }); }
+      const m = byKey(req); if (!m) return json(res, 401, { error: 'not a member' });
+      if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
+      if (betaOn() && !betaAllowed(m)) return json(res, 403, { error: 'Daruma is invite-only for now. Enter the invite code you were sent to bring @' + m.handle + ' in.', needsInvite: true, handle: m.handle });
+      grantAccess(req, res, m, req.headers['x-pulse-key']); return json(res, 200, { ok: true, handle: m.handle });
+    }
+    // POST /beta/check {code, handle?}: is this invite good (and is the name free), before the form is filled in
+    // POST /beta/redeem {code}: a signed-in profile the beta doesn't let in spends an invite on itself
+    if (head === 'beta' && (parts[1] === 'check' || parts[1] === 'redeem') && !parts[2] && M === 'POST') {
+      // a name is checked as it's typed, so checking has room of its own; spending an invite shares joining's
+      if (parts[1] === 'check' ? limited(req, 'betacheck', 120, 600000) : limited(req, 'beta', 30, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
+      if (!betaOn()) return json(res, 409, { error: 'Daruma isn’t invite-only right now: anyone can join.', off: true });
+      const x = inviteBy(body.code), st = inviteState(x);
+      if (st !== 'open') return json(res, st === 'unknown' ? 404 : 410, { error: INVITE_ERR[st], state: st });
+      if (parts[1] === 'check') { const h = cleanText(body.handle, 20).replace(/^@/, '');
+        return json(res, 200, { ok: true, expiresAt: x.exp, ...(h ? { handleOk: HANDLE_RE.test(h), handleFree: HANDLE_RE.test(h) && !byHandle(h) } : {}) }); }
+      const m = byKey(req); if (!m) return json(res, 401, { error: 'not a member' });
+      if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
+      if (!betaAllowed(m)) { useInvite(x, m); if (x.unlocked) m.unlocked = true; save(m, 'beta'); }
+      grantAccess(req, res, m, req.headers['x-pulse-key']); return json(res, 200, { ok: true, handle: m.handle });
     }
 
     // ---------- everything below needs a member key ----------
@@ -4177,8 +4332,10 @@ function createSocial(opts) {
   xpSyncAll(); // every member's XP from its ledger, under the weights and levels as they are now
   save(); // what loading filled in (defaults, league numbers) is written once, so a restart reads the same
   seedSchedule(); // seed wallets still waiting from before a restart
-  return { handle, coach, tick, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, walletsOf: m => walletsOf(m), state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
+  // the private beta's door, for server.js: is it on, may this request open the app, are the docs open too
+  const gate = { active: betaOn, allows: req => !!accessOf(req), docsPublic: () => !betaOn() || S.config.beta.publicDocs };
+  return { handle, coach, tick, gate, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, walletsOf: m => walletsOf(m), state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
 }
 
-module.exports = { createSocial, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, shownBadges, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
+module.exports = { createSocial, sanitizeBetaCfg, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, shownBadges, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,
   boardRows, compStandings, compStatus, disciplineOver, isoWeekOfKey, seasonOf, seasonBounds, seasonLabel, weeksIn, TIERS, DEFAULT_CONFIG, DEFAULT_SHARE };

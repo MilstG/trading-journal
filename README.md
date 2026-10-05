@@ -1054,6 +1054,39 @@ opens your journal, backups or the server's other routes. Removing or suspending
 closes the panel to them at once. The Admins card lists who did what recently, and
 wallet decisions record who made them.
 
+**Private beta mode.** Under **Beta access** in the admin panel, switch the server to
+invite-only: while it's on, the journal (`/`, `/ledger.html`), Daruma (`/daruma`) and the
+app's scripts open only for an activated profile or the owner. Everyone else gets the beta
+page (`beta.html`) instead; guest mode, open joining and the league's shared invite code stop.
+The admin panel, public badge pages and (unless you untick it) `/help`, `/docs` and the
+tutorial stay open.
+
+- **Invites** are single use. Make them in a batch, one per name (only you see the names),
+  each lasting 7 to 90 days. Each one is a `/join#CODE` link, plus the same code to type, which you
+  send yourself (the server sends no email). The code is shown once, when it's made: only its
+  hash is kept. The list shows which are waiting, who each one activated, and which expired.
+  **Withdraw** an unused invite, or give someone a **New link** (the old one stops working).
+- **Activating** an invite makes a profile: the person picks a name (names are unique,
+  whatever their capitals, and the page says whether one is free as it's typed). The page
+  then asks them to add a passkey. **Other devices** sign in without an invite: a passkey,
+  the claimed wallet, a 10-minute code from a signed-in device (Account → Add a device), or
+  a 7-day sign-in code you make on their page under Members.
+- **Profiles from before** keep their access by default: their browser's stored sign-in is
+  swapped for access without a step. Untick it and they need an invite too: the beta page
+  asks for a code once, and it lets that profile in on every device.
+- **How access works.** A page load can't carry the member key, so access rides on an
+  HttpOnly cookie (`daruma_access`), signed by the server. It's an HMAC of one device's key, or
+  of the owner's token. Signing that device out (in the app, or **Sign out all devices** in
+  the panel), suspending or deleting the profile, or a new `AUTH_TOKEN` (for the owner's cookie)
+  ends it at once. The cookie never authorizes an API call: it only opens the pages. The
+  beta page drops whatever the app cached on the device, and the service worker never
+  keeps the beta page as the app.
+- **Switch it off** and everything is as it was: anyone opens the app, and joining follows
+  **Settings → Joining** again. No profile or data changes either way.
+
+The gate protects this server, not the code: the app runs in the browser against
+Hyperliquid's public API, so anyone with a copy of the repository can run their own.
+
 **Two-factor for the admin panel.** Optional, per person: under **Settings → Security**
 the owner and each admin can add **admin passkeys** (Face ID, a fingerprint, the device
 PIN or a security key) and an **authenticator app** (RFC 6238 codes: scan the QR code, or
@@ -1115,7 +1148,8 @@ action. Sections:
   (unless claimed), **map more wallets** to them by hand (or make one their main wallet,
   the one their numbers are read from), **boost XP** (or correct it) with a reason they see, fully unlock,
   their coach allowance, leagues and tiers, award or take back reward badges, a new
-  sign-in code, suspend or delete. Members' addresses are visible to you; others see them only if the member chose to show theirs.
+  sign-in code, **reset their passkeys** (a lost or stolen device; they're told, and add new
+  ones once back in), **sign them out of every device**, suspend or delete. Members' addresses are visible to you; others see them only if the member chose to show theirs.
   - **Several at once:** tick members, or everyone on the page, then **Verify
     wallets**, **Unverify wallets**, **Suspend**, **Restore** or **Delete**.
     Deleting 5 or more asks you to type DELETE. Admins can't act on other admins
