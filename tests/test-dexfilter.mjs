@@ -11,8 +11,8 @@ const { grabFn } = makeExtractor(html);
 
 // Bundle the filter fns with mutable state they close over (view/dexView/dexSel/allTrades/openPositions).
 const bundle = (state) => (0, eval)('(function(){' + state +
-  [ 'tradeDex','dexOk','dexFilter','knownDexes','dexPositions','viewFilter' ].map(grabFn).join('\n') +
-  ';return {tradeDex,dexFilter,knownDexes,dexPositions,viewFilter,' +
+  [ 'tradeDex','dexOk','dexFilter','knownDexes','dexPositions','viewFilter','tableFilter','tradeRow','moneyRow','rangeActive','inRange','periodTrades','periodTradesAll' ].map(grabFn).join('\n') +
+  ';return {tradeDex,dexFilter,knownDexes,dexPositions,viewFilter,tableFilter,tradeRow,moneyRow,periodTrades,periodTradesAll,' +
   'set:(v,d,s)=>{view=v??view; dexView=d??dexView; if(s)dexSel=new Set(s);},' +
   'get openPositions(){return openPositions}};})()');
 
@@ -43,6 +43,21 @@ await t('viewFilter combines market and dex predicates', () => {
   f.set('perp', 'hip3', []); ok(f.viewFilter(tp) && !f.viewFilter(ts), 'perp+hip3 keeps only hip3');
   f.set('combined', 'main'); ok(f.viewFilter(ts), 'spot counts as main dex');
   f.set('spot', 'hip3'); ok(!f.viewFilter(ts), 'spot+hip3 = empty set, by design');
+});
+
+await t('trade rows and money rows: positions are listed and scored, day rows are summed, MOVED is listed only', () => {
+  const perp = { id: 'p', coin: 'BTC', market: 'perp', isOpen: false, closeTime: 10, net: 5 };
+  const pos = { id: 's1', coin: '@210', market: 'spot', spotPos: true, isOpen: false, closeTime: 11, net: 1 };
+  const held = { id: 's2', coin: '@107', market: 'spot', spotPos: true, isOpen: true, closeTime: 12, net: 0 };
+  const moved = { id: 's3', coin: '@107', market: 'spot', spotPos: true, isOpen: false, movedOut: true, closeTime: 13, net: -0.1 };
+  const day = { id: 'r1', coin: '@210', market: 'spot', spotRz: true, isOpen: false, closeTime: 11, net: 1 };
+  const f = bundle("let view='combined',dexView='all',dexSel=new Set(),openPositions=[],period=0,customRange={from:null,to:null},allTrades=" + JSON.stringify([perp, pos, held, moved, day]) + ";");
+  const ids = a => a.map(x => x.id).sort().join(',');
+  ok(ids(f.periodTrades()) === 'p,s1', 'statistics: closed perp trades and closed spot positions, not day rows, not MOVED: ' + ids(f.periodTrades()));
+  ok(ids(f.periodTradesAll()) === 'p,r1', 'money: perp trades and spot day rows, never a position: ' + ids(f.periodTradesAll()));
+  ok(ids(f.periodTradesAll(true)) === 'p,s1,s2,s3', 'the table: every trade row, open, closed and MOVED, no day rows: ' + ids(f.periodTradesAll(true)));
+  f.set('spot'); ok(ids(f.periodTrades()) === 's1' && ids(f.periodTradesAll()) === 'r1', 'the spot view keeps the split');
+  f.set('perp'); ok(ids(f.periodTrades()) === 'p' && ids(f.periodTradesAll()) === 'p', 'perps alone are both');
 });
 
 await t('knownDexes unions trades and open positions, sorted', () => {

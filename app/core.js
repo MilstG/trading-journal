@@ -982,7 +982,8 @@ async function fetchPortfolio(addr){
     const hist=label=>{ const e=(res||[]).find(x=>x[0]===label); const h=(e&&e[1]&&e[1].pnlHistory)||[]; const out=[];
       for(const p of h){ const t=+p[0], v=parseFloat(p[1]); if(isFinite(t)&&isFinite(v))out.push([t,v]); } return out; };
     return {all:last('allTime','pnlHistory'), perp:last('perpAllTime','pnlHistory'), accountValue:last('allTime','accountValueHistory'),
-      vlm:vlm('allTime'), perpVlm:vlm('perpAllTime'), hist:{all:hist('allTime'),perp:hist('perpAllTime')}};
+      // the shorter spans too (denser points): the equity chart for a period cuts the densest one that reaches it
+      vlm:vlm('allTime'), perpVlm:vlm('perpAllTime'), hist:{all:hist('allTime'),perp:hist('perpAllTime'),spans:{day:{all:hist('day'),perp:hist('perpDay')},week:{all:hist('week'),perp:hist('perpWeek')},month:{all:hist('month'),perp:hist('perpMonth')}}}};
   }catch(e){ return {all:null,perp:null,accountValue:null,vlm:null,perpVlm:null,hist:null}; }
 }
 // A portfolio-margin account's balance: the exchange's own account value (spot and perps as one), or

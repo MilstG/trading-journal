@@ -240,8 +240,9 @@ await t('the server resolves the break-even band like the app: auto unless the m
 });
 await t('equity: chronological cumulative points + drawdown diagnostics', async () => {
   const { body } = await jget('/api/v1/equity?status=closed');
-  eq(body.points.length, 2);
-  near(body.points[0][1], 99.5); near(body.points[1][1], 99.5 - 204);
+  // money rows: the two ETH trades and the spot buy's day row (its $0.01 fee, realized the day it was paid)
+  eq(body.points.length, 3);
+  near(body.points[0][1], 99.5); near(body.points[1][1], 99.5 - 0.01); near(body.points[2][1], 99.5 - 0.01 - 204);
   ok(body.currentDD && body.currentDD.dd < 0);
   ok(body.shuffleDD && body.shuffleDD.median >= 0, 'seeded shuffle-DD present');
   const again = await jget('/api/v1/equity?status=closed');
@@ -250,7 +251,7 @@ await t('equity: chronological cumulative points + drawdown diagnostics', async 
 await t('calendar buckets by tz day', async () => {
   const { body } = await jget('/api/v1/calendar?tz=utc&status=closed');
   eq(body.tz, 'utc');
-  near(body.days[dayOf(T0 + 1 * H)], 99.5);
+  near(body.days[dayOf(T0 + 1 * H)], 99.5 - 0.01, 1e-6, 'the ETH win and the spot buy’s fee, the same day');
   near(body.days[dayOf(T0 + 26 * H)], -204);
 });
 await t('breakdown by coin / tag / hour', async () => {
@@ -363,7 +364,7 @@ await t('capital: flows classified, time-weighted model, account-wide', async ()
   eq(body.flows, 2); eq(body.skipped, 1);
   near(body.model.netDeposited, 8000);
   near(body.model.totIn, 10000); near(body.model.totOut, 2000);
-  near(body.model.realized, -104.5, 0.01); // ETH +99.5 and -204; open trades excluded
+  near(body.model.realized, -104.51, 1e-6); // ETH +99.5 and -204, and the spot buy's $0.01 fee; open trades excluded
   ok(body.model.avgCapital > 8000 && body.model.avgCapital < 10000, 'time-weighted between the two levels');
 });
 await t('weekly digest: generated once, listed, fetchable, idempotent', async () => {
@@ -503,10 +504,10 @@ await t('GET /api/v1/metrics returns flat numbers a dashboard can plot', async (
   eq((await get('/api/v1/metrics', {})).status, 401);
   const { status, body } = await jget('/api/v1/metrics', READ);
   eq(status, 200);
-  eq(body.trades_total, 4); eq(body.open_trades, 2);
-  near(body.net_total, -104.5);
+  eq(body.trades_total, 4); eq(body.open_trades, 2); // trade rows: 2 ETH, open BTC, open spot position
+  near(body.net_total, -104.51); // money rows: the spot buy's fee too
   eq(body.trades_today, 0); near(body.net_today, 0); // fixture closes 4-5 days ago
-  near(body.current_drawdown, -204); // peak +99.5 then -204 → 204 under water
+  near(body.current_drawdown, -204.01); // peak +99.5, then the spot buy's fee and -204 → 204.01 under water
   eq(body.open_positions, 1);
   near(body.gross_exposure, 16000); near(body.net_exposure, 16000); // one long BTC position
   near(body.account_value, 5000);
@@ -518,7 +519,7 @@ await t('?format=prom emits Prometheus exposition text', async () => {
   ok((r.headers.get('content-type') || '').startsWith('text/plain'));
   const text = await r.text();
   ok(text.includes('ledger_trades_total 4'));
-  ok(text.includes('ledger_net_total -104.5'));
+  ok(text.includes('ledger_net_total -104.51'));
   ok(!text.includes('null') && !text.includes('NaN'), 'numbers only');
 });
 await t('buildBotState assembles a truthful snapshot for the Telegram router', async () => {

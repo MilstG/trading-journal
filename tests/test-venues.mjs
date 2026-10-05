@@ -108,7 +108,7 @@ await t('one address: trades rebuilt with exact P&L, fees in millionths, funding
   ltCalls = [];
   const S = sandbox(lighterMock());
   const r = await S.run(`loadLighterWallet({address:'lighter:${L1}',label:'L'},false)`);
-  const perp = r.trades.filter(x => x.market === 'perp'), spot = r.trades.filter(x => x.market === 'spot');
+  const perp = r.trades.filter(x => x.market === 'perp'), spot = r.trades.filter(x => x.market === 'spot' && x.spotPos), spotRz = r.trades.filter(x => x.spotRz);
   eq(perp.length, 1); const tr = perp[0];
   eq([tr.coin, tr.dir, tr.isOpen ? 1 : 0, tr.venue], ['BTC', 'Long', 0, 'lighter']);
   near(tr.pnl, 30); near(tr.avgEntry, 105); near(tr.avgExit, 120);
@@ -118,7 +118,8 @@ await t('one address: trades rebuilt with exact P&L, fees in millionths, funding
   near(tr.funding, -0.05);
   ok(tr.id.startsWith('lighter:' + L1 + ':BTC:'), 'id carries the venue address');
   eq(tr.wallet, { address: 'lighter:' + L1, label: 'L' });
-  eq(spot.length, 1); eq(spot[0].coin, 'ETH/USDC'); near(spot[0].pnl, 10); eq(spot[0].symbol, 'ETH/USDC');
+  eq(spot.length, 1); eq(spot[0].coin, 'ETH/USDC'); near(spot[0].pnl, 10); eq(spot[0].symbol, 'ETH/USDC'); ok(!spot[0].isOpen, 'bought 2, sold 2: a round trip');
+  eq(spotRz.length, 1, 'one day row carries the money'); near(spotRz[0].pnl, 10); eq(spotRz[0].symbol, 'ETH/USDC');
   near(r.accountValue, 1000); eq(r.nFills, 5);
 });
 await t('a very long history stops at 40k trades and the next load carries on further back', async () => {

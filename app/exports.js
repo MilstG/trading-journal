@@ -337,7 +337,7 @@ function exportDiagPdf(){
   setStatus('Diagnostic PDF exported ('+(blob.size/1024/1024).toFixed(1)+' MB, '+charts.length+' chart'+(charts.length===1?'':'s')+'). Run the miner / excursions first if you want their charts included.');
 }
 $('exportTaxPdf').onclick=()=>{
-  const model=taxStatementModel(allTrades,settings.wallets);
+  const model=taxStatementModel(allTrades.filter(moneyRow),settings.wallets); // money rows: spot by the day it was realized, never a position and its sells both
   if(!model){ setStatus('No closed trades to export.'); return; }
   let doc; try{ doc=renderTaxPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the PDF ('+e.message+').'); return; }
   const blob=new Blob([doc],{type:'application/pdf'});
@@ -346,7 +346,7 @@ $('exportTaxPdf').onclick=()=>{
 };
 $('exportTax').onclick=()=>{
   // realized (closed) trades across ALL markets/wallets, ignoring view/period filters
-  const rows=allTrades.filter(t=>!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
+  const rows=allTrades.filter(t=>moneyRow(t)&&!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
   if(!rows.length){ setStatus('No closed trades to export for tax.'); return; }
   const q=csvCell; // formula-injection guard + quoting: see csvCell (app/engine.js)
   const isoU=ms=>new Date(ms).toISOString().replace(/\.\d{3}Z$/,'Z'); // ISO-8601 UTC, no milliseconds

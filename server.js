@@ -97,7 +97,7 @@ function timingSafeEq(a, b) {
 const ENGINE_FNS = [
   // time layer + reconstruction
   'tzParts', 'tzMidnight', 'addDays', 'isPerp', 'newTrade', 'tallyFill',
-  'reconstructTrades', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
+  'reconstructTrades', 'tradeRow', 'moneyRow', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
   'spotMapsFrom', 'spotFifoLots',
   // stats
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'retPct',
@@ -1132,7 +1132,7 @@ function createApp(opts) {
     E.journal = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
     // the app's band: the member's fixed $, else the automatic one over every closed trade (as render() does)
     const fx = E.beFixedOf(s);
-    E._be = fx != null ? fx : E.autoBeBand(ensureTrades().trades);
+    E._be = fx != null ? fx : E.autoBeBand(ensureTrades().trades.filter(t => E.tradeRow(t) && !t.movedOut)); // the band is 5% of the median trade: trade rows, not spot day rows
     return { snap, settings: s };
   }
   function applyFilters(trades, q) {
@@ -1189,10 +1189,13 @@ function createApp(opts) {
   function prepare(query) {
     const { settings } = setEngineState(query);
     const { trades, builtAt } = ensureTrades();
-    const all = applyFilters(trades, query);
-    const closed = all.filter(t => !t.isOpen);
+    const picked = applyFilters(trades, query);
+    // money rows (perp trades, spot day rows) for sums and curves; trade rows (perp trades, spot positions)
+    // for lists and counts; closed trade rows for the statistics — engine.js: tradeRow / moneyRow
+    const all = picked.filter(E.moneyRow), rows = picked.filter(E.tradeRow);
+    const closed = rows.filter(t => !t.isOpen && !t.movedOut);
     E._oneR = E.computeOneR(closed);
-    return { all, closed, settings, builtAt };
+    return { all, rows, closed, settings, builtAt };
   }
   function shapeTrade(t, withEvents) {
     const j = E.journal[t.id] || null;
@@ -1448,7 +1451,7 @@ function createApp(opts) {
     const snap = currentSnapshot();
     setEngineState({});
     const { trades } = ensureTrades();
-    const closed = trades.filter(t => !t.isOpen && t.closeTime).sort((a, b) => a.closeTime - b.closeTime);
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut).sort((a, b) => a.closeTime - b.closeTime);
     // "today" on the trader's calendar (the app's clock setting), not the container's zone
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
@@ -1513,7 +1516,7 @@ function createApp(opts) {
     const snap = currentSnapshot();
     setEngineState({});
     const { trades } = ensureTrades();
-    const closed = trades.filter(t => !t.isOpen && t.closeTime).sort((a, b) => a.closeTime - b.closeTime);
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut).sort((a, b) => a.closeTime - b.closeTime);
     const market = readMarket();
     const risk = market ? E.openRiskModel(market.positions || []) : null;
     // "today" on the trader's calendar (the app's clock setting), not the container's zone
@@ -1875,9 +1878,9 @@ function createApp(opts) {
         _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
         const { trades } = ensureTrades();
         summary.trades = {
-          total: trades.length,
+          total: trades.filter(E.tradeRow).length,
           perp: trades.filter(t => t.market === 'perp').length,
-          spot: trades.filter(t => t.market === 'spot').length,
+          spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t)).length,
           open: trades.filter(t => t.isOpen).length,
         };
         maybeAlert().catch(e => console.warn('[ledger] alert check failed: ' + e.message)); // fire-and-forget: a manual refresh should trigger the same monitoring
@@ -1975,9 +1978,9 @@ function createApp(opts) {
           try {
             setEngineState(query);
             const { trades, builtAt } = ensureTrades();
-            counts = { total: trades.length,
+            counts = { total: trades.filter(E.tradeRow).length,
               perp: trades.filter(t => t.market === 'perp').length,
-              spot: trades.filter(t => t.market === 'spot').length,
+              spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t)).length,
               open: trades.filter(t => t.isOpen).length, builtAt };
           } catch (e) {}
         }
@@ -2018,15 +2021,17 @@ function createApp(opts) {
         }
         setEngineState({});
         const { trades } = ensureTrades();
-        const closed = trades.filter(t => !t.isOpen && t.closeTime);
-        m.trades_total = trades.length;
-        m.open_trades = trades.filter(t => t.isOpen).length;
+        // counts are of trade rows (perp trades, spot positions); sums are of money rows (perp trades, spot day rows)
+        const rows = trades.filter(E.tradeRow), closed = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime);
+        m.trades_total = rows.length;
+        m.open_trades = rows.filter(t => t.isOpen).length;
         m.net_total = +closed.reduce((s, t) => s + t.net, 0).toFixed(2);
         // "today" on the owner's own clock, the same day alerts, /today and the nudge use
         const zone = nudgeZone(currentSnapshot().settings), dayIn = ms => zonedDayHour(ms, zone).day, todayKey = dayIn(Date.now());
         let tn = 0, tc = 0;
         const recent = Date.now() - 2 * 86400000; // only the last two days can be "today" anywhere
-        for (const t of closed) if (t.closeTime > recent && dayIn(t.closeTime) === todayKey) { tn += t.net; tc++; }
+        for (const t of closed) if (t.closeTime > recent && dayIn(t.closeTime) === todayKey) tn += t.net;
+        for (const t of rows) if (!t.isOpen && !t.movedOut && t.closeTime > recent && dayIn(t.closeTime) === todayKey) tc++;
         m.net_today = +tn.toFixed(2); m.trades_today = tc;
         const nets = [...closed].sort((a, b) => a.closeTime - b.closeTime).map(t => t.net);
         if (nets.length) m.current_drawdown = +E.currentDD(nets).dd.toFixed(2);
@@ -2040,7 +2045,7 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/trades') {
-        const { all } = prepare(query);
+        const { rows: all } = prepare(query);
         const sortKey = query.sort || 'openTime';
         const SORTS = ['openTime', 'closeTime', 'net', 'pnl', 'fees', 'durationMs', 'coin', 'maxSize'];
         if (!SORTS.includes(sortKey)) throw { code: 400, msg: 'sort must be one of ' + SORTS.join('|') };
@@ -2069,9 +2074,9 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/stats') {
-        const { all, closed, settings } = prepare(query);
+        const { all, rows, closed, settings } = prepare(query);
         const stats = E.computeStats(closed, all);
-        return send(200, { n: closed.length, openN: all.length - closed.length,
+        return send(200, { n: closed.length, openN: rows.filter(t => t.isOpen).length,
           oneR: E._oneR, beThreshold: E._be, tz: settings.tz, stats });
       }
 
@@ -2231,7 +2236,7 @@ function createApp(opts) {
         if (!flows.length) return send(409, { error: 'no capital-flow caches yet — POST /api/v1/refresh first' });
         flows.sort((a, b) => a.time - b.time);
         const wset = new Set(wallets.map(w => w.address.toLowerCase()));
-        const closedAll = trades.filter(t => !t.isOpen && t.closeTime
+        const closedAll = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime // money rows: realized P&L, spot by the day it happened
           && (!query.wallet || (t.wallet && wset.has(t.wallet.address.toLowerCase()))));
         const market = readMarket();
         // Equity-based outputs (impliedPnl, xirr) need equity and flows to cover the SAME
@@ -2466,8 +2471,8 @@ function createApp(opts) {
     const fills = await recentFills(a); if (!fills) return null;
     // attributeFunding sets each trade's net (P&L − fees); funding rows aren't fetched here — they
     // barely move one trade's result and never decide whether it was a loss by more than $1
-    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])];
-    const closed = trades.filter(t => !t.isOpen && t.closeTime);
+    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && !t.movedOut);
     // days on the member's own clock (the zone their app reports), so both sides score the same days
     return E.pzBehaviorDays(closed, { dayOf: zoneDay(tz || 'UTC'), isLoss: n => n < -1 /* same fixed rule as the app's PZ_LOSS */ })
       .map(d => ({ k: d.key, s: d.score, n: d.n, f: Object.keys(d.flags || {}).filter(x => d.flags[x] > 0) }));
@@ -2479,7 +2484,7 @@ function createApp(opts) {
     if (!engine.ok || !E.pzTiltAlerts || !E.pzTiltAlertPick) return null;
     const a = String(addr).toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
     const fills = await recentFills(a); if (!fills) return null;
-    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])];
+    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
     const now = (opts.now || Date.now)(), dayOf = zoneDay(tz || 'UTC');
     return E.pzTiltAlertPick(E.pzTiltAlerts(trades, { now, dayOf, isLoss: n => n < -1 }), state, now, dayOf(now));
   };
@@ -2501,7 +2506,7 @@ function createApp(opts) {
       const mx = Math.max(...batch.map(f => f.time)); start = mx > start ? mx : mx + 1;
     }
     fills.sort((x, y) => x.time - y.time);
-    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])];
+    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(t => E.tradeRow(t) && !t.movedOut);
     let firstAt = null, ret = null, dd = null, avNow = NaN;
     try { const res = await E.hlPost({ type: 'portfolio', user: a });
       const all = (Array.isArray(res) ? res : []).find(x => x && x[0] === 'allTime'), av = (all && all[1] && all[1].accountValueHistory) || [];
