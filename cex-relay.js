@@ -104,6 +104,8 @@ function createCexRelay(opts) {
     const up = upstream(r.venue);
     if (up) { // chained: the far copy does the asking
       if (!secret) return { status: 0, error: 'CEX_RELAY_URL is set but CEX_RELAY_SECRET is not' };
+      // the shared secret rides in a header: never over plain http to another machine
+      if (!/^https:\/\//i.test(up) && !/^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/i.test(up)) return { status: 0, error: 'CEX_RELAY_URL must start with https://' };
       let res;
       try {
         res = await fetchImpl(up + '/api/cex/relay', { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(30000),

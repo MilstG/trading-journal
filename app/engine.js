@@ -1062,7 +1062,14 @@ function taxToolRows(fmt, src){
   const n={}; for(const e of ev)n[e.k]=(n[e.k]||0)+1;
   return {head,rows,n,times:ev.map(e=>e.t)};
 }
-function taxToolCsv(fmt, src){ const r=taxToolRows(fmt,src), q=v=>{ v=String(v); if(/^[=@+]/.test(v))v="'"+v; return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+// One CSV cell, for every export the app writes (the server's csvCell is the same rule). Notes, tags
+// and labels open in Excel/Sheets, where a leading = @ (or a +/- that isn't a number) runs as a
+// formula: checked after leading whitespace too, since some importers trim first. CR is quoted
+// with LF, or an importer that splits records on it moves the rest of the row.
+function csvCell(v){ let s=v==null?'':String(v); const t0=s.replace(/^\s+/,'');
+  if(/^[=@]/.test(t0)||(/^[+-]/.test(t0)&&!isFinite(Number(t0))))s="'"+s;
+  return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+function taxToolCsv(fmt, src){ const r=taxToolRows(fmt,src), q=csvCell;
   return [r.head,...r.rows].map(x=>x.map(q).join(',')).join('\r\n'); }
 function edgeSignificance(nets){ const m=_avg(nets),sd=_std(nets),N=nets.length;
   const t=(sd>0&&N>1)?m/(sd/Math.sqrt(N)):null; const p=t!=null?1-_tCdf(t,N-1):null;

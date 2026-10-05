@@ -400,6 +400,15 @@ await t('a refused location is reported as such, not as a broken key', async () 
   let err = null; try { await S.run(`cexConnect('binance','${BN.key}','${BN.secret}','')`); } catch (e) { err = e.message; }
   ok(/refused your server’s location/.test(err) && /README-deploy/.test(err), err);
 });
+await t('a chained relay never sends its shared secret over plain http to another machine', async () => {
+  let sent = 0; const f = async () => { sent++; return { ok: true, status: 200, json: async () => ({ status: 200, body: '{}' }) }; };
+  const far = Relay.createCexRelay({ env: { CEX_RELAY_URL: 'http://relay.example.com', CEX_RELAY_SECRET: 's3cret-shared-value' }, fetchImpl: f });
+  const [, out] = await far.handle({ venue: 'bybit', host: 'api', path: '/v5/market/time' }, 'owner');
+  ok(/must start with https/.test(out.error), JSON.stringify(out)); eq(sent, 0);
+  for (const u of ['https://relay.example.com', 'http://127.0.0.1:9000']) {
+    const r = Relay.createCexRelay({ env: { CEX_RELAY_URL: u, CEX_RELAY_SECRET: 's3cret-shared-value' }, fetchImpl: f });
+    eq((await r.handle({ venue: 'bybit', host: 'api', path: '/v5/market/time' }, 'owner'))[1].via, 'relay', u); }
+});
 await t('no caller, no relay; each caller has a per-minute budget', async () => {
   const relay = Relay.createCexRelay({ env: { CEX_RELAY_PER_MIN: '10' }, fetchImpl: exchangeMock, now: () => NOW });
   eq((await relay.handle({ venue: 'bybit', host: 'api', path: '/v5/market/time' }, null))[0], 401);

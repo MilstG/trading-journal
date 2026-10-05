@@ -204,6 +204,21 @@ await t('autoRefresh and tilt notifications are device-local and survive reloads
   eq(A.eval('settings.taxExport'), { preset: 'uk', cur: 'GBP' });
 });
 
+await t('an imported snapshot can’t put markup in the settings the templates print (riskDefault, view, …)', async () => {
+  const A = device(); await A.run('boot()');
+  await A.run(`(async()=>{ Object.assign(settings,{riskDefault:100,view:'perp',dexView:'all',rBasis:'avgloss',pageSize:20,theme:'ts9',anaBasis:'usd',tz:'utc',assumedLev:5,attribBasis:'usd',tzZone:'Europe/Paris',pzProfile:'day',beThreshold:2,beFixed:true}); })()`);
+  const X = '"><img src=x onerror=alert(1)>';
+  await A.run(`applySnapshot({settings:${JSON.stringify({ riskDefault: X, view: X, dexView: X, rBasis: X, pageSize: X, theme: X, anaBasis: X, tz: X,
+    assumedLev: X, attribBasis: X, tzZone: X, pzProfile: X, beThreshold: X, beFixed: true })}})`);
+  eq(A.eval('[settings.riskDefault,settings.view,settings.dexView,settings.rBasis,settings.pageSize,settings.theme,settings.anaBasis,settings.tz,settings.assumedLev,settings.attribBasis,settings.tzZone,settings.pzProfile,settings.beThreshold,settings.beFixed]'),
+    [null, 'perp', 'all', 'avgloss', 20, 'ts9', 'usd', 'utc', 5, 'usd', 'Europe/Paris', 'day', null, false], 'markup is dropped; a bad risk default/band clears rather than sticks');
+  await A.run(`applySnapshot({settings:{riskDefault:'250',view:'spot',pageSize:50,beThreshold:0,beFixed:true,assumedLev:'3',pzProfile:'constructor'}})`);
+  eq(A.eval('[settings.riskDefault,settings.view,settings.pageSize,settings.beThreshold,settings.beFixed,settings.assumedLev,settings.pzProfile]'),
+    [250, 'spot', 50, 0, true, 3, 'day'], 'real values (numeric strings from old backups included) still restore');
+  await A.run(`applySnapshot({settings:{riskDefault:null}})`);
+  eq(A.eval('settings.riskDefault'), null, 'a cleared risk default still propagates');
+});
+
 await t('every restore path marks itself and reports only after the server took it', () => {
   const io = html.slice(html.indexOf("$('modalLoad').onclick"), html.indexOf("$('exportCsv').onclick"));
   ok(io.includes('srvRestored(before,bw)') && io.includes('srvRestored(before)'), 'backup and journal pastes mark the restore');

@@ -83,6 +83,14 @@ try {
     eq((await call('/passkey/login/finish', { method: 'POST', body: { credential: A.get(s3.d.challenge, ORIGIN, RP, { tamper: true }) } })).status, 403);
     eq((await call('/passkey/login/finish', { method: 'POST', body: { credential: { type: 'public-key', response: {} } } })).status, 400);
   });
+  await t('a passkey alone signs in, so the device must verify its owner: presence-only ceremonies are refused', async () => {
+    const st = await call('/passkey/login/start', { method: 'POST' }); eq(st.d.userVerification, 'required');
+    const r = await call('/passkey/login/finish', { method: 'POST', body: { credential: A.get(st.d.challenge, ORIGIN, RP, { flags: 0x01 }) } });
+    eq(r.status, 403); ok(/not verified/.test(r.d.error), r.d.error);
+    const U = authenticator(), k = (await call('/join', { method: 'POST', body: { handle: 'touch_only' } })).d.key;
+    const rs = await call('/passkey/register/start', { method: 'POST', key: k }); eq(rs.d.authenticatorSelection.userVerification, 'required');
+    eq((await call('/passkey/register/finish', { method: 'POST', key: k, body: { credential: U.create(rs.d.challenge, ORIGIN, RP, { flags: 0x41 }) } })).status, 400, 'not enrolled without verification');
+  });
   await t('the same passkey can’t be linked twice; a member can remove theirs', async () => {
     const k2 = (await call('/join', { method: 'POST', body: { handle: 'other' } })).d.key;
     const st = await call('/passkey/register/start', { method: 'POST', key: k2 });

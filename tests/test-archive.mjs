@@ -336,6 +336,10 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const c84 = zlib.gunzipSync(r2.members['c84']).toString().trim().split('\n').map(l => JSON.parse(l)); eq(c84.length, 3); ok(c84.every(x => x[0] === ADDR && x[1].coin === 'ETH' && !('user' in x[1])));
   eq(JSON.parse(zlib.gunzipSync(r2.members['aaa']).toString())[1].tid, 5);
   ok(typeof r2.sample === 'string' && r2.sample.startsWith('["2025-05-25'), 'the first line is kept as a sample');
+  // a user field that isn't an address never names a shard (the shard becomes a file name)
+  const badText = [JSON.stringify(Object.assign({ user: '0x/../../etc/x' }, fill)), JSON.stringify({ user: '0x..', fill }), JSON.stringify(Object.assign({ user: ADDR }, fill))].join('\n');
+  const r4 = await I.splitHour({ get: async () => Buffer.from(badText) }, 'node_fills/hourly/20250525/11');
+  eq([r4.fills, Object.keys(r4.members), r4.shapes.badAddress], [1, ['c84'], 2]);
   // sliced: with a tiny slice size the worker hands members over several times; the day's file (members appended in order) still reads as the same lines
   const got = {}; let handed = 0;
   const r3 = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4', async m => { handed++; for (const sh in m) got[sh] = got[sh] ? Buffer.concat([got[sh], m[sh]]) : m[sh]; }, 600);

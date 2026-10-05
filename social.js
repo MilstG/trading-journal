@@ -2315,8 +2315,10 @@ function createSocial(opts) {
   const threadOut = (r, viewer, role) => ({ role, review: reviewOut(r, viewer),
     comments: q('SELECT * FROM review_comments WHERE review = ? ORDER BY at, rowid').all(r.id).filter(c => own(S.members, c.member) && !S.members[c.member].banned)
       .map(c => ({ id: c.id, at: c.at, text: c.text, handle: S.members[c.member].handle, av: avUrl(S.members[c.member]), mentor: c.member !== r.member, mine: !!viewer && c.member === viewer.id })) });
-  const addReviewComment = (rid, m, text) => tx(() => { q('INSERT INTO review_comments (id, review, member, at, text) VALUES (?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), rid, m.id, now(), text);
-    q('UPDATE reviews SET comments = comments + 1, last = ? WHERE id = ?').run(now(), rid); });
+  // the thread cap holds on every path that adds a comment (a trade sent again with a note too): false = full
+  const addReviewComment = (rid, m, text) => tx(() => { if ((q('SELECT comments FROM reviews WHERE id = ?').get(rid) || {}).comments >= REVIEW_COMMENTS_MAX) return false;
+    q('INSERT INTO review_comments (id, review, member, at, text) VALUES (?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), rid, m.id, now(), text);
+    q('UPDATE reviews SET comments = comments + 1, last = ? WHERE id = ?').run(now(), rid); return true; });
 
   // ---- a mentor's rate and slots, the XP a member can spend, and XP held for a review ----
   // The rate is the mentor's own number kept inside the owner's range (rates off: free). Slots: how many
@@ -3160,6 +3162,8 @@ function createSocial(opts) {
       return json(res, 200, { key, me: publicMember(m, m), share: m.share });
     }
     // ---------- passkeys: sign in ----------
+    // A passkey alone signs a member in (no password behind it), so the device must have checked
+    // its owner (PIN, fingerprint, face): user verification is required here, not just presence.
     // The RP ID is the site's hostname: pinned by PUBLIC_ORIGIN when set (a passkey made for one
     // site never works on another), else the address this page was served from.
     if (head === 'passkey' && parts[1] === 'login' && M === 'POST') {
@@ -3169,7 +3173,7 @@ function createSocial(opts) {
       if (parts[2] === 'start') {
         const challenge = WebAuthn.newChallenge(); sweep(pending);
         pending.set('pk:' + challenge, { purpose: 'pk-login', site, exp: now() + 5 * 60000 });
-        return json(res, 200, { challenge, rpId: site.rpId, timeout: 300000, userVerification: 'preferred' });
+        return json(res, 200, { challenge, rpId: site.rpId, timeout: 300000, userVerification: 'required' });
       }
       if (parts[2] === 'finish') {
         const cred = body.credential; let cd = null;
@@ -3182,7 +3186,7 @@ function createSocial(opts) {
         if (!m) return json(res, 404, { error: 'This passkey isn’t linked to a profile here. Sign in another way, then add it under Account.' });
         if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
         const pk = m.passkeys.find(k => k.id === id);
-        try { const r = WebAuthn.verifyAssertion(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId }, pk); pk.signCount = r.signCount; }
+        try { const r = WebAuthn.verifyAssertion(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId, requireUv: true }, pk); pk.signCount = r.signCount; }
         catch (e) { return json(res, 403, { error: 'That passkey didn’t check out (' + e.message + ').' }); }
         pk.lastUsed = now();
         const key = addKey(m); m.lastSeen = now(); save();
@@ -3231,7 +3235,7 @@ function createSocial(opts) {
         pending.set('pk:' + challenge, { purpose: 'pk-reg', memberId: me.id, site, exp: now() + 5 * 60000 });
         return json(res, 200, { challenge, rp: { name: 'Daruma', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('pulse:' + me.id)), name: me.handle, displayName: '@' + me.handle },
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }, { type: 'public-key', alg: -257 }],
-          authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' }, attestation: 'none', timeout: 300000,
+          authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' }, attestation: 'none', timeout: 300000,
           excludeCredentials: (me.passkeys || []).map(k => ({ type: 'public-key', id: k.id })) });
       }
       if (parts[2] === 'finish') {
@@ -3240,7 +3244,7 @@ function createSocial(opts) {
         const p = cd && typeof cd.challenge === 'string' ? pending.get('pk:' + cd.challenge) : null;
         if (!p || p.purpose !== 'pk-reg' || p.memberId !== me.id || p.exp < now()) return json(res, 400, { error: 'That request expired. Try again.' });
         pending.delete('pk:' + cd.challenge);
-        let r; try { r = WebAuthn.verifyRegistration(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId }); }
+        let r; try { r = WebAuthn.verifyRegistration(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId, requireUv: true }); }
         catch (e) { return json(res, 400, { error: 'That passkey couldn’t be added (' + e.message + ').' }); }
         if (members().some(x => (x.passkeys || []).some(k => k.id === r.id))) return json(res, 409, { error: 'That passkey is already linked to a profile.' });
         me.passkeys = [...(me.passkeys || []), { id: r.id, alg: r.alg, jwk: r.jwk, signCount: r.signCount, rpId: p.site.rpId, name: cleanText(body.name, 40) || 'Passkey', at: now(), lastUsed: null }].slice(-PASSKEY_MAX);
@@ -3750,6 +3754,7 @@ function createSocial(opts) {
             if (body.fee != null && rate > (+body.fee || 0)) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade now. Check and send again.', rate });
             if (w.balance < rate) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade and you have ' + w.balance + ' XP to spend' + (w.held ? ' (' + w.held + ' more is held for trades waiting on a review)' : '') + '.', rate, wallet: w });
             fee = rate; feeState = 'held'; } } }
+      if (text && ex && ex.comments >= REVIEW_COMMENTS_MAX) return json(res, 409, { error: 'This thread is full (' + REVIEW_COMMENTS_MAX + ' comments).' });
       if (text && limited(req, 'rcomment:' + me.id, 60, 3600000, true)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
       if (!ex && dayLimit(me, 'reviewLog', REVIEWS_PER_DAY)) return json(res, 429, { error: REVIEWS_PER_DAY + ' trades a day can go to review.' });
       const id = ex ? ex.id : crypto.randomBytes(6).toString('hex');

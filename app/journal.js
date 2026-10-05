@@ -330,7 +330,7 @@ function journalRow(t,j,R){
       <div class="field"><label>Tags — comma separated</label>
         <input type="text" data-j="tags" data-id="${esc(t.id)}" value="${esc((j.tags||[]).join(', '))}" placeholder="a-setup, trend, scalp"></div>
       <div class="field"><label>Planned risk ($) — for this trade's R-multiple</label>
-        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
+        <input type="number" data-j="risk" data-id="${esc(t.id)}" value="${j.risk!=null?esc(j.risk):''}" placeholder="${settings.riskDefault?esc('default '+settings.riskDefault):'e.g. 100'}" min="0" step="any"></div>
       <div class="field"><label>Trade plan — entry / stop / target <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— scored under Diagnostic → Plan adherence</span>${planTimingBadge(t,j)}</label>
         <div style="display:flex;gap:6px">
           <input type="number" data-j="plan_entry" data-id="${esc(t.id)}" value="${(j.plan&&j.plan.entry)?esc(j.plan.entry):''}" placeholder="entry px" step="any" style="flex:1">
@@ -750,7 +750,7 @@ function renderReviewInner(){
   }
   const costVar=(feeCard||varCard)?`<div class="diag-section"><h2>Costs &amp; variance</h2><div class="diag-grid">${feeCard}${varCard}</div></div>`:'';
 
-  el.innerHTML=`<div class="diag-section"><h2>Review · ${view}</h2><p class="lead">Rolling digest for the ${view} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
+  el.innerHTML=`<div class="diag-section"><h2>Review · ${esc(view)}</h2><p class="lead">Rolling digest for the ${esc(view)} view. Windows are trailing 7 / 30 days; "vs prior" compares the immediately preceding window of equal length.</p></div>
    ${progressSectionHtml()}
    ${dayJournalSectionHtml()}
    ${habitsSectionHtml()}
