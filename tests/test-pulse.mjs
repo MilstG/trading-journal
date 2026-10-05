@@ -187,12 +187,14 @@ await t('/daruma (and the old /keel and /pulse) serve the app, their trailing-sl
     ok(dh.includes('<title>Daruma</title>') && dh.includes('<meta name="apple-mobile-web-app-title" content="Daruma">'), 'Daruma installs under its own name');
     const icon = /<link rel="apple-touch-icon" href="(\/icons\/pulse-180\.png\?v=[0-9a-f]{12})">/.exec(dh);
     ok(icon && dh.includes('<link rel="manifest" href="/pulse.webmanifest">'), 'with its PNG icon, addressed by content hash, and its manifest');
+    ok(/<link rel="icon" type="image\/png" sizes="192x192" href="\/icons\/pulse-192\.png\?v=[0-9a-f]{12}">\n<link rel="icon" type="image\/svg\+xml" sizes="any" href="\/pulse-icon\.svg">/.test(dh), 'a PNG favicon ahead of the SVG one');
     const r1 = await fetch(b + icon[1]); eq([r1.status, r1.headers.get('cache-control')], [200, 'public, max-age=31536000, immutable'], 'the current icon caches for good');
     const r0 = await fetch(b + '/icons/pulse-180.png?v=000000000000'); eq([r0.status, r0.headers.get('cache-control')], [200, 'no-cache'], 'an old address is served but never kept');
     ok(!dh.includes('href="data:'), 'no data: icon or manifest left in the served head');
     const jh = await head('/');
     ok(jh.includes('<title>Ledger — Hyperliquid Trade Journal</title>') && jh.includes('<meta name="apple-mobile-web-app-title" content="Ledger">'), 'the journal keeps its name');
     ok(/<link rel="apple-touch-icon" href="\/icons\/ledger-180\.png\?v=[0-9a-f]{12}">/.test(jh) && jh.includes('<link rel="manifest" href="/manifest.webmanifest">'), 'with its PNG icon and manifest');
+    ok(/<link rel="icon" type="image\/png" sizes="192x192" href="\/icons\/ledger-192\.png\?v=[0-9a-f]{12}">/.test(jh), 'and a PNG favicon');
     for (const pth of ['/daruma/', '/keel/', '/pulse/']) { const rd = await fetch(b + pth + '?x=1', { redirect: 'manual' }); eq(rd.status, 302); eq(rd.headers.get('location'), '/daruma?x=1'); }
     const m = await (await fetch(b + '/pulse.webmanifest')).json();
     eq(m.start_url, '/daruma'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq([m.name, m.short_name], ['Daruma', 'Daruma']);

@@ -7,7 +7,7 @@
 // (a goal set, not yet met). TS9 colours: acid green on green-black, glow only on the live parts.
 // The in-app copy (pzMark in app/pulse.js) draws the same shape from the colorway's CSS variables.
 //
-// Run after changing the mark: node icons/build-daruma.mjs   (needs Playwright's Chromium)
+// Run after changing the mark: node icons/build-daruma.mjs   (needs Playwright's Chromium, or PW_CHROMIUM=/path/to/chrome)
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -38,19 +38,23 @@ function tile({ size, rounded, scale }) {
 }
 
 // one logo for both installable apps: Daruma (pulse-*) and the full journal (ledger-*)
+// The mark's body spans 84% of its box, so at scale .84 it stands nearly edge to edge: the full-bleed
+// home-screen tile (iOS rounds and shrinks it) and the rounded tiles fill their square the way app
+// icons do; the maskable one keeps the mark inside Android's safe zone (the middle 80%).
 const outputs = ['pulse', 'ledger'].flatMap(app => [
-  [app + '-192.png', { size: 192, rounded: true, scale: .72 }],
-  [app + '-512.png', { size: 512, rounded: true, scale: .72 }],
-  [app + '-180.png', { size: 180, rounded: false, scale: .7 }],
-  [app + '-maskable-512.png', { size: 512, rounded: false, scale: .6 }],
+  [app + '-192.png', { size: 192, rounded: true, scale: .84 }],
+  [app + '-512.png', { size: 512, rounded: true, scale: .84 }],
+  [app + '-180.png', { size: 180, rounded: false, scale: .88 }],
+  [app + '-maskable-512.png', { size: 512, rounded: false, scale: .7 }],
 ]);
 
-fs.writeFileSync(path.join(DIR, 'daruma.svg'), tile({ size: 180, rounded: true, scale: .72 }) + '\n');
+fs.writeFileSync(path.join(DIR, 'daruma.svg'), tile({ size: 180, rounded: true, scale: .84 }) + '\n');
 
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)('playwright')); }
 catch (e) { console.error('Playwright is not installed. Run: npm i --no-save playwright && npx playwright install chromium'); process.exit(1); }
-const browser = await chromium.launch();
+// PW_CHROMIUM=/path/to/chrome uses a Chromium already on the machine instead of Playwright's own download
+const browser = await chromium.launch(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {});
 try {
   for (const [file, o] of outputs) {
     const page = await browser.newPage({ viewport: { width: o.size, height: o.size } });

@@ -1042,9 +1042,9 @@ function createApp(opts) {
     if (files.some(f => !f)) return { error: 'app scripts missing on server: deploy the app/ folder next to ledger.html' };
     const fonts = [...new Set([...raw.matchAll(/url\(app\/fonts\/([a-z0-9-]+\.woff2)\)/g)].map(m => m[1]))].map(n => [n, fontFile(n)]);
     const rawHash = prev && prev.raw === raw ? prev.rawHash : crypto.createHash('sha1').update(raw).digest('hex');
-    const icons = { journal: iconUrl('ledger-180'), keel: iconUrl('pulse-180') }, touchIcon = icons[surface];
-    // one version for every screen: a change to the page, any script, any font or either home-screen icon is a new version
-    const sig = rawHash + ':' + files.map(f => f.hash).join(',') + ':' + fonts.map(([n, f]) => n + (f ? f.hash : '-')).join(',') + ':' + icons.journal + ',' + icons.keel;
+    const icons = { journal: [iconUrl('ledger-180'), iconUrl('ledger-192')], keel: [iconUrl('pulse-180'), iconUrl('pulse-192')] }, [touchIcon, favicon] = icons[surface];
+    // one version for every screen: a change to the page, any script, any font or any of these icons is a new version
+    const sig = rawHash + ':' + files.map(f => f.hash).join(',') + ':' + fonts.map(([n, f]) => n + (f ? f.hash : '-')).join(',') + ':' + icons.journal.concat(icons.keel).join(',');
     if (!_appHtml || _appHtml.sig !== sig) _appHtml = { sig };
     if (!_appHtml[surface]) {
       const ver = crypto.createHash('sha1').update(sig).digest('hex').slice(0, 12), fh = new Map(fonts.map(([n, f]) => [n, f && f.hash]));
@@ -1058,6 +1058,8 @@ function createApp(opts) {
         // (the inline data: ones in ledger.html only serve a copy opened from disk, which can't be installed).
         .replace(/<link rel="manifest" href="[^"]*">/, '<link rel="manifest" href="' + (surface === 'keel' ? '/pulse.webmanifest' : '/manifest.webmanifest') + '">')
         .replace(/<link rel="apple-touch-icon" href="[^"]*">/, '<link rel="apple-touch-icon" href="' + touchIcon + '">')
+        // a PNG favicon first: Safari and the iOS share sheet use it, and shrink an SVG tile onto a white square
+        .replace(/<link rel="icon" href="[^"]*">/, '<link rel="icon" type="image/png" sizes="192x192" href="' + favicon + '">\n<link rel="icon" type="image/svg+xml" sizes="any" href="/pulse-icon.svg">')
         .replace(/<title>[^<]*<\/title>/, surface === 'keel' ? '<title>Daruma</title>' : '$&')
         .replace(/<meta name="apple-mobile-web-app-title" content="[^"]*">/, surface === 'keel' ? '<meta name="apple-mobile-web-app-title" content="Daruma">' : '$&'));
       _appHtml[surface] = { mtime: st.mtimeMs, size: st.size, raw, rawHash, sig, ver, buf, gz: zlib.gzipSync(buf, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20) + '"' };
