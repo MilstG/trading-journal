@@ -170,6 +170,11 @@ t('upside shock can liquidate the short', () => {
   const sc = scenarioShock(BOOK, 20000, 20);
   eq(sc.liqs.length, 1); eq(sc.liqs[0].coin, 'ETH'); // 50→60 ≥ 58
 });
+t('spot held moves with the shock and never liquidates on its own', () => {
+  const sc = scenarioShock(BOOK.concat([{ coin: 'HYPE', side: 'long', notional: 40000, mark: 94, liq: null, spot: true }]), 100000, -20);
+  near(sc.pnl, -2000 + 1000 - 8000); eq(sc.liqs.map(l => l.coin), ['BTC'], 'the perp that crosses, not the spot');
+  near(sc.acctPct, -9000 / 100000, 1e-9);
+});
 
 console.log('\ngeneric CSV fill import');
 t('csvParseRows: quotes, doubled quotes, CRLF', () => {
