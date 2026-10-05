@@ -79,7 +79,7 @@ await t('UI wiring present: toggle, chips, persistence, render hook', () => {
   ok(html.includes('id="dextog"'), 'dextog markup');
   ok(html.includes('id="dexchips"'), 'chips markup');
   ok(html.includes('dexView:settings.dexView'), 'snapshot whitelist');
-  ok(html.includes('settings.dexView=data.settings.dexView'), 'restore path');
+  ok(html.includes("if(['all','main','hip3'].includes(ds.dexView))settings.dexView=ds.dexView"), 'restore path (whitelisted)');
   ok(html.includes('syncDexTog();'), 'render() calls sync');
   ok(html.includes("dexView=settings.dexView||'all'"), 'init from settings');
 });

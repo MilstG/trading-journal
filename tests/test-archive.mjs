@@ -61,6 +61,43 @@ t('a truncated frame or a bad match offset is an error, not garbage', () => {
   let threw = 0; for (const b of [Buffer.from(LINKED, 'base64').subarray(0, 40), Buffer.from([0x04, 0x22, 0x4d, 0x18, 0x60, 0x40, 0x00, 0x05, 0, 0, 0, 0x10, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00])]) { try { A.lz4Decode(b); } catch (e) { threw++; } }
   eq(threw, 2);
 });
+// a frame by hand: the descriptor with its real header checksum, the blocks ([bytes, stored?]), the end mark
+const frame = (flg, blocks, bd = 0x40) => { const desc = Buffer.from([flg, bd]), parts = [Buffer.from([0x04, 0x22, 0x4d, 0x18]), desc, Buffer.from([(A.xxh32(desc) >>> 8) & 0xff])];
+  for (const [b, stored] of blocks) { const h = Buffer.alloc(4); h.writeUInt32LE((b.length | (stored ? 0x80000000 : 0)) >>> 0); parts.push(h, Buffer.from(b)); }
+  return Buffer.concat([...parts, Buffer.alloc(4)]); };
+const lz4Err = (b, opts) => { try { const out = A.lz4Decode(b, opts); return 'decoded ' + out.length + ' bytes'; } catch (e) { return e.message; } };
+t('xxHash32 matches its published vectors (the checksum LZ4 frames carry)', () => {
+  eq([A.xxh32(Buffer.alloc(0)), A.xxh32(Buffer.from('abc')), A.xxh32(Buffer.from('Nobody inspects the spammish repetition'))], [0x02CC5D05, 0x32D153FF, 0xE2293B2F]);
+});
+t('a literal run longer than its block throws instead of returning bytes it never wrote', () => {
+  const b = frame(0x60, [[[0xF0, 80, ...Buffer.from('abcdefghij')]]]); // 15 + 80 = 95 literals claimed, 10 present
+  ok(/literal run of 95 bytes passes the end of its block/.test(lz4Err(b)), lz4Err(b));
+  ok(/truncated literal length/.test(lz4Err(frame(0x60, [[[0xF0, 255]]]))), 'a length cut off mid-way');
+  let got = null; A.lz4Stream(frame(0x60, [[[0x30, ...Buffer.from('abc')]]]), c => { got = Buffer.from(c).toString(); }); eq(got, 'abc', 'a well-formed one still decodes');
+});
+t('a match offset of zero, or past the bytes written (or, with independent blocks, past the block’s own), throws', () => {
+  ok(/bad match offset/.test(lz4Err(frame(0x60, [[[0x10, 0x41, 0x00, 0x00, 0x10, 0x42]]]))), 'offset 0');
+  ok(/bad match offset/.test(lz4Err(frame(0x60, [[[0x10, 0x41, 0x05, 0x00, 0x10, 0x42]]]))), 'offset 5 with 1 byte written');
+  ok(/truncated match/.test(lz4Err(frame(0x60, [[[0x10, 0x41, 0x05]]]))), 'an offset cut in half');
+  const blocks = [[[0x80, ...Buffer.from('abcdefgh')]], [[0x00, 0x08, 0x00, 0x10, 0x7a]]]; // the second block copies 4 bytes from the first
+  eq(A.lz4Decode(frame(0x40, blocks)).toString(), 'abcdefghabcdz', 'linked blocks may reach back');
+  ok(/bad match offset/.test(lz4Err(frame(0x60, blocks))), 'independent ones may not');
+});
+t('output is bounded: by the cap (a bomb) and by the block maximum the descriptor declares', () => {
+  const run = n => [0x1F, 0x61, 0x01, 0x00, ...Array(n).fill(0xFF), 0x00, 0x10, 0x62]; // 'a', then a repeat of it 19 + 255n long, then 'b'
+  eq(A.lz4Decode(frame(0x60, [[run(200)]])).toString(), 'a'.repeat(51020) + 'b', 'an overlapping repeat decodes');
+  ok(/output over the 1000 byte limit/.test(lz4Err(frame(0x60, [[run(200)]]), { maxOut: 1000 })), lz4Err(frame(0x60, [[run(200)]]), { maxOut: 1000 }));
+  ok(/past its 65536 byte maximum/.test(lz4Err(frame(0x60, [[run(300)]]))), 'a block decoding past 64 KB under a 64 KB descriptor');
+  ok(/past its 65536 byte maximum/.test(lz4Err(frame(0x60, [[Buffer.alloc(65537), true]]))), 'a stored block too');
+  ok(/output over the 10 byte limit/.test(lz4Err(frame(0x60, [[Buffer.alloc(11), true]]), { maxOut: 10 })), 'and under the cap');
+});
+t('header, block and content checksums are verified; a stored content size is held to', () => {
+  const good = Buffer.from(INDEP, 'base64'), bad = i => { const b = Buffer.from(good); b[i] ^= 1; return lz4Err(b); };
+  ok(/header checksum mismatch/.test(bad(14)), bad(14)); ok(/block checksum mismatch/.test(bad(30)), bad(30)); ok(/content checksum mismatch/.test(bad(good.length - 1)), bad(good.length - 1));
+  const desc = Buffer.concat([Buffer.from([0x68, 0x40]), Buffer.from([5, 0, 0, 0, 0, 0, 0, 0])]); // content size 5, 3 bytes follow
+  const short = Buffer.concat([Buffer.from([0x04, 0x22, 0x4d, 0x18]), desc, Buffer.from([(A.xxh32(desc) >>> 8) & 0xff, 3, 0, 0, 0x80, 0x61, 0x62, 0x63, 0, 0, 0, 0])]);
+  ok(/decodes to 3 bytes, its header says 5/.test(lz4Err(short)), lz4Err(short));
+});
 
 console.log('\nFills in a file');
 const ADDR = '0xc846e513f1fb448e744d5c8e911e87bccc0dfb20';
@@ -92,6 +129,25 @@ t('the streaming reader finds the same fills as the whole-text one, from lz4, gz
   // a line cut across chunks: the streaming decoder hands blocks of a few bytes here
   const chunks = []; A.lz4Stream(Buffer.from(LINKED, 'base64'), c => chunks.push(Buffer.from(c)));
   eq(sha(Buffer.concat(chunks)), TEXT_SHA, 'the blocks concatenate to the original');
+});
+t('a gzip bomb stops at the cap: the reader, decodeObject and the indexer’s gunzip alike', () => {
+  const bomb = zlib.gzipSync(Buffer.alloc(8 << 20)); ok(bomb.length < 64 << 10, 'kilobytes that inflate to 8 MB');
+  for (const f of [() => A.extractFillsFromObject(bomb, ADDR, { maxOut: 1 << 20 }), () => A.decodeObject(bomb, { maxOut: 1 << 20 }), () => A.gunzipCapped(bomb, 1 << 20)]) {
+    let msg = null; try { f(); } catch (e) { msg = e.message; } ok(/gzip: output over the 1048576 byte limit/.test(msg), msg); }
+  eq(A.gunzipCapped(bomb, 8 << 20).length, 8 << 20, 'at the cap it inflates whole');
+});
+t('several addresses are read in one pass, each into its own list', () => {
+  const x = A.extractFillsFromObject(Buffer.from(LINKED, 'base64'), [ADDR, '0x' + '2'.repeat(40)]);
+  eq([x.fills.length, x.byAddress[ADDR].length, x.byAddress['0x' + '2'.repeat(40)].length], [12, 12, 0]);
+});
+await t('a download is capped by the bytes that arrive, whatever Content-Length claims', async () => {
+  const body = Buffer.alloc(5000, 1), sent = [];
+  const c = hdrs => A.s3Client({ keyId: 'k', secret: 's', bucket: 'b', region: 'us-east-1', fetchImpl: async () => new Response(new ReadableStream({ pull(ctl) { const i = sent.length; if (i === 5) return ctl.close(); sent.push(i); ctl.enqueue(body.subarray(i * 1000, (i + 1) * 1000)); } }), { status: 200, headers: hdrs }) });
+  for (const h of [{}, { 'content-length': '10' }]) { sent.length = 0;
+    const err = await c(h).get('x', { maxBytes: 2048 }).then(() => null, e => e);
+    ok(err && err.code === 'TooLarge' && /over the 2048 byte limit/.test(err.message), JSON.stringify(h) + ': ' + (err && err.message)); ok(sent.length <= 4, 'the read stopped at the cap: ' + sent.length + ' chunks pulled'); }
+  sent.length = 0; eq((await c({}).get('x', { maxBytes: 5000 })).length, 5000, 'at the cap it arrives whole');
+  const declared = await c({ 'content-length': '9999' }).get('x', { maxBytes: 2048 }).then(() => null, e => e.message); ok(/9999 bytes — over the 2048/.test(declared), 'a declared size over the cap is refused before reading: ' + declared);
 });
 
 console.log('\nWhat to download');
@@ -182,14 +238,14 @@ const FULL = { Authorization: 'Bearer owner', 'Content-Type': 'application/json'
 const call = async (base, p, body, h) => { const r = await fetch(base + p, { method: body === undefined ? 'GET' : 'POST', headers: h || FULL, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 // the wallet's server cache: the open, then the fresh entry — the close between them is missing
 const seamFills = [F('ETH', 'B', 10, 1000, T0, 0), F('ETH', 'B', 2, 1200, SEAM_AT, 0), F('ETH', 'A', 2, 1300, SEAM_AT + 60e3, 2, 200)];
-// the index by wallet, as archive-indexer.js writes it: the wallet's shard for two days, one day empty for it, markers and progress
+// the index by wallet, as archive-indexer.js writes it: the wallet's shard for two days, one day empty for it, markers (with the day's fill count — a marker without fills isn't a finished day) and progress
 const shard = ADDR.slice(2, 5);
 const idxLine = f => JSON.stringify([ADDR, f]) + '\n';
 INDEX['index/v1/d/20260615/' + shard + '.jsonl.gz'] = Buffer.concat([zlib.gzipSync(idxLine(seamFills[0])), zlib.gzipSync(idxLine(lostFill))]); // two gzip members, as appended hour by hour
-INDEX['index/v1/d/20260615/_done'] = Buffer.from('{"day":"20260615","hours":24}');
+INDEX['index/v1/d/20260615/_done'] = Buffer.from('{"day":"20260615","hours":24,"fills":812345}');
 INDEX['index/v1/d/20260616/' + shard + '.jsonl.gz'] = zlib.gzipSync(idxLine(seamFills[1]) + idxLine(seamFills[2]) + JSON.stringify(['0x' + '9'.repeat(40), lostFill]) + '\n');
-INDEX['index/v1/d/20260616/_done'] = Buffer.from('{"day":"20260616","hours":24}');
-INDEX['index/v1/d/20260617/_done'] = Buffer.from('{"day":"20260617","hours":24}'); // the wallet had no fills that day: no shard file
+INDEX['index/v1/d/20260616/_done'] = Buffer.from('{"day":"20260616","hours":24,"fills":790112}');
+INDEX['index/v1/d/20260617/_done'] = Buffer.from('{"day":"20260617","hours":24,"fills":801876}'); // the wallet had no fills that day: no shard file
 INDEX['index/v1/progress.json'] = Buffer.from(JSON.stringify({ lastDay: '20260617', lastSummary: { fills: 123456 } }));
 await t('without the key the endpoints say what is missing; the owner token is required', async () => {
   const app = mk({}); const base = await listen(app);
@@ -284,6 +340,60 @@ await t('backfill reads the wallet’s shard for every day of the index and merg
     const h = await call(b3, '/api/v1/archive/backfill', { address: ADDR, source: 'hours', maxGB: 1 }); eq(h.body.total, 0, 'no seams left to hunt');
   } finally { app3.close(); }
 });
+// the archive on its own, with a cache writer that records what it was asked to write
+const arch = (env, fetchImpl) => { const writes = [];
+  const a = A.createArchive({ env: Object.assign({ ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_PREFIX: 'node_fills/hourly/', ARCHIVE_INDEX_BUCKET: 'my-hl-index', ARCHIVE_INDEX_REGION: 'ap-northeast-1' }, env || {}),
+    fetchImpl: fetchImpl || hlFetch, engine: E, readFills: () => seamFills, writeFills: (addr, f, info) => { writes.push({ addr, fills: f, info }); return { added: f.length, count: f.length }; }, log: () => {} });
+  return Object.assign(a, { writes }); };
+const settle = async a => { for (let i = 0; i < 300 && a.status().job.state === 'running'; i++) await new Promise(r => setTimeout(r, 10)); return a.status().job; };
+// a fetch that holds the GETs it matches until released, and says when the first one is waiting
+const gated = match => { let enter, release; const entered = new Promise(r => { enter = r; }), open = new Promise(r => { release = r; });
+  return { entered, release: () => release(), fetch: async (url, init) => { if (init.method === 'GET' && match(new URL(url).pathname)) { enter(); await open; } return hlFetch(url, init); } }; };
+await t('a dry run from the index lists the days and never downloads a shard or writes', async () => {
+  const a = arch(); s3Calls.length = 0;
+  const j = await a.backfill({ address: ADDR, dryRun: true });
+  eq([j.state, j.source, j.total, j.dryRun, j.incompleteDays], ['done', 'index', 3, true, []]);
+  await new Promise(r => setTimeout(r, 30)); eq(a.writes.length, 0, 'nothing written');
+  ok(!s3Calls.some(c => /\.jsonl\.gz$/.test(c.path)), 'no shard was read');
+});
+await t('a second start while the first is still planning is refused', async () => {
+  const a = arch(); const p1 = a.backfill({ address: ADDR }), p2 = a.backfill({ address: ADDR }).then(() => null, e => e);
+  const e2 = await p2; ok(e2 && e2.code === 409, 'the second start: ' + (e2 && e2.message));
+  eq((await p1).source, 'index'); eq((await settle(a)).state, 'done'); eq(a.writes.length, 1, 'one job, one write');
+  const h = arch({ ARCHIVE_INDEX_BUCKET: '' }); const q1 = h.backfill({ address: ADDR, maxGB: 1 }), q2 = h.backfill({ address: ADDR, maxGB: 1 }).then(() => null, e => e);
+  eq((await q2 || {}).code, 409, 'the hours plan too'); await q1; await settle(h);
+  // a refused plan (over budget) leaves no running job behind, and the last job stays on record
+  const over = await h.backfill({ address: ADDR, maxGB: 1e-9 }).then(() => null, e => e); eq(over.code, 413); eq(h.status().job.state, 'done');
+});
+await t('a job stopped while downloading writes nothing: from the index, and from the hours with the stop landing on the last one', async () => {
+  const g = gated(p => /\.jsonl\.gz$/.test(p)), a = arch({}, g.fetch);
+  const j = await a.backfill({ address: ADDR }); await g.entered;
+  eq(a.stop().state, 'stopped'); g.release();
+  await new Promise(r => setTimeout(r, 50)); eq(j.state, 'stopped'); eq(a.writes.length, 0, 'the index job merged nothing');
+  const g2 = gated(p => /\/node_fills\/hourly\/\d+\/13$/.test(p)), h = arch({ ARCHIVE_INDEX_BUCKET: '' }, g2.fetch); // 13:00 is the plan's last hour
+  const hj = await h.backfill({ address: ADDR, maxGB: 1 }); eq([hj.source, hj.total], ['hours', 4]); await g2.entered;
+  eq(hj.done, 3, 'three hours read, the last one in flight'); h.stop(); g2.release();
+  await new Promise(r => setTimeout(r, 50)); eq(hj.state, 'stopped'); eq(a.writes.length + h.writes.length, 0, 'the hours job merged nothing either');
+  const again = await h.backfill({ address: ADDR, maxGB: 1 }); eq(again.state, 'running', 'a stopped job doesn’t block the next'); await settle(h); eq(h.writes.length, 1);
+});
+await t('the index downloads are held to maxGB: past it the job fails and writes nothing', async () => {
+  const a = arch(); await a.backfill({ address: ADDR, maxGB: 1e-9 }); const j = await settle(a);
+  eq(j.state, 'failed'); ok(/budget/.test(j.lastError), j.lastError); eq(a.writes.length, 0);
+});
+await t('a day without its _done marker (or with one that counts no fills) is reported incomplete, not read as a quiet day', async () => {
+  const P = 'index/t9/d/', gz = f => zlib.gzipSync(idxLine(f)), done = n => Buffer.from(JSON.stringify({ hours: 24, fills: n }));
+  INDEX[P + '20260615/' + shard + '.jsonl.gz'] = gz(seamFills[0]); INDEX[P + '20260615/_done'] = done(9);
+  INDEX[P + '20260616/' + shard + '.jsonl.gz'] = gz(lostFill); // the upload stopped here: shards, no marker
+  INDEX[P + '20260617/' + shard + '.jsonl.gz'] = gz(seamFills[1]); INDEX[P + '20260617/_done'] = done(0); // a marker over nothing
+  INDEX[P + '20260619/_done'] = done(9); // the wallet was quiet that day; the 18th is missing altogether
+  const a = arch({ ARCHIVE_INDEX_PREFIX: 'index/t9/' });
+  const d = await a.indexDays(); eq([d.days, d.incomplete, d.first, d.last], [['20260615', '20260619'], ['20260616', '20260617', '20260618'], '20260615', '20260619']);
+  const j0 = await a.backfill({ address: ADDR, dryRun: true }); eq([j0.state, j0.incompleteDays], ['incomplete', ['20260616', '20260617', '20260618']]);
+  await a.backfill({ address: ADDR }); const j = await settle(a);
+  eq([j.state, j.total, j.indexFiles, j.fills], ['incomplete', 2, 1, 1], JSON.stringify(j)); ok(/3 day\(s\).*not finished.*20260616, 20260617, 20260618/.test(j.note), j.note);
+  eq(a.writes[0].fills.map(f => f.tid), [seamFills[0].tid], 'only the finished day’s fills are merged');
+  const late = await a.backfill({ address: ADDR, fromDay: '20260618' }); eq([late.total, late.incompleteDays], [1, ['20260618']]); await settle(a);
+});
 await t('an index bucket that does not exist yet: check says so, and backfill falls back to the hours plan', async () => {
   const dir4 = mkdtempSync(join(tmpdir(), 'ledger-archive4-'));
   const { writeFileSync, mkdirSync } = await import('node:fs');
@@ -336,6 +446,10 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const c84 = zlib.gunzipSync(r2.members['c84']).toString().trim().split('\n').map(l => JSON.parse(l)); eq(c84.length, 3); ok(c84.every(x => x[0] === ADDR && x[1].coin === 'ETH' && !('user' in x[1])));
   eq(JSON.parse(zlib.gunzipSync(r2.members['aaa']).toString())[1].tid, 5);
   ok(typeof r2.sample === 'string' && r2.sample.startsWith('["2025-05-25'), 'the first line is kept as a sample');
+  // a user field that isn't an address never names a shard (the shard becomes a file name)
+  const badText = [JSON.stringify(Object.assign({ user: '0x/../../etc/x' }, fill)), JSON.stringify({ user: '0x..', fill }), JSON.stringify(Object.assign({ user: ADDR }, fill))].join('\n');
+  const r4 = await I.splitHour({ get: async () => Buffer.from(badText) }, 'node_fills/hourly/20250525/11');
+  eq([r4.fills, Object.keys(r4.members), r4.shapes.badAddress], [1, ['c84'], 2]);
   // sliced: with a tiny slice size the worker hands members over several times; the day's file (members appended in order) still reads as the same lines
   const got = {}; let handed = 0;
   const r3 = await I.splitHour({ get: async () => Buffer.from(LINKED, 'base64') }, 'node_fills_by_block/hourly/20260615/12.lz4', async m => { handed++; for (const sh in m) got[sh] = got[sh] ? Buffer.concat([got[sh], m[sh]]) : m[sh]; }, 600);

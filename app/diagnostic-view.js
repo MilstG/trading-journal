@@ -748,7 +748,7 @@ function renderDiagnostic(closed, allv){
      <p class="lead">Each card says what’s happening, one thing to do about it, and how sure the numbers are. Open “The numbers” for the statistics behind it; “Adopt as habit” turns the advice into a when-then habit tracked in Review.</p>
      <div class="fnd-grid" id="fndGrid">${findings.map(findingCardHtml).join('')}</div>
    </div>`}
-   <p class="lead" style="text-align:center;margin-top:8px">Diagnostic reflects the current view (${view}) and period. Bucket signals require ≥${MIN} trades to appear.</p>`;
+   <p class="lead" style="text-align:center;margin-top:8px">Diagnostic reflects the current view (${esc(view)}) and period. Bucket signals require ≥${MIN} trades to appear.</p>`;
   document.querySelectorAll('#trackedCard .unpin').forEach(b=>{ b.onclick=async()=>{
     // the index is into the listed pins (pinsList skips broken ones): remove that very pin
     const pin=pinsList()[+b.dataset.pi]; settings.pins=(Array.isArray(settings.pins)?settings.pins:[]).filter(p=>p!==pin); await Store.set(S_KEY,settings);

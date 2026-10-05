@@ -71,6 +71,7 @@ const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const MAX_MEMBERS = 5000;
 const WALLETS_SEEN_MAX = 20000; // wallets entered in the app that the owner's Wallets list keeps
+const SEEN_ALL_MAX = 300;       // POST /seen from everyone together per 10 minutes (each IP has its own 30): many IPs can't flood it
 const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
 // guestCap: people using Pulse without a profile stop at this level (their XP still counts, and creating a
@@ -1591,6 +1592,9 @@ function createSocial(opts) {
   // counted seed wallets are read again daily, left-out ones weekly (a new trader may have traded enough since);
   // a counted one whose re-reads keep failing stops counting after SEED_STALE
   const BENCH_FRESH = 21 * 86400000, SEED_REFRESH = 86400000, SEED_SKIP_REFRESH = 7 * 86400000, SEED_STALE = 28 * 86400000, SEED_MAX = 5000;
+  // wallets entered in the app come from anyone: they hold at most SEED_APP_MAX of the seed places and add at most
+  // SEED_APP_DAY a UTC day, so anonymous traffic never crowds out (or outweighs) the owner's own seeds
+  const SEED_APP_MAX = 1000, SEED_APP_DAY = 200;
   const benchRows = () => {
     const rows = [], mine = new Set(), src = []; let seeds = 0;
     for (const m of members()) {
@@ -1633,10 +1637,11 @@ function createSocial(opts) {
   let seedBusy = false, seedTimer = null, closing = false;
   const seedDelay = opts.seedDelay != null ? opts.seedDelay : 4000;
   const seedDue = x => x.st === 'ok' ? !!x.re || now() - (x.done || 0) > SEED_REFRESH : x.st === 'skip' && now() - (x.done || 0) > SEED_SKIP_REFRESH;
-  const nextSeed = () => { let due = null;
-    for (const [a, x] of Object.entries(S.benchSeeds)) { if (x.st === 'queued') return a;
+  // the owner's queued seeds go before ones entered in the app, so an app backlog never holds them up
+  const nextSeed = () => { let due = null, app = null;
+    for (const [a, x] of Object.entries(S.benchSeeds)) { if (x.st === 'queued') { if (x.by !== 'app') return a; app = app || a; continue; }
       if (seedDue(x) && (!due || x.done < S.benchSeeds[due].done)) due = a; }
-    return due; };
+    return app || due; };
   const seedWhy = r => { const c = S.config.bench;
     return r.why === 'few' ? (r.n || 0) + ' closed trade' + (r.n === 1 ? '' : 's') + ' in the last ' + c.days + ' days (needs ' + c.minTrades + ')'
       : r.why === 'short' ? 'under 2 weeks of trading in the last ' + c.days + ' days'
@@ -2315,8 +2320,10 @@ function createSocial(opts) {
   const threadOut = (r, viewer, role) => ({ role, review: reviewOut(r, viewer),
     comments: q('SELECT * FROM review_comments WHERE review = ? ORDER BY at, rowid').all(r.id).filter(c => own(S.members, c.member) && !S.members[c.member].banned)
       .map(c => ({ id: c.id, at: c.at, text: c.text, handle: S.members[c.member].handle, av: avUrl(S.members[c.member]), mentor: c.member !== r.member, mine: !!viewer && c.member === viewer.id })) });
-  const addReviewComment = (rid, m, text) => tx(() => { q('INSERT INTO review_comments (id, review, member, at, text) VALUES (?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), rid, m.id, now(), text);
-    q('UPDATE reviews SET comments = comments + 1, last = ? WHERE id = ?').run(now(), rid); });
+  // the thread cap holds on every path that adds a comment (a trade sent again with a note too): false = full
+  const addReviewComment = (rid, m, text) => tx(() => { if ((q('SELECT comments FROM reviews WHERE id = ?').get(rid) || {}).comments >= REVIEW_COMMENTS_MAX) return false;
+    q('INSERT INTO review_comments (id, review, member, at, text) VALUES (?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), rid, m.id, now(), text);
+    q('UPDATE reviews SET comments = comments + 1, last = ? WHERE id = ?').run(now(), rid); return true; });
 
   // ---- a mentor's rate and slots, the XP a member can spend, and XP held for a review ----
   // The rate is the mentor's own number kept inside the owner's range (rates off: free). Slots: how many
@@ -2519,17 +2526,20 @@ function createSocial(opts) {
     // seed wallet, so the benchmarks count it (anonymously, like any seed) once it has traded enough
     if (head === 'seen' && !parts[1] && M === 'POST') {
       if (limited(req, 'seen', 30, 600000)) return json(res, 429, { error: 'Too many requests from here. Try again in a few minutes.' });
+      if (limited(req, 'seen:all', SEEN_ALL_MAX, 600000, true)) return json(res, 429, { error: 'Too many requests right now. Try again in a few minutes.' });
       const list = [...new Set((Array.isArray(body.addresses) ? body.addresses : []).slice(0, 20)
         .filter(a => typeof a === 'string' && ADDR_RE.test(a)).map(a => a.toLowerCase()))];
       if (!list.length) return json(res, 400, { error: 'no wallet addresses' });
-      const t = now(), day = utcDayKey(t); let seen = false, seeded = false;
+      const t = now(), day = utcDayKey(t); let seen = false, seeded = false, appN = 0, appDay = 0;
+      for (const x of Object.values(S.benchSeeds)) if (x.by === 'app') { appN++; if (utcDayKey(x.added || 0) === day) appDay++; }
       for (const a of list) {
         const w = own(S.walletsSeen, a) ? S.walletsSeen[a] : null;
         if (!w) { S.walletsSeen[a] = { first: t, last: t }; seen = true; }
         else if (utcDayKey(w.last || 0) !== day) { w.last = t; seen = true; }
         // a wallet the owner rejected stays out; the owner can still add it by hand under Benchmarks
-        if (!own(S.benchSeeds, a) && walletStatus(a) !== 'rejected' && Object.keys(S.benchSeeds).length < SEED_MAX) {
-          S.benchSeeds[a] = { st: 'queued', added: t, by: 'app' }; seeded = true; }
+        // past the app's share or today's allowance it's still listed, just not read for the benchmarks
+        if (!own(S.benchSeeds, a) && walletStatus(a) !== 'rejected' && appN < SEED_APP_MAX && appDay < SEED_APP_DAY && Object.keys(S.benchSeeds).length < SEED_MAX) {
+          S.benchSeeds[a] = { st: 'queued', added: t, by: 'app' }; seeded = true; appN++; appDay++; }
       }
       const all = Object.keys(S.walletsSeen);
       if (all.length > WALLETS_SEEN_MAX) { // the least recently seen go first
@@ -3160,6 +3170,8 @@ function createSocial(opts) {
       return json(res, 200, { key, me: publicMember(m, m), share: m.share });
     }
     // ---------- passkeys: sign in ----------
+    // A passkey alone signs a member in (no password behind it), so the device must have checked
+    // its owner (PIN, fingerprint, face): user verification is required here, not just presence.
     // The RP ID is the site's hostname: pinned by PUBLIC_ORIGIN when set (a passkey made for one
     // site never works on another), else the address this page was served from.
     if (head === 'passkey' && parts[1] === 'login' && M === 'POST') {
@@ -3169,7 +3181,7 @@ function createSocial(opts) {
       if (parts[2] === 'start') {
         const challenge = WebAuthn.newChallenge(); sweep(pending);
         pending.set('pk:' + challenge, { purpose: 'pk-login', site, exp: now() + 5 * 60000 });
-        return json(res, 200, { challenge, rpId: site.rpId, timeout: 300000, userVerification: 'preferred' });
+        return json(res, 200, { challenge, rpId: site.rpId, timeout: 300000, userVerification: 'required' });
       }
       if (parts[2] === 'finish') {
         const cred = body.credential; let cd = null;
@@ -3182,7 +3194,7 @@ function createSocial(opts) {
         if (!m) return json(res, 404, { error: 'This passkey isn’t linked to a profile here. Sign in another way, then add it under Account.' });
         if (m.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
         const pk = m.passkeys.find(k => k.id === id);
-        try { const r = WebAuthn.verifyAssertion(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId }, pk); pk.signCount = r.signCount; }
+        try { const r = WebAuthn.verifyAssertion(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId, requireUv: true }, pk); pk.signCount = r.signCount; }
         catch (e) { return json(res, 403, { error: 'That passkey didn’t check out (' + e.message + ').' }); }
         pk.lastUsed = now();
         const key = addKey(m); m.lastSeen = now(); save();
@@ -3231,7 +3243,7 @@ function createSocial(opts) {
         pending.set('pk:' + challenge, { purpose: 'pk-reg', memberId: me.id, site, exp: now() + 5 * 60000 });
         return json(res, 200, { challenge, rp: { name: 'Daruma', id: site.rpId }, user: { id: WebAuthn.b64u(Buffer.from('pulse:' + me.id)), name: me.handle, displayName: '@' + me.handle },
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }, { type: 'public-key', alg: -257 }],
-          authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' }, attestation: 'none', timeout: 300000,
+          authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' }, attestation: 'none', timeout: 300000,
           excludeCredentials: (me.passkeys || []).map(k => ({ type: 'public-key', id: k.id })) });
       }
       if (parts[2] === 'finish') {
@@ -3240,7 +3252,7 @@ function createSocial(opts) {
         const p = cd && typeof cd.challenge === 'string' ? pending.get('pk:' + cd.challenge) : null;
         if (!p || p.purpose !== 'pk-reg' || p.memberId !== me.id || p.exp < now()) return json(res, 400, { error: 'That request expired. Try again.' });
         pending.delete('pk:' + cd.challenge);
-        let r; try { r = WebAuthn.verifyRegistration(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId }); }
+        let r; try { r = WebAuthn.verifyRegistration(cred, { challenge: cd.challenge, origin: p.site.origin, rpId: p.site.rpId, requireUv: true }); }
         catch (e) { return json(res, 400, { error: 'That passkey couldn’t be added (' + e.message + ').' }); }
         if (members().some(x => (x.passkeys || []).some(k => k.id === r.id))) return json(res, 409, { error: 'That passkey is already linked to a profile.' });
         me.passkeys = [...(me.passkeys || []), { id: r.id, alg: r.alg, jwk: r.jwk, signCount: r.signCount, rpId: p.site.rpId, name: cleanText(body.name, 40) || 'Passkey', at: now(), lastUsed: null }].slice(-PASSKEY_MAX);
@@ -3750,6 +3762,7 @@ function createSocial(opts) {
             if (body.fee != null && rate > (+body.fee || 0)) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade now. Check and send again.', rate });
             if (w.balance < rate) return json(res, 409, { error: '@' + target.handle + ' charges ' + rate + ' XP a trade and you have ' + w.balance + ' XP to spend' + (w.held ? ' (' + w.held + ' more is held for trades waiting on a review)' : '') + '.', rate, wallet: w });
             fee = rate; feeState = 'held'; } } }
+      if (text && ex && ex.comments >= REVIEW_COMMENTS_MAX) return json(res, 409, { error: 'This thread is full (' + REVIEW_COMMENTS_MAX + ' comments).' });
       if (text && limited(req, 'rcomment:' + me.id, 60, 3600000, true)) return json(res, 429, { error: 'That’s a lot of comments this hour.' });
       if (!ex && dayLimit(me, 'reviewLog', REVIEWS_PER_DAY)) return json(res, 429, { error: REVIEWS_PER_DAY + ' trades a day can go to review.' });
       const id = ex ? ex.id : crypto.randomBytes(6).toString('hex');

@@ -6,7 +6,7 @@ import { readAppSource } from '../app-source.js';
 
 const html = readAppSource(new URL('../ledger.html', import.meta.url).pathname);
 const { evalModule } = makeExtractor(html);
-const T = await evalModule(['taxYearLabel', 'taxYearBounds', 'taxNum', 'taxToolRows', 'taxToolCsv']);
+const T = await evalModule(['csvCell', 'taxYearLabel', 'taxYearBounds', 'taxNum', 'taxToolRows', 'taxToolCsv']);
 const U = s => Date.parse(s + 'Z');
 
 const SRC = {
@@ -73,5 +73,9 @@ t('amounts print plainly (no exponents, no float dust); text that could run as a
   eq([T.taxNum(1e-7), T.taxNum(0.1 + 0.2), T.taxNum(-0), T.taxNum(1234567.5)], ['0.0000001', '0.3', '0', '1234567.5']);
   const csv = T.taxToolCsv('koinly', { trades: [{ market: 'perp', coin: '=HYPE', dir: 'Long', pnl: 1, fees: 0, closeTime: U('2025-01-01T00:00:00') }] });
   eq(csv.split('\r\n')[1], "2025-01-01 00:00:00,,,1,USDC,,,1,USD,realized gain,'=HYPE long perp realised profit,");
+});
+t('every browser CSV uses one cell rule: whitespace-led formulas are defused, CR is quoted, numbers pass', () => {
+  eq([' =HYPERLINK("x")', '\t@SUM(A1)', '-1.5', '+2', '-x', 'a\rb', 'a,b', null, 7].map(T.csvCell),
+    ["\"' =HYPERLINK(\"\"x\"\")\"", "'\t@SUM(A1)", '-1.5', '+2', "'-x", '"a\rb"', '"a,b"', '', '7']);
 });
 report('tax tools');

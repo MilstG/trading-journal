@@ -331,7 +331,7 @@ function nfLeaderboardHtml(closed){
   const setupTbl=lb.setups.length?`<div class="diag-card"><h3 data-tip="Each journaled setup treated as a pseudo-strategy. Only trades with a Setup filled in appear.">By setup</h3>
       <div class="tbl-wrap"><table class="trades" style="width:100%">${head}<tbody>${lb.setups.slice(0,12).map(cell).join('')}</tbody></table></div></div>`:'';
   if(!walletTbl&&!setupTbl)return '';
-  return `<div class="diag-section"><h2>Leaderboard <span style="font-size:11px;color:var(--faint);font-weight:400">${view} \u00b7 current period</span></h2>
+  return `<div class="diag-section"><h2>Leaderboard <span style="font-size:11px;color:var(--faint);font-weight:400">${esc(view)} \u00b7 current period</span></h2>
     <p class="lead">Which wallet and which setup is actually carrying the account. Ranked by net; Sharpe is of daily net PnL, Max DD on cumulative PnL.</p>
     <div class="diag-grid">${walletTbl}${setupTbl}</div></div>`;
 }

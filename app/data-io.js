@@ -885,11 +885,7 @@ async function restoreBackup(data,what){
 }
 $('exportCsv').onclick=()=>{
   const rows=filteredTrades(); if(!rows.length){ setStatus('No trades in the current filter to export.'); return; }
-  const q=v=>{ v=v==null?'':String(v);
-    // formula-injection guard: notes/tags open in Excel/Sheets, where a leading = @
-    // (or +/- that isn't a number) executes as a formula; real negatives pass untouched
-    if(/^[=@]/.test(v)||(/^[+-]/.test(v)&&!isFinite(Number(v))))v="'"+v;
-    return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=csvCell; // formula-injection guard + quoting: see csvCell (app/engine.js)
   const head=['open_time','close_time','market_type','symbol','direction','status','avg_entry','avg_exit','max_size','pnl','fees','funding','net','return_pct','r_multiple','duration_min','rating','setup','tags','mistakes','note','wallet'];
   const lines=[head.join(',')];
   for(const t of rows){ const j=journal[t.id]||{}; const R=rFor(t), ret=retPct(t);

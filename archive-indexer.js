@@ -29,6 +29,8 @@ const SOURCE_BUCKET = process.env.SOURCE_BUCKET || 'hl-mainnet-node-data';
 const REGION = process.env.AWS_REGION || 'ap-northeast-1';
 const NEW_FROM = '20250727', OLD_FROM = '20250525'; // node_fills_by_block begins; node_fills (same format) before it
 const SHARD = addr => String(addr).slice(2, 5).toLowerCase(); // 0x + 3 hex = 4,096 shards
+const ADDR_OK = a => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a);
+const SHARD_OK = sh => /^[0-9a-f]{3}$/.test(sh); // checked again where a shard name meets the filesystem
 const SLICE_BYTES = +process.env.SLICE_MB * 1048576 || 24 * 1048576; // lines held per worker before they are compressed and handed over
 const dayStr = ms => { const d = new Date(ms); return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0'); };
 const dayMs = s => Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
@@ -51,7 +53,8 @@ async function splitHour(src, key, onMembers, sliceBytes) {
     parts = new Map(); held = 0; slices++;
     if (onMembers) await onMembers(m); else for (const sh in m) members[sh] = members[sh] ? Buffer.concat([members[sh], m[sh]]) : m[sh]; };
   const pending = []; // flushes queued by the synchronous walk; awaited in order below
-  const keep = (addr, fill, shape) => { shapes[shape] = (shapes[shape] || 0) + 1; const sh = SHARD(addr); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } const line = JSON.stringify([addr, fill]); arr.push(line); held += line.length; fills++;
+  // only a real address names a shard: the shard becomes a file name, so a malformed user field is dropped here
+  const keep = (addr, fill, shape) => { if (!ADDR_OK(addr)) { shapes.badAddress = (shapes.badAddress || 0) + 1; return; } shapes[shape] = (shapes[shape] || 0) + 1; const sh = SHARD(addr); let arr = parts.get(sh); if (!arr) { arr = []; parts.set(sh, arr); } const line = JSON.stringify([addr, fill]); arr.push(line); held += line.length; fills++;
     if (held >= LIMIT) { const snap = parts; parts = new Map(); held = 0; pending.push(snap); } };
   // the same walk as archive.js's extractFills: [address, fill] pairs (under "events" or anywhere a
   // few levels deep), {user, fill} objects, and fills carrying their user — so the older dataset's
@@ -77,7 +80,7 @@ async function splitHour(src, key, onMembers, sliceBytes) {
   let rest = '';
   const feed = chunk => { let s = 0; for (let i = 0; i < chunk.length; i++) if (chunk[i] === 10) { onLine(rest + chunk.toString('utf8', s, i)); rest = ''; s = i + 1; } if (s < chunk.length) rest += chunk.toString('utf8', s); };
   if (buf.length >= 4 && buf.readUInt32LE(0) === 0x184D2204) { for await (const _ of A.lz4Steps(buf, feed)) await drain(); }
-  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { feed(zlib.gunzipSync(buf)); await drain(); }
+  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { feed(A.gunzipCapped(buf)); await drain(); } // a gzip bomb stops at the cap
   else { feed(buf); await drain(); }
   if (rest) onLine(rest);
   await drain(); await flush();
@@ -126,15 +129,15 @@ async function main() {
   let appendTo = null; // the day's directory; slices arriving from the workers are appended there
   const streamed = new Set(); // hours that have handed over at least one slice: not retried in place (their lines would land twice), the day is redone instead
   const run = key => new Promise((resolve, reject) => { const go = w => { const onMsg = m => {
-      if (m.slice) { streamed.add(m.key); for (const sh in m.members) fs.appendFileSync(path.join(appendTo, sh + '.jsonl.gz'), Buffer.from(m.members[sh])); return; }
+      if (m.slice) { streamed.add(m.key); for (const sh in m.members) if (SHARD_OK(sh)) fs.appendFileSync(path.join(appendTo, sh + '.jsonl.gz'), Buffer.from(m.members[sh])); return; }
       w.off('message', onMsg); idle.push(w); if (waiting.length) waiting.shift()(idle.pop()); m.ok ? resolve(m.r) : reject(new Error(m.error)); }; w.on('message', onMsg); w.postMessage(key); };
     idle.length ? go(idle.pop()) : waiting.push(go); });
   let total = { days: 0, hours: 0, fills: 0, bytes: 0 }, emptyDays = 0; const t0 = Date.now();
   const redoDays = [];
   const pass = async (list, redo) => {
     for (const day of list) { streamed.clear();
-      const done = await doneSummary(idx, o.prefix + 'd/' + day + '/_done');
-      if (done && isIndexed(done)) { log(day + ' already indexed'); continue; }
+      const done = await A.doneSummary(idx, o.prefix + 'd/' + day + '/_done');
+      if (done && A.isIndexed(done)) { log(day + ' already indexed'); continue; }
       if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
       const hours = (await src.list(sourcePrefix(day))).keys.filter(k => /\/\d{1,2}(\.lz4)?$/.test(k.key)).sort((a, b) => +(/\/(\d+)/.exec(a.key.slice(-7))[1]) - +(/\/(\d+)/.exec(b.key.slice(-7))[1]));
       if (!hours.length) { log(day + ': no files in the archive'); continue; }
@@ -144,7 +147,7 @@ async function main() {
       await Promise.all(hours.map(async h => {
         let r = null; for (let attempt = 0; attempt < 3 && !r; attempt++) { try { r = await run(h.key); } catch (e) { if (attempt === 2 || streamed.has(h.key)) { sum.failed.push(h.key + ': ' + e.message); log('  ' + h.key + ' failed: ' + e.message); break; } } }
         if (!r) return;
-        for (const sh in r.members) fs.appendFileSync(path.join(dir, sh + '.jsonl.gz'), Buffer.from(r.members[sh])); // (none when the worker streamed them)
+        for (const sh in r.members) if (SHARD_OK(sh)) fs.appendFileSync(path.join(dir, sh + '.jsonl.gz'), Buffer.from(r.members[sh])); // (none when the worker streamed them)
         sum.hours++; sum.fills += r.fills; sum.bytes += r.bytes; sum.lines += r.lines; for (const k in r.shapes) sum.shapes[k] = (sum.shapes[k] || 0) + r.shapes[k]; if (!sum.sample && r.sample) sum.sample = r.sample;
       }));
       if (sum.failed.length) { log(day + ': ' + sum.failed.length + ' hour(s) failed — the day is left unmarked' + (redo ? ', run again' : ' and will be tried once more at the end')); fs.rmSync(dir, { recursive: true, force: true }); if (!redo) redoDays.push(day); continue; }
@@ -172,7 +175,5 @@ async function main() {
   log('done: ' + total.days + ' day(s), ' + total.hours + ' hours, ' + total.fills.toLocaleString('en-US') + ' fills, ' + (total.bytes / 1073741824).toFixed(1) + ' GB read in ' + Math.round((Date.now() - t0) / 60000) + ' min');
 }
 if (isMainThread) { if (require.main === module) main().catch(e => { console.error(e.message || e); process.exit(1); }); }
-// the day's _done summary, or null when there is none; and whether it counts as indexed
-async function doneSummary(idx, key) { try { return JSON.parse((await idx.get(key)).toString('utf8')); } catch (e) { if (e.status === 404 || e.code === 'NoSuchKey') return null; return {}; } }
-const isIndexed = sum => !!(sum && sum.fills > 0);
-module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed };
+// the day's _done marker and whether it counts as indexed live in archive.js: the server reads the index by the same rule
+module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed: A.isIndexed };

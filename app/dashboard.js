@@ -503,7 +503,7 @@ function edgeKeyFn(dim,trades){
       case 'dow': return [DOWN[tzDow(t.closeTime)]];
       case 'hour': return [hourBlock(tzHour(t.closeTime))];
       case 'hold': return [holdBucket(t.durationMs)];
-      case 'rating': return [j.rating?'★'.repeat(j.rating):'unrated'];
+      case 'rating': return [j.rating?'★'.repeat(Math.max(0,Math.min(5,Math.round(+j.rating)||0))):'unrated'];
       case 'setup': return [j.setup?j.setup:'(no setup)'];
       case 'tag': return (j.tags&&j.tags.length)?j.tags:['(untagged)'];
       case 'mistake': return (j.mistakes&&j.mistakes.length)?j.mistakes:['clean'];

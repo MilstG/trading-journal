@@ -348,11 +348,7 @@ $('exportTax').onclick=()=>{
   // realized (closed) trades across ALL markets/wallets, ignoring view/period filters
   const rows=allTrades.filter(t=>moneyRow(t)&&!t.isOpen&&t.closeTime).sort((a,b)=>a.closeTime-b.closeTime);
   if(!rows.length){ setStatus('No closed trades to export for tax.'); return; }
-  const q=v=>{ v=v==null?'':String(v);
-    // formula-injection guard: notes/tags open in Excel/Sheets, where a leading = @
-    // (or +/- that isn't a number) executes as a formula; real negatives pass untouched
-    if(/^[=@]/.test(v)||(/^[+-]/.test(v)&&!isFinite(Number(v))))v="'"+v;
-    return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=csvCell; // formula-injection guard + quoting: see csvCell (app/engine.js)
   const isoU=ms=>new Date(ms).toISOString().replace(/\.\d{3}Z$/,'Z'); // ISO-8601 UTC, no milliseconds
   const dateU=ms=>new Date(ms).toISOString().slice(0,10);            // YYYY-MM-DD (UTC)
   // ONE rectangular table — no embedded summary or comment lines, so every spreadsheet / tax tool parses it cleanly.
@@ -401,7 +397,7 @@ async function openTaxExport(){
   document.body.appendChild(bg);
   let rep=null, fx=null;
   const sw={fills,trades:allTrades,flows:ledFlows,nameByCoin:spotMaps.nameByCoin,quoteByCoin:spotMaps.quoteByCoin}, swT=taxToolRows('koinly',sw).times;
-  const q=v=>{ v=v==null?'':String(v); if(/^[=@]/.test(v)||(/^[+-]/.test(v)&&!isFinite(Number(v))))v="'"+v; return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=csvCell; // formula-injection guard + quoting: see csvCell (app/engine.js)
   const day=ms=>ms==null?'':new Date(ms).toISOString().slice(0,10);
   const money=(v,c)=>(v<0?'-':'')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+c;
   const refresh=()=>{
@@ -464,11 +460,7 @@ $('exportSpotLots').onclick=async()=>{
   // FIFO lot rows are built straight from the cached raw fills (not the reconstructed
   // trades), because lots need the individual buy/sell legs, not netted round-trips.
   if(!settings.wallets.length){ setStatus('Add a wallet and Load all first \u2014 lots are built from the cached fills.'); return; }
-  const q=v=>{ v=v==null?'':String(v);
-    // formula-injection guard: notes/tags open in Excel/Sheets, where a leading = @
-    // (or +/- that isn't a number) executes as a formula; real negatives pass untouched
-    if(/^[=@]/.test(v)||(/^[+-]/.test(v)&&!isFinite(Number(v))))v="'"+v;
-    return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=csvCell; // formula-injection guard + quoting: see csvCell (app/engine.js)
   const dateU=ms=>ms==null?'':new Date(ms).toISOString().slice(0,10);
   const head=['tax_year','symbol','quantity','date_acquired','date_disposed','proceeds','cost_basis','gain','term','basis_note','wallet_label','wallet_address'];
   const lines=[head.join(',')];

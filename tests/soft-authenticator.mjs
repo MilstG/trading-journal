@@ -27,8 +27,8 @@ export function authenticator(kind = 'es256') {
     return Buffer.concat(parts); };
   return {
     id: b64u(credId),
-    create(challenge, origin, rpId) { const cdj = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge, origin, crossOrigin: false }));
-      const ao = cbor(new Map([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData(rpId, 0x45, true)]]));
+    create(challenge, origin, rpId, o = {}) { const cdj = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge, origin, crossOrigin: false }));
+      const ao = cbor(new Map([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData(rpId, o.flags ?? 0x45, true)]]));
       return { id: b64u(credId), rawId: b64u(credId), type: 'public-key', response: { clientDataJSON: b64u(cdj), attestationObject: b64u(ao) } }; },
     get(challenge, origin, rpId, o = {}) { count += o.countStep ?? 1;
       const cdj = Buffer.from(JSON.stringify({ type: o.type || 'webauthn.get', challenge, origin, crossOrigin: false }));
