@@ -86,6 +86,7 @@ async function bootFromCache(){
       if(venueOf(w)!=='hyperliquid')return venueBootTrades(w);
       const [fc,fd]=await Promise.all([idbGet('flc:'+a).then(unpackFillCache).catch(()=>null),idbGet('fnd:'+a).catch(()=>null)]);
       if(!fc||!Array.isArray(fc.fills)||!fc.fills.length)return null;
+      fc.fills=dedupeFills(fc.fills);
       const frows=fd&&fd.v===1&&Array.isArray(fd.rows)?fd.rows:[], lastF=fd&&fd.last||0;
       const r=await reconstructCompute(fc.fills,frows,a);
       r.spot.forEach(t=>{ t.symbol=sm.nameByCoin[t.coin]||t.coin; t.quote=(sm.quoteByCoin||{})[t.coin]||null; }); [...r.perp,...r.spot].forEach(t=>t.wallet={address:a,label:w.label});
@@ -158,10 +159,11 @@ async function loadWallet(w,fresh,spotP){
     if(fr.truncated)truncNote=labelFor(w)+' (since last load — Shift-click Load all for a full refetch)';
     else if(seededTrunc)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
   } else { fills=fr.fills; added=fills.length; if(fr.truncated)truncNote=labelFor(w); }
+  const nAll=fills.length; fills=dedupeFills(fills); const removed=nAll-fills.length; // a combined fill and its pieces, served by two sources
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
   // nothing new: the stored copy is already current, so skip re-compressing it
   if(archivedNew)added+=archivedNew;
-  if(!fcache||added>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt})); }catch(e){} }
+  if(!fcache||added>0||removed>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);

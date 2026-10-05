@@ -158,6 +158,31 @@ function reconstructTrades(fills, addr, market){
     t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.isOpen&&t.carried&&t.bagOpen?t.bagOpen+':held':t.openTime); });
   return trades.sort((a,b)=>b.openTime-a.openTime);
 }
+// The same fill served twice at two granularities. userFillsByTime is asked with aggregateByTime,
+// which folds the pieces of one order filled within one millisecond into a single fill; the archive
+// (and the TWAP slice endpoint) keep the pieces. Merged, the combined fill and its pieces move the
+// position twice over: a seam on every later fill of the coin, size and P&L counted double (this
+// wallet's seams went 256 → 1593 the first time archive fills met API fills). Within one coin,
+// order, side and millisecond, a fill whose position range is covered by another's is that other's
+// piece and goes; pieces that only touch end to end (a slice filled in two) all stay. Order is kept.
+function dedupeFills(fills){
+  if(!Array.isArray(fills)||fills.length<2)return fills;
+  const groups=new Map();
+  for(let i=0;i<fills.length;i++){ const f=fills[i]; if(!f)continue; const k=f.coin+'|'+f.oid+'|'+f.time+'|'+f.side; const g=groups.get(k); if(g)g.push(i); else groups.set(k,[i]); }
+  let drop=null;
+  for(const g of groups.values()){ if(g.length<2)continue;
+    const iv=[]; for(const i of g){ const f=fills[i], s=parseFloat(f.startPosition), sz=Math.abs(parseFloat(f.sz)); if(!isFinite(s)||!(sz>0))continue; const e=s+(f.side==='B'?sz:-sz); iv.push({i,lo:Math.min(s,e),hi:Math.max(s,e),span:sz}); }
+    iv.sort((a,b)=>b.span-a.span||a.i-b.i); // the widest first: a combined fill before its pieces
+    const kept=[];
+    for(const x of iv){
+      // covered when it overlaps a kept range by at least half the smaller of the two: a spot
+      // piece's start is off by its fee in the base token, which is nowhere near half a fill
+      const covered=kept.some(k=>Math.min(x.hi,k.hi)-Math.max(x.lo,k.lo)>=0.5*Math.min(x.span,k.span));
+      if(covered)(drop||(drop=new Set())).add(x.i); else kept.push(x);
+    }
+  }
+  return drop?fills.filter((f,i)=>!drop.has(i)):fills;
+}
 // How much of a wallet's history the fills the exchange still serves explain. Volume: the served
 // fills' notional per market against the exchange's own all-time volume (the portfolio endpoint's
 // vlm). Seams: the position changes reconstructTrades found no fill for, their notional at the
