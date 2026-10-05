@@ -196,8 +196,9 @@ function renderStats(s){
 }
 
 /* ============================ calendar heatmap ============================ */
-function renderCalendar(trades){
-  const map={}; trades.forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].net+=t.net; if(tradeRow(t))map[k].n++; }); // money by day; the count is of trades
+function renderCalendar(trades,closed){ // trades: money rows for the day's net; closed: completed trades for the day's count
+  const map={}; trades.forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].net+=t.net; });
+  (closed||[]).forEach(t=>{ const k=dayKey(t.closeTime); (map[k]=map[k]||{net:0,n:0}); map[k].n++; });
   // process mode: same cells, colored by the day's process score instead of its PnL
   const proc=settings.calMode==='process'&&coachOn()?{}:null;
   if(proc){ try{ for(const d of coachContext().days)proc[d.key]=d; }catch(e){} } // colored only where this period has trades
@@ -245,13 +246,13 @@ function renderGuardrails(){
   if(!sig.length){ el.innerHTML=''; return; }
   el.innerHTML=sig.map(s=>`<div class="guard ${s.type}"><span class="gicon">${s.type==='cooldown'?'⏸':'⚠'}</span><span>${s.txt}</span></div>`).join('');
 }
-function renderDowHour(trades){
+function renderDowHour(trades,closed){ // trades: money rows for the cell's net; closed: completed trades for its count and win rate
   const el=$('dowHour'); if(!el)return;
   const hint=$('dowHint'); if(hint)hint.textContent='net PnL by weekday and hour ('+tzLabel()+')';
   const grid=Array.from({length:7},()=>Array(24).fill(null));
   const cnt=Array.from({length:7},()=>Array.from({length:24},()=>({n:0,w:0,l:0})));
-  trades.forEach(t=>{ const day=tzDow(t.closeTime), hr=tzHour(t.closeTime);
-    grid[day][hr]=(grid[day][hr]||0)+t.net; const c=cnt[day][hr]; c.n++; if(isWin(t.net))c.w++; else if(isLoss(t.net))c.l++; });
+  trades.forEach(t=>{ const day=tzDow(t.closeTime), hr=tzHour(t.closeTime); grid[day][hr]=(grid[day][hr]||0)+t.net; });
+  (closed||trades).forEach(t=>{ const c=cnt[tzDow(t.closeTime)][tzHour(t.closeTime)]; c.n++; if(isWin(t.net))c.w++; else if(isLoss(t.net))c.l++; });
   let mx=1; for(const row of grid)for(const v of row)if(v!=null)mx=Math.max(mx,Math.abs(v));
   const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   // every third hour is labeled: two digits don't fit a 24th of a half-width card
@@ -421,14 +422,14 @@ function renderEquityCurve(allv){
         ? ' '+(flowAmt[c.dataIndex]>=0?'deposit +':'withdrawal −')+'$'+Math.abs(Math.round(flowAmt[c.dataIndex])).toLocaleString('en-US')
         : ' Total '+fmtUsd(c.parsed.y),
         afterLabel:c=>{ if(c.datasetIndex!==0)return []; const i=eqIdx?eqIdx[c.dataIndex]:c.dataIndex, t=chron[i]; if(!t)return [];
-          return [' After trade '+(i+1)+' of '+chron.length+': '+dispMarket(dcoin(t))+' '+(t.dir||'')+' '+fmtUsd(t.net),
+          return [' After '+(t.spotRz?'spot day':'trade')+' '+(i+1)+' of '+chron.length+': '+dispMarket(dcoin(t))+' '+(t.spotRz?'':(t.dir||'')+' ')+fmtUsd(t.net),
             eqDD[i]<0?' '+fmtUsd(eqDD[i])+' below the high so far':' At a new high']; }}}},scales:scales(),interaction:{intersect:false,mode:'index'}}});
   explain(charts.eq,'Your running total of closed-trade P&L, trade by trade. Triangles mark deposits (up) and withdrawals (down).');
 }
 function renderOtherCharts(closed, allv){
   const byCoin={}; allv.forEach(t=>{const k=dcoin(t);byCoin[k]=(byCoin[k]||0)+t.net;});
   const coins=Object.entries(byCoin).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10);
-  const gCoin=grpStats(allv,t=>dcoin(t));
+  const gCoin=grpStats(closed,t=>dcoin(t));
   charts.coin=bar('byCoin',coins.map(c=>dispMarket(c[0])),coins.map(c=>c[1]),{groups:coins.map(c=>gCoin[c[0]]),explain:'Net P&L per market, your ten biggest by size of result. The longest bars are where most of your money is made or lost.'});
   const byMon={}; allv.forEach(t=>{ const p=tzParts(t.closeTime); const k=p.y+'-'+String(p.mo+1).padStart(2,'0'); byMon[k]=(byMon[k]||0)+t.net; }); // tzParts, not local Date — keeps this chart on the same clock as the monthly decomposition
   // zero-fill skipped months — omitting them visually compressed inactive stretches out of the timeline
@@ -437,14 +438,14 @@ function renderOtherCharts(closed, allv){
       while(y0<y1||(y0===y1&&m0<=m1)){ const k=y0+'-'+String(m0).padStart(2,'0'); if(byMon[k]==null)byMon[k]=0; if(++m0>12){m0=1;y0++;} } } }
   const mons=Object.keys(byMon).sort().slice(-12);
   const MONL=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const gMon=grpStats(allv,t=>{ const p=tzParts(t.closeTime); return p.y+'-'+String(p.mo+1).padStart(2,'0'); });
+  const gMon=grpStats(closed,t=>{ const p=tzParts(t.closeTime); return p.y+'-'+String(p.mo+1).padStart(2,'0'); });
   charts.month=bar('byMonth',mons.map(k=>MONL[+k.slice(5)-1]+' ’'+k.slice(2,4)),mons.map(k=>byMon[k]),{groups:mons.map(k=>gMon[k]),explain:'Net P&L per calendar month (the last 12). How many months are green, and how lumpy the good ones are.'});
   const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const dow=Array(7).fill(0);
   allv.forEach(t=>dow[tzDow(t.closeTime)]+=t.net);
-  const gDow=grpStats(allv,t=>tzDow(t.closeTime));
+  const gDow=grpStats(closed,t=>tzDow(t.closeTime));
   charts.dow=bar('byDow',DOW,dow,{groups:DOW.map((_,i)=>gDow[i]),explain:'Net P&L by the weekday trades closed on ('+tzLabel()+'). Shows which days you trade well or poorly.'});
   const hrs=Array(24).fill(0); allv.forEach(t=>hrs[tzHour(t.closeTime)]+=t.net);
-  const gHr=grpStats(allv,t=>tzHour(t.closeTime));
+  const gHr=grpStats(closed,t=>tzHour(t.closeTime));
   charts.hour=bar('byHour',hrs.map((_,i)=>i),hrs,{tip:{callbacks:{title:c=>c[0].label+':00–'+c[0].label+':59',label:c=>' Net '+fmtUsd(c.parsed.y),afterLabel:c=>grpLines(gHr[c.dataIndex])}},
     explain:'Net P&L by the hour trades closed ('+tzLabel()+'). Your best and worst hours of the day.'});
   // Sessions are market-clock concepts, pinned to UTC regardless of the tz toggle —
@@ -453,14 +454,14 @@ function renderOtherCharts(closed, allv){
   const utcH=ms=>new Date(ms).getUTCHours();
   const sessIdx=h=>SESS.findIndex(([,a,b])=>a<b?(h>=a&&h<b):(h>=a||h<b));
   const sess=Array(SESS.length).fill(0); allv.forEach(t=>sess[sessIdx(utcH(t.closeTime))]+=t.net);
-  const gSess=grpStats(allv,t=>sessIdx(utcH(t.closeTime)));
+  const gSess=grpStats(closed,t=>sessIdx(utcH(t.closeTime)));
   charts.sess=bar('bySession',SESS.map(([n,a,b])=>[n,String(a).padStart(2,'0')+'–'+String(b).padStart(2,'0')]),sess,
     {ds:{maxBarThickness:60},x:{ticks:{maxRotation:0,autoSkip:false}},groups:SESS.map((_,i)=>gSess[i]),
      tip:{callbacks:{title:c=>{ const s2=SESS[c[0].dataIndex]; return s2[0]+' session · '+String(s2[1]).padStart(2,'0')+':00–'+String(s2[2]).padStart(2,'0')+':00 UTC'; },label:c=>' Net '+fmtUsd(c.parsed.y),afterLabel:c=>grpLines(gSess[c.dataIndex])}},
      explain:'Net P&L by market session, from the UTC hour each trade closed (sessions run on the market’s clock, so the time-zone toggle doesn’t move them).'});
   const sides={}; allv.forEach(t=>sides[t.dir]=(sides[t.dir]||0)+t.net);
   const sideLabels=['Long','Short','Spot'].filter(k=>k in sides);
-  const gSide=grpStats(allv,t=>t.dir);
+  const gSide=grpStats(closed,t=>t.dir);
   charts.side=bar('bySide',sideLabels,sideLabels.map(k=>sides[k]),{ds:{barThickness:60},groups:sideLabels.map(k=>gSide[k]),explain:'Net P&L split by direction. A big gap means you’re much better one way than the other.'});
   const w=closed.filter(t=>isWin(t.net)).length,l=closed.filter(t=>isLoss(t.net)).length,be=closed.filter(t=>isBE(t.net)).length;
   charts.dist=new Chart($('dist'),{type:'doughnut',data:{labels:['Wins','Losses','Break-even'],

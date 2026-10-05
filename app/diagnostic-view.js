@@ -455,7 +455,7 @@ function setupSectionHtml(closed){
 // and says so. Renders nothing when no flows were fetched (pasted data, fetch failure).
 function capitalSectionHtml(){
   if(!ledFlows.length)return '';
-  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord); // an off-record result would misstate realized and the drawdown
+  const allClosed=closedMoney(); // realized money (spot by the day it was realized); an off-record result would misstate realized and the drawdown
   const equityNow=(accountValue!=null||spotAccountValue!=null)?((accountValue||0)+(spotAccountValue||0)):null;
   const m=capitalModel(ledFlows,allClosed,equityNow);
   if(!m)return '';
@@ -476,7 +476,7 @@ function capitalSectionHtml(){
         ${mrow('Flows',m.n+(ledSkipped?' · <span class="loss">'+ledSkipped+' unclassified skipped</span>':''),'Ledger entries classified as capital flows. Unclassified entries (unknown types) are excluded and counted here rather than silently mixed in.')}
       </div>
       <div class="diag-card"><h3 data-tip="Realized net over the flow-covered span divided by time-weighted average capital. This is the number to compare against any other use of the same money.">Return on capital</h3>
-        ${mrow('Realized net (span)','<span class="'+cls(m.realized)+'">'+fmtUsd(m.realized)+'</span>',m.nTrades+' closed trades since the first recorded flow.')}
+        ${mrow('Realized net (span)','<span class="'+cls(m.realized)+'">'+fmtUsd(m.realized)+'</span>',m.nTrades+' realized rows (perp trades and spot days) since the first recorded flow.')}
         ${mrow('Return on avg capital','<span class="'+cls(m.roc||0)+'">'+pctS(m.roc)+'</span>','Realized net ÷ time-weighted average capital.')}
         ${mrow('Annualized',m.rocAnnual!=null?'<span class="'+cls(m.rocAnnual)+'">'+pctS(m.rocAnnual)+'</span>':'—','Geometric annualization of the same figure. Shown only once the span exceeds ~18 days; in-sample, edges drift.')}
         ${mrow('Max drawdown vs capital',m.maxDDpctCap!=null?'<span class="loss">'+pctS(m.maxDDpctCap)+'</span>':'—','Worst realized peak-to-trough dip as a share of the capital present at the trough ('+fmtUsd(m.maxDD$)+'). The % your account actually felt, not % of notional.')}
@@ -781,7 +781,7 @@ function renderDiagnostic(closed, allv){
   renderBenchmark(closed); // async; reveals its card only when candle data exists
   // --- monthly PnL decomposition: price vs funding vs fees ---
   _diagChartLater($('diagDecomp'),function(){ const el=$('diagDecomp'); if(!el)return;
-    const by={}; for(const t of closed){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0');
+    const by={}; for(const t of allv){ const p2=tzParts(t.closeTime); const k=p2.y+'-'+String(p2.mo+1).padStart(2,'0'); // money rows: spot by the day it was realized
       const o=by[k]=by[k]||{price:0,fund:0,fees:0}; o.price+=t.pnl; o.fund+=t.funding||0; o.fees-=t.fees-(t.feesInBasis||0); } // a spot buy's token fee is already inside closedPnl's basis: net here equals the trades' net
     const keys=Object.keys(by).sort(); if(!keys.length)return;
     _diagCharts.decomp=new Chart(el,{type:'bar',data:{labels:keys,datasets:[

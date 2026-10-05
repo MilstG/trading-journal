@@ -11,8 +11,8 @@ const { grabFn } = makeExtractor(html);
 
 // Bundle the filter fns with mutable state they close over (view/dexView/dexSel/allTrades/openPositions).
 const bundle = (state) => (0, eval)('(function(){' + state +
-  [ 'tradeDex','dexOk','dexFilter','knownDexes','dexPositions','viewFilter','tableFilter','tradeRow','moneyRow','rangeActive','inRange','periodTrades','periodTradesAll' ].map(grabFn).join('\n') +
-  ';return {tradeDex,dexFilter,knownDexes,dexPositions,viewFilter,tableFilter,tradeRow,moneyRow,periodTrades,periodTradesAll,' +
+  [ 'tradeDex','dexOk','dexFilter','knownDexes','dexPositions','viewFilter','tableFilter','tradeRow','moneyRow','rangeActive','inRange','periodTrades','periodTradesAll','closedTrades','closedMoney' ].map(grabFn).join('\n') +
+  ';return {tradeDex,dexFilter,knownDexes,dexPositions,viewFilter,tableFilter,tradeRow,moneyRow,periodTrades,periodTradesAll,closedTrades,closedMoney,' +
   'set:(v,d,s)=>{view=v??view; dexView=d??dexView; if(s)dexSel=new Set(s);},' +
   'get openPositions(){return openPositions}};})()');
 
@@ -57,6 +57,8 @@ await t('trade rows and money rows: positions are listed and scored, day rows ar
   ok(ids(f.periodTradesAll()) === 'p,r1', 'money: perp trades and spot day rows, never a position: ' + ids(f.periodTradesAll()));
   ok(ids(f.periodTradesAll(true)) === 'p,s1,s2,s3', 'the table: every trade row, open, closed and MOVED, no day rows: ' + ids(f.periodTradesAll(true)));
   f.set('spot'); ok(ids(f.periodTrades()) === 's1' && ids(f.periodTradesAll()) === 'r1', 'the spot view keeps the split');
+  f.set('combined'); ok(ids(f.closedTrades()) === 'p,s1' && ids(f.closedMoney()) === 'p,r1', 'the period-free helpers: the same two populations: ' + ids(f.closedTrades()) + ' / ' + ids(f.closedMoney()));
+  ok(ids(f.closedTrades(t => t.market === 'spot')) === 's1' && ids(f.closedMoney(t => t.id === 'p')) === 'p', 'narrowed');
   f.set('perp'); ok(ids(f.periodTrades()) === 'p' && ids(f.periodTradesAll()) === 'p', 'perps alone are both');
 });
 

@@ -137,7 +137,7 @@ function replayFillSteps(dir, events){
 // the time it was written, so it counts as a live plan), and plans older than 30 days are dropped.
 function planAttachPending(){
   if(typeof journal!=='object'||!journal||!Array.isArray(allTrades))return 0;
-  const now=Date.now(), m=pplanMatches(journal,allTrades,now); let n=0;
+  const now=Date.now(), m=pplanMatches(journal,allTrades.filter(t=>tradeRow(t)&&!t.movedOut),now); let n=0; // a plan attaches to a trade, never to a spot day row or a balance that left
   for(const {key,tid} of m){ const p=journal[key], j=ensureJ(tid);
     j.plan={entry:p.entry>0?p.entry:'',stop:p.stop,target:p.target>0?p.target:'',at:p.at}; if(p.setup)j.plan.why=p.setup;
     if(!j.setup&&p.setup)j.setup=p.setup;

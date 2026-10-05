@@ -645,7 +645,7 @@ function socPostHtml(D, id){
 }
 
 // ---- the composer ----
-function socJournalTrades(){ return allTrades.filter(t=>t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
+function socJournalTrades(){ return allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan&&t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
 function socComposeHtml(D){
   const back=`<a class="pz-back" href="#social" data-soc-sub="feed">${pzI('back',20)}Feed</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;

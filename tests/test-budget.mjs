@@ -74,7 +74,7 @@ try {
     // Oct 2026: the perp P&L audit (engine.js pnlAudit, the panel in journal.js), the Audit button on the reconciliation
     // note, and the owner-only archive: about 10 KB raw / 3 KB gzipped on both screens
     // (2040 / 1698 raw, 692 / 572 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2045, 695],
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2050, 695],
     ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1705, 575],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {

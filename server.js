@@ -1195,7 +1195,7 @@ function createApp(opts) {
     const all = picked.filter(E.moneyRow), rows = picked.filter(E.tradeRow);
     const closed = rows.filter(t => !t.isOpen && !t.movedOut);
     E._oneR = E.computeOneR(closed);
-    return { all, rows, closed, settings, builtAt };
+    return { all, rows, closed, picked, settings, builtAt };
   }
   function shapeTrade(t, withEvents) {
     const j = E.journal[t.id] || null;
@@ -1451,13 +1451,17 @@ function createApp(opts) {
     const snap = currentSnapshot();
     setEngineState({});
     const { trades } = ensureTrades();
+    // closed trade rows (perp trades, spot positions) for counts and trade statistics; money rows
+    // (perp trades, spot day rows) for every sum — engine.js: tradeRow / moneyRow
     const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut).sort((a, b) => a.closeTime - b.closeTime);
+    const money = trades.filter(t => !t.isOpen && t.closeTime && E.moneyRow(t));
     // "today" on the trader's calendar (the app's clock setting), not the container's zone
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
     const todayKey = dayOf(Date.now());
     let todayNet = 0, todayN = 0;
-    for (const t of closed) if (dayOf(t.closeTime) === todayKey) { todayNet += t.net; todayN++; }
+    for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayN++;
+    for (const t of money) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
     const rules = (snap.settings && snap.settings.rules) || {};
     const st = { engineOk: true, todayNet, todayN, tripLimit: parseFloat(rules.dailyLossLimit) || 0 };
     const market = readMarket();
@@ -1470,13 +1474,14 @@ function createApp(opts) {
         : { positions: 0, gross: 0, skew: 0, dangers: [] };
     }
     const w30 = closed.filter(t => t.closeTime >= Date.now() - 30 * 86400000);
+    const m30 = money.filter(t => t.closeTime >= Date.now() - 30 * 86400000);
     if (w30.length) {
       E._oneR = E.computeOneR(w30);
-      const s = E.computeStats(w30, w30);
+      const s = E.computeStats(w30, m30);
       st.stats30 = { n: w30.length, net: s.net, winRate: s.winRate, expectancy: s.expectancy,
         profitFactor: isFinite(s.profitFactor) ? s.profitFactor : null, fees: s.fees };
     }
-    try { const g = E.monthlyGoalModel(closed, (snap.settings && snap.settings.goals) || null); if (g) st.goals = g; } catch (e) {}
+    try { const g = E.monthlyGoalModel(trades, (snap.settings && snap.settings.goals) || null); if (g) st.goals = g; } catch (e) {}
     try {
       const files = fs.readdirSync(reportsDir).filter(f => /^weekly-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
       if (files.length) st.digest = digestText(JSON.parse(fs.readFileSync(path.join(reportsDir, files[files.length - 1]), 'utf8')));
@@ -1523,7 +1528,7 @@ function createApp(opts) {
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
     const todayKey = dayOf(Date.now());
-    let todayNet = 0; for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
+    let todayNet = 0; for (const t of trades) if (!t.isOpen && t.closeTime && E.moneyRow(t) && dayOf(t.closeTime) === todayKey) todayNet += t.net;
     // every cached wallet, not just saved ones — todayNet already covers all cached
     // wallets via ensureTrades, and the two feeding different wallet sets skewed alerts
     let funding24h = 0; const cut = Date.now() - 86400000;
@@ -1584,7 +1589,7 @@ function createApp(opts) {
     const z = zonedDayHour(now, zone);
     const J = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
     // only trades from the last ~day can be "today": skip formatting the whole history
-    const today = trades.filter(t => !t.isOpen && t.closeTime && t.closeTime > now - 36 * 3600e3
+    const today = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut && t.closeTime > now - 36 * 3600e3
       && zonedDayHour(t.closeTime, zone).day === z.day);
     const de = J['day:' + z.day];
     return { dayKey: z.day, hour: z.hour, tradesToday: today.length,
@@ -1694,17 +1699,19 @@ function createApp(opts) {
     setEngineState({});
     const { trades } = ensureTrades();
     const WEEK = 7 * 86400000;
-    const win = (a, b) => trades.filter(t => !t.isOpen && t.closeTime >= a && t.closeTime < b);
+    const win = (a, b) => trades.filter(t => !t.isOpen && E.tradeRow(t) && !t.movedOut && t.closeTime >= a && t.closeTime < b); // completed trades
+    const winM = (a, b) => trades.filter(t => !t.isOpen && t.closeTime && E.moneyRow(t) && t.closeTime >= a && t.closeTime < b); // money rows for sums
     const wk = win(monday - WEEK, monday), prev = win(monday - 2 * WEEK, monday - WEEK);
-    if (!wk.length && !prev.length) return null; // nothing to say — don't write empty reports
+    const wkM = winM(monday - WEEK, monday), prevM = winM(monday - 2 * WEEK, monday - WEEK);
+    if (!wk.length && !prev.length && !wkM.length && !prevM.length) return null; // nothing to say — don't write empty reports
     const sumNet = a => a.reduce((x, t) => x + t.net, 0);
     E._oneR = E.computeOneR(wk);
-    const s = wk.length ? E.computeStats(wk, wk) : null;
+    const s = (wk.length || wkM.length) ? E.computeStats(wk, wkM) : null;
     const best = wk.length ? wk.reduce((m, t) => t.net > m.net ? t : m) : null;
     const worst = wk.length ? wk.reduce((m, t) => t.net < m.net ? t : m) : null;
     const digest = {
       week: tag, from: monday - WEEK, to: monday, generatedAt: Date.now(),
-      n: wk.length, net: +sumNet(wk).toFixed(2), prevN: prev.length, prevNet: +sumNet(prev).toFixed(2),
+      n: wk.length, net: +sumNet(wkM).toFixed(2), prevN: prev.length, prevNet: +sumNet(prevM).toFixed(2),
       stats: s, best: best ? { coin: best.symbol || best.coin, net: best.net } : null,
       worst: worst ? { coin: worst.symbol || worst.coin, net: worst.net } : null,
       webhookSent: !hasDelivery(), // no delivery channel configured counts as nothing pending
@@ -1878,9 +1885,9 @@ function createApp(opts) {
         _lastRefreshAt = Date.now(); _lastRefreshSummary = summary;
         const { trades } = ensureTrades();
         summary.trades = {
-          total: trades.filter(E.tradeRow).length,
+          total: trades.filter(t => E.tradeRow(t) && !t.movedOut).length,
           perp: trades.filter(t => t.market === 'perp').length,
-          spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t)).length,
+          spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut).length,
           open: trades.filter(t => t.isOpen).length,
         };
         maybeAlert().catch(e => console.warn('[ledger] alert check failed: ' + e.message)); // fire-and-forget: a manual refresh should trigger the same monitoring
@@ -1980,9 +1987,9 @@ function createApp(opts) {
           try {
             setEngineState(query);
             const { trades, builtAt } = ensureTrades();
-            counts = { total: trades.filter(E.tradeRow).length,
+            counts = { total: trades.filter(t => E.tradeRow(t) && !t.movedOut).length,
               perp: trades.filter(t => t.market === 'perp').length,
-              spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t)).length,
+              spot: trades.filter(t => t.market === 'spot' && E.tradeRow(t) && !t.movedOut).length,
               open: trades.filter(t => t.isOpen).length, builtAt };
           } catch (e) {}
         }
@@ -2024,7 +2031,7 @@ function createApp(opts) {
         setEngineState({});
         const { trades } = ensureTrades();
         // counts are of trade rows (perp trades, spot positions); sums are of money rows (perp trades, spot day rows)
-        const rows = trades.filter(E.tradeRow), closed = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime);
+        const rows = trades.filter(t => E.tradeRow(t) && !t.movedOut), closed = trades.filter(t => E.moneyRow(t) && !t.isOpen && t.closeTime);
         m.trades_total = rows.length;
         m.open_trades = rows.filter(t => t.isOpen).length;
         m.net_total = +closed.reduce((s, t) => s + t.net, 0).toFixed(2);
@@ -2070,8 +2077,8 @@ function createApp(opts) {
         let id; try { id = decodeURIComponent(tradeM[1]); } catch (e) { throw { code: 400, msg: 'malformed percent-encoding in id' }; }
         const t = trades.find(x => x.id === id);
         if (!t) return send(404, { error: 'no trade with id ' + id });
-        const closed = trades.filter(x => !x.isOpen);
-        E._oneR = E.computeOneR(closed);   // 1R basis over the full closed set for a single lookup
+        const closed = trades.filter(x => !x.isOpen && E.tradeRow(x) && !x.movedOut);
+        E._oneR = E.computeOneR(closed);   // 1R basis over the full closed set of completed trades, for a single lookup
         return send(200, shapeTrade(t, true));
       }
 
@@ -2179,14 +2186,14 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/projection') {
-        const { all } = prepare(query);
         const lookback = Math.max(0, Math.floor(qnum(query.lookback, 0)));
         const horizon = Math.max(1, Math.min(3650, Math.floor(qnum(query.horizon, qnum(query.days, 90)))));
         // horizon × paths is capped so one request can't hold the server for long
         const paths = Math.max(50, Math.min(2000, Math.floor(2e6 / horizon), Math.floor(qnum(query.paths, 400))));
         const block = Math.max(0, Math.floor(qnum(query.block, 0)));
         const seed = query.seed != null && query.seed !== '' && query.seed !== 'auto' ? (parseInt(query.seed, 10) >>> 0) : null;
-        const base = E.projBaseline(all, lookback);
+        const { picked } = prepare(query); // projBaseline splits money rows and trade rows itself
+        const base = E.projBaseline(picked, lookback);
         if (!base) return send(200, { baseline: null, projection: null, note: 'no closed trades in the selected window' });
         const projection = E.projectForward(base.daily, horizon, paths, seed, block);
         const { daily, ...baseline } = base;
@@ -2381,12 +2388,12 @@ function createApp(opts) {
       }
 
       if (url === '/api/v1/export/trades.csv') {
-        const { all } = prepare(query);
+        const { rows: picked } = prepare(query); // trade rows: perp trades and spot positions, not spot day rows
         const cols = ['id', 'wallet', 'label', 'market', 'coin', 'symbol', 'dir', 'isOpen',
           'openTime', 'openISO', 'closeTime', 'closeISO', 'durationMs', 'maxSize', 'avgEntry', 'avgExit',
           'pnl', 'fees', 'funding', 'net', 'r', 'retPct', 'fills', 'liquidated', 'tags', 'notes'];
         const rows = [cols.join(',')];
-        for (const t of [...all].sort((a, b) => a.closeTime - b.closeTime)) {
+        for (const t of [...picked].sort((a, b) => a.closeTime - b.closeTime)) {
           const j = E.journal[t.id] || {};
           rows.push([t.id, t.wallet && t.wallet.address, t.wallet && t.wallet.label, t.market, t.coin,
             t.symbol || '', t.dir, t.isOpen ? 1 : 0,
@@ -2474,7 +2481,7 @@ function createApp(opts) {
     // attributeFunding sets each trade's net (P&L − fees); funding rows aren't fetched here — they
     // barely move one trade's result and never decide whether it was a loss by more than $1
     const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
-    const closed = trades.filter(t => !t.isOpen && t.closeTime && !t.movedOut);
+    const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut);
     // days on the member's own clock (the zone their app reports), so both sides score the same days
     return E.pzBehaviorDays(closed, { dayOf: zoneDay(tz || 'UTC'), isLoss: n => n < -1 /* same fixed rule as the app's PZ_LOSS */ })
       .map(d => ({ k: d.key, s: d.score, n: d.n, f: Object.keys(d.flags || {}).filter(x => d.flags[x] > 0) }));
@@ -2486,7 +2493,7 @@ function createApp(opts) {
     if (!engine.ok || !E.pzTiltAlerts || !E.pzTiltAlertPick) return null;
     const a = String(addr).toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
     const fills = await recentFills(a); if (!fills) return null;
-    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
+    const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(t => E.tradeRow(t) && !t.movedOut); // trade rows: perp trades and spot positions, not spot day rows or balances moved out
     const now = (opts.now || Date.now)(), dayOf = zoneDay(tz || 'UTC');
     return E.pzTiltAlertPick(E.pzTiltAlerts(trades, { now, dayOf, isLoss: n => n < -1 }), state, now, dayOf(now));
   };

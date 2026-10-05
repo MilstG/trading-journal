@@ -170,7 +170,7 @@ const PZ_RULE_LABEL={setups:'Only my setups',coins:'Only these markets',until:'N
 const PZ_SETUP_DEFAULTS=['Breakout','Pullback','Trend continuation','Range fade','Reversal','News'];
 function pzPlanCheck(key){
   const e=journal['day:'+key]||{}, R=e.rules||{}, out=[];
-  const opened=allTrades.filter(t=>t.openTime&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
+  const opened=allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan&&t.openTime&&dayKey(t.openTime)===key), closedD=(gameContext().ctx.byDay||{})[key]||[];
   const add=(k,ok,detail)=>out.push({k,label:PZ_RULE_LABEL[k],ok,detail}), lab=(k,label,ok,detail)=>out.push({k,label,ok,detail});
   // a setup is within the rule by name, or by naming the same playbook (an alias of a chosen playbook counts)
   if(Array.isArray(R.setups)&&R.setups.length){ const pbs=pbList(), want=new Set(R.setups.map(s=>s.toLowerCase())), wantPb=new Set(R.setups.map(s=>playbookFor(s,pbs)).filter(Boolean).map(p=>p.id)), tagged=opened.filter(t=>journal[t.id]&&journal[t.id].setup);
@@ -452,7 +452,7 @@ function pzCoachStatus(force){
 }
 function pzCoachFacts(D){
   const g=D.g, ctx=g.ctx, now=Date.now(), from30=pzRangeStart(30,now), k30=dayKey(from30), e=D.dayE||{}, day=D.day;
-  const s30=pzStatsFor(ctx.trades,from30), r=v=>v==null||!isFinite(v)?null:Math.round(v*100)/100;
+  const s30=pzStatsFor(ctx.trades,from30,ctx.money), r=v=>v==null||!isFinite(v)?null:Math.round(v*100)/100;
   const yK=g.days.filter(d=>d.key<D.todayK).slice(-1)[0], ye=yK?(journal['day:'+yK.key]||{}).eod:null;
   const prof=pzProfile(ctx.closed);
   return {
