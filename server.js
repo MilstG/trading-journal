@@ -1009,6 +1009,23 @@ function createApp(opts) {
     }
     return f;
   };
+  // The home-screen icons (icons/{ledger,pulse}-*.png), each addressed by its content hash (/icons/x.png?v=hash):
+  // phones cache a touch icon by URL for a long time, so a redrawn logo under the same URL stayed the old one.
+  const _iconFiles = new Map();
+  const iconFile = (name) => {
+    if (!/^(ledger|pulse)-(180|192|512|maskable-512)$/.test(name)) return null;
+    const file = path.join(__dirname, 'icons', name + '.png');
+    let st; try { st = fs.statSync(file); } catch (e) { return null; }
+    if (!st.isFile()) return null;
+    let f = _iconFiles.get(name);
+    if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) {
+      const buf = fs.readFileSync(file);
+      f = { mtime: st.mtimeMs, size: st.size, buf, hash: crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12) };
+      _iconFiles.set(name, f);
+    }
+    return f;
+  };
+  const iconUrl = (name) => { const f = iconFile(name); return '/icons/' + name + '.png' + (f ? '?v=' + f.hash : ''); };
   // Each screen gets only the scripts it uses: a script tag marked data-only="journal" or "keel" goes in
   // that screen's page only (Chart.js is journal-only: Keel never draws one). Opened from disk,
   // ledger.html still loads everything.
@@ -1025,8 +1042,9 @@ function createApp(opts) {
     if (files.some(f => !f)) return { error: 'app scripts missing on server: deploy the app/ folder next to ledger.html' };
     const fonts = [...new Set([...raw.matchAll(/url\(app\/fonts\/([a-z0-9-]+\.woff2)\)/g)].map(m => m[1]))].map(n => [n, fontFile(n)]);
     const rawHash = prev && prev.raw === raw ? prev.rawHash : crypto.createHash('sha1').update(raw).digest('hex');
-    // one version for every screen: a change to the page, any script or any font is a new version
-    const sig = rawHash + ':' + files.map(f => f.hash).join(',') + ':' + fonts.map(([n, f]) => n + (f ? f.hash : '-')).join(',');
+    const icons = { journal: iconUrl('ledger-180'), keel: iconUrl('pulse-180') }, touchIcon = icons[surface];
+    // one version for every screen: a change to the page, any script, any font or either home-screen icon is a new version
+    const sig = rawHash + ':' + files.map(f => f.hash).join(',') + ':' + fonts.map(([n, f]) => n + (f ? f.hash : '-')).join(',') + ':' + icons.journal + ',' + icons.keel;
     if (!_appHtml || _appHtml.sig !== sig) _appHtml = { sig };
     if (!_appHtml[surface]) {
       const ver = crypto.createHash('sha1').update(sig).digest('hex').slice(0, 12), fh = new Map(fonts.map(([n, f]) => [n, f && f.hash]));
@@ -1039,8 +1057,8 @@ function createApp(opts) {
         // name, icon and manifest from the HTML as served and ignores the page's own later changes to them
         // (the inline data: ones in ledger.html only serve a copy opened from disk, which can't be installed).
         .replace(/<link rel="manifest" href="[^"]*">/, '<link rel="manifest" href="' + (surface === 'keel' ? '/pulse.webmanifest' : '/manifest.webmanifest') + '">')
-        .replace(/<link rel="apple-touch-icon" href="[^"]*">/, '<link rel="apple-touch-icon" href="/icons/' + (surface === 'keel' ? 'pulse' : 'ledger') + '-180.png">')
-        .replace(/<title>[^<]*<\/title>/, surface === 'keel' ? '<title>Daruma — Ledger</title>' : '$&')
+        .replace(/<link rel="apple-touch-icon" href="[^"]*">/, '<link rel="apple-touch-icon" href="' + touchIcon + '">')
+        .replace(/<title>[^<]*<\/title>/, surface === 'keel' ? '<title>Daruma</title>' : '$&')
         .replace(/<meta name="apple-mobile-web-app-title" content="[^"]*">/, surface === 'keel' ? '<meta name="apple-mobile-web-app-title" content="Daruma">' : '$&'));
       _appHtml[surface] = { mtime: st.mtimeMs, size: st.size, raw, rawHash, sig, ver, buf, gz: zlib.gzipSync(buf, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20) + '"' };
     }
@@ -2698,30 +2716,31 @@ function createApp(opts) {
     }
     // Two installable apps from one origin: the journal (/) and Daruma (/daruma), each with PNG icons
     // (192 / 512, and a maskable 512 for Android's shapes) so phones install them as real apps.
-    const appIcons = n => [{ src: '/icons/' + n + '-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icons/' + n + '-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: '/icons/' + n + '-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }];
+    const appIcons = n => [{ src: iconUrl(n + '-192'), sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: iconUrl(n + '-512'), sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: iconUrl(n + '-maskable-512'), sizes: '512x512', type: 'image/png', purpose: 'maskable' }];
     if (req.method === 'GET' && url === '/manifest.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
       return res.end(JSON.stringify({ id: '/', name: 'Ledger — trade journal', short_name: 'Ledger',
         description: 'Your trades rebuilt from fills, with a journal, review and diagnostics.',
         start_url: homeKeel ? '/ledger.html' : '/', scope: '/', display: 'standalone', orientation: 'any', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity'], icons: appIcons('ledger'),
-        shortcuts: [{ name: 'Daruma', short_name: 'Daruma', url: '/daruma', icons: [{ src: '/icons/pulse-192.png', sizes: '192x192', type: 'image/png' }] }] }));
+        shortcuts: [{ name: 'Daruma', short_name: 'Daruma', url: '/daruma', icons: [{ src: iconUrl('pulse-192'), sizes: '192x192', type: 'image/png' }] }] }));
     }
     // the id keeps the view's old name so phones that installed it as Pulse update in place to Daruma
     if (req.method === 'GET' && url === '/pulse.webmanifest') {
       res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
-      return res.end(JSON.stringify({ id: '/pulse', name: 'Daruma — Ledger', short_name: 'Daruma',
+      return res.end(JSON.stringify({ id: '/pulse', name: 'Daruma', short_name: 'Daruma',
         description: 'Readiness, discipline and risk for your trading day.',
         start_url: '/daruma', scope: '/', display: 'standalone', orientation: 'portrait', background_color: '#0A0C0F', theme_color: '#0A0C0F',
         categories: ['finance', 'productivity', 'health'], icons: appIcons('pulse'),
         shortcuts: [{ name: 'Prep', url: '/daruma#checkin' }, { name: 'Journal', url: '/daruma#journal' }, { name: 'Full journal', url: '/ledger.html' }] }));
     }
-    { const m = req.method === 'GET' && /^\/icons\/(ledger|pulse)-(180|192|512|maskable-512)\.png$/.exec(url);
-      if (m) return fs.readFile(path.join(__dirname, 'icons', m[1] + '-' + m[2] + '.png'), (err, buf) => {
-        if (err) return json(res, 404, { error: 'not found' });
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=604800' }); res.end(buf); }); }
+    { const m = req.method === 'GET' && /^\/icons\/((?:ledger|pulse)-(?:180|192|512|maskable-512))\.png$/.exec(url);
+      if (m) { const f = iconFile(m[1]);
+        if (!f) return json(res, 404, { error: 'not found' });
+        const current = (query.v || '') === f.hash;
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': current ? 'public, max-age=31536000, immutable' : 'no-cache' }); return res.end(f.buf); } }
     // Daruma's logo as an SVG tile (notification icon and badge); icons/build-daruma.mjs writes it
     if (req.method === 'GET' && (url === '/pulse-icon.svg' || url === '/icon.svg')) {
       return fs.readFile(path.join(__dirname, 'icons', 'daruma.svg'), (err, buf) => {
