@@ -1266,7 +1266,9 @@ function createSocial(opts) {
   const awardsOut = m => Object.keys(m.awards || {}).filter(id => own(S.badges, id)).map(id => ({ id, name: S.badges[id].name, icon: S.badges[id].icon, desc: S.badges[id].desc, xp: S.badges[id].xp, at: m.awards[id] }));
   // ---- AI coach allowance: per member per day (their own clock), or the owner's own budget ----
   // Admins ask without a limit (null); everyone else has the day's allowance, unless the owner set one for them.
-  const coachLimitFor = m => m.admin ? null : m.coachDaily != null ? m.coachDaily : m.unlocked ? S.config.coach.dailyUnlocked
+  // fully unlocked: by hand, or as a High Ninja (the role carries it; taking the role away leaves the hand-set one as it was)
+  const unlockedOf = m => !!(m && (m.unlocked || m.ninja));
+  const coachLimitFor = m => m.admin ? null : m.coachDaily != null ? m.coachDaily : unlockedOf(m) ? S.config.coach.dailyUnlocked
     : standingLapsed(m) ? Math.min(1, S.config.coach.daily) : S.config.coach.daily; // a lapsed standing: 1 a day
   // Counted per profile and per wallet: several profiles on one wallet share its allowance, and
   // taking the wallet off a profile doesn't hand it a fresh one. A count's day follows the asker's
@@ -1308,7 +1310,7 @@ function createSocial(opts) {
       : null;
     return { price, msgs: c.msgs, bought: ex.p, max: c.max || null, xp, after: Math.max(0, after), level, levelAfter, spend: free, blocked }; };
   const coachStatusFor = m => {
-    const c = S.config.coach, lvl = (m.stats && m.stats.level) || 1, need = S.config.unlocksOn && !m.unlocked && S.config.modules.coach > 1 ? S.config.modules.coach : 0;
+    const c = S.config.coach, lvl = (m.stats && m.stats.level) || 1, need = S.config.unlocksOn && !unlockedOf(m) && S.config.modules.coach > 1 ? S.config.modules.coach : 0;
     const base = coachLimitFor(m), ex = coachExtra(m), limit = base == null ? null : base + ex.x, used = coachUsed(m), extra = ex.x > 0;
     const gate = m.banned ? 'This profile was removed from the league.' : m.admin ? null : !c.members ? 'The owner hasn’t opened the coach to members.'
       : need && lvl < need ? 'The coach unlocks at level ' + need + '.' : base <= 0 ? 'The coach is switched off for your profile.' : null;
@@ -1575,7 +1577,7 @@ function createSocial(opts) {
   const standingCfgOut = () => { const c = S.config.standing; return { on: standingOn(), bar: c.bar, grace: c.grace, years: opts.taStanding ? opts.taStanding.years(c.bar) : null }; };
   const fmtYears = y => !(y > 0) ? '—' : y < 1 ? Math.max(1, Math.round(y * 12)) + ' months' : (y < 10 ? y.toFixed(1) : String(Math.round(y))) + ' years';
   const PERKS = 'duels, competitions, the leaderboards and the coach’s full allowance';
-  const standingExempt = m => !!(m.admin || m.unlocked);
+  const standingExempt = m => !!(m.admin || unlockedOf(m));
   const standingOf = m => {
     if (!m || !standingOn()) return { state: 'off', since: null };
     // read from fills alone (m.ta.fills): the app-reported parts of Trader Age don't hold standing up
@@ -2069,7 +2071,7 @@ function createSocial(opts) {
     return changed;
   };
   // a module the owner made an unlock: the level it needs, when this member is still below it (else 0)
-  const lockedFor = (m, mod) => { const need = S.config.unlocksOn && m && !m.unlocked && S.config.modules[mod] > 1 ? S.config.modules[mod] : 0;
+  const lockedFor = (m, mod) => { const need = S.config.unlocksOn && m && !unlockedOf(m) && S.config.modules[mod] > 1 ? S.config.modules[mod] : 0;
     return need && ((m.stats && m.stats.level) || 1) < need ? need : 0; };
   const benchOut = (B, dims) => ({ on: true, at: B.at, contributors: B.contributors, members: B.members, seeds: B.seeds, min: B.min, split: B.split,
     groups: Bench.groupsFor(B, dims).map(g => ({ key: g.key, dims: g.dims, n: g.n, q: g.q, top: g.top })), improvers: impOut(B, dims) });
@@ -2094,7 +2096,7 @@ function createSocial(opts) {
     const out = { id: m.id, handle: m.handle, ...tierOf(m), level: st.level || 1, title: levelTitle(st.level || 1),
       followers: followersOf(m.id),
       following: (S.follows[m.id] || []).length, isFollowing: !!viewer && (S.follows[viewer.id] || []).includes(m.id), isMe: !!viewer && viewer.id === m.id,
-      claimed: !!m.claimed, av: avUrl(m), bio: m.bio || '', duelsOpen: !!(m.share && m.share.duels !== false), mentor: !!m.mentor, seeking: !!(m.share && m.share.seek),
+      claimed: !!m.claimed, av: avUrl(m), bio: m.bio || '', duelsOpen: !!(m.share && m.share.duels !== false), mentor: !!m.mentor, ninja: !!m.ninja, seeking: !!(m.share && m.share.seek),
       // verified Trader Age, for anyone who shares verified Discipline
       traderAge: m.ta && !m.ta.building && m.share && m.share.verify ? m.ta.age : null };
     // where the viewer stands with them, as a People card shows it: partners (asked, sent, active) and a duel already open
@@ -2108,7 +2110,7 @@ function createSocial(opts) {
       needsClaim: !!(S.config.requireClaim && m.address && m.claimed !== m.address),
       walletStatus: m.address && (S.config.approveWallets || walletStatus(m.address) === 'rejected') ? walletStatus(m.address) : null, admin: !!m.admin,
       passkeys: (m.passkeys || []).map(k => ({ id: k.id, name: k.name, at: k.at, lastUsed: k.lastUsed || null })),
-      unlocked: !!m.unlocked, grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ...(g.coach ? { coach: true } : {}) })),
+      unlocked: unlockedOf(m), grants: (m.grants || []).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at, ...(g.coach ? { coach: true } : {}) })),
       stakeNet: +m.stakeNet || 0, balance: balanceOf(m), ledger: ledgerOf(m), stakes: (m.stakes || []).slice(-30).map(g => ({ id: g.id, xp: g.xp, why: g.why, at: g.at })), coach: coachStatusFor(m), coachDetail: !!m.coachDetail,
       leagues: leaguesOf(m).map(L => ({ id: L.id, name: L.name, tier: leagueTier(L, m) })), mentor: !!m.mentor,
       push: { on: !!(m.push && m.push.subs && m.push.subs.length), prefs: sanitizePrefs(null, m.push && m.push.prefs), available: !!push },
@@ -2134,7 +2136,7 @@ function createSocial(opts) {
     const usdB = e.type === 'badge' && !(m && m.share.usd); // a feed line from before the app held those badges back
     const o = { id: e.id, at: e.at, type: e.type, text: usdB && USD_BADGE_TXT.test(e.text || '') ? 'unlocked a results badge' : e.text,
       quote: usdB && e.quote ? e.quote.replace(/(In the black|Big day) · [A-Za-z]+( · )?/g, '').replace(/ · $/, '') : e.quote,
-      handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null,
+      handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null, ninja: !!(m && m.ninja),
       admin: !e.member, kudos: e.kudos || 0, liked: !!liked && liked.has(e.id), mine: !!viewer && e.member === viewer.id };
     if (e.type === 'playbook') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {} if (d.pb && pbById(d.pb)) o.pb = d.pb; }
     if (e.type === 'post') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
@@ -2711,7 +2713,7 @@ function createSocial(opts) {
           tier: m.tier || 0, level: (m.stats && m.stats.level) || 1, xp: (m.stats && m.stats.xp) || 0, balance: balanceOf(m), streak: (m.stats && m.stats.streak) || 0,
           passkeys: (m.passkeys || []).length,
           address: m.address || null, walletStatus: m.address ? walletStatus(m.address) : null, joinedWith: m.joinedWith || (m.adminMade ? 'admin' : null), claimed: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
-          vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: !!m.unlocked, coachDaily: m.coachDaily != null ? m.coachDaily : null,
+          vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: unlockedOf(m), unlockedOwn: !!m.unlocked, ninja: !!m.ninja, coachDaily: m.coachDaily != null ? m.coachDaily : null,
           coachUsed: coachUsed(m), coachLimit: coachLimitToday(m), coachPacks: coachExtra(m).p, grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
           wallets: linkedOf(m).filter(a => a !== m.address),
           leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, mentor: !!m.mentor, admin: !!m.admin, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), standing: standingOn() ? standingOf(m).state : null, mentorXp: m.mentorXp ? (mentorXpOut(m) || {}).total || 0 : 0, createdAt: m.createdAt, lastSeen: m.lastSeen || null,
@@ -2819,6 +2821,11 @@ function createSocial(opts) {
         else if (a === 'mentor' || a === 'unmentor') { m.mentor = a === 'mentor'; // sees the days of members who let mentors in, and comments on them
           if (!m.mentor) refundHolds('mentor = ?', [m.id], () => 'isn’t a mentor here any more.'); }
         else if (a === 'unlock' || a === 'lock') m.unlocked = a === 'unlock'; // every feature, theme and the bigger coach allowance
+        else if (a === 'ninja' || a === 'unninja') { // the High Ninja role: a mark on their profile, and fully unlocked while they hold it
+          if (a === 'ninja' && !m.ninja) { m.ninja = true; m.ninjaSince = now();
+            notify(m, 'role', 'You’re a High Ninja now: every feature is unlocked, and your profile carries the star.', { title: 'High Ninja', url: '/daruma#u/' + encodeURIComponent(m.handle) });
+            if (m.share.feed) pushEvent(m, { type: 'badge', text: 'became a High Ninja ✦' }); }
+          else if (a === 'unninja') { delete m.ninja; delete m.ninjaSince; } }
         else if (a === 'coachreset') coachReset(m); // today's count back to zero, for the profile and its wallet
         else if (a === 'passkeys') { // a lost or stolen device: its passkeys stop signing in (they add new ones once back in)
           const n = (m.passkeys || []).length; m.passkeys = []; extra = { removed: n };
@@ -3676,7 +3683,7 @@ function createSocial(opts) {
         const pub = o.share.profile !== false, st = o.stats || {};
         return { handle: o.handle, av: avUrl(o), level: st.level || 1, title: levelTitle(st.level || 1), bio: pub ? o.bio || '' : '',
           style: pub && o.share.bench !== false && o.bench && o.bench.style ? o.bench.style : null,
-          active: (o.lastSeen || 0) > now() - week, duels: duelsOn && o.share.duels !== false, seeking: !!o.share.seek, mentor: !!o.mentor,
+          active: (o.lastSeen || 0) > now() - week, duels: duelsOn && o.share.duels !== false, seeking: !!o.share.seek, mentor: !!o.mentor, ninja: !!o.ninja,
           following: (S.follows[me.id] || []).includes(o.id), partner: partnerState(me, o), duelWith: duelsOn ? duelWithState(me, o) : null,
           leagues: leaguesOf(o).filter(L => mine.has(L.id)).map(L => L.name).slice(0, 3),
           askedMentor: !!(o.mentor && me.mentorAsks && me.mentorAsks[o.id]), rate: o.mentor ? rateOf(o) : null, myMentor: picksOf(me).includes(o.id) }; }) });
@@ -4298,7 +4305,7 @@ function createSocial(opts) {
           const seat = seatTaken(me, Object.keys(c.potIn || {})); if (seat) return json(res, 409, { error: seat });
           const pb = pairBlock(me, Object.keys(c.potIn || {}).map(id => S.members[id]).filter(Boolean)); if (pb) return json(res, 409, { error: pb.replace('Play this one without XP at stake.', 'This competition has a buy-in, so you can’t join this one.') });
         }
-        const need = S.config.unlocksOn && !me.unlocked && S.config.modules.compete > 1 ? S.config.modules.compete : 0;
+        const need = S.config.unlocksOn && !unlockedOf(me) && S.config.modules.compete > 1 ? S.config.modules.compete : 0;
         if (need && ((me.stats && me.stats.level) || 1) < need) return json(res, 403, { error: 'Competitions unlock at level ' + need + '.' });
         if (standingLock(me, 'Competitions')) return json(res, 403, { error: standingLock(me, 'Competitions'), standing: true });
         const ddNeed = c.type === 'return' || !!c.ddCap;
