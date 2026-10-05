@@ -127,15 +127,16 @@ function sanitizeMentorXp(b, prev) {
 const DEFAULT_CONFIG = { open: true, inviteCode: '', unlocksOn: true, requireClaim: false, approveWallets: false, vaultOn: true, guestCap: 3,
   unlocks: { trends: 2, share: 3, compete: 4 } };
 const SHARE_KEYS = ['profile', 'boards', 'global', 'page', 'feed', 'habits', 'verify', 'ret', 'usd', 'addr', 'mentor', 'bench', 'duels', 'seek'];
-// New members start with everything on except dollar P&L, the wallet address and "looking for a partner";
-// they can switch any of it off before joining or later. Existing members keep what they had.
+// New members start with everything on except % return, dollar P&L, the wallet address and "looking for a
+// partner" (the rankings count process, never profit, so returns are something to opt into); they can switch
+// any of it off before joining or later. Existing members keep what they had.
 // mentor: the league's mentors can see your trading days (scores, slips, the lesson you wrote) and comment on them
 // global: appear on the server-wide leaderboards (every member, every league)
 // page: a public badge page at /b/<name> that anyone with the link can open
 // ret: 30-day % return and drawdown, read on chain from the first wallet
 // duels: other members can challenge you 1 on 1 (you still choose whether to accept)
 // bench: an anonymous summary of your trading counts toward "traders like you" — on unless switched off
-const DEFAULT_SHARE = { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: true, usd: false, addr: false, mentor: true, bench: true, duels: true, seek: false };
+const DEFAULT_SHARE = { profile: true, boards: true, global: true, page: true, feed: true, habits: true, verify: true, ret: false, usd: false, addr: false, mentor: true, bench: true, duels: true, seek: false };
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const clampNum = (v, lo, hi) => { if (v !== null && typeof v === 'object') return null; const n = +v; return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
@@ -209,7 +210,8 @@ function sanitizeStats(b, opts) {
 function sanitizeShare(s, prev) {
   // a new member gets the defaults; an existing one keeps what they had, and a key added later
   // (like verify) stays OFF until they switch it on themselves
-  const out = prev ? Object.assign({}, DEFAULT_SHARE, { verify: false }, prev) : Object.assign({}, DEFAULT_SHARE);
+  // (ret was on by default until October 2026: a stored choice from before it existed keeps that)
+  const out = prev ? Object.assign({}, DEFAULT_SHARE, { verify: false, ret: true }, prev) : Object.assign({}, DEFAULT_SHARE);
   for (const k of SHARE_KEYS) if (s && typeof s[k] === 'boolean') out[k] = s[k];
   return out;
 }
@@ -1491,14 +1493,14 @@ function createSocial(opts) {
   // over the last 20 trading days (the app's own taStanding, app/features/trader-age.js). Under the
   // bar, or without a verified Trader Age, there are 14 days of grace; a lapse needs a trading day
   // in them, so a break freezes it. Worked out whenever it's asked, since time passes without new
-  // stats. The owner's admins and fully unlocked members are never locked.
+  // stats. The owner (their own profile), their admins and fully unlocked members are never locked.
   const standingOn = () => !!(opts.taStanding && opts.traderAge && S.config.standing.on);
   // verified Trader Age from fills alone (Discipline and steadiness); a record from before it had one falls back
   const taFills = m => m && m.ta ? m.ta.fills || m.ta : null;
   const standingCfgOut = () => { const c = S.config.standing; return { on: standingOn(), bar: c.bar, grace: c.grace, years: opts.taStanding ? opts.taStanding.years(c.bar) : null }; };
   const fmtYears = y => !(y > 0) ? '—' : y < 1 ? Math.max(1, Math.round(y * 12)) + ' months' : (y < 10 ? y.toFixed(1) : String(Math.round(y))) + ' years';
   const PERKS = 'duels, competitions, the leaderboards and the coach’s full allowance';
-  const standingExempt = m => !!(m.admin || m.unlocked);
+  const standingExempt = m => !!(m.admin || m.unlocked || m.owner); // m.owner: the profile the server's owner uses (GET /me with the access token)
   const standingOf = m => {
     if (!m || !standingOn()) return { state: 'off', since: null };
     // read from fills alone (m.ta.fills): the app-reported parts of Trader Age don't hold standing up
@@ -2020,6 +2022,8 @@ function createSocial(opts) {
       claimed: !!m.claimed, av: avUrl(m), bio: m.bio || '', duelsOpen: !!(m.share && m.share.duels !== false), mentor: !!m.mentor, seeking: !!(m.share && m.share.seek),
       // verified Trader Age, for anyone who shares verified Discipline
       traderAge: m.ta && !m.ta.building && m.share && m.share.verify ? m.ta.age : null };
+    // where the viewer stands with them, as a People card shows it: partners (asked, sent, active) and a duel already open
+    if (viewer && !out.isMe) Object.assign(out, { partner: partnerState(viewer, m), duelWith: duelWithState(viewer, m) });
     if (out.isMe) Object.assign(out, { claimedAddress: m.claimed || null, devices: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0),
       vault: m.vault ? { rev: m.vault.rev, size: m.vault.size, at: m.vault.at } : null, requireClaim: !!S.config.requireClaim, vaultOn: !!S.config.vaultOn,
       ta: m.share && m.share.verify ? m.ta || null : null, // verified Trader Age (null: the app shows its own estimate)
@@ -2268,15 +2272,23 @@ function createSocial(opts) {
     return sent; };
 
   // ---- accountability partners: two members who see each other's process and nudge each other ----
+  const partnerState = (me, o) => { const p = pairsOf(me).find(x => x.a === o.id || x.b === o.id); return p ? (p.status === 'active' ? 'active' : p.from === me.id ? 'sent' : 'asked') : null; };
+  // an open duel between two members: 'pending' (a challenge out either way) or 'active' (accepted; it may not have started)
+  const duelWithState = (me, o) => { const d = Object.values(S.duels).find(x => duelOpen(x) && ((x.a === me.id && x.b === o.id) || (x.a === o.id && x.b === me.id))); return d ? d.status : null; };
   const pairOf = (m, id) => { const p = own(S.partners, id) ? S.partners[id] : null; return p && (p.a === m.id || p.b === m.id) ? p : null; };
   const pairsOf = m => Object.values(S.partners).filter(p => p.a === m.id || p.b === m.id);
   const otherIn = (p, m) => S.members[p.a === m.id ? p.b : p.a] || null;
+  // A member's days as others see them on a partner card, a mentor's list and the duel form: the days the
+  // server scored from their wallet when they verify (and it has read some), else the days their app reported.
+  // One source and one window ("the last 7 trading days") everywhere, so one member's Discipline reads one way.
+  const daysOf = o => { const v = !!(o.share && o.share.verify && Array.isArray(o.vdays) && o.vdays.length);
+    return { days: v ? o.vdays : (o.stats && Array.isArray(o.stats.days) ? o.stats.days : []), verified: v }; };
+  const last7 = o => { const { days, verified } = daysOf(o), r = days.slice(-7);
+    return { avg7: r.length ? Math.round(r.reduce((a, d) => a + (+d.s || 0), 0) / r.length) : null, slips7: r.reduce((a, d) => a + (Array.isArray(d.f) ? d.f.length : 0), 0), n7: r.length, verified7: verified }; };
   const partnerView = (o) => { const st = o.stats || {};
-    const days = (st.days || []).slice(-14).map(d => ({ k: d.k, s: d.s, f: d.f || [] }));
-    const recent = days.slice(-7);
-    return { handle: o.handle, level: st.level || 1, streak: st.streak || 0, best: st.best || 0, days,
-      avg7: recent.length ? Math.round(recent.reduce((a, d) => a + d.s, 0) / recent.length) : null,
-      slips7: recent.reduce((a, d) => a + d.f.length, 0), challenge: st.lastChallenge || '', habits: o.share.habits ? st.habits || [] : [], seen: o.statsAt || null }; };
+    const days = daysOf(o).days.slice(-14).map(d => ({ k: d.k, s: d.s, f: d.f || [] }));
+    return Object.assign({ handle: o.handle, level: st.level || 1, streak: st.streak || 0, best: st.best || 0, days,
+      challenge: st.lastChallenge || '', habits: o.share.habits ? st.habits || [] : [], seen: o.statsAt || null }, last7(o)); };
   const pairOut = (p, m) => { const o = otherIn(p, m); if (!o || o.banned) return null;
     const out = { id: p.id, handle: o.handle, av: avUrl(o), status: p.status === 'active' ? 'active' : p.from === m.id ? 'sent' : 'received', since: p.since || p.at,
       challenge: p.challenge && p.challenge.week === S.league.week ? { text: p.challenge.text, mine: p.challenge.by === m.id } : null };
@@ -2295,10 +2307,9 @@ function createSocial(opts) {
   const menteesOf = m => members().filter(o => mentorSees(m, o));
   const commentsFor = id => (S.comments[id] || []);
   const commentOut = c => { const by = own(S.members, c.by) ? S.members[c.by] : null; return { id: c.id, day: c.day, text: c.text, at: c.at, by: by ? by.handle : 'a mentor', read: !!c.read }; };
-  const menteeSummary = o => { const st = o.stats || {}, days = (st.days || []).slice(-7);
-    return { handle: o.handle, av: avUrl(o), level: st.level || 1, streak: st.streak || 0, avg7: days.length ? Math.round(days.reduce((a, d) => a + d.s, 0) / days.length) : null,
-      slips7: days.reduce((a, d) => a + (d.f ? d.f.length : 0), 0), lastDay: days.length ? days[days.length - 1].k : null, seen: o.statsAt || null,
-      notes: commentsFor(o.id).length }; };
+  const menteeSummary = o => { const st = o.stats || {}, days = daysOf(o).days;
+    return Object.assign({ handle: o.handle, av: avUrl(o), level: st.level || 1, streak: st.streak || 0, lastDay: days.length ? days[days.length - 1].k : null, seen: o.statsAt || null,
+      notes: commentsFor(o.id).length }, last7(o)); };
   // ---- trade reviews: a trade a member sends their mentors, and the thread on it. The member and
   // the server's mentors see it while the member lets mentors in; admins read it (read-only) ----
   const REVIEWS_PER_DAY = 10, REVIEWS_KEEP = 100, REVIEW_COMMENTS_MAX = 200;
@@ -3268,7 +3279,9 @@ function createSocial(opts) {
     me.lastSeen = now();
     if (now() - (me.seenSaved || 0) > 600000) { me.seenSaved = now(); save(me); } // last seen is written at most every ten minutes
 
-    if (head === 'me' && M === 'GET') { holdSweep(); return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 }); } // the wallet counts only live holds
+    if (head === 'me' && M === 'GET') { holdSweep();
+      // the owner's own profile: their app sends the access token with this read, and the owner keeps every perk
+      if (!me.owner && adminConfigured && req.headers['authorization'] && authOk(req)) { me.owner = true; save(me); } return json(res, 200, { me: publicMember(me, me), share: me.share, tier: me.tier || 0 }); } // the wallet counts only live holds
 
     // ---- inbox: nudges, mentor notes, season results ----
     if (head === 'inbox' && M === 'GET') return json(res, 200, { items: (me.inbox || []).slice().reverse().map(x => Object.assign({}, x, { unread: x.at > (me.inboxRead || 0) })) });
@@ -3416,12 +3429,16 @@ function createSocial(opts) {
     if (head === 'duels' && parts[1] === 'with' && parts[2] && M === 'GET') {
       let h = parts[2]; try { h = decodeURIComponent(h); } catch (e) {}
       const o = byHandle(String(h).replace(/^@/, '')); if (!o || o.banned) return json(res, 404, { error: 'There’s no such member.' });
-      const h2h = { w: 0, l: 0, d: 0 };
-      for (const d of Object.values(S.duels)) if (d.status === 'done' && ((d.a === me.id && d.b === o.id) || (d.a === o.id && d.b === me.id))) {
+      const h2h = { w: 0, l: 0, d: 0, open: 0 };
+      for (const d of Object.values(S.duels)) if ((d.status === 'done' || duelOpen(d)) && ((d.a === me.id && d.b === o.id) || (d.a === o.id && d.b === me.id))) {
+        if (duelOpen(d)) { h2h.open++; continue; } // a challenge out or a duel running: not "a first duel together"
         const r = d.result || {}; if (!r.winner) h2h.d++; else if (r.winner === me.id) h2h.w++; else h2h.l++; }
-      const st = o.stats || {}, d30 = disciplineOver(o.share.verify && Array.isArray(o.vdays) ? o.vdays : st.days, addDaysKey(todayKey(), -6), todayKey(), 1);
-      const busy = Object.values(S.duels).some(d => duelOpen(d) && ((d.a === me.id && d.b === o.id) || (d.a === o.id && d.b === me.id)));
-      return json(res, 200, { other: { handle: o.handle, av: avUrl(o), level: st.level || 1, verified: !!(o.share.verify && o.address), ret: !!(o.share.ret && walletFor(o)), week: d30.avg == null || !o.share.profile ? null : Math.round(d30.avg) }, // a private profile keeps its Discipline to itself
+      const st = o.stats || {}, l7 = last7(o);
+      const cur = Object.values(S.duels).find(d => duelOpen(d) && ((d.a === me.id && d.b === o.id) || (d.a === o.id && d.b === me.id)));
+      // the open duel itself, so the form can say so at the top: waiting on whom, or accepted and when it starts
+      const busy = cur ? { id: cur.id, status: cur.status, awaiting: cur.status === 'pending' ? (cur.awaiting === me.id ? 'me' : 'them') : null, start: cur.start || null, label: duelName(cur) } : false;
+      return json(res, 200, { other: { handle: o.handle, av: avUrl(o), level: st.level || 1, verified: !!(o.share.verify && o.address), ret: !!(o.share.ret && walletFor(o)),
+          week: l7.avg7 == null || !o.share.profile ? null : l7.avg7, weekVerified: l7.verified7, weekN: l7.n7 }, // a private profile keeps its Discipline to itself; week: the last 7 trading days, as on a partner card
         room: o.share.profile ? stakeRoomOf(o) : null, // a private profile doesn't hint at its XP
         h2h, accepting: o.share.duels !== false && o.id !== me.id, busy, me: { room: stakeRoomOf(me), verified: !!(me.share.verify && me.address), ret: !!(me.share.ret && walletFor(me)) } });
     }
@@ -3488,7 +3505,6 @@ function createSocial(opts) {
     if (head === 'people' && !parts[1] && M === 'GET') {
       const q = cleanText(query.q, 40).replace(/^@/, '').toLowerCase(), f = ['duels', 'partner', 'mentor'].includes(query.f) ? query.f : '';
       const duelsOn = !!S.config.duels.on, week = 7 * 86400000;
-      const pairWith = o => pairsOf(me).find(p => p.a === o.id || p.b === o.id);
       let list = members().filter(o => o.id !== me.id && !o.banned && (o.mentor || (o.share && o.share.profile !== false)));
       if (f === 'duels') list = list.filter(o => duelsOn && o.share.duels !== false);
       if (f === 'partner') list = list.filter(o => o.share.seek);
@@ -3498,11 +3514,11 @@ function createSocial(opts) {
       list.sort((a, b) => (q ? (+b.handle.toLowerCase().startsWith(q)) - (+a.handle.toLowerCase().startsWith(q)) : 0) || ((b.lastSeen || 0) - (a.lastSeen || 0)));
       const mine = new Set(leaguesOf(me).map(L => L.id));
       return json(res, 200, { total, page, more: total > (page + 1) * size, people: list.slice(page * size, (page + 1) * size).map(o => {
-        const pub = o.share.profile !== false, pr = pairWith(o), st = o.stats || {};
+        const pub = o.share.profile !== false, st = o.stats || {};
         return { handle: o.handle, av: avUrl(o), level: st.level || 1, title: levelTitle(st.level || 1), bio: pub ? o.bio || '' : '',
           style: pub && o.share.bench !== false && o.bench && o.bench.style ? o.bench.style : null,
           active: (o.lastSeen || 0) > now() - week, duels: duelsOn && o.share.duels !== false, seeking: !!o.share.seek, mentor: !!o.mentor,
-          following: (S.follows[me.id] || []).includes(o.id), partner: pr ? (pr.status === 'active' ? 'active' : pr.from === me.id ? 'sent' : 'asked') : null,
+          following: (S.follows[me.id] || []).includes(o.id), partner: partnerState(me, o), duelWith: duelsOn ? duelWithState(me, o) : null,
           leagues: leaguesOf(o).filter(L => mine.has(L.id)).map(L => L.name).slice(0, 3),
           askedMentor: !!(o.mentor && me.mentorAsks && me.mentorAsks[o.id]), rate: o.mentor ? rateOf(o) : null, myMentor: picksOf(me).includes(o.id) }; }) });
     }

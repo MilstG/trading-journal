@@ -1446,6 +1446,19 @@ function createApp(opts) {
   }
   // Plain-data snapshot for the pure telegramReply router. Every field beyond engineOk is
   // optional — the router degrades to "refresh first" answers when caches are cold.
+  // Today's realized result the way the app's tripwire reads it (dailyLossToday): every fill today on a
+  // trade row (closes, partial closes of open positions, fees), not whole trades that happened to close
+  // today. Summing closed trade rows put a spot position's whole life on its last day and a partial
+  // sell on none; adding spot day rows to them counted spot twice.
+  function realizedToday(trades, dayOf, todayKey) {
+    let net = 0;
+    for (const t of trades) {
+      if (!E.tradeRow(t)) continue;
+      if (t.rz) { for (const [tm, v] of t.rz) if (dayOf(tm) === todayKey) net += v; }
+      else if (!t.isOpen && t.closeTime && dayOf(t.closeTime) === todayKey) net += t.net;
+    }
+    return net;
+  }
   function buildBotState() {
     if (!engine.ok) return { engineOk: false };
     const snap = currentSnapshot();
@@ -1456,8 +1469,8 @@ function createApp(opts) {
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
     const todayKey = dayOf(Date.now());
-    let todayNet = 0, todayN = 0;
-    for (const t of closed) if (dayOf(t.closeTime) === todayKey) { todayNet += t.net; todayN++; }
+    let todayN = 0; for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayN++;
+    const todayNet = realizedToday(trades, dayOf, todayKey);
     const rules = (snap.settings && snap.settings.rules) || {};
     const st = { engineOk: true, todayNet, todayN, tripLimit: parseFloat(rules.dailyLossLimit) || 0 };
     const market = readMarket();
@@ -1523,7 +1536,7 @@ function createApp(opts) {
     const zone = nudgeZone(snap.settings);
     const dayOf = (ms) => zonedDayHour(ms, zone).day;
     const todayKey = dayOf(Date.now());
-    let todayNet = 0; for (const t of closed) if (dayOf(t.closeTime) === todayKey) todayNet += t.net;
+    const todayNet = realizedToday(trades, dayOf, todayKey);
     // every cached wallet, not just saved ones — todayNet already covers all cached
     // wallets via ensureTrades, and the two feeding different wallet sets skewed alerts
     let funding24h = 0; const cut = Date.now() - 86400000;
@@ -1584,7 +1597,7 @@ function createApp(opts) {
     const z = zonedDayHour(now, zone);
     const J = (snap.journal && typeof snap.journal === 'object') ? snap.journal : {};
     // only trades from the last ~day can be "today": skip formatting the whole history
-    const today = trades.filter(t => !t.isOpen && t.closeTime && t.closeTime > now - 36 * 3600e3
+    const today = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut && !t.orphan && t.closeTime > now - 36 * 3600e3 // trades the journal lists, not spot day rows
       && zonedDayHour(t.closeTime, zone).day === z.day);
     const de = J['day:' + z.day];
     return { dayKey: z.day, hour: z.hour, tradesToday: today.length,
@@ -1694,17 +1707,21 @@ function createApp(opts) {
     setEngineState({});
     const { trades } = ensureTrades();
     const WEEK = 7 * 86400000;
-    const win = (a, b) => trades.filter(t => !t.isOpen && t.closeTime >= a && t.closeTime < b);
-    const wk = win(monday - WEEK, monday), prev = win(monday - 2 * WEEK, monday - WEEK);
-    if (!wk.length && !prev.length) return null; // nothing to say — don't write empty reports
+    // trades (perp trades, spot positions) for counts, stats and best/worst; money rows (spot by the day it
+    // was realized) for the week's net — the two together counted spot twice and day rows as trades
+    const win = (a, b, row) => trades.filter(t => row(t) && !t.isOpen && !(t.orphan || t.offRecord) && t.closeTime >= a && t.closeTime < b);
+    const isTrade = t => E.tradeRow(t) && !t.movedOut;
+    const wk = win(monday - WEEK, monday, isTrade), prev = win(monday - 2 * WEEK, monday - WEEK, isTrade);
+    const wkM = win(monday - WEEK, monday, E.moneyRow), prevM = win(monday - 2 * WEEK, monday - WEEK, E.moneyRow);
+    if (!wk.length && !prev.length && !wkM.length && !prevM.length) return null; // nothing to say — don't write empty reports
     const sumNet = a => a.reduce((x, t) => x + t.net, 0);
     E._oneR = E.computeOneR(wk);
-    const s = wk.length ? E.computeStats(wk, wk) : null;
+    const s = wk.length ? E.computeStats(wk, wkM) : null;
     const best = wk.length ? wk.reduce((m, t) => t.net > m.net ? t : m) : null;
     const worst = wk.length ? wk.reduce((m, t) => t.net < m.net ? t : m) : null;
     const digest = {
       week: tag, from: monday - WEEK, to: monday, generatedAt: Date.now(),
-      n: wk.length, net: +sumNet(wk).toFixed(2), prevN: prev.length, prevNet: +sumNet(prev).toFixed(2),
+      n: wk.length, net: +sumNet(wkM).toFixed(2), prevN: prev.length, prevNet: +sumNet(prevM).toFixed(2),
       stats: s, best: best ? { coin: best.symbol || best.coin, net: best.net } : null,
       worst: worst ? { coin: worst.symbol || worst.coin, net: worst.net } : null,
       webhookSent: !hasDelivery(), // no delivery channel configured counts as nothing pending

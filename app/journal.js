@@ -1576,6 +1576,7 @@ function renderDataHealth(){
 // sample hour, then the backfill with a spending cap. The server merges what it finds into its fill
 // cache; the next load merges that into this browser's (data-io.js: srvArchived) and reconstructs.
 let _arcTimer=null;
+function _arcApplied(v){ try{ if(v!==undefined)localStorage.setItem('arc_applied',String(v)); else return +localStorage.getItem('arc_applied')||0; }catch(e){ return 0; } }
 // Opened from the Data health strip (seams on record) or from the server-sync bar (always there, so a
 // check, a diagnose or a running backfill stays reachable once the seams are gone); anchored below either.
 async function toggleArchivePanel(anchor){
@@ -1632,7 +1633,10 @@ async function toggleArchivePanel(anchor){
   };
   const poll=async()=>{ clearTimeout(_arcTimer); try{ const st=await call(''); draw(st);
       if(st.job&&st.job.state==='running')_arcTimer=setTimeout(poll,3000);
-      else if(st.job&&st.job.state==='done'&&!st.job.applied){ st.job.applied=true; if(st.job.added){ out(`Done: ${st.job.added} fills recovered — loading them…`); loadAll(); } } }
+      // a finished job's fills are loaded once (remembered by its start, across panel openings and reloads);
+      // an incomplete one recovered fills too
+      else if(st.job&&(st.job.state==='done'||st.job.state==='incomplete')&&st.job.added&&_arcApplied()!==st.job.startedAt){ _arcApplied(st.job.startedAt);
+        out(`${st.job.state==='done'?'Done':'Partly done'}: ${st.job.added} fills recovered — loading them…`); loadAll(); } }
     catch(e){ p.innerHTML='<b>Hyperliquid’s archive</b> — '+esc(e.message)+' <button class="df-btn" id="arcClose">Close</button>'; $('arcClose').onclick=toggleArchivePanel; } };
   poll();
 }

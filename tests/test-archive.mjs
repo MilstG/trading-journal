@@ -404,6 +404,21 @@ await t('a day without its _done marker (or with one that counts no fills) is re
   eq(a.writes[0].fills.map(f => f.tid), [seamFills[0].tid], 'only the finished day’s fills are merged');
   const late = await a.backfill({ address: ADDR, fromDay: '20260618' }); eq([late.total, late.incompleteDays], [1, ['20260618']]); await settle(a);
 });
+await t('hours whose download failed are not recovered: some failing ends incomplete, all failing ends failed, never "done"', async () => {
+  const failing = match => async (url, init) => { if (init.method === 'GET' && match(new URL(url).pathname)) throw new Error('connection reset'); return hlFetch(url, init); };
+  const h = arch({ ARCHIVE_INDEX_BUCKET: '' }, failing(p => /\/node_fills\/hourly\/\d+\/13$/.test(p)));
+  await h.backfill({ address: ADDR, maxGB: 1 }); const j = await settle(h);
+  eq([j.state, j.total, j.done, j.errors], ['incomplete', 4, 4, 1], JSON.stringify(j)); eq(h.writes.length, 1, 'what did arrive is merged');
+  const all = arch({ ARCHIVE_INDEX_BUCKET: '' }, failing(p => /\/node_fills\/hourly\//.test(p)));
+  await all.backfill({ address: ADDR, maxGB: 1 }); eq((await settle(all)).state, 'failed');
+});
+await t('a busy wallet: 200,000 fills in one day of the index are merged (no spread push to overflow the stack)', async () => {
+  const P = 'index/big/d/', N = 200000, T0 = Date.UTC(2026, 5, 15, 12), lines = [];
+  for (let i = 0; i < N; i++) lines.push(JSON.stringify([ADDR, { coin: 'ETH', px: '3000', sz: '0.01', side: i % 2 ? 'A' : 'B', time: T0 + i, startPosition: String(i % 2 ? 0.01 : 0), dir: 'x', closedPnl: '0', hash: '0x1', oid: i, tid: 9e6 + i, fee: '0', feeToken: 'USDC', crossed: true }]));
+  INDEX[P + '20260615/' + shard + '.jsonl.gz'] = zlib.gzipSync(lines.join('\n') + '\n'); INDEX[P + '20260615/_done'] = Buffer.from(JSON.stringify({ hours: 24, fills: N }));
+  const a = arch({ ARCHIVE_INDEX_PREFIX: 'index/big/' }); await a.backfill({ address: ADDR }); const j = await settle(a);
+  eq([j.state, j.fills], ['done', N], JSON.stringify(j)); eq(a.writes[0].fills.length, N);
+});
 await t('an index bucket that does not exist yet: check says so, and backfill falls back to the hours plan', async () => {
   const dir4 = mkdtempSync(join(tmpdir(), 'ledger-archive4-'));
   const { writeFileSync, mkdirSync } = await import('node:fs');

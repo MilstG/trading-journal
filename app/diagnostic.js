@@ -333,7 +333,7 @@ const _WORKER_DISPATCH="onmessage=function(e){var d=e.data;"+
  "var res=mineInsights(P,V);var deep=deepScan(P,V);_progress=null;out={res:res,deep:deep};}"+
  "else if(d.kind==='pool'){if(d.payload.reset)_pool={key:d.payload.key,trades:[]};"+ // the miner's pool, kept here across scans (see _workerPool)
  "if(_pool&&_pool.key===d.payload.key){for(var i=0;i<d.payload.trades.length;i++)_pool.trades.push(d.payload.trades[i]);}out={key:_pool&&_pool.key,n:_pool?_pool.trades.length:0};}"+
- "else if(d.kind==='reconstruct'){out={perp:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'perp'),d.payload.frows||[]),"+
+ "else if(d.kind==='reconstruct'){if(d.payload.tz)settings.tz=d.payload.tz;out={perp:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'perp'),d.payload.frows||[]),"+
  "spot:attributeFunding(reconstructTrades(d.payload.fills,d.payload.addr,'spot'),[])};}"+
  "else if(d.kind==='diagmc'){if(d.payload.be!=null)_be=d.payload.be;out=diagMCCompute(d.payload);}"+ // the sync path's own function — identical values
  "else throw new Error('unknown kind: '+d.kind);"+
@@ -416,7 +416,7 @@ async function minerScan(pool,basis,seed,onProgress,poolKey){
   }
 }
 async function reconstructCompute(fills,frows,addr){
-  try{ return await runInWorker('reconstruct',{fills,frows,addr}); }
+  try{ return await runInWorker('reconstruct',{fills,frows,addr,tz:settings.tz}); } // the app's clock: spot day rows end at its midnight
   catch(e){ return {perp:attributeFunding(reconstructTrades(fills,addr,'perp'),frows),
                     spot:attributeFunding(reconstructTrades(fills,addr,'spot'),[])}; }
 }

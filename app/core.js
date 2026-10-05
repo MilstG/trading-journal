@@ -98,7 +98,7 @@ async function gunzipStr(bytes){
 }
 // exchange-key wallets keep two small extras beside the fills: the symbols traded (Binance asks
 // per symbol) and the positions held before the history begins (venues.js)
-const cacheExtras=(to,from)=>{ if(from&&from.syms)to.syms=from.syms; if(from&&from.seed)to.seed=from.seed; if(from&&from.more)to.more=from.more; if(from&&from.twapFull)to.twapFull=true; if(from&&from.archivedAt)to.archivedAt=from.archivedAt; return to; };
+const cacheExtras=(to,from)=>{ if(from&&from.syms)to.syms=from.syms; if(from&&from.seed)to.seed=from.seed; if(from&&from.more)to.more=from.more; if(from&&from.twapFull)to.twapFull=true; if(from&&from.archivedAt)to.archivedAt=from.archivedAt; if(from&&from.trunc)to.trunc=from.trunc; return to; };
 async function packFillCache(fills,last){
   const gz=await gzipBytes(JSON.stringify(fills));
   return gz ? {v:3,gz,last,count:fills.length,savedAt:Date.now()}
@@ -109,7 +109,7 @@ async function unpackFillCache(c){
   if(c.v===2&&Array.isArray(c.fills))return c;
   if(c.v===3&&c.gz){ try{ const fills=JSON.parse(await gunzipStr(c.gz));
     if(!Array.isArray(fills))return null;
-    const out={v:2,fills,last:c.last,savedAt:c.savedAt}; if(c.syms)out.syms=c.syms; if(c.seed)out.seed=c.seed; if(c.more)out.more=c.more; if(c.twapFull)out.twapFull=true; if(c.archivedAt)out.archivedAt=c.archivedAt; return out;
+    const out={v:2,fills,last:c.last,savedAt:c.savedAt}; if(c.syms)out.syms=c.syms; if(c.seed)out.seed=c.seed; if(c.more)out.more=c.more; if(c.twapFull)out.twapFull=true; if(c.archivedAt)out.archivedAt=c.archivedAt; if(c.trunc)out.trunc=c.trunc; return out;
   }catch(e){ return null; } }
   return null;
 }
@@ -716,15 +716,17 @@ async function fetchAllFills(addr, since=0){
     start=mx>start?mx:mx+1; pages++; await sleep(40);
     if(pages>=60) truncated=true; // hit the hard page cap with a full final batch — older history is missing
   }
+  const capped=truncated, first=all.length?all.reduce((m,f)=>f.time<m?f.time:m,Infinity):null; // the oldest regular fill served (TWAP slices aside)
   // The exchange only serves the 10,000 most recent fills: a fetch that reaches that many
   // (from zero, or a gap since the cached watermark) may be missing everything older.
+  // No refetch reaches past that window; only the archive can (why: 'window', else 'cap').
   if(all.length>=10000) truncated=true;
   // TWAP slice fills live in a separate endpoint and are NOT in userFills — merge them in so
   // TWAP-executed trades reconstruct correctly instead of silently going missing.
   const tw=await fetchTwapFills(addr,since);
   for(const f of tw.fills) if(!same.has(fillSame(f))) add(f);
   if(tw.partial&&typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.twap=true;
-  return {fills:all, truncated, twapPartial:!!tw.partial};
+  return {fills:all, truncated, why:truncated?(capped?'cap':'window'):null, first, twapPartial:!!tw.partial};
 }
 // Every TWAP slice fill the exchange still serves, from `since` on. userTwapSliceFills returns
 // only the newest 2,000 slices: a wallet that TWAPs out of its positions had everything older

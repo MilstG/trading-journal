@@ -10,7 +10,7 @@
 // their mentors for review (reviews.js). Returns are read on the server from the
 // chain, never sent from here. Sample data is never posted.
 const SOC_KEY_STORE='pz_social_key';
-const SOC_DEFAULT_SHARE={profile:true,boards:true,global:true,page:true,feed:true,habits:true,verify:true,ret:true,usd:false,addr:false,mentor:true,bench:true,duels:true,seek:false};
+const SOC_DEFAULT_SHARE={profile:true,boards:true,global:true,page:true,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false,mentor:true,bench:true,duels:true,seek:false};
 const SOC_SHARE_ROWS=[
   ['profile','Public profile','Your profile page: streak, discipline, badges. Name, level and league show wherever you appear'],
   ['boards','Process leaderboards','Weekly XP, discipline and streak boards in your leagues'],
@@ -384,7 +384,7 @@ function socJoinHtml(){
   if(cfg&&!cfg.open)return `${pzHead('Leagues · competitions · friends','Social')}${pzLinkCardHtml()}<section class="pz-card"><p class="pz-sub">This league isn’t taking new members right now. Ask the person who shared the link.</p></section>`;
   const linkCard=pzLinkCardHtml(), d=SOC.draft;
   // one column: the pitch, your name and the button first; what you share folds below with a one-line summary
-  const on=SOC_SHARE_ROWS.filter(r=>d[r[0]]).map(r=>r[1]), off=SOC_SHARE_ROWS.filter(r=>!d[r[0]]&&r[3]).map(r=>r[1]);
+  const on=SOC_SHARE_ROWS.filter(r=>d[r[0]]).map(r=>r[1]), off=SOC_SHARE_ROWS.filter(r=>!d[r[0]]&&(r[3]||r[0]==='ret')).map(r=>r[1]); // what money and identity stay hidden
   const autoL=(cfg&&cfg.autoLeagues)||[], skip=SOC.joinSkip||(SOC.joinSkip=[]);
   const rankings=autoL.length?`<div><span class="pz-lbl" style="color:var(--pz-muted)">Also join ${autoL.length===1?'this ranking':'these rankings'}</span>${autoL.map(L=>`<div class="pz-toggle"><span style="flex:1"><b id="socjl_${esc(L.id)}">${esc(L.name)}</b><span>${L.metricLabel?'Ranked by '+esc(L.metricLabel)+' · ':''}you can leave it, or join others, any time</span></span>
       <button type="button" role="switch" class="pz-switch" data-soc-jskip="${esc(L.id)}" aria-checked="${!skip.includes(L.id)}" aria-labelledby="socjl_${esc(L.id)}"><i></i></button></div>`).join('')}</div>`:'';

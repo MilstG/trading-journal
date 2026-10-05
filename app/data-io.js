@@ -93,7 +93,7 @@ async function bootFromCache(){
       _recMemo[a.toLowerCase()]={sig:recSig(fc.fills,fc.last||fc.fills.reduce((m,f)=>f.time>m?f.time:m,0),frows,lastF),perp:r.perp,spot:r.spot};
       return r.perp.concat(r.spot); }));
     if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
-    allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm;
+    allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm; migrateSpotJournalIds(allTrades);
     if(view&&view.v===1&&view.key===walletsSig()){ openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
       spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; dataAudit=null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
     $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
@@ -117,7 +117,8 @@ const fundKey=r=>r.time+'|'+r.coin;
 // the loaded wallets' fill coverage as one (engine.js: coverageOf): volumes and seams add up, the
 // shares are re-derived from the sums, and the wallets with seams are named
 function mergeCoverage(acc,c){
-  if(!c)return acc; if(!acc)acc={perpVol:0,spotVol:0,exchPerpVlm:0,exchVlm:0,perpShare:null,allShare:null,gaps:0,gapNotional:0,offRecord:0,gapFirst:null,gapLast:null,months:{},wallets:[]};
+  if(!c)return acc; if(!acc)acc={perpVol:0,spotVol:0,exchPerpVlm:0,exchVlm:0,perpShare:null,allShare:null,gaps:0,gapNotional:0,offRecord:0,gapFirst:null,gapLast:null,truncLast:null,months:{},wallets:[]};
+  if(c.truncFrom!=null&&(acc.truncLast==null||c.truncFrom>acc.truncLast))acc.truncLast=c.truncFrom; // whole only after every truncated wallet's first fill
   acc.perpVol+=c.perpVol||0; acc.spotVol+=c.spotVol||0;
   if(c.exchPerpVlm!=null)acc.exchPerpVlm+=c.exchPerpVlm; if(c.exchVlm!=null)acc.exchVlm+=c.exchVlm;
   acc.perpShare=acc.exchPerpVlm>0?Math.min(1,acc.perpVol/acc.exchPerpVlm):null; acc.allShare=acc.exchVlm>0?Math.min(1,(acc.perpVol+acc.spotVol)/acc.exchVlm):null;
@@ -128,13 +129,41 @@ function mergeCoverage(acc,c){
   if(c.gaps&&c.label&&!acc.wallets.includes(c.label))acc.wallets.push(c.label);
   return acc;
 }
+// A history cut short stays cut short on every later load: the cause and the time from which the fills
+// are whole live in the fill cache (trunc: {why, from}). why: 'window' (the exchange serves only the newest
+// 10,000 fills; no refetch reaches past them, only the archive can), 'cap' (the 60-page cap), 'gap' (an
+// incremental fetch that hit a limit: fills missing between the cache and now). A whole refetch that isn't
+// cut clears it; for 'window' and 'cap', so do fills recovered from before `from` (the archive). Pure.
+// incremental: fetched from the cache's watermark (else from zero: a first load, or a full refetch merged
+// into the cache, where cached fills older than the cut keep the cache's own record).
+function fillTrunc(prev, fr, fills, incremental){
+  let m=Infinity; for(const f of (fills||[]))if(f.time<m)m=f.time;
+  const first=fr&&fr.first!=null?fr.first:null;
+  if(fr&&fr.truncated){
+    if(incremental)return {why:'gap', from:prev&&prev.from!=null&&first!=null?Math.max(prev.from,first):first};
+    if(first!=null&&m<first-86400e3)return prev||null; // the cache reaches past the cut: what it held stands
+    return {why:fr.why||'window', from:first}; }
+  if(!incremental||!prev)return null; // a whole fetch from zero: nothing is cut
+  if(prev.why!=='gap'&&prev.from!=null&&m<prev.from-86400e3)return null; // older fills recovered (the archive)
+  return prev;
+}
+let fillsTruncWindow=false; // a loaded wallet starts at the exchange's 10,000-fill window: only the archive reaches past it
+function truncNoteOf(label, tr){
+  const d=tr.from!=null?new Date(tr.from).toISOString().slice(0,10):null;
+  if(tr.why==='window')return label+' (the exchange serves only the newest 10,000 fills'+(d?': nothing before '+d:'')+'; a refetch can’t reach past them, the archive can)';
+  if(tr.why==='gap')return label+' (fills missing between an earlier load and '+(d||'now')+'; Full refetch reads them again)';
+  return label+' (the fetch stopped at the 60-page cap'+(d?' · whole from '+d:'')+'; Full refetch reads it again)';
+}
 // rebuilding trades is skipped when a wallet's fills and funding haven't changed since the last rebuild
 var _recMemo={};
-const recSig=(fills,lastF,frows,lastR)=>fills.length+'|'+lastF+'|'+frows.length+'|'+lastR;
+const recSig=(fills,lastF,frows,lastR)=>fills.length+'|'+lastF+'|'+frows.length+'|'+lastR+'|'+(settings.tz||'')+'|'+(settings.tzZone||''); // the clock too: spot day rows end at its midnight
 async function loadWallet(w,fresh,spotP){
   if(venueOf(w)!=='hyperliquid')return loadVenueWallet(w,fresh); // Lighter, Bybit, Binance: venues.js
   const a=w.address, fcKey='flc:'+a, fdKey='fnd:'+a, lgKey='lgu:'+a;
-  const [fc0,fd0,lg0]=fresh?[null,null,null]:await Promise.all([idbGet(fcKey).then(unpackFillCache).catch(()=>null),idbGet(fdKey).catch(()=>null),idbGet(lgKey).catch(()=>null)]);
+  // A full refetch (fresh) reads every fill the exchange serves from zero but merges it into the fill cache,
+  // as the server's does: replacing the cache lost every fill past the exchange's 10,000-fill window and
+  // every one recovered from the archive. Funding and the ledger are fetched whole again.
+  const [fc0,fd0,lg0]=await Promise.all([idbGet(fcKey).then(unpackFillCache).catch(()=>null),fresh?null:idbGet(fdKey).catch(()=>null),fresh?null:idbGet(lgKey).catch(()=>null)]);
   let fcache=fc0&&fc0.v===2&&Array.isArray(fc0.fills)?fc0:null;
   let fdc=fd0&&fd0.v===1&&Array.isArray(fd0.rows)?fd0:null, lgc=lg0&&lg0.v===1&&Array.isArray(lg0.rows)?lg0:null;
   // a new device on a synced server: start from the server's copy instead of the whole history
@@ -142,7 +171,7 @@ async function loadWallet(w,fresh,spotP){
   if(!fcache&&!fresh){ const seed=await srvSeed(a); if(seed){ fcache=seed.fills; fdc=fdc||seed.funding; lgc=lgc||seed.ledger; seededTrunc=seed.truncated; } }
   // everything that doesn't need the fills starts now
   const fundP=fetchFunding(a,fdc?fdc.last:0), ledP=fetchLedgerUpdates(a,lgc?lgc.last:0), spotStP=fetchSpotState(a), portP=fetchPortfolio(a);
-  const fr=await fetchAllFills(a,fcache&&fcache.last?fcache.last:0); // resume AT the watermark — the merge dedupes, boundary-ms fills are never skipped
+  const fr=await fetchAllFills(a,fcache&&fcache.last&&!fresh?fcache.last:0); // resume AT the watermark — the merge dedupes, boundary-ms fills are never skipped
   // A cache from before TWAP slices were paged holds only the newest 2,000 of them: the first load
   // after that fetches the whole slice history once (older than the watermark, so the resume above
   // never sees it) and marks the cache, so every load after is incremental again.
@@ -154,16 +183,18 @@ async function loadWallet(w,fresh,spotP){
     const seen=new Set(fcache.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time));
     fills=fcache.fills.slice();
     for(const f of fr.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fills.push(f); added++; } }
-    // A truncated incremental fetch means a gap between the cache and now that the
-    // advancing watermark would otherwise paper over permanently — say so loudly.
-    if(fr.truncated)truncNote=labelFor(w)+' (since last load — Shift-click Load all for a full refetch)';
-    else if(seededTrunc)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
-  } else { fills=fr.fills; added=fills.length; if(fr.truncated)truncNote=labelFor(w); }
+    if(seededTrunc&&!fr.truncated)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
+  } else { fills=fr.fills; added=fills.length; }
   const nAll=fills.length; fills=dedupeFills(fills); const removed=nAll-fills.length; // a combined fill and its pieces, served by two sources
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
+  // A truncated fetch (from zero: the exchange's window; incremental: a gap between the cache and now
+  // that the advancing watermark would otherwise paper over) stays said on every later load — it used
+  // to be said once and forgotten on the next refresh while the history still started at the window
+  const trunc=fillTrunc(fcache&&fcache.trunc,fr,fills,!!fcache&&!fresh);
+  if(trunc)truncNote=truncNoteOf(labelFor(w),trunc);
   // nothing new: the stored copy is already current, so skip re-compressing it
   if(archivedNew)added+=archivedNew;
-  if(!fcache||added>0||removed>0||fcache.seeded||twapFull!==!!fcache.twapFull){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt})); }catch(e){} }
+  if(!fcache||added>0||removed>0||fcache.seeded||twapFull!==!!fcache.twapFull||JSON.stringify(trunc||null)!==JSON.stringify(fcache.trunc||null)){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt,trunc})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);
@@ -197,9 +228,9 @@ async function loadWallet(w,fresh,spotP){
   const unified=unifiedAccountOf(sbal,port,spotVal);
   // how much of this wallet's history the fills explain: served volume against the exchange's own, and
   // the seams the reconstruction found (position changes with no fill behind them)
-  const coverage=coverageOf(fills,perpTr,port); coverage.label=labelFor(w);
+  const coverage=coverageOf(fills,perpTr,port); coverage.label=labelFor(w); coverage.truncFrom=trunc?trunc.from:null;
   let audit=null; try{ audit=pnlAudit(fills,fm.rows,port.hist&&port.hist.perp,perpTr,port.win); audit.label=labelFor(w); audit.address=a; }catch(e){}
-  return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
+  return {added,cached:!!fcache,truncNote,trunc,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
     accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage,audit};
 }
 // one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
@@ -214,7 +245,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[], spanAcc={day:{all:[],perp:[]},week:{all:[],perp:[]},month:{all:[],perp:[]}};
-  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null, auditAcc=[];
+  let truncated=[], truncWin=false, newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null, auditAcc=[];
   _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
   try{
     // spot metadata and every wallet load side by side — two wallets at a time, so a long list
@@ -226,7 +257,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     results.forEach((r,i)=>{ const w=settings.wallets[i];
       // the reason is worth reading (offline, a key to add on this device, a region the exchange refuses)
       if(r.failed){ failed.push(loadFailNote(w,r.error)); return; }
-      newFills+=r.added; if(r.cached)cachedN++; if(r.truncNote)truncated.push(r.truncNote);
+      newFills+=r.added; if(r.cached)cachedN++; if(r.truncNote)truncated.push(r.truncNote); if(r.trunc&&r.trunc.why==='window')truncWin=true;
       for(const f of r.flows)flowsAcc.push(f); skippedAcc+=r.skipped; totalFills+=r.nFills;
       trades=trades.concat(r.trades); positions=positions.concat(r.positions);
       if(r.accountValue!=null)accVals.push(r.accountValue);
@@ -247,11 +278,11 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       // every wallet failing is not "no activity": say why, and only that
       setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
     sampleLeave(); // real trades: the account's own journal and settings are back
-    allTrades=trades.sort((a,b)=>b.openTime-a.openTime);
+    allTrades=trades.sort((a,b)=>b.openTime-a.openTime); migrateSpotJournalIds(allTrades);
     openPositions=positions; accountValue=accVals.length?accVals.reduce((a,b)=>a+b,0):null;
     spotHoldings=spotHold; spotAccountValue=spotAccVals.length?spotAccVals.reduce((a,b)=>a+b,0):null;
     unifiedAccountValue=uniVals.length?uniVals.reduce((a,b)=>a+b,0):null;
-    fillsTruncated=truncated;
+    fillsTruncated=truncated; fillsTruncWindow=truncWin;
     ledFlows=flowsAcc.sort((a,b)=>a.time-b.time); ledSkipped=skippedAcc;
     // purge stale open-window MAE/MFE for trades that have since closed — the ratchet
     // re-measures them entry-to-exit on its next pass
@@ -266,7 +297,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     const whole=t=>!t.isOpen&&!(t.orphan||t.offRecord), perpN=allTrades.filter(t=>whole(t)&&t.market==='perp').length, spotN=allTrades.filter(t=>whole(t)&&t.market==='spot'&&tradeRow(t)&&!t.movedOut).length, ok=settings.wallets.length-failed.length;
     const offN=allTrades.filter(t=>!t.isOpen&&t.offRecord).length, offNote=offN?` · ${offN} with an incomplete result (fills missing)`:'';
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
-    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${offNote}${cacheNote}${failed.length?' · '+failed.join(' · '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
+    setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${offNote}${cacheNote}${failed.length?' · '+failed.join(' · '):''}${truncated.length?' · ⚠ fill history truncated for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);
   }catch(e){ console.error(e);
     // a background refresh failing (offline laptop, transient outage) is not banner-worthy —
     // it retries in 3 minutes; only a user-initiated load earns the error treatment
@@ -503,7 +534,7 @@ async function loadFromPaste(fills,opts){
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
   openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
-  fillsTruncated=[];
+  fillsTruncated=[]; fillsTruncWindow=false;
   // a big history: let the browser breathe between taking in the worker's trades and the first full
   // render (two tasks of a few hundred ms instead of one long one at 30k trades)
   if(allTrades.length>=5000)await new Promise(r=>setTimeout(r,0));
@@ -515,6 +546,9 @@ async function loadFromPaste(fills,opts){
 /* ============================ events ============================ */
 $('addWallet').onclick=addWalletFromInput;
 $('loadAll').onclick=e=>loadAll({fresh:!!(e&&(e.shiftKey||e.altKey))});
+// the same full refetch without a modifier key, which a phone doesn't have (Tools menu, the data-health line)
+function fullRefetch(){ const tm=$('toolsMenu'); if(tm)tm.open=false; setStatus('Full refetch: reading every fill the exchange still serves…',true); return loadAll({fresh:true}); }
+{ const fb=$('fullRefetch'); if(fb)fb.onclick=fullRefetch; }
 $('walletAddr').addEventListener('keydown',e=>{ if(e.key==='Enter')loadAll(); });
 $('walletLabel').addEventListener('keydown',e=>{ if(e.key==='Enter')$('walletAddr').focus(); });
 $('wallets').addEventListener('click',e=>{ const b=e.target.closest('[data-rm]'); if(b)removeWallet(+b.dataset.rm);
@@ -651,7 +685,9 @@ $('tzBtn').addEventListener('click',async ()=>{ settings.tz=settings.tz==='utc'?
   _minerCache={key:null,res:null,deep:null}; // session/dow buckets changed → invalidate mined patterns
   await Store.set(S_KEY,settings);
   // a custom date range is resolved on the active clock — re-resolve it, or its edges stay on the old one
-  if($('pFrom').value||$('pTo').value)applyRange(); else if(allTrades.length)render(); });
+  if($('pFrom').value||$('pTo').value)applyRange(); else if(allTrades.length)render();
+  // spot money is cut into days on this clock when trades are rebuilt: rebuild them (from the cache, quietly)
+  if(allTrades.some(t=>t.spotRz&&t.wallet)&&!(typeof _sample!=='undefined'&&_sample))loadAll({auto:true}); });
 $('gearBtn').addEventListener('click',e=>{ e.stopPropagation(); $('settingsPop').classList.toggle('hide'); });
 $('settingsPop').addEventListener('click',e=>e.stopPropagation());
 document.addEventListener('click',e=>{ const p=$('settingsPop'); if(p&&!p.classList.contains('hide'))p.classList.add('hide');
@@ -901,3 +937,30 @@ $('exportCsv').onclick=()=>{
   dlBlob(blob,'ledger-trades-'+new Date().toISOString().slice(0,10)+'.csv');
   setStatus('Exported '+rows.length+' trades (current filters) to CSV.');
 };
+// Spot used to be cut into a trade per sell run (ids ending in the run's first time, the still-held
+// rest in '<first buy>:held'); a spot trade is now the whole position, keyed by its first fill, and
+// its money sits in day rows ('rz:<day>') no list shows. Notes
+// written on the old pieces would match nothing: each is laid onto the position whose span holds it
+// (notes appended, tags and mistakes joined, the rest only where the position has none). The old key
+// stays (another device may still run the old build); laying it on twice changes nothing.
+function migrateSpotJournalIds(trades){
+  if(typeof journal!=='object'||!journal||(typeof _sample!=='undefined'&&_sample))return 0;
+  const ids=new Set(), rz={}, pos={}; let moved=0;
+  for(const t of trades){ if(t.spotRz){ rz[t.id]=t; continue; } ids.add(t.id); if(!t.spotPos)continue; const k=t.id.slice(0,t.id.lastIndexOf(':')+1); (pos[k]=pos[k]||[]).push(t); }
+  for(const key of Object.keys(journal)){
+    if(ids.has(key)||key.indexOf(':spot:')<0)continue;
+    // a day row (the journal inbox used to offer them) goes to the position its last fill was in
+    const m=/^(.*:spot:[^:]+:)(rz:)?(\d+)(:held)?$/.exec(key); if(!m||!pos[m[1]]||(m[2]&&!rz[key]))continue;
+    const at=m[2]?rz[key].closeTime:+m[3], src=journal[key]; if(!src||typeof src!=='object'||Array.isArray(src))continue;
+    const to=pos[m[1]].find(t=>t.openTime<=at&&(t.isOpen||at<=t.closeTime)); if(!to)continue;
+    const dst=journal[to.id]&&typeof journal[to.id]==='object'?journal[to.id]:{}; let ch=false;
+    for(const [f,v] of Object.entries(src)){
+      if(f==='updatedAt'||v==null||v==='')continue;
+      if(f==='notes'&&typeof v==='string'&&typeof dst.notes==='string'&&dst.notes){ if(!dst.notes.includes(v)){ dst.notes+='\n\n'+v; ch=true; } }
+      else if(Array.isArray(v)&&Array.isArray(dst[f])){ const have=new Set(dst[f].map(x=>JSON.stringify(x))); for(const x of v)if(!have.has(JSON.stringify(x))){ dst[f].push(x); ch=true; } }
+      else if(dst[f]==null||dst[f]===''){ dst[f]=Array.isArray(v)?v.slice():v; ch=true; }
+    }
+    if(ch){ journal[to.id]=dst; markJEdit(to.id); moved++; }
+  }
+  return moved;
+}
