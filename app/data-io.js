@@ -212,7 +212,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   if(typeof socWalletsSeen==='function')try{ socWalletsSeen(); }catch(e){} // the league's admin sees every wallet entered (pulse-social.js)
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
-  let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[];
+  let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[], spanAcc={day:{all:[],perp:[]},week:{all:[],perp:[]},month:{all:[],perp:[]}};
   let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null;
   _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
   try{
@@ -232,7 +232,8 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       if(r.port.all!=null){portAll+=r.port.all;portAllHas=true;}
       if(r.port.perp!=null){portPerp+=r.port.perp;portPerpHas=true;}
       if(venueOf(w)==='hyperliquid'&&r.port.all==null&&r.port.perp==null)portMissing++; // the exchange didn't answer for this wallet: the sums below understate
-      if(r.port.hist){ if(r.port.hist.all&&r.port.hist.all.length)histAll.push(r.port.hist.all); if(r.port.hist.perp&&r.port.hist.perp.length)histPerp.push(r.port.hist.perp); }
+      if(r.port.hist){ if(r.port.hist.all&&r.port.hist.all.length)histAll.push(r.port.hist.all); if(r.port.hist.perp&&r.port.hist.perp.length)histPerp.push(r.port.hist.perp);
+        for(const k in spanAcc){ const sp=r.port.hist.spans&&r.port.hist.spans[k]; if(!sp)continue; if(sp.all&&sp.all.length)spanAcc[k].all.push(sp.all); if(sp.perp&&sp.perp.length)spanAcc[k].perp.push(sp.perp); } }
       spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
       if(r.coverage)covAcc=mergeCoverage(covAcc,r.coverage);
     });
@@ -254,12 +255,13 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     // re-measures them entry-to-exit on its next pass
     { const closedIds=new Set(allTrades.filter(t=>!t.isOpen).map(t=>t.id));
       for(const id in _excM) if(_excM[id]&&_excM[id].openMeas&&closedIds.has(id)) delete _excM[id]; }
-    hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null, hist:(histAll.length||histPerp.length)?{all:sumSeries(histAll),perp:sumSeries(histPerp)}:null, partial:portMissing>0};
+    const spans={}; for(const k in spanAcc)if(spanAcc[k].all.length||spanAcc[k].perp.length)spans[k]={all:sumSeries(spanAcc[k].all),perp:sumSeries(spanAcc[k].perp)};
+    hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null, hist:(histAll.length||histPerp.length)?{all:sumSeries(histAll),perp:sumSeries(histPerp),spans}:null, partial:portMissing>0};
     dataCoverage=covAcc;
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
     saveLastView();
-    const whole=t=>!t.isOpen&&!(t.orphan||t.offRecord), perpN=allTrades.filter(t=>whole(t)&&t.market==='perp').length, spotN=allTrades.filter(t=>whole(t)&&t.market==='spot').length, ok=settings.wallets.length-failed.length;
+    const whole=t=>!t.isOpen&&!(t.orphan||t.offRecord), perpN=allTrades.filter(t=>whole(t)&&t.market==='perp').length, spotN=allTrades.filter(t=>whole(t)&&t.market==='spot'&&tradeRow(t)&&!t.movedOut).length, ok=settings.wallets.length-failed.length;
     const offN=allTrades.filter(t=>!t.isOpen&&t.offRecord).length, offNote=offN?` · ${offN} with an incomplete result (fills missing)`:'';
     const cacheNote=cachedN?` · ${newFills} new fill${newFills===1?'':'s'} since last load`:'';
     setStatus(`${totalFills} fills → ${perpN} perp + ${spotN} spot trades across ${ok} wallet${ok===1?'':'s'}${offNote}${cacheNote}${failed.length?' · '+failed.join(' · '):''}${truncated.length?' · ⚠ fill history truncated (60-page cap) for: '+truncated.join(', ')+' — oldest trades may be missing':''}`);

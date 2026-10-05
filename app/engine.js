@@ -21,33 +21,6 @@ function tallyFill(t,f,fee,portion,liq){ const notl=(portion!=null?portion:Math.
   else if(f.crossed===false){ t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
   else { t.unkFills=(t.unkFills||0)+1; t.unkNotional=(t.unkNotional||0)+notl; }
   if(liq!=null?liq:(f.liquidation || /liquidat/i.test(f.dir||''))) t.liquidated=true; }
-// Spot cycles grouped per coin per day. The spot reconstruction realizes a trade at every buy that
-// follows a sell, which is right for discrete trades but turns grid or bot activity around a held
-// balance (0.3 HYPE nibbles on a 27,000 HYPE stack, all day) into hundreds of $12 round trips that
-// drown the trade count and the expectancy. Consecutive closed spot trades on one coin that opened
-// on the same day become one trade: sums of size, notional, P&L, fees and fills, the earliest open,
-// the latest close, `cycles` saying how many went in. A holding still open stays as it is; a trade
-// whose first fill is on another day stays separate. dayOf maps a time to its day (the app's time zone when
-// known, else UTC).
-function groupSpotCycles(trades, dayOf){
-  const day=dayOf||(ms=>Math.floor(ms/86400000));
-  // a trade carried out of a sell run opens one ms after that run, so its day is its first fill's
-  const at=t=>t.events&&t.events.length?t.events[0][0]:t.openTime;
-  const asc=trades.slice().sort((a,b)=>at(a)-at(b)), out=[], last={};
-  for(const t of asc){
-    const cur=last[t.coin];
-    if(cur&&!cur.isOpen&&!t.isOpen&&day(at(cur))===day(at(t))){
-      cur.closeTime=Math.max(cur.closeTime,t.closeTime); cur.openSz+=t.openSz; cur.openNotional+=t.openNotional; cur.closeSz+=t.closeSz; cur.closeNotional+=t.closeNotional;
-      cur.pnl+=t.pnl; cur.fees+=t.fees; if(t.feesInBasis)cur.feesInBasis=(cur.feesInBasis||0)+t.feesInBasis; cur.fills+=t.fills; cur.maxSize=Math.max(cur.maxSize,t.maxSize);
-      cur.makerFills+=t.makerFills; cur.takerFills+=t.takerFills; cur.makerFee+=t.makerFee; cur.takerFee+=t.takerFee; cur.makerNotional+=t.makerNotional; cur.takerNotional+=t.takerNotional;
-      cur.liquidated=cur.liquidated||t.liquidated; cur.events=cur.events.concat(t.events); if(t.rz)cur.rz=(cur.rz||[]).concat(t.rz);
-      cur.partialHistory=!!(cur.partialHistory||t.partialHistory); cur.cycles=(cur.cycles||1)+1;
-      cur.avgEntry=cur.openSz>0?cur.openNotional/cur.openSz:cur.avgEntry; cur.avgExit=cur.closeSz>0?cur.closeNotional/cur.closeSz:cur.avgExit; cur.durationMs=cur.closeTime-cur.openTime;
-      continue; }
-    out.push(t); last[t.coin]=t;
-  }
-  return out;
-}
 function reconstructTrades(fills, addr, market){
   // Spot fees paid in a stable quote are dollars; anything else (a buy's fee comes out of the
   // token bought) is in the base token and is converted at the fill price.
@@ -84,19 +57,14 @@ function reconstructTrades(fills, addr, market){
   const liqOf=f=>{ const l=f.liquidation; if(l&&typeof l==='object'&&l.liquidatedUser&&me)return String(l.liquidatedUser).toLowerCase()===me;
     return !!(l||/liquidat/i.test(f.dir||'')); };
   const open={}, trades=[], EPS=1e-9, spot=market==='spot', lastAfter={};
-  // Spot only: a sell run followed by more buying (or the end of the history) is a realized
-  // trade for the amount sold, at the position's average cost; what's still held carries on.
-  // Without it, anyone who never sells down to zero had no closed spot trades at all.
-  const realize=(t,coin,f,held)=>{
-    const avg=t.openSz>0?t.openNotional/t.openSz:null;
-    const r=Object.assign({},t,{events:t.events.slice(),openSz:t.closeSz,openNotional:avg!=null?t.closeSz*avg:t.closeNotional});
-    if(avg==null)r.partialHistory=true;
-    r.avgEntry=avg!=null?avg:(t.closeSz>0?t.closeNotional/t.closeSz:0); r.avgExit=t.closeSz>0?t.closeNotional/t.closeSz:0; r.durationMs=r.closeTime-r.openTime;
-    trades.push(r);
-    const nt=newTrade(coin,f,'Long',held,avg!=null?held*avg:0,0); nt.openTime=r.closeTime+1; nt.closeTime=r.closeTime+1; nt.maxSize=held;
-    if(avg==null)nt.partialHistory=true; nt.firstEntryPx=avg!=null?avg:t.firstEntryPx; nt.carried=true;
-    nt.bagOpen=t.bagOpen||t.openTime; // the holding it came from: the still-held rest keeps one id across sells
-    return nt; };
+  // Spot: a position runs from the balance leaving zero to its return to zero (dust aside): partial
+  // sells stay inside it, so a stack nibbled around for months is one open position, not a trade a
+  // day. Its money is counted apart from it, by the day it was realized (dayRz: one row per coin and
+  // day, flagged spotRz), so the equity curve, the calendar and the totals see spot P&L when it
+  // happened while the trade statistics see only round trips. The day is the app's when the
+  // time-zone helpers are here (the page, the worker, the server), else UTC.
+  const dayOf=typeof tzMidnight==='function'?(ms=>{ try{ return tzMidnight(ms); }catch(e){ return Math.floor(ms/86400000)*86400000; } }):(ms=>Math.floor(ms/86400000)*86400000);
+  const dayRz={};
   for(const f of sorted){
     const coin=f.coin, sz=Math.abs(parseFloat(f.sz));
     if(!(sz>0))continue; // a zero-size fill moves nothing (it used to open a phantom trade)
@@ -132,14 +100,21 @@ function reconstructTrades(fills, addr, market){
           t0.durationMs=t0.closeTime-t0.openTime; trades.push(t0); delete open[coin]; }
       }
     }
+    // Spot balances move without fills (a transfer, staking, a send). A position whose balance left
+    // without a sell ends where its last fill left it (movedOut); one whose balance moved while held is
+    // noted (balanceMoved) and carries on from the exchange's own figure.
+    if(spot&&open[coin]&&lastAfter[coin]!=null&&Math.abs(before-lastAfter[coin])>Math.max(EPS,1e-6*Math.max(Math.abs(before),Math.abs(lastAfter[coin])))){
+      const t0=open[coin]; t0.balanceMoved=true;
+      if(Math.abs(before)<EPS){ t0.movedOut=true; if(!(t0.openSz>0))t0.partialHistory=true;
+        t0.avgEntry=t0.openSz>0?t0.openNotional/t0.openSz:t0.firstEntryPx; t0.avgExit=t0.closeSz>0?t0.closeNotional/t0.closeSz:null; t0.durationMs=t0.closeTime-t0.openTime; trades.push(t0); delete open[coin]; }
+    }
     const wasFlat=!spot&&lastAfter[coin]!=null&&Math.abs(lastAfter[coin])<EPS; // the fills saw this coin go flat, so a new trade must start from 0
     lastAfter[coin]=after;
     let t=open[coin];
-    if(spot&&t&&signed>0&&t.closeSz>0&&Math.abs(before)>EPS)t=open[coin]=realize(t,coin,f,Math.abs(before));
     // a fill acting on a position held before the history began (closing it, or flipping through it)
     // belongs to the side that was held; a fresh position takes the side it opens
     if(!t){ t=open[coin]=newTrade(coin,f,(Math.abs(before)>EPS?before>0:after>0)?'Long':'Short',0,0,0);
-      if(!spot&&Math.abs(before)>EPS){ t.partialHistory=true; // held before its first served fill: the entry is unknown, adds or not
+      if(Math.abs(before)>EPS){ t.partialHistory=true; // held before its first served fill: the entry is unknown, adds or not
         // the fills saw this coin go flat earlier, so the position it starts from was opened in fills we
         // never got: a seam like the others (it was counted as none, so coverage read whole)
         if(wasFlat){ t.gaps=1; t.gapSz=Math.abs(before); t.gapNotional=Math.abs(before)*px; t.gapTimes=[f.time]; } } }
@@ -148,6 +123,11 @@ function reconstructTrades(fills, addr, market){
     // counting the whole fill on both inflated volume, taker share and the fee-tier model
     const feeHere=flipped&&sz>0?fee*Math.abs(before)/sz:fee;
     const liq=liqOf(f);
+    if(spot){ // the day's realized result on this coin: spot money lives here, by the day it happened
+      const dk=dayOf(f.time), rk=coin+'|'+dk; let r=dayRz[rk]; if(!r){ r=dayRz[rk]=newTrade(coin,f,'Spot',0,0,0); r.spotRz=true; r.dayStart=dk; }
+      r.fills++; r.fees+=fee; if(feeBasis)r.feesInBasis=(r.feesInBasis||0)+feeBasis; r.pnl+=pnl; r.closeTime=f.time;
+      if(signed>0){ r.openSz+=sz; r.openNotional+=sz*px; } else { r.closeSz+=sz; r.closeNotional+=sz*px; }
+      r.maxSize=Math.max(r.maxSize,Math.abs(after)); tallyFill(r,f,fee,null,liq); r.events.push([f.time,px,sz,signed>0?1:-1]); }
     t.fills++; t.fees+=feeHere; if(feeBasis)t.feesInBasis=(t.feesInBasis||0)+feeBasis; t.pnl+=pnl; t.closeTime=f.time; tallyFill(t,f,feeHere,flipped?Math.abs(before):null,liq);
     if(f.time>rzSince)(t.rz||(t.rz=[])).push([f.time,pnl-(fee-feeBasis)]); // the whole fill once (a flip's opening fee included; a spot buy's token fee is already in closedPnl's basis)
     if(flipped){
@@ -170,24 +150,18 @@ function reconstructTrades(fills, addr, market){
         nt.maxSize=Math.abs(after); nt.fills++; nt.fees+=fee-feeHere; tallyFill(nt,f,fee-feeHere,Math.abs(after),liq); nt.events.push([f.time,px,Math.abs(after),1]); open[coin]=nt; }
     }
   }
-  for(const c in open){ let t=open[c];
-    // spot: what was sold since the last buy is realized even though some is still held
-    // the real balance is what stays open: tokens that arrived by transfer count too
-    if(spot&&t.closeSz>0){ const held=Math.abs(lastAfter[c]||0); const last=t.events[t.events.length-1]||[t.closeTime];
-      t=realize(t,c,{time:last[0],px:String(t.openSz>0?t.openNotional/t.openSz:0),sz:'0'},held); if(!(held>EPS))continue; }
+  for(const c in open){ const t=open[c];
     t.isOpen=true; if(!(t.openSz>0))t.partialHistory=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
     t.avgExit=null; t.durationMs=Date.now()-t.openTime; trades.push(t); }
-  // spot: a day's cycles on one coin are one trade (groupSpotCycles); the day is the app's when the
-  // time-zone helpers are here (the page, the worker, the server), else UTC
-  const dayOf=typeof tzMidnight==='function'?(ms=>{ try{ return tzMidnight(ms); }catch(e){ return Math.floor(ms/86400000); } }):null;
-  const out=spot?groupSpotCycles(trades,dayOf):trades;
-  out.forEach(t=>{ t.market=market; if(market==='spot')t.dir='Spot';
+  if(spot)for(const k in dayRz){ const r=dayRz[k]; r.isOpen=false; r.avgEntry=r.openSz>0?r.openNotional/r.openSz:(r.closeSz>0?r.closeNotional/r.closeSz:r.firstEntryPx);
+    r.avgExit=r.closeSz>0?r.closeNotional/r.closeSz:null; r.durationMs=r.closeTime-r.openTime; trades.push(r); }
+  trades.forEach(t=>{ t.market=market; if(spot){ t.dir='Spot'; if(!t.spotRz)t.spotPos=true; }
     // entry drift: how far your size-weighted entry landed from your first fill, in the adverse direction
-    t.entryDrift=(!t.partialHistory&&t.firstEntryPx>0&&t.avgEntry>0)
+    t.entryDrift=(!t.partialHistory&&!t.spotRz&&t.firstEntryPx>0&&t.avgEntry>0)
       ? (t.dir==='Short' ? t.firstEntryPx/t.avgEntry-1 : t.avgEntry/t.firstEntryPx-1) : null;
-    // a spot holding sold down in steps keeps one id while it's still held, so notes on it stay put
-    t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.isOpen&&t.carried&&t.bagOpen?t.bagOpen+':held':t.openTime); });
-  return out.sort((a,b)=>b.openTime-a.openTime);
+    // a spot day row is keyed by its day, a position (spot or perp) by its first fill, so notes stay put across rebuilds
+    t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.spotRz?'rz:'+t.dayStart:t.openTime); });
+  return trades.sort((a,b)=>b.openTime-a.openTime);
 }
 // The same fill served twice at two granularities. userFillsByTime is asked with aggregateByTime,
 // which folds the pieces of one order filled within one millisecond into a single fill; the archive
@@ -1336,7 +1310,12 @@ function dexPositions(){ return dexView==='all'?openPositions:openPositions.filt
 function viewFilter(t){ return !(t.orphan||(t.offRecord&&!t.isOpen)) && (view==='combined' ? true : t.market===view) && dexFilter(t); }
 // The trades table keeps the off-record ones (badged "incomplete"): they happened, they carry notes, and
 // hiding them made a TWAP-heavy wallet's history look thinner than it was. Orphans stay out as before.
-function tableFilter(t){ return !t.orphan && (view==='combined' ? true : t.market===view) && dexFilter(t); }
+function tableFilter(t){ return !t.orphan && !t.spotRz && (view==='combined' ? true : t.market===view) && dexFilter(t); }
+// Two populations out of one list. Trade rows (perp trades, spot positions): counted, rated, listed.
+// Money rows (perp trades, spot day rows): summed into P&L, fees, volume, the curve and the calendar.
+// A spot position is never money (its sells are in the day rows); a day row is never a trade.
+function tradeRow(t){ return !t.spotRz; }
+function moneyRow(t){ return !t.spotPos; }
 // The all-time net the fills can't give: Hyperliquid's own P&L for a market ('perp', 'spot' or
 // 'combined' — what its app and trackers such as Hyperdash show, unrealized included) with the
 // fill-based sum beside it, when seams were found or, for perps, the two differ materially.
@@ -1360,6 +1339,28 @@ function verifiedCurve(mkt){
   const h=hlPnl&&hlPnl.hist; if(!h)return null;
   const c=mkt==='perp'?h.perp:mkt==='spot'?sumSeries([h.all,(h.perp||[]).map(p=>[p[0],-p[1]])]):h.all;
   return c&&c.length>1?c:null;
+}
+// A curve cut to [from, to] and rebased to zero at `from`: the point standing at `from` (the last one
+// at or before it, else the first) becomes [from, 0]; null when fewer than two points remain.
+function curveSlice(curve, from, to){
+  if(!curve||curve.length<2)return null;
+  const lo=from!=null?from:curve[0][0], hi=to!=null?to:Infinity;
+  let base=null; for(const p of curve){ if(p[0]<=lo)base=p; else break; }
+  const b=base?base[1]:curve[0][1], out=[];
+  if(base||from!=null)out.push([lo,0]);
+  for(const p of curve){ if(p[0]>lo&&p[0]<=hi)out.push([p[0],p[1]-b]); }
+  return out.length>1?out:null;
+}
+// Hyperliquid's mark-to-market P&L (equity, unrealized included) for a market over a period: the
+// densest of the exchange's spans that reaches back to `from` (a day, a week, a month, all time),
+// cut and rebased there. All time when from is null. null without the exchange's curves.
+function verifiedCurveFor(mkt, from, to){
+  const h=hlPnl&&hlPnl.hist; if(!h)return null;
+  const pick=sp=>{ if(!sp)return null; const c=mkt==='perp'?sp.perp:mkt==='spot'?sumSeries([sp.all,(sp.perp||[]).map(p=>[p[0],-p[1]])]):sp.all; return c&&c.length>1?c:null; };
+  if(from==null)return pick(h);
+  const spans=h.spans||{};
+  for(const k of ['day','week','month']){ const c=pick(spans[k]); if(c&&c[0][0]<=from)return curveSlice(c,from,to); }
+  const c=pick(h); return c?curveSlice(c,from,to):null;
 }
 // the deepest fall from a high on a curve of [time, value] points
 function curveDrawdown(curve){ let peak=-Infinity, dd=0, at=null; for(const [t,v] of (curve||[])){ if(v>peak)peak=v; const d=v-peak; if(d<dd){ dd=d; at=t; } } return {dd, at, peak:isFinite(peak)?peak:0}; }
@@ -1404,10 +1405,10 @@ function _tradesMemo(name,closed,ver,fn,allv){ const m=_tradesMemo[name]||(_trad
 function computeStatsMemo(closed,allv){ allv=allv||closed; let a=0,b=0;
   for(const t of allv){ a+=t.net; b+=(t.closeTime||0)+(t.fees||0)+(t.funding||0)+(t.isOpen?1:0); }
   return _tradesMemo('stats',closed,[_be,_oneR,_jrev,settings.tz,settings.tzZone,dayKey(Date.now()),a,b].join('|'),()=>computeStats(closed,allv),allv); }
-function periodTrades(){ const closed=allTrades.filter(t=>!t.isOpen && viewFilter(t));
+function periodTrades(){ const closed=allTrades.filter(t=>!t.isOpen && tradeRow(t) && !t.movedOut && viewFilter(t)); // a spot position that ended by its balance leaving (movedOut) is listed, not scored
   if(rangeActive())return closed.filter(inRange);
   if(!period)return closed; const cut=Date.now()-period*86400000; return closed.filter(t=>t.closeTime>=cut); }
-function periodTradesAll(forTable){ const inv=allTrades.filter(forTable?tableFilter:viewFilter);
+function periodTradesAll(forTable){ const inv=allTrades.filter(forTable?tableFilter:(t=>moneyRow(t)&&viewFilter(t)));
   if(rangeActive())return inv.filter(inRange);
   if(!period)return inv; const cut=Date.now()-period*86400000; return inv.filter(t=>t.closeTime>=cut); }
 // maxDDpct's label: |maxDD| ÷ the all-time high of cumulative PnL, which is not "% off the peak it fell from"

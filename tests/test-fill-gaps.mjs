@@ -14,7 +14,7 @@ const ctx = { Math, Object, Array, String, Number, JSON, isFinite, Date, Set, Ma
   setTimeout, Promise, Error, setStatus(){}, _fetchHealth: { funding: false, ledger: false, twap: false } };
 vm.createContext(ctx);
 vm.runInContext('const sleep=ms=>new Promise(r=>setTimeout(r,0));\n' +
-  ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'groupSpotCycles', 'attributeFunding', 'coverageOf', 'dedupeFills', 'fetchAllFills', 'fetchTwapFills'].map(grabFn).join('\n'), ctx);
+  ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'coverageOf', 'dedupeFills', 'fetchAllFills', 'fetchTwapFills'].map(grabFn).join('\n'), ctx);
 
 const T0 = Date.UTC(2026, 5, 1);
 let tid = 0;
