@@ -860,7 +860,7 @@ function pzImproversHtml(g){
 function pzTrendsHtml(D){
   const {g}=D, ctx=g.ctx, R=pzS.range, now=Date.now();
   const from=R==='all'?0:pzRangeStart(R,now), fromKey=dayKey(from);
-  const st=pzStatsFor(ctx.trades.filter(pzInMk),from);
+  const st=pzStatsFor(ctx.trades.filter(pzInMk),from,(ctx.money||[]).filter(pzInMk)); // counts from trades, sums from money rows
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
   const money=v=>v==null||!isFinite(v)?'—':pzSigned(v), exact=v=>v==null||!isFinite(v)?'':signedPlain(v);
   let stats;
@@ -1048,13 +1048,13 @@ function pzDeepHtml(D){
   const dlock=pzLocked('deep',g.level.level); if(dlock)return back+pzLockedHtml('In-depth stats',dlock,g);
   const seg=`<div class="pz-seg" role="group" aria-label="Range">${[[7,'7D'],[30,'30D'],[90,'90D'],['all','All']].map(([n,l])=>`<button type="button" data-pz-range="${n}" aria-pressed="${n===R}">${l}</button>`).join('')}</div>`;
   const head=`${back}${pzHead(R==='all'?'All time':'Last '+R+' days','In-depth stats',seg)}${pzMkSeg()}`;
-  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t));
+  const tr=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), mon=(ctx.money||tr).filter(t=>t.closeTime>=fromMs&&pzInMk(t));
   const X=pzDeepStats(tr,{isWin,isLoss,coin:dcoin,hourOf:tzHour,dowOf:tzDow,monthOf:ms=>dayKey(ms).slice(0,7),
     setupOf:t=>journal[t.id]&&journal[t.id].setup?String(journal[t.id].setup).trim():null,ratingOf:t=>journal[t.id]&&+journal[t.id].rating||null,
     volOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.vol; },trendOf:t=>{ const r=pzRegimeOf(t.openTime||t.closeTime); return r&&r.trend; }});
   pzRegimeWant();
   if(!X)return `${head}<section class="pz-card"><p class="pz-sub">No closed trades in this range.</p></section>`;
-  const s=computeStats(tr,tr);
+  const s=computeStats(tr,mon); // trade stats from closed trades, sums from money rows
   const hr=h=>String(h).padStart(2,'0')+':00';
   // results, risk, consistency
   const results=pzKv('Results',[

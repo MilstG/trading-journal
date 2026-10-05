@@ -107,7 +107,7 @@ function taxStatementModel(trades,wallets,nowIso){
     Y.lines.push({date:dU(t.closeTime),symbol:dcoin(t),market:t.market,dir:t.dir,
       held:t.durationMs?t.durationMs/86400000:0,pnl:t.pnl,fees,funding:fund,net:t.net,balance:bal,
       wallet:t.wallet&&(t.wallet.label||(t.wallet.address?t.wallet.address.slice(0,10):''))||''});
-    M.n++; if(t.net>0)M.wins++; else if(t.net<0)M.losses++;
+    M.n++; if(!t.spotRz){ if(t.net>0)M.wins++; else if(t.net<0)M.losses++; } // a spot day row is a line of realized money, not a trade to rate
     M.pnl+=t.pnl; M.fees+=fees; M.funding+=fund; M.net+=t.net; M.endBal=bal;
     Y.totals.n++; Y.totals.pnl+=t.pnl; Y.totals.fees+=fees; Y.totals.funding+=fund; Y.totals.net+=t.net; Y.close=bal;
     grand.n++; grand.pnl+=t.pnl; grand.fees+=fees; grand.funding+=fund; grand.net+=t.net;
@@ -188,7 +188,7 @@ function renderTaxPdfDoc(model){
     const mc={mo:Mg, n:Mg+120, wl:Mg+185, pnl:Mg+265, fees:Mg+330, fund:Mg+395, net:Mg+455, bal:W-Mg};
     for(const m of Y.months){ if(y-10<Mg+26){ page(); monHead(true); }
       pdf.text(mc.mo,y,m.label,{size:7.5});
-      pdf.textR(mc.n,y,m.n+' trades',{size:7.5,color:gray});
+      pdf.textR(mc.n,y,m.n+' rows',{size:7.5,color:gray});
       pdf.textR(mc.wl,y,m.wins+'W/'+m.losses+'L',{size:7.5,color:gray});
       pdf.textR(mc.pnl,y,money(m.pnl),{size:7.5,color:colFor(m.pnl)});
       pdf.textR(mc.fees,y,money(m.fees),{size:7.5,color:colFor(m.fees)});
@@ -342,7 +342,7 @@ $('exportTaxPdf').onclick=()=>{
   let doc; try{ doc=renderTaxPdfDoc(model); }catch(e){ console.error(e); setErr('Could not build the PDF ('+e.message+').'); return; }
   const blob=new Blob([doc],{type:'application/pdf'});
   dlBlob(blob,'ledger-statement-'+new Date().toISOString().slice(0,10)+'.pdf');
-  setStatus(`Exported statement PDF: ${model.grand.n} realized trades across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
+  setStatus(`Exported statement PDF: ${model.grand.n} realized rows (perp trades and spot days) across ${model.years.length} tax year${model.years.length===1?'':'s'}, net ${fmtUsd(model.grand.net)}. Realized PnL only — not tax advice.`);
 };
 $('exportTax').onclick=()=>{
   // realized (closed) trades across ALL markets/wallets, ignoring view/period filters
@@ -362,9 +362,9 @@ $('exportTax').onclick=()=>{
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv'});
   dlBlob(blob,'ledger-tax-'+new Date().toISOString().slice(0,10)+'.csv');
   const yrs=Object.keys(byYear).sort();
-  const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} trade${byYear[y].n===1?'':'s'})`).join(' · ');
+  const summary=yrs.map(y=>`${y}: net ${fmtUsd(byYear[y].net)} (${byYear[y].n} row${byYear[y].n===1?'':'s'})`).join(' · ');
   const offN=rows.filter(t=>t.offRecord).length; // their rows carry only what the served fills realized
-  setStatus(`Exported ${rows.length} realized trades → ${summary}. Realized PnL only (no unrealized or transferred cost basis)${offN?` · ${offN} trade${offN===1?'':'s'} closed partly in fills Hyperliquid no longer serves, so ${offN===1?'its':'their'} figures are incomplete`:''} — not tax advice.`);
+  setStatus(`Exported ${rows.length} realized rows (perp trades and spot days) → ${summary}. Realized PnL only (no unrealized or transferred cost basis)${offN?` · ${offN} trade${offN===1?'':'s'} closed partly in fills Hyperliquid no longer serves, so ${offN===1?'its':'their'} figures are incomplete`:''} — not tax advice.`);
 };
 /* ---- tax export by country (presets in engine.js: TAX_PRESETS, taxReport) ---- */
 const TAX_UI={preset:null,cur:null,rates:''};

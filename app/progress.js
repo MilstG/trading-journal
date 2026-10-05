@@ -1125,14 +1125,21 @@ function pzTiltAlertPick(cands, st, now, today){
   return {pick,st:keep};
 }
 // Plain stats for a window: the full app's computeStats, plus markets, hours and daily P&L.
-function pzStatsFor(trades, fromMs){
-  const all=(trades||[]).filter(t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen);
-  if(!all.length)return null;
-  const s=computeStats(all,all);
+// trades: trade rows (perp trades, spot positions) for counts, win rates and hours; money: money rows
+// (perp trades, spot day rows) for every sum — the same split as computeStats(closed, allv). Without
+// a money list the trades carry the sums too (perp-only callers).
+function pzStatsFor(trades, fromMs, money){
+  const inWin=t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen;
+  const all=(trades||[]).filter(inWin), mon=money?money.filter(inWin):all;
+  if(!all.length&&!mon.length)return null;
+  const s=computeStats(all,mon);
   const mk={}, hr={}, dy={};
-  for(const t of all){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}); mk[m].net+=t.net; mk[m].n++;
-    const h=tzParts(t.openTime||t.closeTime).h; (hr[h]=hr[h]||{net:0,n:0}); hr[h].net+=t.net; hr[h].n++;
-    const d=dayKey(t.closeTime), o=dy[d]=dy[d]||{net:0,n:0,w:0,l:0}; o.net+=t.net; o.n++; if(isWin(t.net))o.w++; else if(isLoss(t.net))o.l++; }
+  for(const t of all){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}); mk[m].n++;
+    const h=tzParts(t.openTime||t.closeTime).h; (hr[h]=hr[h]||{net:0,n:0}); hr[h].n++;
+    const d=dayKey(t.closeTime), o=dy[d]=dy[d]||{net:0,n:0,w:0,l:0}; o.n++; if(isWin(t.net))o.w++; else if(isLoss(t.net))o.l++; }
+  for(const t of mon){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}); mk[m].net+=t.net;
+    const h=tzParts(t.openTime||t.closeTime).h; (hr[h]=hr[h]||{net:0,n:0}); hr[h].net+=t.net;
+    const d=dayKey(t.closeTime), o=dy[d]=dy[d]||{net:0,n:0,w:0,l:0}; o.net+=t.net; }
   const markets=Object.entries(mk).map(([k,v])=>({k,...v})).sort((a,b)=>b.net-a.net);
   const hours=Object.entries(hr).map(([k,v])=>({h:+k,...v})).filter(x=>x.n>=3).sort((a,b)=>b.net-a.net);
   return {s,markets,hours,days:Object.keys(dy).sort().map(k=>({k,...dy[k]}))};

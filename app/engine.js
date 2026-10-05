@@ -447,9 +447,13 @@ function edgeTest(closed){ const N=closed.length; if(N<5)return {proven:false,sh
 // Pure given tzMidnight/addDays/isWin/isLoss, so the Node harness can pin exact outputs.
 function projBaseline(trades, lookbackDays, now){
   now=now||Date.now();
-  const closed=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
+  // one list, two populations: money rows (perp trades, spot day rows) make the daily series and the
+  // total; trade rows (perp trades, spot round trips — not a balance that merely left) make the counts
+  // and rates. Given trade rows alone (older callers, tests) both are the same rows.
+  const done=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
+  const money=done.filter(t=>!t.spotPos), closed=done.filter(t=>!t.spotRz&&!t.movedOut);
   const from=lookbackDays>0? now-lookbackDays*86400000 : -Infinity;
-  const inWin=closed.filter(t=>t.closeTime>=from);
+  const inWin=money.filter(t=>t.closeTime>=from), trIn=closed.filter(t=>t.closeTime>=from);
   if(!inWin.length) return null;
   const m={}; let min=Infinity;
   inWin.forEach(t=>{ const k=tzMidnight(t.closeTime); m[k]=(m[k]||0)+t.net; if(k<min)min=k; });
@@ -457,8 +461,8 @@ function projBaseline(trades, lookbackDays, now){
   // lookback with trades only in the last 10 days is a trader who paused, not a 9x pace.
   // Accounts younger than the lookback clamp to their own first trade ever, so a 2-week-old
   // account isn't diluted across 90 empty days it didn't exist for.
-  if(lookbackDays>0&&closed.length){
-    const firstEver=tzMidnight(Math.min(...closed.map(t=>t.closeTime)));
+  if(lookbackDays>0&&money.length){
+    const firstEver=tzMidnight(Math.min(...money.map(t=>t.closeTime)));
     const start=Math.max(tzMidnight(from),firstEver);
     if(start<min)min=start;
   }
@@ -466,13 +470,13 @@ function projBaseline(trades, lookbackDays, now){
   const daily=[]; let active=0;
   for(let d=min; d<=end; d=addDays(d,1)){ daily.push(m[d]||0); if(m[d]!=null)active++; }
   const total=inWin.reduce((s,t)=>s+t.net,0);
-  const w=inWin.filter(t=>isWin(t.net)).length, l=inWin.filter(t=>isLoss(t.net)).length;
-  return { daily, trades:inWin.length, total,
+  const w=trIn.filter(t=>isWin(t.net)).length, l=trIn.filter(t=>isLoss(t.net)).length;
+  return { daily, trades:trIn.length, total,
     perDay: daily.length? total/daily.length : 0,
     activeDays:active, calDays:daily.length,
     winRate:(w+l)? w/(w+l) : null,
-    expectancy: total/inWin.length,
-    tradesPerWeek: daily.length? inWin.length/(daily.length/7) : 0 };
+    expectancy: trIn.length? total/trIn.length : 0,
+    tradesPerWeek: daily.length? trIn.length/(daily.length/7) : 0 };
 }
 // Bootstrap Monte Carlo: resample the observed daily distribution forward `horizonDays`.
 // Default is i.i.d. daily sampling; pass block>1 for a moving-block bootstrap that samples
@@ -1416,19 +1420,21 @@ function verifiedFigure(mkt){
   const ver=mkt==='perp'?hlPnl.perp:hlPnl.all;
   if(ver==null||hlPnl.partial)return null; // a wallet the exchange didn't answer for: the sum understates and must not lead
   const hlOf=t=>!candleVenue(t)&&!t.orphan&&!t.offRecord&&(mkt==='combined'||mkt==='all'||t.market===mkt);
-  const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen);
+  // money rows (perp trades, spot day rows): a spot position and the day rows that carry its sells are never both summed
+  const hl=allTrades.filter(t=>hlOf(t)&&!t.isOpen&&!t.spotPos);
   const rec=hl.reduce((s,t)=>s+t.net,0);
+  const nTr=allTrades.filter(t=>hlOf(t)&&!t.isOpen&&!t.spotRz&&!t.movedOut).length; // the count is of completed trades
   const seams=!!(dataCoverage&&dataCoverage.gaps>0);
   // The exchange's figure is account-based, unrealized included. Set against it, the fills must count
   // what open trades have realized so far and what the open positions are marked at — a large open
   // position used to read as a material gap on its own, and the exchange's curve took over a
   // dashboard whose fills were whole.
   const hlPos=p=>!p.venue||p.venue==='hyperliquid';
-  const live=rec+allTrades.filter(t=>hlOf(t)&&t.isOpen).reduce((s,t)=>s+t.net,0)
+  const live=rec+allTrades.filter(t=>hlOf(t)&&t.isOpen&&!t.spotPos).reduce((s,t)=>s+t.net,0) // open perp trades' realized so far; an open spot position's sells are already in its day rows
     +(mkt==='perp'||mkt==='combined'||mkt==='all'?openPositions.filter(hlPos).reduce((s,p)=>s+(p.uPnl||0),0):0)
     +(mkt==='combined'||mkt==='all'?spotHoldings.filter(hlPos).reduce((s,h)=>s+(h.uPnl||0),0):0);
   if(!seams&&!(mkt==='perp'&&Math.abs(live-ver)>Math.max(2500,Math.abs(ver)*0.05)))return null;
-  return {ver,rec,live,seams,n:hl.length,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
+  return {ver,rec,live,seams,n:nTr,gaps:seams?dataCoverage.gaps:0,share:dataCoverage?(mkt==='perp'?dataCoverage.perpShare:dataCoverage.allShare):null};
 }
 let customRange={from:null,to:null};
 function rangeActive(){ return customRange.from!=null||customRange.to!=null; }

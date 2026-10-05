@@ -96,7 +96,7 @@ function renderTripwire(){
   const lim=committed||R.dailyLossLimit;
   if(!(lim>0)||!allTrades.length){ el.classList.add('hide'); return; }
   const src=committed?'your committed max loss for today':'your daily limit';
-  const d=dailyLossToday(allTrades);
+  const d=dailyLossToday(allTrades.filter(moneyRow)); d.n=closedTrades(t=>nfDayKey(t.closeTime)===nfDayKey(Date.now())).length; // the net is money (spot by the day it was realized), the count is of completed trades
   // Open losses count toward the limit as an INTRADAY delta: open uPnL now minus open
   // uPnL at the first sight of this tz-day. Counting lifetime unrealized-since-entry
   // against a daily limit kept the banner permanently lit for anyone holding an old
@@ -403,7 +403,7 @@ let _lrpMemo={key:null,preds:null};
 function liveRulePreds(){
   let last=0; for(const t of allTrades){ const x=t.closeTime||t.openTime||0; if(x>last)last=x; }
   const key=[allTrades.length,last,settings.tz,JSON.stringify(customRules()),_jrev].join('|');
-  if(_lrpMemo.key!==key)_lrpMemo={key,preds:customRulePreds(allTrades,customRules())};
+  if(_lrpMemo.key!==key)_lrpMemo={key,preds:customRulePreds(allTrades.filter(t=>tradeRow(t)&&!t.movedOut&&!t.orphan),customRules())}; // rules read trades, not spot day rows
   return _lrpMemo.preds;
 }
 // Open positions breaking a live rule right now.
@@ -774,7 +774,7 @@ let _inboxSkip=new Set();
 function inboxSectionHtml(){
   if(!coachOn())return '';
   const inbox=journalInbox(allTrades.filter(t=>viewFilter(t)&&tradeRow(t)&&!t.movedOut),journal).filter(t=>!_inboxSkip.has(t.id)); // trades to journal: not spot day rows, not a balance that left
-  const st=journalStreak(allTrades.filter(viewFilter),journal,dayKey,dayKey(Date.now()));
+  const st=journalStreak(allTrades.filter(t=>viewFilter(t)&&tradeRow(t)&&!t.movedOut),journal,dayKey,dayKey(Date.now()));
   const streakTxt=`<span class="sr-note" data-tip="Consecutive trading days on which every closed trade has a setup, tag, rating, note or mistake flag. Today only counts once it's complete — it never breaks the streak while you're still trading.">streak ${st.current} day${st.current===1?'':'s'} · best ${st.best}</span>`;
   if(!inbox.length) return `<div class="diag-section"><h2>Journal inbox <span style="font-size:11px;color:var(--faint);font-weight:400">last 30 days</span> ${streakTxt}</h2>
     <p class="lead">Nothing waiting — every trade from the last 30 days carries at least a setup, tag, rating, note or mistake flag.</p></div>`;
@@ -1194,9 +1194,15 @@ function wireFindingCards(root, findings){
 // follows the view, for the dashboard's own coach card, findings and habits. Memoized separately.
 let _coachMemo={key:null,ctx:null}, _coachMemoAll={key:null,ctx:null};
 function coachContext(all){
-  const trades=(all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter)).filter(t=>tradeRow(t)&&!t.movedOut); // trades, not spot day rows or balances that left
-  let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; net+=t.net; } }
-  const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
+  // two populations of the same rows (engine.js: tradeRow / moneyRow): trades (perp trades, spot
+  // positions that closed by selling; never spot day rows or balances that left) carry counts,
+  // win rates and behaviour; money (perp trades, spot day rows) carries every sum of P&L and fees
+  const base=all?allTrades.filter(t=>!(t.orphan||(t.offRecord&&!t.isOpen))):allTrades.filter(viewFilter);
+  const trades=base.filter(t=>tradeRow(t)&&!t.movedOut);
+  const money=base.filter(t=>moneyRow(t)&&!t.isOpen&&t.closeTime);
+  let closedN=0, lastClose=0, net=0; for(const t of trades){ if(!t.isOpen&&t.closeTime){ closedN++; if(t.closeTime>lastClose)lastClose=t.closeTime; } }
+  for(const t of money){ net+=t.net; if(t.closeTime>lastClose)lastClose=t.closeTime; }
+  const key=[all?'all':view+'/'+(typeof dexView==='undefined'?'':dexView),settings.tz,trades.length,money.length,closedN,lastClose,net.toFixed(2),_jrev,dayKey(Date.now()),Object.keys(_excM||{}).length,
     JSON.stringify(settings.rules||{}),JSON.stringify(settings.habits||[]),JSON.stringify(settings.playbooks||[]),_be].join('|');
   const memo=all?_coachMemoAll:_coachMemo;
   if(memo.key===key)return memo.ctx;
@@ -1210,11 +1216,11 @@ function coachContext(all){
     avoid.forEach((h,i)=>{ preds[h.id]=P[i]&&P[i].pred; }); }
   let findings=[];
   if(closed.length>=5){ try{
-    const s=computeStatsMemo(closed,trades); // the dashboard just ran it on the same trades (period "all")
+    const s=computeStatsMemo(closed,money); // trade stats from closed trades, sums from money rows (as the dashboard's period "all")
     const chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
     findings=buildFindings(closed,s,{scan:diagScanMemo(closed),sig:behaviorSignalsMemo(closed,s),cdd:currentDD(nets),uw:underwaterStats(chron),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)});
   }catch(e){ console.warn('coach findings failed',e); } }
-  const ctx={trades,closed,days:pc.days,byDay,preds,findings,rulePreds};
+  const ctx={trades,closed,money,days:pc.days,byDay,preds,findings,rulePreds};
   memo.key=key; memo.ctx=ctx; return ctx;
 }
 function habitProgress(h, ctx, fromMs){

@@ -162,7 +162,7 @@ function extraDiagHtml(closed,allv,s){
     : '<p class="lead">Needs ≥2 completed trades.</p>';
   ddHtml += mrow('Worst losing streak',wls.count?('<span class="loss">'+fmtUsd(wls.depth)+' · '+wls.count+' trades</span>'):'—','Deepest cumulative dollar loss across an unbroken run of losing trades — the depth behind the count-based streak. Size so you can sit through this without breaking rules.');
 
-  const feeRows=feeDragByMonth(closed);
+  const feeRows=feeDragByMonth(allv); // money rows: spot fees and funding by the day they were paid
   const feeHtml=feeRows.length?`<div class="diag-section"><h2>Cost drag over time <span style="font-size:11px;color:var(--faint);font-weight:400">fees net of funding, as % of gross profit</span></h2>
      <div class="diag-card"><div style="height:210px"><canvas id="diagFeeMonth"></canvas></div>
        <p class="mini-note">Bars show monthly friction (fees − funding) as a share of that month's gross profit. Rising drag as size grows is a signal to favor maker fills or trade less often.</p></div></div>`:'';
@@ -192,7 +192,7 @@ function extraDiagHtml(closed,allv,s){
 }
 function wireExtraDiag(closed,allv,s){
   // cost drag by month
-  const fee=feeDragByMonth(closed);
+  const fee=feeDragByMonth(allv);
   if(fee.length&&$('diagFeeMonth')){ const lab=fee.map(r=>r.k.slice(2)), d=fee.map(r=>r.drag!=null?r.drag*100:0);
     _diagCharts.feeMonth=new Chart($('diagFeeMonth'),{type:'bar',data:{labels:lab,datasets:[{data:d,backgroundColor:d.map(v=>v>25?tint(themeRed(),.8):tint(themeGold(),.75)),borderRadius:4}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' Costs: '+c.parsed.y.toFixed(0)+'% of gross profit',
@@ -624,7 +624,7 @@ function renderInner(){
   applyBeBand();
   _oneR=computeOneR(pt);
   renderReconcile(); renderPulse(); renderTape(); renderHeaderSummary();
-  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll); renderDowHour(ptAll.filter(tradeRow)); renderGuardrails();
+  renderPositions(); renderRiskPanel(); renderStats(computeStatsMemo(pt,ptAll)); renderCharts(pt,ptAll); renderCalendar(ptAll,pt); renderDowHour(ptAll,pt); renderGuardrails();
   // the coach panel is the heaviest part and sits below the fold: on the first paint it waits for an idle moment
   if(_coachFirst){ _coachFirst=false; const go=()=>{ try{ renderCoach(); }catch(e){ console.warn(e); } }; if(typeof requestIdleCallback==='function')requestIdleCallback(go,{timeout:1500}); else setTimeout(go,50); }
   else if(allTrades.length>=5000&&typeof requestIdleCallback==='function')coachStaged(); else renderCoach();
@@ -688,9 +688,10 @@ function renderReviewInner(){
   if(!closed.length){ el.innerHTML=dayJournalSectionHtml()+habitsSectionHtml()+goalsSectionHtml()+playbooksSectionHtml()+'<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; wireDayJournal(); wireHabits(); wireGoals(); wirePlaybooks(); return; }
   let procHtml=''; try{ procHtml=processSectionHtml(); }catch(e){ console.warn('process score failed',e); }
   const now=Date.now(), DAY=86400000;
-  const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to);
-  const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY);
-  const mo=win(now-30*DAY,now+1), pmo=win(now-60*DAY,now-30*DAY);
+  const money=closedMoney(viewFilter); // the windows' net is money (spot by the day it was realized); their counts and rates are trades
+  const win=(from,to)=>closed.filter(t=>t.closeTime>=from&&t.closeTime<to), winM=(from,to)=>money.filter(t=>t.closeTime>=from&&t.closeTime<to);
+  const wk=win(now-7*DAY,now+1), pwk=win(now-14*DAY,now-7*DAY), wkM=winM(now-7*DAY,now+1), pwkM=winM(now-14*DAY,now-7*DAY);
+  const mo=win(now-30*DAY,now+1), pmo=win(now-60*DAY,now-30*DAY), moM=winM(now-30*DAY,now+1), pmoM=winM(now-60*DAY,now-30*DAY);
   const sumNet=a=>a.reduce((s,t)=>s+t.net,0);
   const wr=a=>{const w=a.filter(t=>isWin(t.net)).length,l=a.filter(t=>isLoss(t.net)).length;return (w+l)?w/(w+l):null;};
   const exp=a=>a.length?sumNet(a)/a.length:null;
@@ -700,10 +701,10 @@ function renderReviewInner(){
     const good=invert?d<0:d>0; return ` <span class="${good?'pos-t':'neg-t'}" style="font-size:11px">${d>=0?'▲':'▼'} ${fmt(Math.abs(d))} vs prior</span>`; };
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const pct=x=>x==null?'—':(x*100).toFixed(0)+'%';
-  const windowCard=(title,cur,prev)=>{
-    const n=cur.length, net=sumNet(cur), w=wr(cur), e=exp(cur);
+  const windowCard=(title,cur,prev,curM,prevM)=>{
+    const n=cur.length, net=sumNet(curM||cur), w=wr(cur), e=exp(cur);
     return `<div class="diag-card"><h3>${title}</h3>
-      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prev),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
+      ${mrow('Net PnL','<span class="'+cls(net)+'">'+fmtUsd(net)+'</span>'+delta(net,sumNet(prevM||prev),v=>fmtUsd(v).replace('-','')),'Realized net over the window.')}
       ${mrow('Trades',String(n)+delta(n,prev.length,v=>v.toFixed(0)),'Closed trades in the window.')}
       ${mrow('Win rate',pct(w)+delta(w,wr(prev),v=>(v*100).toFixed(0)+'pt'),'Wins ÷ decisive trades (scratches excluded).')}
       ${mrow('Expectancy / trade',(e!=null?'<span class="'+cls(e)+'">'+fmtUsd(e)+'</span>':'—')+delta(e,exp(prev),v=>fmtUsd(v).replace('-','')),'Average net per trade. Baseline (all-time): '+(baseExp!=null?fmtUsd(baseExp):'—')+'.')}
@@ -759,7 +760,7 @@ function renderReviewInner(){
    ${weeklyReviewSectionHtml()}
    ${goalsSectionHtml()}
    ${playbooksSectionHtml()}
-   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk)}${windowCard('Last 30 days',mo,pmo)}</div></div>
+   <div class="diag-section"><h2>This week</h2><div class="diag-grid">${windowCard('Last 7 days',wk,pwk,wkM,pwkM)}${windowCard('Last 30 days',mo,pmo,moM,pmoM)}</div></div>
    ${procHtml}
    ${routineSectionLazyHtml(closed.length)}
    <div id="peersSec">${peersSectionHtml()}</div>
@@ -768,7 +769,7 @@ function renderReviewInner(){
      <div class="diag-card"><h3>Best &amp; worst</h3>
        ${mrow('Best trade',tradeLine(best))}
        ${mrow('Worst trade',tradeLine(worst))}
-       ${mrow('Month net','<span class="'+cls(sumNet(mo))+'">'+fmtUsd(sumNet(mo))+'</span>')}
+       ${mrow('Month net','<span class="'+cls(sumNet(moM))+'">'+fmtUsd(sumNet(moM))+'</span>')}
      </div>
      <div class="diag-card"><h3 data-tip="Share of this month's closed trades that have a note, setup, tag, rating or mistake flag.">Journaling completeness</h3>
        ${mrow('Journaled','<span class="'+(jpct>=.5?'pos-t':'neg-t')+'">'+Math.round(jpct*100)+'%</span> ('+journaled+'/'+mo.length+')')}
@@ -1261,13 +1262,16 @@ function monthlyGoalModel(closed, goals, now){
   const mStart=settings.tz==='utc'?Date.UTC(p.y,p.mo,1):new Date(p.y,p.mo,1).getTime();
   const daysIn=new Date(Date.UTC(p.y,p.mo+1,0)).getUTCDate();
   const dayOf=p.day;
-  const inMonth=closed.filter(t=>!t.isOpen&&t.closeTime>=mStart&&t.closeTime<=now).sort((a,b)=>a.closeTime-b.closeTime);
+  // one list, two populations: money rows (perp trades, spot day rows) for the net and the drawdown,
+  // trade rows (perp trades, spot round trips) for the counts; given trade rows alone they coincide
+  const rows=closed.filter(t=>!t.isOpen&&t.closeTime>=mStart&&t.closeTime<=now).sort((a,b)=>a.closeTime-b.closeTime);
+  const inMonth=rows.filter(t=>!t.spotPos), trMonth=rows.filter(t=>!t.spotRz&&!t.movedOut);
   const net=inMonth.reduce((s,t)=>s+t.net,0);
   let cum=0,peak=0,worst=0;
   for(const t of inMonth){ cum+=t.net; if(cum>peak)peak=cum; if(cum-peak<worst)worst=cum-peak; }
   const weeksElapsed=Math.max(1/7,(now-mStart)/(7*86400000));
-  return {mStart, daysIn, dayOf, n:inMonth.length, net, intraDD:worst,
-    tradesPerWeek:inMonth.length/weeksElapsed,
+  return {mStart, daysIn, dayOf, n:trMonth.length, net, intraDD:worst,
+    tradesPerWeek:trMonth.length/weeksElapsed,
     projected:dayOf>0?net/dayOf*daysIn:null,
     paceNeeded:goals.monthlyTarget>0?(goals.monthlyTarget-net)/Math.max(1,daysIn-dayOf+1):null,
     target:goals.monthlyTarget>0?goals.monthlyTarget:null,
@@ -1276,7 +1280,7 @@ function monthlyGoalModel(closed, goals, now){
 }
 function goalsSectionHtml(){
   const g=settings.goals||{};
-  const allClosed=closedMoney(viewFilter); // the month's P&L against the goal: money, spot by the day it was realized
+  const allClosed=allTrades.filter(viewFilter); // every row: the model sums money rows and counts trade rows itself
   const m=monthlyGoalModel(allClosed,g);
   const inp=(id,val,ph,tip)=>`<div class="field"><label data-tip="${esc(tip)}">${ph}</label><input type="number" id="${id}" min="0" step="any" value="${val>0?esc(val):''}"></div>`;
   let progress='<p class="lead">Set a goal to see this month tracked against it. Goals are commitments made calmly — the month holds you to them.</p>';
@@ -1424,12 +1428,12 @@ const PROJ_BLOCKS=[[0,'resample: i.i.d. daily'],[5,'resample: 5-day blocks'],[7,
 function renderProjection(){
   const el=$('projView'); if(!el)return;
   if(_projChart){ _projChart.destroy(); _projChart=null; }
-  const closed=closedTrades(viewFilter);
+  const closed=closedTrades(viewFilter), rowsAll=allTrades.filter(viewFilter); // projBaseline sums money rows and counts trade rows itself
   if(closed.length<5){ el.innerHTML='<div class="diag-section"><p class="lead">Need at least 5 closed trades in this view to project forward. Load more history first.</p></div>'+nfSizerHtml(); nfWireSizer(); return; }
-  let base=projBaseline(closed,_proj.look), look=_proj.look;
-  if((!base||base.trades<5)&&_proj.look>0){ base=projBaseline(closed,0); look=0; } // fall back to all history if the window is too thin
+  let base=projBaseline(rowsAll,_proj.look), look=_proj.look;
+  if((!base||base.trades<5)&&_proj.look>0){ base=projBaseline(rowsAll,0); look=0; } // fall back to all history if the window is too thin
   if(!base){ el.innerHTML='<div class="diag-section"><p class="lead">No closed trades inside the selected lookback window.</p></div>'+nfSizerHtml(); nfWireSizer(); return; } // the pre-trade sizer needs no history — keep it available
-  const now=Date.now(), startBal=closed.reduce((s,t)=>s+t.net,0);
+  const now=Date.now(), startBal=closedMoney(viewFilter).reduce((s,t)=>s+t.net,0);
   // the Diagnostic headline's test on the basis trades: until it passes, every number here is "if"
   const bt=look>0?closed.filter(t=>t.closeTime>=now-look*86400000&&t.closeTime<=now):closed;
   const proven=bt.length>=5&&_tradesMemo('projEdge',bt,settings.tz+'|'+settings.tzZone,()=>edgeTest(bt)).proven;

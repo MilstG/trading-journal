@@ -530,7 +530,7 @@ await t('buildBotState assembles a truthful snapshot for the Telegram router', a
   ok(st.risk && st.risk.positions === 1, 'one cached BTC position');
   near(st.risk.gross, 16000);
   ok(st.stats30 && st.stats30.n === 2, 'both ETH round trips inside 30d');
-  near(st.stats30.net, -104.5);
+  near(st.stats30.net, -104.51); // sums come from money rows: the spot buy's $0.01 fee too, as /stats and /metrics report
   ok(!('goals' in st), 'no goals configured — router says so');
 });
 
