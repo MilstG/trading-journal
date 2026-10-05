@@ -128,7 +128,9 @@ async function applySnapshot(data){ if(!data)return false;
   _applying=true;
   try{
     if(data.journal && typeof data.journal==='object'){ journal=data.journal; _jrev++; }
-    if(Array.isArray(data.wallets)) settings.wallets=data.wallets;
+    // a wallet is an address string (labels are printed, so one that isn't a short string is dropped)
+    if(Array.isArray(data.wallets)) settings.wallets=data.wallets.filter(w=>w&&typeof w==='object'&&typeof w.address==='string'&&w.address.length<=200)
+      .map(w=>{ const o=Object.assign({},w); if(o.label!=null)o.label=typeof o.label==='string'?o.label.slice(0,200):''; if(!o.label)delete o.label; return o; });
     // 'in', not !=null: a cleared risk default (null) must propagate, or another device resurrects it
     // An imported backup or linked file is untrusted: every scalar is held to its own type or
     // whitelist here, so nothing but the values the UI itself writes ever reaches a template.

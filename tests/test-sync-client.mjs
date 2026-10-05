@@ -217,6 +217,8 @@ await t('an imported snapshot can’t put markup in the settings the templates p
     [250, 'spot', 50, 0, true, 3, 'day'], 'real values (numeric strings from old backups included) still restore');
   await A.run(`applySnapshot({settings:{riskDefault:null}})`);
   eq(A.eval('settings.riskDefault'), null, 'a cleared risk default still propagates');
+  await A.run(`applySnapshot({wallets:[{address:'${W('4')}',label:'main'},{address:{x:1}},null,'0xabc',{address:'${W('5')}',label:{toString:1}}]})`);
+  eq(A.eval('settings.wallets'), [{ address: W('4'), label: 'main' }, { address: W('5') }], 'only wallets with an address string; a label is a string or nothing');
 });
 
 await t('every restore path marks itself and reports only after the server took it', () => {
