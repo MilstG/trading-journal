@@ -2561,7 +2561,7 @@ function createApp(opts) {
   // readiness from WHOOP, Oura or Apple Health: the owner (AUTH_TOKEN) or a member (Pulse key)
   const wearOrigin = req => { if (publicOrigins[0]) { try { return new URL(publicOrigins[0]).origin; } catch (e) {} }
     return hostVetted && req.headers.host ? 'https://' + req.headers.host : opts.wearOrigin || null; };
-  const wear = Wear.createWear({ dataDir, json, fetchImpl: opts.wearFetch || opts.fetchImpl, now: opts.now, env: opts.wearEnv || process.env, originOf: wearOrigin,
+  const wear = Wear.createWear({ dataDir, json, fetchImpl: opts.wearFetch || opts.fetchImpl, now: opts.now, env: opts.wearEnv || process.env, originOf: wearOrigin, clientIp,
     // a member's clock is the one their app reports; the owner's is the journal's own time zone setting
     tzOf: uid => { if (uid === 'owner') return nudgeZone(currentSnapshot().settings);
       const m = uid.startsWith('m:') ? social.state().members[uid.slice(2)] : null; return (m && m.stats && m.stats.tz) || process.env.TZ || 'UTC'; } });
