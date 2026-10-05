@@ -137,7 +137,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `ADMIN_2FA_RESET`      | *(unset)*                        | Escape hatch if the owner lost every second factor: set it (e.g. `1`), restart, then remove it. Clears the owner's admin passkeys, app and recovery codes and ends every admin session; each value resets once. Or run `node server.js --reset-admin-2fa` |
 | `CORS_ORIGIN`          | *(unset)*                        | Exact origin allowed to call `/api/*` from a browser app |
 | `PUBLIC_ORIGIN`        | *(unset)*                        | The address people open Daruma at (e.g. `https://pulse.example.com`; comma-separate several). Wallet sign-in messages name only this site, so a look-alike site can't collect a valid signature. Not needed on Railway, whose edge only passes the service's own domains (custom ones included); set it when self-hosting |
-| `ARCHIVE_AWS_KEY_ID` / `ARCHIVE_AWS_SECRET` | *(unset)* | An AWS access key that can read Hyperliquid's node-data archive (`s3:GetObject` and `s3:ListBucket` on `hl-mainnet-node-data`, a requester-pays bucket — the transfer is billed to that AWS account). Turns on Data health → **Recover from the archive**, which pulls the fills the public API no longer serves (TWAP slices older than ~3 months) for the hours a wallet's seams need. See "Recovering fills from Hyperliquid's archive" |
+| `ARCHIVE_AWS_KEY_ID` / `ARCHIVE_AWS_SECRET` | *(unset)* | An AWS access key that can read Hyperliquid's node-data archive (`s3:GetObject` and `s3:ListBucket` on `hl-mainnet-node-data`, a requester-pays bucket — the transfer is billed to that AWS account). Turns on Data health → **Recover from the archive** (and Wallets ▾ → **Archive**; owner token only, refused when `AUTH_TOKEN` is unset), which pulls the fills the public API no longer serves (TWAP slices older than ~3 months) for the hours a wallet's seams need. See "Recovering fills from Hyperliquid's archive" |
 | `ARCHIVE_COST_PER_GB`  | `0.09`                           | The egress price used in the archive's estimates |
 | `ARCHIVE_MAX_WINDOW_DAYS` | `14`                          | A seam wider than this (days between a coin's last served fill and the fill that revealed the gap) is skipped by the backfill and reported instead |
 | `ARCHIVE_BUCKET` / `ARCHIVE_PREFIX` / `ARCHIVE_REGION` | `hl-mainnet-node-data` / `node_fills_by_block/hourly/` / *(learned)* | Where the archive is; only for a mirror or a format change |
@@ -250,8 +250,8 @@ yours in the same region (~$0.023/GB-month) and read by the server with the same
    `ARCHIVE_INDEX_REGION=ap-northeast-1`. From then on **Backfill** reads a wallet's whole history
    from the index (every day it has, a few MB) instead of hunting hours; `source: "hours"` on the
    endpoint still takes the old path.
-6. When the build is done, change the instance type to `t4g.nano` (stop → Actions → Instance
-   settings → Change instance type → start): the daily run needs almost nothing.
+6. When the build is done, switch to the schedule below: a machine that starts twice a day,
+   catches the index up and stops itself costs cents a month instead of running all the time.
 
 ```bash
 #!/bin/bash
@@ -308,9 +308,85 @@ say "build started as hl-index-build.service into s3://$INDEX_BUCKET (log: /var/
 
 The build is resumable: each finished day carries a `_done` marker, and a rerun (or the daily timer)
 skips them. `node archive-indexer.js status --bucket …` prints the index's days and the last
-summary. Costs: a `t4g.medium` for the build (~$0.03/h, a few hours), a `t4g.nano` after (~$3/month),
-the index's storage (~$4–6/month for everything), S3 requests (~$9 once for the 1.8M files). No
+summary. Costs: a `t4g.medium` for the build (~$0.03/h, a few hours), then the schedule below (the disk,
+~$2.90/month, and cents of running time), the index's storage (~$4–6/month for everything), S3
+requests (~$9 once for the 1.8M files). No
 transfer, because the machine and both buckets share a region.
+
+### Keeping the index current for pennies: a machine that wakes, catches up and stops
+
+A machine left running costs every hour (`t4g.medium` ~$25/month, `t4g.nano` ~$3) for a job that
+takes a few minutes a day. Instead, let it sleep: a schedule starts it twice a day, it runs `build`
+(which skips every finished day, so it fills any day still missing, the gaps a stopped build left
+included, then yesterday) and powers itself off. You pay the minutes it runs (cents a month) and its
+disk (30 GB, ~$2.90/month). No shell on the machine is needed: everything goes through the console.
+
+Before switching, let a build that is still running finish (Check coverage → the index's "last
+day" stops moving, or the system log shows `done:`). Switching mid-build is safe too, since the
+next run resumes where it stopped; it just runs longer that time.
+
+1. **The machine runs this on every boot.** EC2 → the instance → Instance state → **Stop**. Then
+   Actions → Instance settings → **Edit user data**, replace it with the script below (your bucket
+   and server filled in), Save. Keep the type `t4g.medium`: it is billed by the second, so a bigger
+   machine finishing sooner costs about the same, and it has the memory a busy hour needs.
+2. **Shutdown means stop.** Actions → Instance settings → *Change shutdown behavior*: **Stop**
+   (the default; "Terminate" would delete the machine the first time it finishes).
+3. **The schedule.** EventBridge → **Scheduler** → Create schedule, in Tokyo: *Recurring*, cron
+   `30 1,13 * * ? *` (01:30 and 13:30 UTC), flexible window off → Target: *All APIs* → **Amazon
+   EC2** → **StartInstances**, input `{"InstanceIds": ["i-…your instance id…"]}` → let it create a
+   new execution role → Create. Hyperliquid uploads each hour with a lag of an hour or two: a day
+   still short of hours is left for the next run rather than marked finished short, so the 13:30 run
+   completes the day the 01:30 run saw partly, and the index trails the exchange by half a day at most.
+4. Check it the next day: Check coverage shows the index's last day as yesterday, and EC2 → the
+   instance → Monitor and troubleshoot → **Get system log** shows the last run's summary.
+
+To keep the machine on for a look around, set `STAY_ON=1` in the user data before starting it (and
+back to `0` after). Starting it while it is already running does nothing, so a long catch-up is
+never started twice.
+
+```
+Content-Type: multipart/mixed; boundary="//"
+MIME-Version: 1.0
+
+--//
+Content-Type: text/cloud-config; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="cloud-config.txt"
+
+#cloud-config
+cloud_final_modules:
+- [scripts-user, always]
+
+--//
+Content-Type: text/x-shellscript; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="userdata.txt"
+
+#!/bin/bash
+# every boot: refresh the indexer from your server, catch the index up, power off
+INDEX_BUCKET=hl-fills-index-yourname
+LEDGER=https://your-app.up.railway.app
+STAY_ON=0
+say() { echo "hl-index: $*" | tee /dev/console; }
+# the always-on setup's units: the schedule replaces them
+systemctl disable --now hl-index-daily.timer hl-index-build.service >/dev/null 2>&1
+command -v node >/dev/null || dnf install -y nodejs20 >/var/log/indexer-install.log 2>&1 || dnf install -y nodejs >>/var/log/indexer-install.log 2>&1
+NODE=$(command -v node || ls /usr/bin/node-* 2>/dev/null | head -1)
+mkdir -p /opt/hl-index && cd /opt/hl-index
+for f in archive.js archive-indexer.js; do # the newest version from your server; the copy on disk if it can't be reached
+  curl -fsSL -o "$f.new" "$LEDGER/archive/$f" && mv "$f.new" "$f" || say "kept the old $f (couldn't fetch it)"
+done
+if [ "$STAY_ON" = 1 ]; then say "STAY_ON=1: not running, not powering off"; exit 0; fi
+say "catching up s3://$INDEX_BUCKET"
+# a transient unit, so boot finishes; the power-off comes after the run whatever its outcome, and
+# a run that hangs is cut off after 10 hours
+systemd-run --unit=hl-index-run --setenv=INDEX_BUCKET=$INDEX_BUCKET --setenv=WORKDIR=/var/tmp/hl-index \
+  /bin/sh -c "timeout 10h $NODE /opt/hl-index/archive-indexer.js build --workers 2 >>/var/log/hl-index-build.log 2>&1;
+    echo \"hl-index: run ended (exit \$?): \$(tail -n 3 /var/log/hl-index-build.log | tr '\n' ' ')\" >/dev/console; shutdown -h +1"
+--//--
+```
 
 ## Off-site backups
 

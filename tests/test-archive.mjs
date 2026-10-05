@@ -255,6 +255,16 @@ await t('without the key the endpoints say what is missing; the owner token is r
     eq((await call(base, '/api/v1/archive', undefined, { Authorization: 'Bearer nope' })).status, 401);
   } finally { app.close(); }
 });
+await t('an open server (no AUTH_TOKEN) refuses the archive: nobody but the owner spends its AWS budget', async () => {
+  const dirO = mkdtempSync(join(tmpdir(), 'ledger-archive-open-'));
+  const appO = createApp({ dataDir: dirO, auth: '', htmlPath: join(here, '..', 'ledger.html'), push: false, pushTick: false, offsiteTimer: false, fetchImpl: hlFetch,
+    archiveEnv: { ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit' } });
+  const bO = await listen(appO);
+  try {
+    eq((await call(bO, '/api/v1/archive', undefined, {})).status, 403);
+    eq((await call(bO, '/api/v1/archive/backfill', { address: ADDR, maxGB: 1 }, { 'Content-Type': 'application/json' })).status, 403);
+  } finally { appO.close(); }
+});
 const app = mk({ ARCHIVE_AWS_KEY_ID: 'AKIATEST', ARCHIVE_AWS_SECRET: 'sekrit', ARCHIVE_COST_PER_GB: '1', ARCHIVE_PREFIX: 'node_fills/hourly/' });
 const base = await listen(app);
 try {
@@ -457,6 +467,11 @@ await t('the indexer splits an hour into shards as gzip members; its arguments a
   const whole = zlib.gunzipSync(r.members['c84']).toString(), sliced = zlib.gunzipSync(got['c84']).toString(); eq(sliced, whole, 'the sliced shard file holds the same lines in the same order');
   // a day marked done with no fills in it is not indexed
   eq([I.isIndexed({ fills: 0, hours: 24 }), I.isIndexed({ fills: 3 }), I.isIndexed(null)], [false, true, false]);
+  // a day still uploading is left for the next run, never marked short; a day marked short is redone once the archive has more
+  const NOW = Date.UTC(2026, 9, 5, 3, 30), M = { fills: 9, hours: 24 };
+  eq([I.dayPlan('20261004', null, 22, NOW), I.dayPlan('20261003', null, 23, NOW), I.dayPlan('20261002', null, 23, NOW), I.dayPlan('20261004', null, 24, NOW), I.dayPlan('20261004', null, 0, NOW)], ['wait', 'wait', 'index', 'index', 'empty']);
+  eq([I.dayPlan('20261003', M, 24, NOW), I.dayPlan('20261003', { fills: 9, hours: 22 }, 24, NOW), I.dayPlan('20261003', { fills: 0, hours: 24 }, 24, NOW)], ['done', 'index', 'index']);
+  eq(I.parseArgs(['build', '--recheck', '30']).recheck, 30); eq(I.parseArgs(['daily']).recheck, 7);
   const o = I.parseArgs(['build', '--bucket', 'b', '--from', '20250801', '--to', '20250802', '--workers', '2']); eq([o.cmd, o.bucket, o.from, o.to, o.workers, o.prefix], ['build', 'b', '20250801', '20250802', 2, 'index/v1/']);
 });
 await t('role credentials: the environment’s key wins, and a session token is signed as a header', async () => {

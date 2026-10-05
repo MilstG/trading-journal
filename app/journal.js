@@ -1562,7 +1562,7 @@ function renderDataHealth(){
   // a server to recover from: the archive panel (check, sample, backfill, the index) stays reachable
   // here whether or not there is anything to warn about — once the seams are closed, the strip is the
   // one place that says so, and the panel is still how the index and other wallets are looked after
-  const canArc=typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
+  const canArc=srvOwner(); // the owner's token session only: the archive spends their AWS budget
   const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+(cov&&cov.gaps?'Recover from the archive…':'Archive…')+'</button>':'';
   if(!items.length&&!canArc){ el.classList.add('hide'); el.innerHTML=''; delete el.dataset.ok; return; }
   el.classList.remove('hide');
@@ -1580,6 +1580,7 @@ let _arcTimer=null;
 // check, a diagnose or a running backfill stays reachable once the seams are gone); anchored below either.
 async function toggleArchivePanel(anchor){
   let p=$('arcPanel'); if(p){ p.remove(); clearTimeout(_arcTimer); return; }
+  if(!srvOwner())return;
   const host=(anchor&&anchor.nodeType===1?anchor:null)||$('dataHealth'); if(!host)return;
   p=document.createElement('div'); p.id='arcPanel'; p.className='reconwarn'; p.style.cssText='margin-top:-6px;margin-bottom:12px';
   host.insertAdjacentElement('afterend',p);

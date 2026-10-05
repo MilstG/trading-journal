@@ -14,6 +14,8 @@
 // Usage (the index bucket must be in the same region as the archive):
 //   node archive-indexer.js build  --bucket my-hl-index [--from 20250525] [--to 20261003] [--workers 3]
 //   node archive-indexer.js daily  --bucket my-hl-index          # yesterday and any recent day still missing
+//   (either one skips finished days, so a scheduled `build` keeps the index whole and current; days of the
+//   last --recheck 7 are listed again and redone if the archive has hours their marker didn't count)
 //   node archive-indexer.js status --bucket my-hl-index
 // Credentials: the EC2 instance role (IMDSv2), or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment.
 // No dependencies: archive.js beside this file is all it needs.
@@ -96,11 +98,23 @@ if (!isMainThread) {
 }
 
 /* ---------------- the main thread: days, workers, uploads, markers ---------------- */
+// What a run does with one day, given its _done marker (or null) and how many hourly files the archive
+// lists for it: 'done' (indexed, and the archive has no more hours than the marker counted), 'empty'
+// (nothing in the archive), 'wait' (a day of the last two still short of 24 hours: Hyperliquid uploads
+// each hour with a lag, and a day marked done short of hours would stay short), else 'index'. An older
+// day short of hours is indexed as it is: the archive has gaps of its own.
+const recentDay = (day, now, n) => day >= dayStr(now - n * 86400e3);
+function dayPlan(day, done, nHours, now) {
+  if (done && A.isIndexed(done) && (done.hours || 0) >= nHours) return 'done';
+  if (!nHours) return 'empty';
+  if (nHours < 24 && recentDay(day, now, 2)) return 'wait';
+  return 'index';
+}
 function parseArgs(argv) {
-  const o = { cmd: argv[0] || 'status', bucket: process.env.INDEX_BUCKET || '', prefix: (process.env.INDEX_PREFIX || 'index/v1/').replace(/\/*$/, '/'), workers: +process.env.WORKERS || Math.max(1, Math.min(4, os.cpus().length)), work: process.env.WORKDIR || path.join(os.tmpdir(), 'hl-index') };
+  const o = { cmd: argv[0] || 'status', bucket: process.env.INDEX_BUCKET || '', prefix: (process.env.INDEX_PREFIX || 'index/v1/').replace(/\/*$/, '/'), workers: +process.env.WORKERS || Math.max(1, Math.min(4, os.cpus().length)), work: process.env.WORKDIR || path.join(os.tmpdir(), 'hl-index'), recheck: +process.env.RECHECK_DAYS || 7 };
   for (let i = 1; i < argv.length; i++) { const k = argv[i], v = argv[i + 1];
     if (k === '--bucket') { o.bucket = v; i++; } else if (k === '--prefix') { o.prefix = v.replace(/\/*$/, '/'); i++; } else if (k === '--from') { o.from = v; i++; } else if (k === '--to') { o.to = v; i++; }
-    else if (k === '--workers') { o.workers = +v; i++; } else if (k === '--work') { o.work = v; i++; } else if (k === '--days') { o.days = +v; i++; } }
+    else if (k === '--workers') { o.workers = +v; i++; } else if (k === '--work') { o.work = v; i++; } else if (k === '--days') { o.days = +v; i++; } else if (k === '--recheck') { o.recheck = +v; i++; } }
   return o;
 }
 async function main() {
@@ -137,10 +151,16 @@ async function main() {
   const pass = async (list, redo) => {
     for (const day of list) { streamed.clear();
       const done = await A.doneSummary(idx, o.prefix + 'd/' + day + '/_done');
-      if (done && A.isIndexed(done)) { log(day + ' already indexed'); continue; }
-      if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
+      // an indexed day outside the recheck window is final; inside it the archive is listed again,
+      // since a day indexed while Hyperliquid was still uploading its last hours has more of them now
+      if (done && A.isIndexed(done) && !recentDay(day, Date.now(), o.recheck)) { log(day + ' already indexed'); continue; }
       const hours = (await src.list(sourcePrefix(day))).keys.filter(k => /\/\d{1,2}(\.lz4)?$/.test(k.key)).sort((a, b) => +(/\/(\d+)/.exec(a.key.slice(-7))[1]) - +(/\/(\d+)/.exec(b.key.slice(-7))[1]));
-      if (!hours.length) { log(day + ': no files in the archive'); continue; }
+      const plan = dayPlan(day, done, hours.length, Date.now());
+      if (plan === 'done') { log(day + ' already indexed (' + done.hours + ' hours)'); continue; }
+      if (plan === 'empty') { log(day + ': no files in the archive'); continue; }
+      if (plan === 'wait') { log(day + ': ' + hours.length + '/24 hours in the archive so far — left for the next run'); continue; }
+      if (done && A.isIndexed(done)) log(day + ': indexed with ' + (done.hours || 0) + ' hours, the archive has ' + hours.length + ' now — indexing it again');
+      else if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
       const dir = path.join(o.work, day); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true }); appendTo = dir;
       const sum = { day, hours: 0, fills: 0, bytes: 0, lines: 0, failed: [], shapes: {}, sample: null }; const td = Date.now();
       // every hour of the day through the workers; each result is appended to the day's shard files as it lands
@@ -176,4 +196,4 @@ async function main() {
 }
 if (isMainThread) { if (require.main === module) main().catch(e => { console.error(e.message || e); process.exit(1); }); }
 // the day's _done marker and whether it counts as indexed live in archive.js: the server reads the index by the same rule
-module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed: A.isIndexed };
+module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, dayPlan, isIndexed: A.isIndexed };
