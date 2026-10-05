@@ -751,6 +751,7 @@ $('tbody').addEventListener('click',e=>{
     if(_attSrcOk(src)){ const w=window.open(); if(w){ const img=w.document.createElement('img');
       img.src=src; img.style.maxWidth='100%'; w.document.body.appendChild(img); } } return; }
   const star=e.target.closest('.star'); if(star){ setStar(star); return; }
+  const pna=e.target.closest('[data-pbna]'); if(pna){ pbToggleNa(pna); return; }
   const pbr=e.target.closest('.pbrule'); if(pbr){ setTimeout(()=>{ const box=pbr.closest('.pbrules'); pbr.classList.toggle('on',pbr.querySelector('input').checked); pbSaveTicks(box); },0); return; }
   const chk=e.target.closest('.chk'); if(chk){ const id=chk.parentElement.dataset.id,m=chk.querySelector('input').dataset.m;
     const j=ensureJ(id),box=chk.querySelector('input'); setTimeout(()=>{ if(box.checked){if(!j.mistakes.includes(m))j.mistakes.push(m);}else{j.mistakes=j.mistakes.filter(x=>x!==m);} chk.classList.toggle('on',box.checked);

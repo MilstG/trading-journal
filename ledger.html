@@ -359,6 +359,8 @@ tr.trow.expanded .caret{transform:rotate(90deg);display:inline-block}
 .field label.pbrule,.pbrule{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--line);padding:7px 9px;margin:0;font-family:var(--prose);font-size:13.5px;letter-spacing:0;text-transform:none;color:var(--muted);cursor:pointer;min-height:34px}
 .field .pbrule input,.pbrule input{width:auto;flex:none;margin:2px 0 0;accent-color:var(--gold)}
 .pbrule.on{border-color:#3D4652;background:var(--panel2);color:var(--text)}
+.pbrow{display:flex;gap:6px;align-items:stretch}.pbrow .pbrule{flex:1}.pbrow.na .pbrule{opacity:.55;text-decoration:line-through}
+.pbna{flex:none;border:1px solid var(--line);background:none;color:var(--faint);font:inherit;font-size:11px;padding:0 8px;cursor:pointer;border-radius:9px}.pbna[aria-pressed="true"]{color:var(--text);border-color:#3D4652;background:var(--panel2)}
 .pbedit textarea{min-height:110px}
 body.bb .chk.on{border-color:var(--lbl)}
 .jsave{display:flex;align-items:center;gap:10px;margin-top:6px}
@@ -1485,6 +1487,8 @@ body.light .pz-hlpill.pays{background:#E6F6EF;color:#0A9A63} body.light .pz-hlpi
 .pz-pbcheck legend{font-size:12px;color:var(--pz-muted);padding:0 4px}
 .pz-pbr{display:flex;gap:10px;align-items:flex-start;min-height:36px;padding:6px 0;font-size:14px;line-height:1.35;cursor:pointer}
 .pz-pbr input{width:20px;height:20px;margin:0;flex:none;accent-color:var(--pz-acc)}
+.pz-pbrow{display:flex;gap:8px;align-items:center}.pz-pbrow .pz-pbr{flex:1;min-width:0}.pz-pbrow.na .pz-pbr span{opacity:.55;text-decoration:line-through}
+.pz-pbna{flex:none;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--pz-line2);background:none;color:var(--pz-muted);font:inherit;font-size:12px;cursor:pointer}.pz-pbna[aria-pressed="true"]{color:var(--pz-text);border-color:var(--pz-acc)}
 #pz .pz-quietbtn{background:none;border:0;padding:6px 0;font:inherit;font-size:13px;font-weight:600;color:var(--pz-muted);cursor:pointer}
 #pz .pz-quietbtn.warn{color:#FFB39E}
 img.pz-av{object-fit:cover;background:#23272E;padding:0}

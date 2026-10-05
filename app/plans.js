@@ -141,6 +141,8 @@ function planAttachPending(){
   for(const {key,tid} of m){ const p=journal[key], j=ensureJ(tid);
     j.plan={entry:p.entry>0?p.entry:'',stop:p.stop,target:p.target>0?p.target:'',at:p.at}; if(p.setup)j.plan.why=p.setup;
     if(!j.setup&&p.setup)j.setup=p.setup;
+    // the checklist ticked in the plan becomes the trade's, marked as ticked before the close
+    if(p.pb&&typeof p.pb.id==='string'&&Array.isArray(p.pb.ok)&&!j.pb)j.pb={id:p.pb.id,ok:p.pb.ok,of:Array.isArray(p.pb.of)?p.pb.of:[],...(Array.isArray(p.pb.na)&&p.pb.na.length?{na:p.pb.na}:{}),at:p.at,live:true};
     p.tid=tid; markJEdit(tid); markJEdit(key); n++; }
   for(const p of pplanList(journal))if(now-p.at>30*864e5){ delete journal[p.key]; markJEdit(p.key); n++; }
   if(n)Store.set(J_KEY,journal);
@@ -170,7 +172,8 @@ function planDiagHtml(closed){
   const pct=x=>x==null?'—':Math.round(x*100)+'%', cols={followed:'var(--profit)',early:'var(--gold)',moved:'var(--loss)',held:'#E0803F'};
   const vr=['followed','early','moved','held'].map(k=>{ const b=S.by[k], w=planWords(k);
     return `<tr data-tip="${esc(w[2])}"><td class="l">${w[0]}</td><td>${b.n}</td><td>${b.n?pct(b.n/S.planned):'—'}</td><td class="${b.n?cls(b.R):''}">${b.n?planFmtR(b.R/b.n):'—'}</td><td class="${cls(b.cost)}">${k==='followed'?'—':b.priced?fmtUsd(b.cost)+(b.priced<b.n?' <span style="color:var(--faint)">('+b.priced+' of '+b.n+')</span>':''):b.n?'<span style="color:var(--faint)">not costed</span>':'—'}</td></tr>`; }).join('');
-  const sr=S.bySetup.slice(0,12).map(s=>`<tr data-tip="${esc((s.k==='—'?'Planned trades with no setup written':s.k)+': '+s.n+' planned · average planned R:R '+(s.rr!=null?'1:'+s.rr.toFixed(2):'— (no targets)')+' vs '+planFmtR(s.R)+' achieved on average · plan followed '+pct(s.adherence))}"><td class="l">${esc(s.k)}</td><td>${s.n}</td><td>${s.rr!=null?'1:'+s.rr.toFixed(2):'—'}</td><td class="${cls(s.R)}">${planFmtR(s.R)}</td><td>${pct(s.adherence)}</td></tr>`).join('');
+  const sr=S.bySetup.slice(0,12).map(s=>{ const pb=typeof playbookFor==='function'?playbookFor(s.k,pbList()):null; // the playbook's own aim, next to what was planned
+    return `<tr data-tip="${esc((s.k==='—'?'Planned trades with no setup written':s.k)+': '+s.n+' planned · average planned R:R '+(s.rr!=null?'1:'+s.rr.toFixed(2):'— (no targets)')+(pb&&pb.rr?' (the playbook aims for 1:'+pb.rr+')':'')+' vs '+planFmtR(s.R)+' achieved on average · plan followed '+pct(s.adherence))}"><td class="l">${esc(s.k)}${pb?' <span style="color:var(--faint)">playbook</span>':''}</td><td>${s.n}</td><td>${s.rr!=null?'1:'+s.rr.toFixed(2):'—'}${pb&&pb.rr?' <span style="color:var(--faint)">aims 1:'+pb.rr+'</span>':''}</td><td class="${cls(s.R)}">${planFmtR(s.R)}</td><td>${pct(s.adherence)}</td></tr>`; }).join('');
   return `<div class="diag-section">${head}<div class="diag-grid">
     <div class="diag-card"><h3 data-tip="Each planned trade gets one verdict from its prices: out beyond the stop (moved or widened), price through the stop while you held, out before the target, or the plan as written. R is gross, in units of your entry-to-stop distance.">Adherence</h3>
       ${mrow('Trades with a plan',pct(S.share)+' <span style="color:var(--faint)">'+S.planned+' / '+S.n+'</span>','Closed trades in this view with a stop written down — before the trade (Daruma’s Plan a trade) or on the journal row.')}
@@ -217,7 +220,7 @@ function planPzHtml(D){
   const left=p=>{ const h=Math.max(0,(p.at+864e5-now)/36e5); return h>=1?Math.floor(h)+'h left':Math.max(1,Math.round(h*60))+' min left'; };
   const row=p=>{ const st=pplanStatus(p,now), t=p.tid&&allTrades.find(x=>x.id===p.tid), r=t&&!t.isOpen?planVerdict(t,nfPlan(journal[t.id]),_excM[t.id]):null, rr=planPzRR(p);
     const what=st==='pending'?left(p):st==='expired'?'Expired — no trade within 24h':!t?'Attached':t.isOpen?'Attached · trade open':r&&r.v!=='none'?planWords(r.v)[1]+' · '+planFmtR(r.R):'Attached';
-    return `<div class="pz-row-t" style="flex-wrap:wrap" data-pz-tip="${esc(planCoinKey(p.coin)+' '+(p.dir==='Short'?'short':'long')+'\nStop '+planPzPx(p.stop)+(p.target?' · target '+planPzPx(p.target):'')+(p.entry?' · entry '+planPzPx(p.entry):'')+(rr?'\nRisk 1 to make '+rr.toFixed(1):'')+(p.setup?'\n'+p.setup:''))}" tabindex="0"><span style="min-width:0;overflow-wrap:anywhere"><b>${esc(planCoinKey(p.coin))} ${p.dir==='Short'?'short':'long'}</b> <span class="pz-sub" style="font-size:12px">stop ${esc(planPzPx(p.stop))}${p.target?' · target '+esc(planPzPx(p.target)):''}</span></span><span style="display:flex;gap:8px;align-items:center"><b style="font-size:13px;color:${st==='pending'?'var(--pz-text)':r&&r.v==='followed'?PZ_COL.good:r&&r.v!=='none'?PZ_COL.low:'var(--pz-muted)'}">${esc(what)}</b>${st==='pending'?`<button type="button" class="pz-chip icon" data-pz-pldel="${esc(p.key)}" aria-label="Delete the ${esc(planCoinKey(p.coin))} plan">${pzI('x',16)}</button>`:''}</span></div>`; };
+    return `<div class="pz-row-t" style="flex-wrap:wrap" data-pz-tip="${esc(planCoinKey(p.coin)+' '+(p.dir==='Short'?'short':'long')+'\nStop '+planPzPx(p.stop)+(p.target?' · target '+planPzPx(p.target):'')+(p.entry?' · entry '+planPzPx(p.entry):'')+(rr?'\nRisk 1 to make '+rr.toFixed(1):'')+(p.setup?'\n'+p.setup:'')+(p.pb&&Array.isArray(p.pb.ok)?'\nChecklist: '+p.pb.ok.length+' of '+(Array.isArray(p.pb.of)?p.pb.of.length-(p.pb.na||[]).length:p.pb.ok.length)+' rules ticked before the trade':''))}" tabindex="0"><span style="min-width:0;overflow-wrap:anywhere"><b>${esc(planCoinKey(p.coin))} ${p.dir==='Short'?'short':'long'}</b> <span class="pz-sub" style="font-size:12px">stop ${esc(planPzPx(p.stop))}${p.target?' · target '+esc(planPzPx(p.target)):''}</span></span><span style="display:flex;gap:8px;align-items:center"><b style="font-size:13px;color:${st==='pending'?'var(--pz-text)':r&&r.v==='followed'?PZ_COL.good:r&&r.v!=='none'?PZ_COL.low:'var(--pz-muted)'}">${esc(what)}</b>${st==='pending'?`<button type="button" class="pz-chip icon" data-pz-pldel="${esc(p.key)}" aria-label="Delete the ${esc(planCoinKey(p.coin))} plan">${pzI('x',16)}</button>`:''}</span></div>`; };
   return `<a class="pz-back" href="#today">${pzI('back',20)}Today</a>${pzHead('Before you trade','Plan a trade')}
     <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:10px;align-items:flex-end"><div class="pz-field" style="flex:1;min-width:0"><label for="pzPlCoin" style="font-size:13px">Market</label><input type="text" id="pzPlCoin" maxlength="24" placeholder="BTC" list="pzPlCoins" autocomplete="off" autocapitalize="characters" spellcheck="false"><datalist id="pzPlCoins">${coins.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
@@ -225,6 +228,7 @@ function planPzHtml(D){
       <div style="display:flex;gap:10px">${num('pzPlEntry','Entry','opt.')}${num('pzPlStop','Stop','needed')}${num('pzPlTarget','Target','opt.')}</div>
       <div class="pz-field"><label for="pzPlWhy" style="font-size:13px">Why this trade (one line)</label><input type="text" id="pzPlWhy" maxlength="80" placeholder="Breakout retest" autocomplete="off"></div>
       ${setups.length?`<div class="pz-chiprow pz-wrapr" aria-label="Your setups">${setups.map(x=>`<button type="button" class="pz-chipbtn" data-pz-plwhy="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:''}
+      <div data-pz-plpb></div>
       <button type="button" class="pz-cta" data-pz-plsave>Save plan</button>
       <p class="pz-fine">It attaches itself to your next trade on this market and side within 24 hours, then Daruma checks how the trade went against it. No trade in 24 hours? It expires.</p></section></div>
     <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">Your plans</b>${L.length?L.slice(0,8).map(row).join(''):'<p class="pz-sub" style="font-size:13px">None yet.</p>'}</section></div></div>`;
@@ -269,22 +273,42 @@ function planPzRpHtml(t){
 function planPzMark(t){ const i=(pzS.rp||{})[t&&t.id]; if(i==null||i<0)return null; const s=replayFillSteps(t.dir,t.events)[i]; return s?{t:s.t,px:s.px,k:s.k}:null; }
 async function planPzAction(el){
   const ds=el.dataset;
-  if(ds.pzPlside){ pzS.planSide=ds.pzPlside; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); return true; }
-  if(ds.pzPlwhy){ const w=$('pzPlWhy'); if(w){ w.value=ds.pzPlwhy; w.focus(); } return true; }
+  if(ds.pzPlside){ pzS.planSide=ds.pzPlside; el.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===el))); planPzFillTarget(); return true; }
+  if(ds.pzPlwhy){ const w=$('pzPlWhy'); if(w){ w.value=ds.pzPlwhy; w.focus(); planPzWhyChanged(); } return true; }
   if(ds.pzPldel){ if(journal[ds.pzPldel]&&!journal[ds.pzPldel].tid){ delete journal[ds.pzPldel]; markJEdit(ds.pzPldel); await Store.set(J_KEY,journal); pzNote('Plan deleted.'); pzRender(); } return true; }
   if(ds.pzPlsave!==undefined){ const v=id=>{ const e=$(id); return e?e.value.trim():''; }, n=id=>{ const x=parseFloat(v(id)); return x>0?x:null; };
     const p={coin:planCoinKey(v('pzPlCoin')),dir:pzS.planSide==='Short'?'Short':'Long',entry:n('pzPlEntry'),stop:n('pzPlStop'),target:n('pzPlTarget'),setup:v('pzPlWhy').slice(0,80),at:Date.now()};
+    // the playbook's checklist, when it was touched: the trade it attaches to gets these ticks, marked live
+    const pbBox=document.querySelector('[data-pz-plpb] [data-pz-pb][data-touched]'), pbP=pbBox&&pbList().find(x=>x.id===pbBox.dataset.pzPb);
+    if(pbP&&playbookFor(p.setup,[pbP]))p.pb={id:pbP.id,...pzPbRead(pbBox,pbP),at:p.at};
     if(!_planPerps)await Promise.race([planPerpsLoad(),new Promise(r=>setTimeout(r,1500))]); // a moment for the list on a slow line
     const err=pplanCheck(p,planKnownMarkets()); if(err){ pzNote(err,'err'); return true; }
     if(p.setup&&typeof pzCanonSetup==='function')p.setup=pzCanonSetup(p.setup);
     const key='pplan:'+p.at.toString(36)+Math.random().toString(36).slice(2,6);
     journal[key]=p; markJEdit(key); await Store.set(J_KEY,journal);
     for(const id of ['pzPlCoin','pzPlEntry','pzPlStop','pzPlTarget','pzPlWhy']){ const e=$(id); if(e)e.value=''; }
+    const slot=document.querySelector('[data-pz-plpb]'); if(slot)slot.innerHTML='';
     planAttachPending(); // the trade may already be on
     pzNote('Plan saved — it attaches to your next '+p.coin+' '+p.dir.toLowerCase()+'.'); pzRender(); return true; }
   if(ds.pzRp){ const g=el.closest('[data-pz-rpg]'); if(g)planPzStep(g.dataset.pzRpg,+ds.pzRp); return true; }
   if(ds.pzRpi!==undefined){ const g=el.closest('[data-pz-rpg]'); if(g)planPzStep(g.dataset.pzRpg,+ds.pzRpi,true); return true; }
   return false;
+}
+// The playbook named in "Why this trade": its checklist under the form (tick the rules this plan keeps:
+// they go on the trade as ticked before the close), and its target reward-to-risk fills the target once
+// the entry and the stop are typed (a target you typed yourself is never overwritten).
+function planPzWhyChanged(){
+  const slot=document.querySelector('[data-pz-plpb]'), w=$('pzPlWhy'); if(!slot||!w)return;
+  const p=typeof playbookFor==='function'?playbookFor(w.value,pbList()):null, cur=slot.querySelector('[data-pz-pb]');
+  if((cur?cur.dataset.pzPb:'')!==(p?p.id:''))slot.innerHTML=p?pzPbCheckHtml('pplan',w.value,{id:p.id,ok:[],of:[]},'tick the rules this plan keeps')+(p.rr?`<p class="pz-fine" data-pz-plrr>Aims for 1:${p.rr}: the target fills in from the entry and the stop.</p>`:''):'';
+  planPzFillTarget();
+}
+function planPzFillTarget(){
+  const w=$('pzPlWhy'), tg=$('pzPlTarget'); if(!w||!tg||(tg.value.trim()&&tg.dataset.auto!=='1'))return;
+  const p=typeof playbookFor==='function'?playbookFor(w.value,pbList()):null, en=parseFloat(($('pzPlEntry')||{}).value), st=parseFloat(($('pzPlStop')||{}).value);
+  const sg=pzS.planSide==='Short'?-1:1, risk=p&&p.rr&&en>0&&st>0?sg*(en-st):0;
+  if(!(risk>0)){ if(tg.dataset.auto==='1'){ tg.value=''; tg.dataset.auto=''; } return; }
+  tg.value=String(+(en+sg*risk*p.rr).toPrecision(6)); tg.dataset.auto='1';
 }
 // one step: redraw only this card's chart and step-through (a full render would drop focus and scroll)
 function planPzStep(id,d,abs){
@@ -301,6 +325,8 @@ function planPzStep(id,d,abs){
 // Pulse wiring of its own (pulse.js's handlers stay untouched): clicks, and ← → on a step-through
 if(typeof PZ!=='undefined'&&PZ){
   document.addEventListener('click',ev=>{ const el=ev.target.closest&&ev.target.closest('[data-pz-plside],[data-pz-plwhy],[data-pz-pldel],[data-pz-plsave],[data-pz-rp],[data-pz-rpi]'); if(el&&!el.disabled)planPzAction(el); });
+  document.addEventListener('input',ev=>{ const t=ev.target; if(!t||!t.id)return;
+    if(t.id==='pzPlWhy')planPzWhyChanged(); else if(t.id==='pzPlEntry'||t.id==='pzPlStop')planPzFillTarget(); else if(t.id==='pzPlTarget')t.dataset.auto=''; });
   document.addEventListener('keydown',ev=>{ if(ev.key!=='ArrowLeft'&&ev.key!=='ArrowRight')return; const g=ev.target.closest&&ev.target.closest('[data-pz-rpg]'); if(!g)return;
     ev.preventDefault(); planPzStep(g.dataset.pzRpg,ev.key==='ArrowRight'?1:-1); });
 }

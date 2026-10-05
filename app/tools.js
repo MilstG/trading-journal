@@ -81,6 +81,7 @@ function weeklyReviewSectionHtml(){
         ${lastWeekFocusHtml(from)}
         <div class="metric-row"><span class="ml">Best trade</span><span class="mv">${tl(best)}</span></div>
         <div class="metric-row"><span class="ml">Worst trade</span><span class="mv">${tl(worst)}</span></div>
+        ${(()=>{ const s=pbSummary(closed,journal,pbList()); return s?`<div class="metric-row" data-tip="That week’s trades with a playbook checklist filled in: how many kept every rule, and the rule broken most."><span class="ml">Playbooks</span><span class="mv" style="max-width:70%;text-align:right;white-space:normal;font-weight:400">${esc(pbSummaryText(s))}</span></div>`:''; })()}
         <div class="field" style="margin-top:8px"><label>What worked — worth repeating?</label><textarea id="wrRepeat" placeholder="setups, conditions, behaviors that paid">${esc(e.repeat||'')}</textarea></div>
         <div class="field"><label>What didn't — what changes next week?</label><textarea id="wrChange" placeholder="the leak you'll plug">${esc(e.change||'')}</textarea></div>
         <div class="field"><label>One-line lesson</label><input type="text" id="wrLesson" maxlength="160" value="${esc(e.lesson||'')}" placeholder="the sentence future-you should re-read"></div>

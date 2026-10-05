@@ -785,13 +785,17 @@ function renderReviewInner(){
 }
 /* ============================ playbooks ============================ */
 // A playbook is a setup with its written rules ("Breakout: wait for the retest; stop under
-// the range; no entries in the first 15 minutes"). A trade whose setup names a playbook gets
-// that checklist in its journal: tick it before you enter (open trades) or when you review.
-// The Review tab then compares trades that kept every rule with trades that broke one, rule
-// by rule: does following your own rules pay? Playbooks live in settings (synced, merged per
-// playbook, deletions as dated tombstones); ticks live in the trade's journal entry as
-// j.pb = {id, ok:[rule ids ticked], of:[rule ids on the checklist then], at}.
-const PB_MAX=30, PB_RULES_MAX=15;
+// the range; no entries in the first 15 minutes"). A trade whose setup names a playbook (its
+// name or one of its aliases) gets that checklist in its journal: tick it before you enter
+// (Daruma's Plan a trade, or an open trade's journal row) or when you review. The Review tab
+// then compares trades that kept every rule with trades that broke one, rule by rule: does
+// following your own rules pay? Playbooks live in settings (synced, merged per playbook,
+// deletions as dated tombstones); ticks live in the trade's journal entry as
+// j.pb = {id, ok:[rule ids ticked], of:[rule ids on the checklist then], na:[rule ids that didn't
+// apply to this trade], at, live:true when it was ticked before the trade closed}.
+// A playbook may also carry aliases (other setup spellings that mean it) and rr, the reward-to-risk
+// it aims for (Plan a trade fills the target from it).
+const PB_MAX=30, PB_RULES_MAX=15, PB_ALIAS_MAX=6, PB_TREND_N=10;
 function pbNorm(list, keepDeleted){
   const out=[], seen=new Set();
   for(const p of (Array.isArray(list)?list:[])){
@@ -803,7 +807,8 @@ function pbNorm(list, keepDeleted){
     // src: a copy adopted from a playbook someone shared in Daruma (its shared id, the author, the version
     // taken, and when it was taken — an edit after that is the adopter's own)
     const s=p.src, src=s&&typeof s.id==='string'&&/^[a-f0-9]{12}$/.test(s.id)?{src:{id:s.id,h:String(s.h||'').slice(0,20),v:Math.max(1,Math.floor(+s.v)||1),at:+s.at||0}}:{};
-    out.push({id:p.id.slice(0,24),name,rules,at:+p.at||0,createdAt:+p.createdAt||+p.at||0,...src});
+    const aliases=pbAliasesFromText(Array.isArray(p.aliases)?p.aliases.filter(a=>typeof a==='string').join('\n'):'',name), rr=pbRR(p.rr);
+    out.push({id:p.id.slice(0,24),name,rules,at:+p.at||0,createdAt:+p.createdAt||+p.at||0,...src,...(aliases.length?{aliases}:{}),...(rr?{rr}:{})});
   }
   return out.slice(-90); // PB_MAX × 3, room for tombstones
 }
@@ -815,7 +820,17 @@ function pbUnadopt(p){
   return socFetch('/playbooks/'+p.src.id+'/adopt',{method:'POST',body:JSON.stringify({on:false})}).catch(()=>null);
 }
 function pbKey(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
-function playbookFor(setup, playbooks){ const k=pbKey(setup); return k?(playbooks||[]).find(p=>!p.del&&pbKey(p.name)===k)||null:null; }
+// the setup spellings that mean playbook p: its name first, then its aliases
+function pbNames(p){ return [p.name,...(p.aliases||[])]; }
+function playbookFor(setup, playbooks){ const k=pbKey(setup); return k?(playbooks||[]).find(p=>!p.del&&pbNames(p).some(n=>pbKey(n)===k))||null:null; }
+// aliases typed with commas or one per line -> up to PB_ALIAS_MAX distinct spellings, never the name itself
+function pbAliasesFromText(text, name){
+  const seen=new Set([pbKey(name)]), out=[];
+  for(const a of String(text||'').split(/[\n,]/)){ const t=a.trim().replace(/\s+/g,' ').slice(0,40), k=pbKey(t); if(!k||seen.has(k))continue; seen.add(k); out.push(t); if(out.length>=PB_ALIAS_MAX)break; }
+  return out;
+}
+// the reward-to-risk a playbook aims for: a number from 0.1 to 50, two decimals; null when none
+function pbRR(v){ const x=parseFloat(v); return x>=0.1&&x<=50?Math.round(x*100)/100:null; }
 // rules typed one per line -> rules; a line that didn't change keeps its id, so past ticks still count
 function pbRulesFromText(text, prev, mkId){
   mkId=mkId||(()=>'r'+Math.random().toString(36).slice(2,9));
@@ -823,27 +838,41 @@ function pbRulesFromText(text, prev, mkId){
   return String(text||'').split('\n').map(x=>x.replace(/^\s*(?:[-*•]|\d+[.)])\s*/,'').trim()).filter(Boolean).slice(0,15).map(t=>{ // 15 = PB_RULES_MAX
     let id=old.get(pbKey(t)); if(!id||used.has(id))id=mkId(); used.add(id); return {id,text:t.slice(0,160)}; });
 }
+// Pure. One trade's checklist against playbook p: null when it wasn't checked (or was checked for
+// another playbook); else which of p's rules it was graded on (the ones on its checklist then, minus
+// the ones marked not applicable), which it broke, and whether it was ticked before the close.
+function pbGrade(pb, p){
+  if(!pb||pb.id!==p.id||!Array.isArray(pb.ok))return null;
+  const na=new Set(Array.isArray(pb.na)?pb.na:[]), of=Array.isArray(pb.of)?new Set(pb.of):null;
+  const graded=p.rules.filter(r=>(!of||of.has(r.id))&&!na.has(r.id)).map(r=>r.id);
+  const broke=graded.filter(id=>!pb.ok.includes(id));
+  return {graded,broke,kept:!broke.length,live:pb.live===true};
+}
 // Pure. Per playbook: its trades; of those with a filled-in checklist, the ones that kept every
-// rule vs broke at least one; and per rule, the average result when kept vs broken. A rule only
-// counts on trades whose checklist had it (rules added later don't grade older trades).
-// Results come in R (rOf) where the risk is known, and in $ always.
+// rule vs broke at least one (with a bootstrap range on the gap); per rule, how often it was kept
+// and the average result when kept vs broken; the rule broken most; the adherence trend (the last
+// PB_TREND_N checked trades against the ones before); and how many were ticked before the close.
+// A rule only counts on trades whose checklist had it (rules added later don't grade older trades)
+// and where it applied. Results come in R (rOf) where the risk is known, and in $ always.
 function playbookStats(closed, J, playbooks, rOf){
   rOf=rOf||(()=>null);
-  const agg=list=>{ const n=list.length; if(!n)return {n:0,net:0,exp:null,wr:null,avgR:null,nR:0};
-    const net=list.reduce((s,t)=>s+t.net,0), w=list.filter(t=>isWin(t.net)).length, l=list.filter(t=>isLoss(t.net)).length;
+  const agg=list=>{ const n=list.length, nets=list.map(t=>t.net); if(!n)return {n:0,net:0,exp:null,wr:null,avgR:null,nR:0,nets,rs:[]};
+    const net=nets.reduce((s,x)=>s+x,0), w=list.filter(t=>isWin(t.net)).length, l=list.filter(t=>isLoss(t.net)).length;
     const rs=list.map(rOf).filter(x=>x!=null&&isFinite(x));
-    return {n,net,exp:net/n,wr:w+l?w/(w+l):null,avgR:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null,nR:rs.length}; };
+    return {n,net,exp:net/n,wr:w+l?w/(w+l):null,avgR:rs.length?rs.reduce((a,b)=>a+b,0)/rs.length:null,nR:rs.length,nets,rs}; };
   return (playbooks||[]).filter(p=>!p.del).map(p=>{
     const mine=closed.filter(t=>{ const j=J[t.id]; return j&&playbookFor(j.setup,[p]); });
-    const ticks=t=>{ const pb=J[t.id].pb; return pb&&pb.id===p.id&&Array.isArray(pb.ok)?pb:null; };
-    const checked=mine.filter(ticks);
-    const onList=(t,r)=>{ const pb=ticks(t); return !Array.isArray(pb.of)||pb.of.includes(r.id); };
-    const kept=(t,r)=>ticks(t).ok.includes(r.id);
-    const allKept=t=>p.rules.every(r=>!onList(t,r)||kept(t,r));
-    const rules=p.rules.map(r=>{ const graded=checked.filter(t=>onList(t,r)), k=graded.filter(t=>kept(t,r)), b=graded.filter(t=>!kept(t,r));
+    const G=new Map(); for(const t of mine){ const g=pbGrade(J[t.id].pb,p); if(g)G.set(t.id,g); }
+    const checked=mine.filter(t=>G.has(t.id));
+    const rules=p.rules.map(r=>{ const graded=checked.filter(t=>G.get(t.id).graded.includes(r.id)), k=graded.filter(t=>!G.get(t.id).broke.includes(r.id)), b=graded.filter(t=>G.get(t.id).broke.includes(r.id));
       return {id:r.id,text:r.text,graded:graded.length,keptRate:graded.length?k.length/graded.length:null,kept:agg(k),broke:agg(b)}; });
-    return {id:p.id,name:p.name,ruleN:p.rules.length,n:mine.length,checked:checked.length,all:agg(mine),
-      kept:agg(checked.filter(allKept)),broke:agg(checked.filter(t=>!allKept(t))),rules};
+    const kept=agg(checked.filter(t=>G.get(t.id).kept)), broke=agg(checked.filter(t=>!G.get(t.id).kept));
+    const mb=rules.filter(r=>r.broke.n).sort((a,b)=>b.broke.n-a.broke.n||a.keptRate-b.keptRate)[0]||null;
+    const chron=[...checked].sort((a,b)=>a.closeTime-b.closeTime), recent=chron.slice(-PB_TREND_N), earlier=chron.slice(0,-PB_TREND_N);
+    const rate=L=>L.length?L.filter(t=>G.get(t.id).kept).length/L.length:null;
+    return {id:p.id,name:p.name,ruleN:p.rules.length,n:mine.length,checked:checked.length,live:checked.filter(t=>G.get(t.id).live).length,all:agg(mine),
+      kept,broke,range:pbGapRange(kept,broke),mostBroken:mb?{id:mb.id,text:mb.text,broke:mb.broke.n,graded:mb.graded}:null,
+      trend:{recent:{n:recent.length,rate:rate(recent)},earlier:{n:earlier.length,rate:rate(earlier)}},rules};
   });
 }
 // the cost of breaking a rule, in R when both sides have R for most trades, else in $ per trade
@@ -852,47 +881,107 @@ function pbGap(k, b){
   if(k.avgR!=null&&b.avgR!=null&&k.nR>=k.n/2&&b.nR>=b.n/2)return {v:k.avgR-b.avgR,unit:'R'};
   return {v:k.exp-b.exp,unit:'$'};
 }
+// a 90% bootstrap range on that gap (1000 resamples of each side, seeded by the data so it's the
+// same on every redraw), in pbGap's unit; null until each side has 5 trades
+function pbGapRange(k, b, B){
+  const g=pbGap(k,b); if(!g||k.n<5||b.n<5)return null;
+  const a=g.unit==='R'?k.rs:k.nets, c=g.unit==='R'?b.rs:b.nets; if(a.length<5||c.length<5)return null;
+  let seed=(a.length*7919+c.length*104729+Math.round((a[0]+c[0])*1000))|0; const rnd=()=>{ seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; };
+  const mean=L=>{ let s=0; for(let i=0;i<L.length;i++)s+=L[Math.floor(rnd()*L.length)]; return s/L.length; };
+  B=B||1000; const d=[]; for(let i=0;i<B;i++)d.push(mean(a)-mean(c)); d.sort((x,y)=>x-y);
+  return {lo:d[Math.floor(B*0.05)],hi:d[Math.ceil(B*0.95)-1],unit:g.unit};
+}
+// Pure. Setups that name no playbook but look like one: the same words as its name or an alias
+// (one contains the other, or they share a first word of 4+ letters). Per playbook id: [{setup, n}],
+// most used first — the nudge to add an alias so those trades get the checklist and count.
+function pbNearSetups(closed, J, playbooks){
+  const live=(playbooks||[]).filter(p=>!p.del), cnt={}, canon={};
+  for(const t of closed){ const j=J[t.id], s=j&&typeof j.setup==='string'?j.setup.trim().replace(/\s+/g,' '):''; if(!s||playbookFor(s,live))continue; const k=pbKey(s); cnt[k]=(cnt[k]||0)+1; canon[k]=canon[k]||s; }
+  const first=k=>{ const w=k.split(' ')[0]; return w.length>=4?w:null; };
+  const like=(k,n)=>{ const nk=pbKey(n); if(k.length<4||nk.length<4)return false; if(k.includes(nk)||nk.includes(k))return true; const a=first(k), b=first(nk); return !!a&&a===b; };
+  const out={};
+  for(const p of live){ const L=Object.keys(cnt).filter(k=>pbNames(p).some(n=>like(k,n))).sort((a,b)=>cnt[b]-cnt[a]).map(k=>({setup:canon[k],n:cnt[k]})); if(L.length)out[p.id]=L; }
+  return out;
+}
+// Pure. Which closed trades have a checked playbook, and which of those broke a rule (the day's
+// "playbook rules kept" part reads this). -> {checked: Set, broke: Set}
+function pbTradeGrades(closed, J, playbooks){
+  const live=(playbooks||[]).filter(p=>!p.del), checked=new Set(), broke=new Set();
+  if(live.length)for(const t of closed){ const j=J[t.id]; if(!j||!j.pb)continue; const p=playbookFor(j.setup,live), g=p&&pbGrade(j.pb,p); if(!g)continue; checked.add(t.id); if(!g.kept)broke.add(t.id); }
+  return {checked,broke};
+}
+// Pure. One line's worth of playbook adherence over a set of closed trades (a week, the coach):
+// null with nothing checked; else how many kept every rule, and the rule broken most often.
+function pbSummary(closed, J, playbooks){
+  const S=playbookStats(closed,J,playbooks,()=>null).filter(s=>s.checked); if(!S.length)return null;
+  const checked=S.reduce((a,s)=>a+s.checked,0), kept=S.reduce((a,s)=>a+s.kept.n,0);
+  const mb=S.filter(s=>s.mostBroken).sort((a,b)=>b.mostBroken.broke-a.mostBroken.broke)[0];
+  return {checked,kept,broke:checked-kept,playbooks:S.length,mostBroken:mb?{playbook:mb.name,text:mb.mostBroken.text,n:mb.mostBroken.broke}:null};
+}
+function pbSummaryText(s){ if(!s)return '';
+  return s.kept+' of '+s.checked+' checked trade'+(s.checked===1?'':'s')+' kept every playbook rule'+(s.mostBroken?'. Broken most: “'+s.mostBroken.text+'” ('+s.mostBroken.playbook+', '+s.mostBroken.n+' time'+(s.mostBroken.n===1?'':'s')+')':'')+'.'; }
+// the words after a checklist's name: how many kept, and when it was ticked
+function pbTickWords(p, pb){ if(!pb||pb.id!==p.id||!Array.isArray(pb.ok))return 'not checked yet';
+  const na=new Set(pb.na||[]), of=p.rules.filter(r=>!na.has(r.id)); return pb.ok.filter(id=>of.some(r=>r.id===id)).length+'/'+of.length+' kept · ticked '+(pb.live?'before the close':'after the close'); }
 // the checklist inside a trade's journal row
 function pbChecklistHtml(t,j){
   const p=playbookFor(j.setup,pbList()); if(!p)return '';
   if(!p.rules.length)return `<div class="field"><label>${esc(p.name)} playbook</label><p class="mini-note">This playbook has no rules yet — add them under Review → Playbooks.</p></div>`;
-  const pb=j.pb&&j.pb.id===p.id?j.pb:null, ok=new Set(pb?pb.ok:[]);
-  return `<div class="field"><label data-tip="Tick each rule you followed on this trade${t.isOpen?' — before you enter is best':''}. Unticked rules count as broken once any box here has been saved. Review → Playbooks compares trades that kept every rule with trades that broke one.">${esc(p.name)} playbook${pb?` · ${p.rules.filter(r=>ok.has(r.id)).length}/${p.rules.length} kept`:' · not checked yet'}</label>
-    <div class="pbrules" data-pb="${esc(p.id)}" data-id="${esc(t.id)}">${p.rules.map(r=>`<label class="pbrule${ok.has(r.id)?' on':''}"><input type="checkbox" data-pbr="${esc(r.id)}"${ok.has(r.id)?' checked':''}><span>${esc(r.text)}</span></label>`).join('')}</div></div>`;
+  const pb=j.pb&&j.pb.id===p.id?j.pb:null, ok=new Set(pb?pb.ok:[]), na=new Set(pb&&Array.isArray(pb.na)?pb.na:[]);
+  return `<div class="field"><label data-tip="Tick each rule you followed on this trade${t.isOpen?' — before you enter is best':''}. Unticked rules count as broken once any box here has been saved; n/a takes a rule that didn’t apply to this trade out of the grading. Ticks made while the trade is open are marked as such. Review → Playbooks compares trades that kept every rule with trades that broke one.">${esc(p.name)} playbook · ${esc(pbTickWords(p,pb))}</label>
+    <div class="pbrules" data-pb="${esc(p.id)}" data-id="${esc(t.id)}">${p.rules.map(r=>`<div class="pbrow${na.has(r.id)?' na':''}"><label class="pbrule${ok.has(r.id)&&!na.has(r.id)?' on':''}"><input type="checkbox" data-pbr="${esc(r.id)}"${ok.has(r.id)&&!na.has(r.id)?' checked':''}${na.has(r.id)?' disabled':''}><span>${esc(r.text)}</span></label><button type="button" class="pbna" data-pbna="${esc(r.id)}" aria-pressed="${na.has(r.id)}" data-tip="This rule didn’t apply to this trade: it’s left out of the grading.">n/a</button></div>`).join('')}</div></div>`;
 }
-// a tick is an edit, saved at once (like the mistake flags)
+// a tick is an edit, saved at once (like the mistake flags); once ticked live, a later touch keeps it live
 function pbSaveTicks(box){
   const id=box.dataset.id, p=pbList().find(x=>x.id===box.dataset.pb); if(!p)return;
-  const j=ensureJ(id), ok=[...box.querySelectorAll('input[data-pbr]')].filter(i=>i.checked).map(i=>i.dataset.pbr);
-  j.pb={id:p.id,ok,of:p.rules.map(r=>r.id),at:Date.now()};
-  const lab=box.previousElementSibling; if(lab)lab.textContent=p.name+' playbook · '+ok.length+'/'+p.rules.length+' kept';
+  const j=ensureJ(id), na=[...box.querySelectorAll('[data-pbna][aria-pressed="true"]')].map(b=>b.dataset.pbna);
+  const ok=[...box.querySelectorAll('input[data-pbr]')].filter(i=>i.checked&&!na.includes(i.dataset.pbr)).map(i=>i.dataset.pbr);
+  const t=allTrades.find(x=>x.id===id), live=!!((j.pb&&j.pb.id===p.id&&j.pb.live)||(t&&t.isOpen));
+  j.pb={id:p.id,ok,of:p.rules.map(r=>r.id),...(na.length?{na}:{}),at:Date.now(),...(live?{live:true}:{})};
+  const lab=box.previousElementSibling; if(lab)lab.textContent=p.name+' playbook · '+pbTickWords(p,j.pb);
   markJEdit(id); Store.set(J_KEY,journal);
+}
+// n/a on a rule: out of the grading for this trade (and unticked)
+function pbToggleNa(btn){
+  const box=btn.closest('.pbrules'), row=btn.closest('.pbrow'), on=btn.getAttribute('aria-pressed')!=='true';
+  btn.setAttribute('aria-pressed',String(on)); row.classList.toggle('na',on);
+  const inp=row.querySelector('input[data-pbr]'); if(inp){ inp.disabled=on; if(on){ inp.checked=false; row.querySelector('.pbrule').classList.remove('on'); } }
+  pbSaveTicks(box);
 }
 let _pbEdit=null; // playbook id being edited, 'new', or null
 function playbooksSectionHtml(){
   const list=pbList();
   const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
-  const stats=playbookStats(closed,journal,list,rFor);
+  const stats=playbookStats(closed,journal,list,rFor), near=pbNearSetups(closed,journal,list);
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const pct=x=>x==null?'—':Math.round(x*100)+'%';
   const res=a=>!a.n?'—':`${a.n} trade${a.n===1?'':'s'} · win ${pct(a.wr)} · `+(a.avgR!=null&&a.nR>=a.n/2?`<span class="${cls(a.avgR)}">${a.avgR>=0?'+':''}${a.avgR.toFixed(2)}R</span>/trade`:`<span class="${cls(a.exp)}">${fmtUsd(a.exp)}</span>/trade`);
   const early=(a,b)=>Math.min(a.n,b.n)<10?` <span style="color:var(--faint)" data-tip="Fewer than 10 trades on one side: this can flip with a few more trades.">· early (${Math.min(a.n,b.n)} vs ${Math.max(a.n,b.n)})</span>`:'';
   const gapTxt=g=>!g?'':g.unit==='R'?`${g.v>=0?'+':''}${g.v.toFixed(2)}R`:`${g.v>=0?'+':''}${fmtUsd(g.v)}`;
+  const rangeTxt=r=>!r?'':` <span style="color:var(--faint)" data-tip="A 90% bootstrap range: resampling your trades 1,000 times, the gap landed in here 9 times out of 10. A range that straddles zero isn’t settled yet.">· 90% range ${gapTxt({v:r.lo,unit:r.unit})} to ${gapTxt({v:r.hi,unit:r.unit})}</span>`;
   const editor=p=>`<div class="diag-card pbedit"><h3>${p?'Edit playbook':'New playbook'}</h3>
       <div class="field"><label for="pbName">Setup name</label><input type="text" id="pbName" maxlength="60" value="${esc(p?p.name:'')}" placeholder="e.g. Breakout retest"></div>
       <div class="field"><label for="pbRules">Rules — one per line</label><textarea id="pbRules" placeholder="Wait for the retest of the range high&#10;Stop under the range low&#10;Risk no more than 1R&#10;No entries in the first 15 minutes">${esc(p?p.rules.map(r=>r.text).join('\n'):'')}</textarea></div>
-      <p class="mini-note">A trade gets this checklist when its Setup field says exactly this name. Rewording a rule starts it fresh; unchanged lines keep their history.</p>
+      <div class="field"><label for="pbAliases" data-tip="Other spellings of this setup you use on trades (comma separated, up to ${PB_ALIAS_MAX}). A trade tagged with any of them gets this checklist and counts here.">Also matches — other setup names, comma separated</label><input type="text" id="pbAliases" maxlength="200" value="${esc(p&&p.aliases?p.aliases.join(', '):'')}" placeholder="breakout, bo retest"></div>
+      <div class="field"><label for="pbRR" data-tip="The reward-to-risk this setup aims for. Daruma’s Plan a trade fills the target from it once you’ve typed the entry and the stop.">Target reward-to-risk (optional)</label><input type="number" id="pbRR" inputmode="decimal" step="0.1" min="0.1" max="50" value="${p&&p.rr?p.rr:''}" placeholder="e.g. 2 for 1:2"></div>
+      <p class="mini-note">A trade gets this checklist when its Setup field says this name or one of the other names. Rewording a rule starts it fresh; unchanged lines keep their history.</p>
       <button class="btn" id="pbSave" data-pbid="${esc(p?p.id:'')}">Save playbook</button> <button class="btn ghost" id="pbCancel">Cancel</button></div>`;
   const cards=stats.map(s=>{ const p=list.find(x=>x.id===s.id); if(_pbEdit===s.id)return editor(p);
-    const g=pbGap(s.kept,s.broke);
+    const g=pbGap(s.kept,s.broke), tr=s.trend, trendOn=tr.earlier.n>=5&&tr.recent.n>=5;
     const rules=s.rules.map(r=>({r,g:pbGap(r.kept,r.broke)})).sort((a,b)=>(b.g?Math.abs(b.g.v):-1)-(a.g?Math.abs(a.g.v):-1));
-    return `<div class="diag-card"><h3>${esc(s.name)} <span style="font-size:11px;color:var(--faint);font-weight:400">${p&&p.src?'from @'+esc(p.src.h)+' · ':''}${s.ruleN} rule${s.ruleN===1?'':'s'} · ${s.n} trade${s.n===1?'':'s'}</span></h3>
-      ${s.checked?`${mrow('Kept every rule',res(s.kept),'Trades whose checklist had every rule ticked.')}
-      ${mrow('Broke a rule',res(s.broke),'Trades with at least one rule left unticked.')}
-      ${g?mrow('Following the playbook is worth',`<b class="${cls(g.v)}">${gapTxt(g)}</b> per trade${early(s.kept,s.broke)}`,'Average result when every rule was kept minus when one was broken. Small samples swing a lot — read it as a direction until each side has 20+ trades.'):''}
-      <div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${rules.map(({r,g})=>mrow(esc(r.text),r.graded?`kept ${pct(r.keptRate)}${!g?'':g.v>=0?` · breaking it cost <b class="neg-t">${gapTxt(g).replace('+','')}</b>/trade`:` · broken trades did <b class="pos-t">${gapTxt({v:-g.v,unit:g.unit})}</b> better`}${g?early(r.kept,r.broke):''}`:'<span style="color:var(--faint)">not graded yet</span>','Of the '+r.graded+' checked trades that had this rule: how often you kept it, and the average result when kept vs broken.')).join('')}</div>`
+    const nr=near[s.id]||[];
+    return `<div class="diag-card"><h3>${esc(s.name)} <span style="font-size:11px;color:var(--faint);font-weight:400">${p&&p.src?'from @'+esc(p.src.h)+' · ':''}${s.ruleN} rule${s.ruleN===1?'':'s'} · ${s.n} trade${s.n===1?'':'s'}${p&&p.rr?' · aims for 1:'+p.rr:''}</span></h3>
+      ${p&&p.aliases&&p.aliases.length?`<p class="mini-note" style="margin-top:0">Also matches: ${esc(p.aliases.join(', '))}</p>`:''}
+      ${s.checked?`${mrow('Kept every rule',res(s.kept),'Trades whose checklist had every rule that applied ticked.')}
+      ${mrow('Broke a rule',res(s.broke),'Trades with at least one rule that applied left unticked.')}
+      ${g?mrow('Following the playbook is worth',`<b class="${cls(g.v)}">${gapTxt(g)}</b> per trade${rangeTxt(s.range)}${early(s.kept,s.broke)}`,'Average result when every rule was kept minus when one was broken. Small samples swing a lot — read it as a direction until each side has 20+ trades.'):''}
+      ${s.mostBroken?mrow('Rule you break most',`${esc(s.mostBroken.text)} <span style="color:var(--faint)">· broken on ${s.mostBroken.broke} of ${s.mostBroken.graded}</span>`,'The rule left unticked on the most checked trades. Fixing one rule is easier than fixing a setup.'):''}
+      ${trendOn?mrow('Adherence trend',`last ${tr.recent.n} checked: <b class="${tr.recent.rate>=tr.earlier.rate?'pos-t':'neg-t'}">${pct(tr.recent.rate)}</b> kept every rule <span style="color:var(--faint)">· before that ${pct(tr.earlier.rate)} (${tr.earlier.n})</span>`,'Share of checked trades that kept every rule: the most recent '+PB_TREND_N+' against the ones before. Is it getting better?'):''}
+      ${mrow('Ticked before the close',`${s.live} of ${s.checked}`,'Checklists filled while the trade was still open (or in Plan a trade before it). Ticks made after the close know how it went; these don’t.')}
+      <div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${rules.map(({r,g})=>mrow(esc(r.text),r.graded?`kept ${pct(r.keptRate)}${!g?'':g.v>=0?` · breaking it cost <b class="neg-t">${gapTxt(g).replace('+','')}</b>/trade`:` · broken trades did <b class="pos-t">${gapTxt({v:-g.v,unit:g.unit})}</b> better`}${g?early(r.kept,r.broke):''}`:'<span style="color:var(--faint)">not graded yet</span>','Of the '+r.graded+' checked trades where this rule applied: how often you kept it, and the average result when kept vs broken.')).join('')}</div>`
       :`<p class="mini-note">${s.n?`${s.n} trade${s.n===1?' has':'s have'} this setup, none checked yet. Open one in the trade list and tick the rules you followed.`:'No trades with this setup yet. Type “'+esc(s.name)+'” in a trade’s Setup field to get the checklist.'}</p>`}
       ${s.checked&&s.checked<s.n?`<p class="mini-note">${s.n-s.checked} of ${s.n} trades with this setup aren’t checked yet.</p>`:''}
+      ${nr.length?`<p class="mini-note">${nr.slice(0,3).map(x=>`${x.n} trade${x.n===1?'':'s'} tagged “${esc(x.setup)}” look${x.n===1?'s':''} like this playbook${p&&(p.aliases||[]).length<PB_ALIAS_MAX?` — <button class="btn ghost pbaliasbtn" data-pbalias="${esc(s.id)}" data-v="${esc(x.setup)}">count them here</button>`:''}`).join('<br>')}</p>`:''}
       <div style="margin-top:8px"><button class="btn ghost" data-pbedit="${esc(s.id)}">Edit</button> <button class="btn ghost" data-pbdel="${esc(s.id)}">Delete</button></div></div>`; }).join('');
   return `<div class="diag-section"><h2>Playbooks <span style="font-size:11px;color:var(--faint);font-weight:400">your setups' rules, and what keeping them is worth · current view</span></h2>
     <p class="lead">Write the rules for each setup once. Every trade with that setup gets a checklist; tick what you followed${list.length?'':' — then this section shows whether following your own rules pays'}.${/^https?:$/.test(location.protocol)?` <a href="/daruma#playbooks">Share yours or adopt others’ in Daruma →</a>`:''}</p>
@@ -906,12 +995,20 @@ function wirePlaybooks(){
   const save=$('pbSave'); if(save)save.onclick=async()=>{
     const name=$('pbName').value.trim(); if(!name){ setErr('A playbook needs a setup name.'); return; }
     const all=pbNorm(settings.playbooks,true), id=save.dataset.pbid, prev=all.find(p=>p.id===id&&!p.del);
-    if(pbList().some(p=>p.id!==id&&pbKey(p.name)===pbKey(name))){ setErr('There is already a playbook called “'+name+'”.'); return; }
-    const now=Date.now(), p={id:prev?prev.id:'pb'+now.toString(36)+Math.random().toString(36).slice(2,5),name,rules:pbRulesFromText($('pbRules').value,prev&&prev.rules),at:now,createdAt:prev?prev.createdAt:now,...(prev&&prev.src?{src:prev.src}:{})};
+    const aliases=pbAliasesFromText($('pbAliases').value,name), rr=pbRR($('pbRR').value);
+    const clash=pbList().find(p=>p.id!==id&&[name,...aliases].some(n=>pbNames(p).some(m=>pbKey(m)===pbKey(n))));
+    if(clash){ setErr('“'+clash.name+'” already answers to one of those names.'); return; }
+    const now=Date.now(), p={id:prev?prev.id:'pb'+now.toString(36)+Math.random().toString(36).slice(2,5),name,rules:pbRulesFromText($('pbRules').value,prev&&prev.rules),at:now,createdAt:prev?prev.createdAt:now,...(prev&&prev.src?{src:prev.src}:{}),...(aliases.length?{aliases}:{}),...(rr?{rr}:{})};
     settings.playbooks=[...all.filter(x=>x.id!==p.id),p];
     _pbEdit=null; await Store.set(S_KEY,settings); renderReview(); renderTable();
   };
   root.querySelectorAll('[data-pbedit]').forEach(b=>b.onclick=()=>{ _pbEdit=b.dataset.pbedit; renderReview(); });
+  // "count them here": the look-alike setup becomes an alias, so its trades get the checklist and count
+  root.querySelectorAll('[data-pbalias]').forEach(b=>b.onclick=async()=>{
+    const all=pbNorm(settings.playbooks,true), p=all.find(x=>x.id===b.dataset.pbalias&&!x.del); if(!p)return;
+    const aliases=pbAliasesFromText([...(p.aliases||[]),b.dataset.v].join('\n'),p.name); if(aliases.length===(p.aliases||[]).length)return;
+    settings.playbooks=[...all.filter(x=>x.id!==p.id),{...p,aliases,at:Date.now()}];
+    await Store.set(S_KEY,settings); renderReview(); renderTable(); });
   root.querySelectorAll('[data-pbdel]').forEach(b=>b.onclick=async()=>{
     const p=pbList().find(x=>x.id===b.dataset.pbdel); if(!p||!confirm('Delete the “'+p.name+'” playbook? Trades keep their setup name; their checklist ticks stop counting.'))return;
     settings.playbooks=[...pbNorm(settings.playbooks,true).filter(x=>x.id!==p.id),{id:p.id,del:true,at:Date.now()}];
