@@ -320,7 +320,7 @@ function behaviorSignalsMemo(closed,s){ // reads s.net / fees / fund / expectanc
 const _WORKER_LIB=()=>({_srand,_avg,_std,_erf,_normCdf,_lgamma,_ibetaReg,_tCdf,_wilson,_maxSplitT,retPct,addedToLoser,dcoin,dispMarket,
   mcMaxDD,fwdMaxDD,edgeSignificance,walkForward,diagMCCompute,
   tzParts,tzHour,tzDow,tzLabel,tzMidnight,isWin,isLoss,isPerp,newTrade,tallyFill,
-  reconstructTrades,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
+  reconstructTrades,groupSpotCycles,attributeFunding,bootstrapMeanCI,tradeStates,stateDefs,stateAnalysis,
   changePoint,sizeDependence,probabilityScan,partitionConditions,dayJKey,checkinPred,minerFams,mineInsights,deepScan});
 const _WORKER_PRELUDE="let settings={tz:'local'}, journal={}, _excM={}, spotMaps={nameByCoin:{}}, _be=50, _rng=Math.random, _progress=null, _pool=null;"+
   "const CHECKIN_CONDS="+JSON.stringify(CHECKIN_CONDS)+";";

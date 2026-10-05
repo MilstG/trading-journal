@@ -21,6 +21,33 @@ function tallyFill(t,f,fee,portion,liq){ const notl=(portion!=null?portion:Math.
   else if(f.crossed===false){ t.makerFills++; t.makerFee+=fee; t.makerNotional+=notl; }
   else { t.unkFills=(t.unkFills||0)+1; t.unkNotional=(t.unkNotional||0)+notl; }
   if(liq!=null?liq:(f.liquidation || /liquidat/i.test(f.dir||''))) t.liquidated=true; }
+// Spot cycles grouped per coin per day. The spot reconstruction realizes a trade at every buy that
+// follows a sell, which is right for discrete trades but turns grid or bot activity around a held
+// balance (0.3 HYPE nibbles on a 27,000 HYPE stack, all day) into hundreds of $12 round trips that
+// drown the trade count and the expectancy. Consecutive closed spot trades on one coin that opened
+// on the same day become one trade: sums of size, notional, P&L, fees and fills, the earliest open,
+// the latest close, `cycles` saying how many went in. A holding still open stays as it is; a trade
+// whose first fill is on another day stays separate. dayOf maps a time to its day (the app's time zone when
+// known, else UTC).
+function groupSpotCycles(trades, dayOf){
+  const day=dayOf||(ms=>Math.floor(ms/86400000));
+  // a trade carried out of a sell run opens one ms after that run, so its day is its first fill's
+  const at=t=>t.events&&t.events.length?t.events[0][0]:t.openTime;
+  const asc=trades.slice().sort((a,b)=>at(a)-at(b)), out=[], last={};
+  for(const t of asc){
+    const cur=last[t.coin];
+    if(cur&&!cur.isOpen&&!t.isOpen&&day(at(cur))===day(at(t))){
+      cur.closeTime=Math.max(cur.closeTime,t.closeTime); cur.openSz+=t.openSz; cur.openNotional+=t.openNotional; cur.closeSz+=t.closeSz; cur.closeNotional+=t.closeNotional;
+      cur.pnl+=t.pnl; cur.fees+=t.fees; if(t.feesInBasis)cur.feesInBasis=(cur.feesInBasis||0)+t.feesInBasis; cur.fills+=t.fills; cur.maxSize=Math.max(cur.maxSize,t.maxSize);
+      cur.makerFills+=t.makerFills; cur.takerFills+=t.takerFills; cur.makerFee+=t.makerFee; cur.takerFee+=t.takerFee; cur.makerNotional+=t.makerNotional; cur.takerNotional+=t.takerNotional;
+      cur.liquidated=cur.liquidated||t.liquidated; cur.events=cur.events.concat(t.events); if(t.rz)cur.rz=(cur.rz||[]).concat(t.rz);
+      cur.partialHistory=!!(cur.partialHistory||t.partialHistory); cur.cycles=(cur.cycles||1)+1;
+      cur.avgEntry=cur.openSz>0?cur.openNotional/cur.openSz:cur.avgEntry; cur.avgExit=cur.closeSz>0?cur.closeNotional/cur.closeSz:cur.avgExit; cur.durationMs=cur.closeTime-cur.openTime;
+      continue; }
+    out.push(t); last[t.coin]=t;
+  }
+  return out;
+}
 function reconstructTrades(fills, addr, market){
   // Spot fees paid in a stable quote are dollars; anything else (a buy's fee comes out of the
   // token bought) is in the base token and is converted at the fill price.
@@ -150,13 +177,17 @@ function reconstructTrades(fills, addr, market){
       t=realize(t,c,{time:last[0],px:String(t.openSz>0?t.openNotional/t.openSz:0),sz:'0'},held); if(!(held>EPS))continue; }
     t.isOpen=true; if(!(t.openSz>0))t.partialHistory=true; t.avgEntry=t.openSz>0?t.openNotional/t.openSz:0;
     t.avgExit=null; t.durationMs=Date.now()-t.openTime; trades.push(t); }
-  trades.forEach(t=>{ t.market=market; if(market==='spot')t.dir='Spot';
+  // spot: a day's cycles on one coin are one trade (groupSpotCycles); the day is the app's when the
+  // time-zone helpers are here (the page, the worker, the server), else UTC
+  const dayOf=typeof tzMidnight==='function'?(ms=>{ try{ return tzMidnight(ms); }catch(e){ return Math.floor(ms/86400000); } }):null;
+  const out=spot?groupSpotCycles(trades,dayOf):trades;
+  out.forEach(t=>{ t.market=market; if(market==='spot')t.dir='Spot';
     // entry drift: how far your size-weighted entry landed from your first fill, in the adverse direction
     t.entryDrift=(!t.partialHistory&&t.firstEntryPx>0&&t.avgEntry>0)
       ? (t.dir==='Short' ? t.firstEntryPx/t.avgEntry-1 : t.avgEntry/t.firstEntryPx-1) : null;
     // a spot holding sold down in steps keeps one id while it's still held, so notes on it stay put
     t.id=(market==='spot'?(addr||'paste')+':spot:':(addr||'paste')+':')+t.coin+':'+(t.isOpen&&t.carried&&t.bagOpen?t.bagOpen+':held':t.openTime); });
-  return trades.sort((a,b)=>b.openTime-a.openTime);
+  return out.sort((a,b)=>b.openTime-a.openTime);
 }
 // The same fill served twice at two granularities. userFillsByTime is asked with aggregateByTime,
 // which folds the pieces of one order filled within one millisecond into a single fill; the archive

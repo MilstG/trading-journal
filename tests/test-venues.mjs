@@ -22,7 +22,7 @@ const constLine = name => { const m = html.match(new RegExp('^const ' + name + '
 const Relay = require('../cex-relay.js');
 const server = require('../server.js');
 
-const ENGINE = ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'deriveFillPositions', 'initialPositions',
+const ENGINE = ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'groupSpotCycles', 'attributeFunding', 'deriveFillPositions', 'initialPositions',
   'ltNormTrade', 'ltFundingEstimate', 'cexCoin', 'cexSymbol', 'bybitNormExec', 'binanceNormTrade', 'gzipBytes', 'gunzipStr',
   'packFillCache', 'unpackFillCache', 'validFillCache'].map(grabFn).join('\n');
 const SHIMS = `

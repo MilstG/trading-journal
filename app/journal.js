@@ -346,7 +346,7 @@ function journalRow(t,j,R){
       <div class="field"><label>Trade metrics</label>
         <div class="num" style="color:var(--muted);font-size:12.5px;line-height:1.9">
           Realized ${fmtUsd(t.pnl)} · fees ${fmtUsd(-t.fees)} · funding <span class="${cls(t.funding||0)}">${fmtUsd(t.funding||0)}</span><br>
-          <strong style="color:var(--text)">Net ${fmtUsd(t.net)}</strong>${retPct(t)!=null?' · <span class="'+cls(retPct(t))+'">'+(retPct(t)>=0?'+':'')+retPct(t).toFixed(2)+'%</span>':''}${R!=null?' · <span class="'+cls(R)+'">'+(R>=0?'+':'')+R.toFixed(2)+'R</span>':''} · ${t.fills} fills · held ${fmtDur(t.durationMs)}<br>
+          <strong style="color:var(--text)">Net ${fmtUsd(t.net)}</strong>${retPct(t)!=null?' · <span class="'+cls(retPct(t))+'">'+(retPct(t)>=0?'+':'')+retPct(t).toFixed(2)+'%</span>':''}${R!=null?' · <span class="'+cls(R)+'">'+(R>=0?'+':'')+R.toFixed(2)+'R</span>':''} · ${t.fills} fills${t.cycles>1?' in '+t.cycles+' cycles':''} · held ${fmtDur(t.durationMs)}<br>
           <span data-tip="Share of this trade's fills that were taker (crossed the spread) vs maker (resting). Taker fills pay the higher fee tier. Imported fills carry no execution style and are counted in neither.">${((t.makerFills||0)+(t.takerFills||0))?`maker ${(t.makerFills||0)} · taker ${(t.takerFills||0)}${(t.takerFills+t.makerFills)?' ('+Math.round((t.takerFills/(t.takerFills+t.makerFills))*100)+'% taker)':''}`:(t.unkFills?'execution style unknown (imported)':'maker 0 · taker 0')}</span>${t.entryDrift!=null?` · <span data-tip="How far your size-weighted entry drifted from your first fill, in the adverse direction. Positive = you scaled in at worse prices (chasing).">entry drift <span class="${t.entryDrift>0?'neg-t':t.entryDrift<0?'pos-t':''}">${(t.entryDrift>=0?'+':'')+(t.entryDrift*100).toFixed(2)}%</span></span>`:''}${addedToLoser(t)?' · <span class="neg-t" data-tip="At least one add was executed while the position was underwater vs your running average entry (detected from the fill stream, not a proxy).">avg’d down</span>':''}${t.liquidated?' · <span class="loss" data-tip="Contains a liquidation fill.">⚠ liquidated</span>':''}${excLine(t)}
         </div></div>
     </div>
@@ -1559,11 +1559,16 @@ function renderDataHealth(){
   if(_idbWarned)items.push('browser storage is failing — caches may not persist; export a backup');
   const orph=allTrades.filter(t=>t.orphan);
   if(orph.length)items.push(orph.length+' position'+(orph.length===1?'':'s')+' the exchange no longer holds but whose closing fill isn’t in your history ('+orph.slice(0,4).map(t=>esc(dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()+' from '+new Date(t.openTime).toISOString().slice(0,10))).join(', ')+(orph.length>4?'…':'')+') — likely a liquidation or a gap; kept out of your stats. Shift-click Load all for a full refetch');
-  if(!items.length){ el.classList.add('hide'); el.innerHTML=''; return; }
+  // a server to recover from: the archive panel (check, sample, backfill, the index) stays reachable
+  // here whether or not there is anything to warn about — once the seams are closed, the strip is the
+  // one place that says so, and the panel is still how the index and other wallets are looked after
+  const canArc=typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
+  const arcBtn=canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">'+(cov&&cov.gaps?'Recover from the archive…':'Archive…')+'</button>':'';
+  if(!items.length&&!canArc){ el.classList.add('hide'); el.innerHTML=''; delete el.dataset.ok; return; }
   el.classList.remove('hide');
-  // seams, and a server to do it from: the fills behind them may still be in Hyperliquid's archive (archive.js)
-  const canArc=cov&&cov.gaps&&typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
-  el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+(canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">Recover from the archive…</button>':'');
+  if(!items.length){ el.dataset.ok='1';
+    el.innerHTML='✓ <b>Data health:</b> every position change has its fill'+(cov&&cov.perpShare!=null?' · '+Math.round(cov.perpShare*100)+'% of perp volume has fills':'')+arcBtn; }
+  else { delete el.dataset.ok; el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+arcBtn; }
   const b=$('arcOpen'); if(b)b.onclick=toggleArchivePanel;
 }
 // Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server

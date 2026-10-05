@@ -29,7 +29,7 @@ const { feeTierModel, isoWeekKey, lastCompletedWeekRange, varianceModel, riskCre
         unplannedToday, demoFills, reconstructTrades, attributeFunding, spotMapsFrom } = await evalModule(
   ['tzParts', 'tzMidnight', 'dayJKey', '_srand', '_hashSeed', 'nfMedian',
    'feeTierModel', 'isoWeekKey', 'lastCompletedWeekRange', 'varianceModel', 'riskCreepModel',
-   'unplannedToday', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'spotMapsFrom'],
+   'unplannedToday', 'demoFills', 'isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'groupSpotCycles', 'attributeFunding', 'spotMapsFrom'],
   ['feeTierModel', 'isoWeekKey', 'lastCompletedWeekRange', 'varianceModel', 'riskCreepModel',
    'unplannedToday', 'demoFills', 'reconstructTrades', 'attributeFunding', 'spotMapsFrom'], PRELUDE);
 
@@ -210,6 +210,19 @@ t('spot buy fees in the token are priced in dollars and not subtracted twice', (
   const [x] = reconstructTrades(fills, 'a', 'spot'); attributeFunding([x], []);
   ok(Math.abs(x.fees - (7.716 * 0.0023 + 0.02)) < 1e-9, 'fees in dollars, not 7.7 tokens counted as $7.7: ' + x.fees);
   ok(Math.abs(x.net - (5.39 - 0.02)) < 1e-9, 'closedPnl already holds the buy fee; only the sell fee comes off: ' + x.net);
+});
+t('a day of spot cycles on one coin is one trade; another day, or the held rest, stays apart', () => {
+  // a grid around a held balance of 1000: buy 10, sell 10, three times before noon UTC, then once more the next day
+  const D = Date.UTC(2026, 5, 15, 9), fills = []; let i = 0, pos = 1000;
+  const cycle = (t0, px) => { fills.push(SF('B', 10, px, t0, pos, 0, 0.01, 'USDC', ++i)); pos += 10; fills.push(SF('A', 10, px + 0.1, t0 + 10 * 60e3, pos, 1, 0.01, 'USDC', ++i)); pos -= 10; };
+  cycle(D, 1); cycle(D + H, 1); cycle(D + 2 * H, 1); cycle(D + 30 * H, 1);
+  const tr = reconstructTrades(fills, 'a', 'spot'), closed = tr.filter(x => !x.isOpen).sort((a, b) => a.openTime - b.openTime);
+  eq(closed.length, 2, 'three cycles in a day → one trade, the next day its own: ' + closed.map(x => x.cycles || 1).join('/'));
+  const [day1, day2] = closed;
+  eq([day1.cycles, day1.fills, +day1.pnl.toFixed(2), +day1.fees.toFixed(2), day1.openSz, day1.closeSz], [3, 6, 3, 0.06, 30, 30]);
+  eq([day1.openTime, day1.closeTime], [D, D + 2 * H + 10 * 60e3]); near(day1.avgEntry, 1, 1e-9); near(day1.avgExit, 1.1, 1e-9); eq(day1.durationMs, day1.closeTime - day1.openTime);
+  eq([day2.cycles, day2.fills, day2.events[0][0]], [undefined, 2, D + 30 * H], 'the next day’s cycle is its own trade (carried trades open one ms after the sell run, so the day is the first fill’s)');
+  ok(tr.some(x => x.isOpen), 'the held balance is still an open holding'); ok(day1.id.endsWith(':' + D), 'the id is the first cycle’s');
 });
 t('selling part of a spot position realizes a closed trade; the rest stays open', () => {
   const fills = [SF('B', 10, 2, NOW - 9 * H, 0, 0, 0.01, 'USDC', 1), SF('A', 4, 2.5, NOW - 6 * H, 10, 2, 0.01, 'USDC', 2),

@@ -97,7 +97,7 @@ function timingSafeEq(a, b) {
 const ENGINE_FNS = [
   // time layer + reconstruction
   'tzParts', 'tzMidnight', 'addDays', 'isPerp', 'newTrade', 'tallyFill',
-  'reconstructTrades', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
+  'reconstructTrades', 'groupSpotCycles', 'attributeFunding', 'hip3DexsFromFills', 'mapClearinghouse', 'dedupeFills',
   'spotMapsFrom', 'spotFifoLots',
   // stats
   'dailyPnl', 'dailySeriesCalendar', 'sharpeStats', 'sortinoAnnual', 'retPct',
