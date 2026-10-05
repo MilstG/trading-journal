@@ -80,7 +80,7 @@ async function splitHour(src, key, onMembers, sliceBytes) {
   let rest = '';
   const feed = chunk => { let s = 0; for (let i = 0; i < chunk.length; i++) if (chunk[i] === 10) { onLine(rest + chunk.toString('utf8', s, i)); rest = ''; s = i + 1; } if (s < chunk.length) rest += chunk.toString('utf8', s); };
   if (buf.length >= 4 && buf.readUInt32LE(0) === 0x184D2204) { for await (const _ of A.lz4Steps(buf, feed)) await drain(); }
-  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { feed(zlib.gunzipSync(buf)); await drain(); }
+  else if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) { feed(A.gunzipCapped(buf)); await drain(); } // a gzip bomb stops at the cap
   else { feed(buf); await drain(); }
   if (rest) onLine(rest);
   await drain(); await flush();
@@ -136,8 +136,8 @@ async function main() {
   const redoDays = [];
   const pass = async (list, redo) => {
     for (const day of list) { streamed.clear();
-      const done = await doneSummary(idx, o.prefix + 'd/' + day + '/_done');
-      if (done && isIndexed(done)) { log(day + ' already indexed'); continue; }
+      const done = await A.doneSummary(idx, o.prefix + 'd/' + day + '/_done');
+      if (done && A.isIndexed(done)) { log(day + ' already indexed'); continue; }
       if (done) log(day + ': marked done earlier but with no fills in it — indexing it again');
       const hours = (await src.list(sourcePrefix(day))).keys.filter(k => /\/\d{1,2}(\.lz4)?$/.test(k.key)).sort((a, b) => +(/\/(\d+)/.exec(a.key.slice(-7))[1]) - +(/\/(\d+)/.exec(b.key.slice(-7))[1]));
       if (!hours.length) { log(day + ': no files in the archive'); continue; }
@@ -175,7 +175,5 @@ async function main() {
   log('done: ' + total.days + ' day(s), ' + total.hours + ' hours, ' + total.fills.toLocaleString('en-US') + ' fills, ' + (total.bytes / 1073741824).toFixed(1) + ' GB read in ' + Math.round((Date.now() - t0) / 60000) + ' min');
 }
 if (isMainThread) { if (require.main === module) main().catch(e => { console.error(e.message || e); process.exit(1); }); }
-// the day's _done summary, or null when there is none; and whether it counts as indexed
-async function doneSummary(idx, key) { try { return JSON.parse((await idx.get(key)).toString('utf8')); } catch (e) { if (e.status === 404 || e.code === 'NoSuchKey') return null; return {}; } }
-const isIndexed = sum => !!(sum && sum.fills > 0);
-module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed };
+// the day's _done marker and whether it counts as indexed live in archive.js: the server reads the index by the same rule
+module.exports = { splitHour, SHARD, sourcePrefix, dayStr, parseArgs, isIndexed: A.isIndexed };
