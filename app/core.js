@@ -200,7 +200,8 @@ function scheduleLinkedWrite(){ if(!linkedHandle||_applying)return; clearTimeout
 // Concurrency: every write carries the last-known revision. A stale write gets a 409
 // with the server's current state, which the client applies instead of clobbering it,
 // laying back what it changed since (an entry both devices edited merges field by field).
-const SRV={enabled:false,needsAuth:false,badAuth:false,token:null,rev:0};
+// storeId/at: which store and which version of it this tab last matched (server.js dataVer; srvDiverged)
+const SRV={enabled:false,needsAuth:false,badAuth:false,token:null,rev:0,storeId:null,at:null};
 let _srvTimer=null;
 // Journal ids edited locally since the last successful sync, with a per-id edit counter.
 // On a 409 the server's snapshot wins wholesale — except these entries, which are
@@ -320,7 +321,7 @@ function schedulePersist(){ scheduleLinkedWrite(); scheduleServerWrite(); vaultS
 // A failed write keeps the edits dirty, shows the error, and retries with backoff (5s → 2min), or
 // once a lockout's wait (ms) is over.
 function syncFailed(msg,wait){
-  SRV.err=msg; SRV.retryMs=wait>0?wait+1000:Math.min(120000,(SRV.retryMs||2500)*2);
+  SRV.err=msg; SRV.retryMs=wait>0?wait+1000:Math.min(120000,(SRV.retryMs||2500)*2); SRV.lockUntil=wait>0?Date.now()+wait:0;
   renderDatafile('error');
   clearTimeout(_srvTimer); _srvTimer=setTimeout(writeServer,SRV.retryMs);
 }
@@ -332,7 +333,7 @@ function scheduleServerWrite(){ if(!SRV.enabled||_applying)return; if(SRV.needsA
 // unchanged server revision means nobody else saved since, and this browser's copy is kept and sent.
 let _srvGen=0;
 const SRV_MARK='srv_sync';
-function srvMark(dirty){ try{ localStorage.setItem(SRV_MARK,JSON.stringify({rev:SRV.rev,dirty:!!dirty})); }catch(e){} }
+function srvMark(dirty){ try{ localStorage.setItem(SRV_MARK,JSON.stringify({rev:SRV.rev,dirty:!!dirty,sid:SRV.storeId||undefined,at:SRV.at||undefined})); }catch(e){} }
 function srvMarkRead(){ try{ const m=JSON.parse(localStorage.getItem(SRV_MARK)||'null'); return m&&typeof m.rev==='number'?m:null; }catch(e){ return null; } }
 // The settings baseline (_lastSyncedS) is kept beside the mark, so a start that finds another device
 // saved in the meantime can still tell which fields this browser changed: those are kept, the rest
@@ -355,19 +356,22 @@ async function writeServer(){
     const sentDirty=[..._dirtyJ.entries()]; // (id, counter) pairs — edits made while in flight bump the counter and stay dirty
     const sentS=_snapS(), sentGen=_srvGen, sentRestore=SRV.restoring||0;
     const body={rev:SRV.rev,snapshot:snap}; if(sentRestore)body.restore=true; // the server keeps a copy of what a restore replaces
+    if(SRV.storeId)body.storeId=SRV.storeId; if(SRV.at)body.at=SRV.at; // the version this copy was made on: a replaced store answers 409, never takes it blind
     const sent=JSON.stringify(body); // once saved, the base the next conflict merges against
     const r=await srvFetch('/api/data',{method:'PUT',headers:{'Content-Type':'application/json'},body:sent});
     if(r.status===401){ SRV.badAuth=true; renderDatafile(); return 'auth'; }
     if(r.status===429){ syncFailed(srvLockMsg(r),(+r.headers.get('retry-after')||0)*1000); return 'error'; } // locked out: retry when it ends
     if(r.status===409){ // edited from another device since we last loaded — take theirs, but keep our unsynced edits
       if(_sample){ _sample.dirty=true; srvMark(true); renderDatafile(); return 'conflict'; } // merged after sampleLeave
-      const txt=await r.text(), j=JSON.parse(txt); SRV.rev=j.rev||0;
+      const txt=await r.text(), j=JSON.parse(txt);
+      if(srvDiverged(j,srvKnown())){ await srvAdoptReplaced(j,txt,journal,settings); renderDatafile(); return 'conflict'; } // not newer: replaced or gone backwards
+      srvVer(j);
       const n=j.snapshot?await srvTakeNewer(j,txt):0;
       if(n)setErr('Loaded newer data saved from another device. '+jConflictMsg(n));
       else setStatus('Loaded newer data saved from another device.'+(_dirtyJ.size?' Your local edits were kept and will re-sync.':''));
       renderDatafile(); return 'conflict';
     }
-    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1; jBaseSet(sent);
+    if(r.ok){ const j=await r.json(); SRV.rev=j.rev||SRV.rev+1; if(j.storeId)SRV.storeId=j.storeId; SRV.at=j.at||null; jBaseSet(sent);
       for(const [id,rev] of sentDirty) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); // only clear what was actually sent unchanged
       jPendingSave();
       _lastSyncedS=sentS; srvBaseSave(); SRV.err=null; SRV.retryMs=0;
@@ -421,6 +425,62 @@ async function srvTakeNewer(j,txt){
   if(merged)scheduleServerWrite(); // push the merge at the new revision
   if(conflicts)SRV.conflicts=(SRV.conflicts||0)+conflicts;
   return conflicts; }
+// The server's store isn't a later version of the one this browser last matched — it came back empty
+// (redeployed without its volume, wiped) or older (restored from a bundle, its .bak): another storeId
+// (none, for an empty one), a lower revision, or the same revision number written at another time
+// (hist: the times of its last revisions, for a restored store saved past ours). Taking such a copy as
+// "another device saved since" threw away everything this browser had that it lacked, on each device
+// in turn. k: what this browser last matched ({rev, sid, at}: the srv_sync mark, or srvKnown()).
+function srvDiverged(j,k){ if(!j||!k)return false; const r=+j.rev||0, kr=+k.rev||0;
+  if(k.sid&&j.storeId!==k.sid)return true;
+  if(r<kr)return true;
+  if(kr>0&&k.at&&j.at){ if(r===kr)return j.at!==k.at;
+    const h=Array.isArray(j.hist)?j.hist.find(x=>Array.isArray(x)&&x[0]===kr):null; if(h)return h[1]!==k.at; }
+  return false; }
+const srvKnown=()=>({rev:SRV.rev,sid:SRV.storeId,at:SRV.at});
+function srvVer(j){ SRV.rev=j.rev||0; SRV.storeId=j.storeId||null; SRV.at=j.at||null; }
+// Two copies of the journal with no base in common (a replaced store): every entry either has; one both
+// have that differs goes to the later edit (updatedAt), or, when neither is later, merges field by field
+// (jMerge3 without a base: both texts kept). Nothing only one side has is dropped.
+function jMergeUnion(mine,theirs){ const S=v=>JSON.stringify(v===undefined?null:v), j=Object.assign({},theirs||{}); let conflicts=0;
+  for(const [id,m] of Object.entries(mine||{})){ const t=j[id];
+    if(t==null){ j[id]=m; continue; } if(S(m)===S(t))continue;
+    const mu=+(m&&m.updatedAt)||0, tu=+(t&&t.updatedAt)||0;
+    if(mu!==tu){ if(mu>tu)j[id]=m; continue; }
+    const r=jMerge3(undefined,m,t); conflicts+=r.conflicts; if(r.v!==undefined)j[id]=r.v; }
+  return {j,conflicts}; }
+// A replaced store (srvDiverged) never wins over this browser: its copy is merged over the server's
+// (jMergeUnion; settings this browser's, list settings merged, wallets from both) and sent back as a
+// restore, so the server first keeps what it had (History → "before restore"). Every entry that
+// differs from the server's is dirty, so a 409 from a device saving meanwhile lays it back whole.
+// localJ/localS: this browser's journal and settings (at boot, as stored). Says what happened.
+async function srvAdoptReplaced(j,txt,localJ,localS){
+  const theirs=j.snapshot&&typeof j.snapshot==='object'?j.snapshot:null, S=v=>JSON.stringify(v===undefined?null:v);
+  const lj=localJ&&typeof localJ==='object'&&!Array.isArray(localJ)?localJ:{}, ls=JSON.parse(JSON.stringify(localS&&typeof localS==='object'?localS:settings));
+  if(!Array.isArray(ls.wallets))ls.wallets=[];
+  let theirsS=null, tj={};
+  // their settings and wallets held to applySnapshot's checks (their fill caches and measurements aren't taken)
+  if(theirs){ await applySnapshot({journal:theirs.journal,wallets:theirs.wallets,settings:theirs.settings}); theirsS=_snapS();
+    if(theirs.journal&&typeof theirs.journal==='object'&&!Array.isArray(theirs.journal))tj=theirs.journal; }
+  const u=jMergeUnion(lj,tj); journal=u.j; _jrev++; settings=ls;
+  if(theirsS){ for(const k of _SYNC_S_FIELDS)if(theirsS[k]!==undefined)settings[k]=ls[k]===undefined?theirsS[k]:_syncMerge(k,ls[k],theirsS[k]);
+    const wk=w=>String(w&&w.address).toLowerCase(), have=new Set(ls.wallets.map(wk));
+    settings.wallets=[...ls.wallets,...(theirsS.wallets||[]).filter(w=>!have.has(wk(w)))]; }
+  await rawSet(J_KEY,journal); await rawSet(S_KEY,settings);
+  let kept=0; for(const id of Object.keys(journal))if(S(journal[id])!==S(tj[id])){ _dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); kept++; }
+  jPendingSave(); srvVer(j); jBaseSet(txt);
+  _lastSyncedS={wallets:JSON.parse(JSON.stringify(theirsS?theirsS.wallets||[]:[]))}; srvBaseSave(); // as srvRestored: every field here is this browser's word
+  const push=!theirs||kept>0||S(_snapS())!==S(theirsS);
+  if(push){ SRV.restoring=(SRV.restoring||0)+1; srvMark(true); } else srvMark(false);
+  if(u.conflicts)SRV.conflicts=(SRV.conflicts||0)+u.conflicts;
+  try{ renderWallets(); }catch(e){}
+  const n=Object.keys(journal).length, ent=x=>x+' journal entr'+(x===1?'y':'ies');
+  const msg=!theirs?'The server had lost its data (redeployed without its volume, or wiped). Nothing was taken from it: this browser’s copy ('+ent(n)+', wallets and settings) is being saved back to it.'
+    :kept?'The server’s copy was older than this browser’s (restored from an older backup, or replaced). Nothing here was thrown away: '+ent(kept)+' it lacked or had older '+(kept===1?'is':'are')+' kept, merged with what it has, and saved back. The copy it had stays under History → “before restore”.'
+    :'';
+  if(msg){ SRV.replaced=msg; try{ setErr(u.conflicts?msg+' '+jConflictMsg(u.conflicts):msg); }catch(e){} }
+  if(push&&!_applying)scheduleServerWrite();
+  return {kept,push,conflicts:u.conflicts}; }
 // Another device saved: notice it without a reload (this tab used to read "saved" over a stale copy
 // until then). A cheap revision check (GET /api/data?only=rev) when the tab comes back into view or
 // gets focus, and once a minute while it's visible; a newer revision is fetched and taken like a
@@ -432,10 +492,12 @@ async function srvCheckNewer(){
   if(Date.now()-_srvChk<5000)return false; _srvChk=Date.now();
   _srvWriting=true;
   try{ const r=await srvFetch('/api/data?only=rev'); if(!r.ok)return false;
-    const v=await r.json(); if(!(v&&v.rev>SRV.rev))return false;
+    const v=await r.json(), k=srvKnown(); if(!(v&&(v.rev>SRV.rev||srvDiverged(v,k))))return false;
     const d=await srvFetch('/api/data'); if(!d.ok)return false;
-    const txt=await d.text(), j=JSON.parse(txt); if(!(j.rev>SRV.rev)||!j.snapshot)return false;
-    SRV.rev=j.rev; const n=await srvTakeNewer(j,txt);
+    const txt=await d.text(), j=JSON.parse(txt);
+    if(srvDiverged(j,k)){ await srvAdoptReplaced(j,txt,journal,settings); renderDatafile(); srvRefreshView(); return true; } // replaced, not newer: this tab's copy goes back
+    if(!(j.rev>SRV.rev)||!j.snapshot)return false;
+    srvVer(j); const n=await srvTakeNewer(j,txt);
     if(n)setErr('Loaded newer data saved from another device. '+jConflictMsg(n)); else setStatus('Loaded newer data saved from another device.');
     renderDatafile(); srvRefreshView(); return true;
   }catch(e){ return false; }
@@ -443,9 +505,16 @@ async function srvCheckNewer(){
 // redraw with what was fetched, unless someone is typing (their field would be redrawn under them)
 function srvRefreshView(){ try{ const a=document.activeElement; if(a&&(/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable))return;
   if(typeof PZ!=='undefined'&&PZ){ if(typeof pzRender==='function')pzRender(); } else if(typeof allTrades!=='undefined'&&allTrades.length)render(); }catch(e){} }
+// Back online, or the tab back in front, with a save that failed: send it now. The backoff (up to 2 min)
+// is for a server that keeps failing, not for a connection that just came back — an edit made offline
+// used to wait out the whole of it. Not while locked out (the wait is the server's), at most every 3 s.
+let _srvRetryAt=0;
+function srvRetryNow(){ if(!SRV.enabled||!SRV.err||(SRV.needsAuth&&(!SRV.token||SRV.badAuth))||(SRV.lockUntil||0)>Date.now())return false;
+  if(Date.now()-_srvRetryAt<3000)return true; _srvRetryAt=Date.now(); clearTimeout(_srvTimer); writeServer(); return true; }
 function srvWatch(){ if(typeof document.addEventListener!=='function'||typeof window.addEventListener!=='function')return;
-  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')srvCheckNewer(); else jPendingBaseSave(); });
-  window.addEventListener('focus',()=>{ srvCheckNewer(); });
+  const back=()=>{ if(!srvRetryNow())srvCheckNewer(); };
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')back(); else jPendingBaseSave(); });
+  window.addEventListener('focus',back); window.addEventListener('online',back);
   window.addEventListener('pagehide',jPendingBaseSave);
   setInterval(()=>{ if(document.visibilityState==='visible')srvCheckNewer(); },60000); }
 // A restore (a pasted backup or journal, a server snapshot) is this device's word on everything it
@@ -492,11 +561,21 @@ async function initServerSync(){
     if(SRV.needsAuth){ SRV.token=tok;
       if(!SRV.token){ renderDatafile(); return true; } }
     const d=(early&&await early)||await srvFetch('/api/data');
-    if(d.status===401){ SRV.badAuth=true; renderDatafile(); return true; }
-    if(d.status===429){ SRV.badAuth=true; renderDatafile(); setErr(srvLockMsg(d)); return true; } // locked out: never sync blind at rev 0
-    if(d.ok){ const txt=await d.text(), j=JSON.parse(txt); SRV.rev=j.rev||0;
+    // Without the server's answer this tab stays at the version this browser last matched: at rev 0 its
+    // first mark wiped that record, so a server that comes back older or empty looked like a new one.
+    const m=srvMarkRead(), fromMark=()=>{ if(m){ SRV.rev=m.rev; SRV.storeId=m.sid||null; SRV.at=m.at||null; } };
+    if(d.status===401){ fromMark(); SRV.badAuth=true; renderDatafile(); return true; }
+    if(d.status===429){ fromMark(); SRV.badAuth=true; renderDatafile(); setErr(srvLockMsg(d)); return true; } // locked out: never sync blind at rev 0
+    if(!d.ok){ fromMark(); let msg='HTTP '+d.status; try{ const e=await d.json(); if(e&&e.error)msg+=': '+e.error; }catch(e){}
+      syncFailed(msg); return true; } // a missing or damaged data file: this browser's copy stays, the save retries
+    if(d.ok){ const txt=await d.text(), j=JSON.parse(txt);
+      if(m&&srvDiverged(j,m)){ // the server's store came back empty or older: this browser's copy is merged over it and sent back, never thrown away
+        const stored=await Store.get(S_KEY), localJ=await Store.get(J_KEY);
+        if(stored&&typeof stored==='object'&&!Array.isArray(stored))settings=stored;
+        const a=await srvAdoptReplaced(j,txt,localJ,settings); if(a.push)SRV.pushLocal=true; }
+      else {
+      srvVer(j);
       const jBase=jPendingBaseLoad(); jBaseSet(txt); // the stored base is the one the pending edits were made on
-      const m=srvMarkRead();
       if(m&&m.dirty&&m.rev===SRV.rev){ // nobody saved since this browser's unsent edits: keep them all (boot sends them)
         SRV.pushLocal=true; const ss=(j.snapshot&&j.snapshot.settings)||{};
         for(const id of jPendingLoad())_dirtyJ.set(id,(_dirtyJ.get(id)||0)+1); // still unsent: a 409 before the push keeps them
@@ -518,7 +597,7 @@ async function initServerSync(){
           if(Array.isArray(base.wallets)){ const w=_walletMerge(base.wallets,localS.wallets,settings.wallets);
             if(JSON.stringify(w)!==JSON.stringify(settings.wallets)){ settings.wallets=w; kept=true; } }
           if(kept){ await rawSet(S_KEY,settings); srvMark(true); SRV.pushLocal=true; } } // boot sends the kept fields
-        srvBaseSave(); } }
+        srvBaseSave(); } } }
     // PWA: only meaningful when served — installable app icon + offline shell
     try{ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
       if(!document.querySelector('link[rel=manifest]')){ const l=document.createElement('link');
@@ -594,11 +673,18 @@ async function toggleSnapHistory(){
   }catch(e){ p.innerHTML='<span>Could not load snapshots: '+esc(e.message)+'</span>'; }
 }
 
-let _writing=false,_writeAgain=false;
+// A Backup all file carries fill caches (history past the API's page cap) that snapshot() doesn't: it is
+// never linked, and a linked file found holding them (linked by an older build) is never written over.
+const isFullBackup=d=>!!(d&&typeof d==='object'&&d.fillCaches&&typeof d.fillCaches==='object');
+const backupNotLinked=n=>n+' is a full backup (fill caches included), so it isn’t linked and nothing is saved over it. Use Link new file to auto-save to a data file.';
+let _writing=false,_writeAgain=false,_linkedOk=null;
 async function writeLinked(){ if(!linkedHandle)return;
   if(_writing){ _writeAgain=true; return; }
   _writing=true;
   try{ if(await ensurePerm(linkedHandle,'readwrite')!=='granted'){ renderDatafile('need-permission'); return; }
+    if(_linkedOk!==linkedHandle){ let d=null; try{ d=JSON.parse(await (await linkedHandle.getFile()).text()); }catch(e){} // once per linked file
+      if(isFullBackup(d)){ const n=linkedName; await unlinkFile(); setErr(backupNotLinked(n)); return; }
+      _linkedOk=linkedHandle; }
     const sent=[..._dirtyJ.entries()];
     const w=await linkedHandle.createWritable(); await w.write(JSON.stringify(snapshot(),null,2)); await w.close();
     if(!SRV.enabled){ for(const [id,rev] of sent) if(_dirtyJ.get(id)===rev)_dirtyJ.delete(id); jPendingSave(); } // the file is the saved copy here
@@ -609,22 +695,39 @@ async function ensurePerm(h,mode){ try{ const o={mode}; let p=await h.queryPermi
 
 async function linkNewFile(){ if(!FSA){ alert('Your browser does not support linking a file. Use “Backup all” to export a JSON you can re-import.'); return; }
   try{ const h=await window.showSaveFilePicker({suggestedName:'ledger-data.json',types:[{description:'JSON',accept:{'application/json':['.json']}}]});
-    linkedHandle=h; linkedName=h.name; await idbSet('handle',h);
+    linkedHandle=h; linkedName=h.name; _linkedOk=h; await idbSet('handle',h); // a file chosen to be written: the save dialog asked before replacing one
     await writeLinked(); renderDatafile('saved');
   }catch(e){ if(e.name!=='AbortError') renderDatafile('error'); } }
+// Opening a file used to apply it over the journal here without asking (notes written since it was
+// saved were gone) and link it; for a Backup all file, the first save then wrote the journal over it,
+// fill caches and all. A full backup now goes through restoreBackup (asks, merges the journal, restores
+// the fill caches) and is not linked. A data file asks before it's merged with a journal that has notes:
+// entries only here are kept unless the file's copy is newer, and the merge is written to it.
 async function openExistingFile(){ if(!FSA){ $('importBtn').click(); return; }
   try{ const [h]=await window.showOpenFilePicker({types:[{description:'JSON',accept:{'application/json':['.json']}}]});
-    if(await ensurePerm(h,'readwrite')!=='granted')return;
     const file=await h.getFile(); const data=JSON.parse(await file.text());
-    await applySnapshot(data); linkedHandle=h; linkedName=h.name; await idbSet('handle',h);
+    if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('not a Ledger data file');
+    if(isFullBackup(data)){ if(typeof restoreBackup==='function'&&await restoreBackup(data,'the backup '+h.name))setStatus('Restored '+h.name+': its journal merged with yours, its fill caches restored. A full backup isn’t linked — use Link new file to auto-save to a data file. Hit Load all to refresh trades.'); return; }
+    const before=journal, bw=settings.wallets, inc=data.journal&&typeof data.journal==='object'&&!Array.isArray(data.journal)?data.journal:{};
+    const nIn=Object.keys(inc).length, nOnlyHere=Object.keys(before).filter(k=>!(k in inc)).length;
+    if(Object.keys(before).length&&!confirm('Link '+h.name+' ('+nIn+' journal entr'+(nIn===1?'y':'ies')+')? Your journal then auto-saves to it.\n\nWallets and settings come from the file. Your journal is merged: entries only in the file are added, and your own notes are kept'
+      +(nOnlyHere?' (including '+nOnlyHere+' the file doesn’t have)':'')+' unless the file’s copy is newer.'))return;
+    if(await ensurePerm(h,'readwrite')!=='granted')return;
+    await applySnapshot(data);
+    let kept=0; for(const [k,v] of Object.entries(before)){ const b=inc[k]; if(!b||(v&&(v.updatedAt||0)>=(b.updatedAt||0))){ journal[k]=v; if(JSON.stringify(v)!==JSON.stringify(b))kept++; } }
+    if(kept){ _jrev++; await rawSet(J_KEY,journal); }
+    if(typeof vaultMarkAll==='function')vaultMarkAll(before); srvRestored(before,bw); // a synced copy elsewhere takes the merge, not the old journal
+    linkedHandle=h; linkedName=h.name; _linkedOk=h; await idbSet('handle',h);
+    if(kept)await writeLinked(); // the file holds the merge, not only what it had
     renderDatafile('saved'); renderWallets();
     if(allTrades.length) render();
-    setStatus('Loaded from '+h.name+' · '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries. Hit Load all to refresh trades.');
-  }catch(e){ if(e.name!=='AbortError') renderDatafile('error'); } }
+    setStatus('Loaded from '+h.name+' · '+settings.wallets.length+' wallet(s), '+Object.keys(journal).length+' journal entries'+(kept?' ('+kept+' kept from this browser)':'')+'. Hit Load all to refresh trades.');
+  }catch(e){ if(e.name!=='AbortError'){ renderDatafile('error'); if(e instanceof SyntaxError||/not a Ledger/.test(e.message))setErr('Couldn’t open that file: it isn’t a Ledger data file or backup.'); } } }
 async function reconnectFile(){ const h=await idbGet('handle'); if(!h){ renderDatafile(); return; }
   if(await ensurePerm(h,'readwrite')!=='granted'){ renderDatafile('need-permission'); return; }
   try{ const file=await h.getFile(); const data=JSON.parse(await file.text());
-    await applySnapshot(data); linkedHandle=h; linkedName=h.name;
+    if(isFullBackup(data)){ await idbDel('handle'); renderDatafile(); setErr(backupNotLinked(h.name)); return; } // linked by an older build
+    await applySnapshot(data); linkedHandle=h; linkedName=h.name; _linkedOk=h;
     renderDatafile('saved'); renderWallets();
     if(allTrades.length) render();
     setStatus('Reconnected '+h.name+' · data restored. Hit Load all to refresh trades.');
@@ -653,7 +756,8 @@ function renderDatafile(state){ const el=$('datafile'); if(!el)return;
       :state==='saved'?'<span style="color:var(--profit)">saved</span>':'synced';
     // an open server (no AUTH_TOKEN): sync works, and so does everyone else's access — say it every time
     const open=SRV.needsAuth?'':`<span style="color:var(--loss)" data-tip="Set AUTH_TOKEN on the server (README-deploy.md, step 3: a long random string) and restart it. The app then asks for it once per browser.">⚠ This server has no AUTH_TOKEN — anyone with the URL can read and change your journal</span>`;
-    const both=SRV.conflicts?`<span style="color:var(--gold)" data-tip="${esc(jConflictMsg(SRV.conflicts))}">⚠ ${SRV.conflicts} note${SRV.conflicts===1?'':'s'} edited on two devices — both versions kept</span>`:'';
+    const both=(SRV.conflicts?`<span style="color:var(--gold)" data-tip="${esc(jConflictMsg(SRV.conflicts))}">⚠ ${SRV.conflicts} note${SRV.conflicts===1?'':'s'} edited on two devices — both versions kept</span>`:'')
+      +(SRV.replaced?`<span style="color:var(--gold)" data-tip="${esc(SRV.replaced)}">⚠ the server’s copy was older — this browser’s kept</span>`:'');
     el.innerHTML=`<span class="dot"></span><span data-tip="Journal, wallets, settings and MAE/MFE measurements auto-save to this server on every change and load on every visit — reboots and redeploys are covered as long as the server has a persistent volume. Journal image attachments sync too; candle caches stay in this browser (re-fetchable).">☁ Server sync · rev ${SRV.rev} · ${tag}</span>${open}${both}
       <span class="sp"></span><button class="df-btn" id="srvHist" data-tip="Rotating daily snapshots kept on the server (last 14 days), and the full backups made with Backup to server. Restore any of them if a sync or edit went wrong.">History</button><button class="df-btn" id="srvSaveNow">Save now</button>${srvOwner()&&typeof toggleArchivePanel==='function'?'<button class="df-btn" id="srvArchive" data-tip="Hyperliquid’s node-data archive on S3: check coverage, diagnose the AWS key, fetch a sample hour, run or watch a backfill of the fills the public API no longer serves.">Archive</button>':''}`;
     $('srvSaveNow').onclick=writeServer;
@@ -854,8 +958,9 @@ function capitalModel(flows, closed, equityNow, now){
   tw+=prevCap*(now-prevT);
   const spanMs=now-chron[0].time;
   const avgCapital=spanMs>0?tw/spanMs:cap;
-  const closedIn=(closed||[]).filter(t=>!t.isOpen&&t.closeTime>=chron[0].time&&t.closeTime<=now)
-    .sort((x,y)=>x.closeTime-y.closeTime);
+  const in0=(closed||[]).filter(t=>!t.isOpen&&t.closeTime>=chron[0].time&&t.closeTime<=now);
+  // money rows summed, trade rows counted (moneyRow / closedTrade inlined: the server runs this bare)
+  const closedIn=in0.filter(t=>!t.spotPos).sort((x,y)=>x.closeTime-y.closeTime), nTrades=in0.filter(t=>!t.spotRz&&!t.movedOut).length;
   const realized=closedIn.reduce((s,t)=>s+t.net,0);
   const roc=avgCapital>0?realized/avgCapital:null;
   const years=spanMs/(365*86400000);
@@ -873,7 +978,7 @@ function capitalModel(flows, closed, equityNow, now){
   const implied=(equityNow!=null&&isFinite(equityNow))?equityNow-cap:null; // the account's own all-time accounting, unrealized included
   return {n:chron.length, firstAt:chron[0].time, lastAt:chron[chron.length-1].time,
     totIn, totOut, netDeposited:cap, maxCapital:maxCap, avgCapital,
-    realized, nTrades:closedIn.length, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
+    realized, nTrades, roc, rocAnnual, maxDD$:worst$, maxDDpctCap:worstPct,
     equityNow:equityNow!=null?equityNow:null, impliedPnl:implied};
 }
 // Money-weighted (XIRR) annual return: the rate r solving Σ flow·(1+r)^(yrs remaining) =

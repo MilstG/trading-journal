@@ -74,7 +74,8 @@ async function srvArchived(a, fcache){
   }catch(e){ return 0; } }
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
-function saveLastView(){ try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:Date.now(),positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
+let _viewAt=0; // when what's on screen was loaded from the exchange (Daruma's offline line says so)
+function saveLastView(){ _viewAt=Date.now(); try{ idbSet(VIEW_KEY,{v:1,key:walletsSig(),at:_viewAt,positions:openPositions,accountValue,spotHoldings,spotAccountValue,unifiedAccountValue,hlPnl,dataCoverage,ledFlows,ledSkipped}); }catch(e){} }
 // Opening the app shows your saved data at once — trades rebuilt from the cached fills and funding,
 // positions as they were last time — and the refresh runs quietly behind it.
 async function bootFromCache(){
@@ -94,7 +95,7 @@ async function bootFromCache(){
       return r.perp.concat(r.spot); }));
     if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
     allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm; migrateSpotJournalIds(allTrades);
-    if(view&&view.v===1&&view.key===walletsSig()){ openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
+    if(view&&view.v===1&&view.key===walletsSig()){ _viewAt=view.at||0; openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
       spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; dataAudit=null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
     $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
     try{ render(); }catch(e){ console.warn('cached render',e); }
@@ -237,6 +238,20 @@ async function loadWallet(w,fresh,spotP){
 function loadFailNote(w,err){ err=String(err||'');
   if(/^Network error reaching Hyperliquid/.test(err))return 'Couldn\u2019t reach Hyperliquid for '+labelFor(w)+' \u2014 check your connection';
   return 'Couldn\u2019t load '+labelFor(w)+(err?' \u2014 '+err:''); }
+// Why trades the exchange no longer holds are out of the stats, in the same words in Daruma's note and the full
+// journal's data-health strip. A perp's closing fill is missing: likely a liquidation, or a gap in the history.
+// A spot balance can't be liquidated: it was sent, staked or sold somewhere the fills don't show (or left as dust).
+// name: a trade's label (the strip escapes it and adds the date).
+const ORPH_TOLD='pz_orph_told';
+function orphanLines(o, name){ const sp=o.filter(t=>t.market==='spot'), pp=o.filter(t=>t.market!=='spot'), L=[], few=a=>a.slice(0,3).map(name).join(', ')+(a.length>3?'…':'');
+  if(pp.length)L.push(pp.length+' position'+(pp.length===1?'':'s')+' ('+few(pp)+') closed without a closing fill in your history: likely a liquidation or a gap in the history');
+  if(sp.length)L.push(sp.length+' spot balance'+(sp.length===1?' is':'s are')+' no longer in your wallet ('+few(sp)+'): sent, staked or sold where the fills don’t show it');
+  return L; }
+// Daruma's note about them, for the ones not told before on this device (null: nothing new to say)
+function orphanNoteOnce(o){ let told=[]; try{ told=JSON.parse(localStorage.getItem(ORPH_TOLD)||'[]'); if(!Array.isArray(told))told=[]; }catch(e){}
+  const fresh=o.filter(t=>!told.includes(t.id)); if(!fresh.length)return null;
+  try{ localStorage.setItem(ORPH_TOLD,JSON.stringify(told.concat(fresh.map(t=>t.id)).slice(-300))); }catch(e){}
+  return orphanLines(fresh,t=>dispMarket(dcoin(t))+(t.market==='spot'?'':' '+(t.dir||'').toLowerCase())).join('. ')+'. Left out of your stats.'; }
 async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!opts.auto;
   if(_loading)return; _loading=true; _pzQuiet=auto&&allTrades.length>0; try{
   if($('walletAddr').value.trim()){ if(!await addWalletFromInput()) return; }
@@ -276,6 +291,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       if(auto){ setStatus('Auto-refresh got nothing'+(failed.length?' ('+failed.join('; ')+')':'')+' — keeping the current view.'); return; }
       sampleLeave(); allTrades=[]; openPositions=[]; spotHoldings=[];
       // every wallet failing is not "no activity": say why, and only that
+      loadAll.empty=!failed.length; // every wallet answered, with nothing in it (Daruma's first run drops a new address that did this)
       setErr(failed.length===settings.wallets.length?failed.join(' · ')+'.':'No activity found'+(failed.length?' in the wallets that loaded · '+failed.join(' · '):'')+'.'); return; }
     sampleLeave(); // real trades: the account's own journal and settings are back
     allTrades=trades.sort((a,b)=>b.openTime-a.openTime); migrateSpotJournalIds(allTrades);
@@ -306,9 +322,9 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   finally{ $('loadAll').disabled=false; }
 
   } finally { _loading=false; _pzQuiet=false; if(PZ&&pzS.note&&pzS.note.kind==='busy')pzS.note=null;
-    // Pulse has no data-health strip: say once when an open trade turned out to be closed off the record
-    if(PZ){ const o=allTrades.filter(t=>t.orphan), k=o.map(t=>t.id).join('|'); if(o.length&&k!==_orphSeen){ _orphSeen=k;
-      pzNote(o.length+' position'+(o.length===1?'':'s')+' ('+o.slice(0,3).map(t=>dispMarket(dcoin(t))+' '+(t.dir||'').toLowerCase()).join(', ')+') closed without a closing fill in your history — likely a liquidation. Left out of your stats.'); } }
+    // Pulse has no data-health strip: say once per trade, ever, when an open trade turned out to be closed off the
+    // record (the ids told are kept on this device; it used to repeat on every open)
+    if(PZ){ const m=orphanNoteOnce(allTrades.filter(t=>t.orphan)); if(m)pzNote(m); }
     // new fills for today: check them for a tilt pattern before drawing (the banner shows on this render)
     if(PZ){ try{ pzTiltAlertCheck(); }catch(e){ console.warn('tilt alerts',e); } pzRender(); } }
   // measuring excursions fetches candles: wait until the browser is idle so it never competes with the first paint
@@ -649,7 +665,9 @@ $('periods').addEventListener('click',e=>{ const b=e.target.closest('button'); i
   customRange={from:null,to:null}; $('pFrom').value=''; $('pTo').value=''; $('pFrom').classList.remove('act'); $('pTo').classList.remove('act'); $('rangeFields').classList.add('hide'); $('rangeBtn').classList.remove('on');
   render(); });
 function applyRange(){
-  const fv=$('pFrom').value, tv=$('pTo').value;
+  let fv=$('pFrom').value, tv=$('pTo').value;
+  // a range picked backwards (Sep 30 → Sep 1) used to match nothing, silently: read it the right way round, and say so
+  if(fv&&tv&&fv>tv){ [fv,tv]=[tv,fv]; $('pFrom').value=fv; $('pTo').value=tv; setStatus('The range ran backwards — read as '+fv+' → '+tv+'.'); }
   customRange.from = dateBound(fv,false);
   customRange.to   = dateBound(tv,true);
   $('pFrom').classList.toggle('act',!!fv); $('pTo').classList.toggle('act',!!tv);

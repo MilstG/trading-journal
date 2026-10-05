@@ -81,9 +81,12 @@ function dailyLossToday(trades){
   const k=nfDayKey(Date.now()); let net=0, n=0;
   for(const t of (trades||[])){
     const today=!t.isOpen&&t.closeTime&&nfDayKey(t.closeTime)===k;
+    // a spot day row repeats what its position's per-fill results (rz) already hold: counted, a −$300 spot
+    // day read −$600 and the limit fired at half. Day rows are neither money here nor trades.
+    if(t.spotRz)continue;
     if(t.rz){ for(const [tm,v] of t.rz)if(nfDayKey(tm)===k)net+=v; }
     else if(today)net+=t.net; // a trade built without per-fill results (imports, tests): whole trade on its close day
-    if(today)n++; }
+    if(today&&!t.movedOut)n++; }
   return {net, n};
 }
 function renderTripwire(){
@@ -773,8 +776,9 @@ function processContext(trades, rulePreds){
 let _inboxSkip=new Set();
 function inboxSectionHtml(){
   if(!coachOn())return '';
-  const inbox=journalInbox(allTrades.filter(viewFilter),journal).filter(t=>!_inboxSkip.has(t.id));
-  const st=journalStreak(allTrades.filter(viewFilter),journal,dayKey,dayKey(Date.now()));
+  const tr=allTrades.filter(t=>closedTrade(t)&&viewFilter(t)); // trades only: a spot day row isn't in the table and can't be journaled
+  const inbox=journalInbox(tr,journal).filter(t=>!_inboxSkip.has(t.id));
+  const st=journalStreak(tr,journal,dayKey,dayKey(Date.now()));
   const streakTxt=`<span class="sr-note" data-tip="Consecutive trading days on which every closed trade has a setup, tag, rating, note or mistake flag. Today only counts once it's complete — it never breaks the streak while you're still trading.">streak ${st.current} day${st.current===1?'':'s'} · best ${st.best}</span>`;
   if(!inbox.length) return `<div class="diag-section"><h2>Journal inbox <span style="font-size:11px;color:var(--faint);font-weight:400">last 30 days</span> ${streakTxt}</h2>
     <p class="lead">Nothing waiting — every trade from the last 30 days carries at least a setup, tag, rating, note or mistake flag.</p></div>`;
@@ -958,7 +962,7 @@ async function adoptHabit(spec){
   if(same){ await Store.set(S_KEY,settings); return same; }
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ // same contract as pins and rules: thresholds fixed at adoption, never re-derived
-    try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
+    try{ const chron=allTrades.filter(t=>closedTrade(t)&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime); // the miner reads trades, as on the Diagnostic
       params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const h={id:'h'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tpl:spec.tpl||null,kind:spec.kind,
     part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,
@@ -1268,7 +1272,7 @@ function tradeQuestion(t, j, e){
   }
   if(plan&&t.avgExit>0&&(short?t.avgExit>plan.stop:t.avgExit<plan.stop))return {q:'You got out past your planned stop. What happened between the stop and the exit?',why:'exit beyond stop'};
   if(e&&e.mfePct!=null&&t.avgEntry>0){ const ret=retPct(t);
-    if(e.mfePct>=1&&ret!=null&&ret<e.mfePct*0.25)return {q:`It was up ${e.mfePct.toFixed(1)}% at its best and closed at ${ret>=0?'+':''}${ret.toFixed(1)}%. Where was your exit plan?`,why:'gave back'}; }
+    if(e.mfePct>=1&&ret!=null&&ret<e.mfePct*0.25)return {q:`It was up ${e.mfePct.toFixed(1)}% at its best and closed at ${ret>=0?'+':'−'}${Math.abs(ret).toFixed(2)}%. Where was your exit plan?`,why:'gave back'}; }
   if(addedToLoser(t))return {q:'You added to this while it was losing. Was that the plan, or hoping?',why:'added to loser'};
   const j2=j.mistakes||[];
   if(j2.includes('Revenge trade'))return {q:'You flagged this as revenge. What would have stopped you from taking it?',why:'revenge'};
@@ -1287,6 +1291,10 @@ function lastSessionLine(ctx){
   const miss=weak.length?PART_MISS[weak[0]]:null;
   const money=`<b class="${cls(d.net)}">${signedPlain(d.net)}</b>`, sc=`process <b>${d.score}</b>`;
   const when=dayLabel(d.key);
+  // a trade you flagged yourself ("FOMO entry"…) still journals honestly and scores (AUDIT-4), but a day
+  // carrying one isn't praised as "earned the right way": the flag is the lesson
+  const flagged=((ctx.byDay||{})[d.key]||[]).map(t=>journal[t.id]).find(j=>j&&Array.isArray(j.mistakes)&&j.mistakes.length);
+  if(d.score>=70&&flagged)return `${when}: ${money}, ${sc} — and you flagged “${esc(flagged.mistakes[0])}” yourself. Honest journaling; now the fix is not to repeat it.`;
   if(d.score>=70&&d.net>=0)return `${when}: ${money}, ${sc}. Earned the right way — do it again.`;
   if(d.score>=70)return `${when}: ${money}, ${sc}. A good loss: you did your part and the market said no.`;
   // nothing journaled yet, ever: the score is low because the journal is empty, and saying "process 0,

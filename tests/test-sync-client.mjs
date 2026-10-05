@@ -167,9 +167,9 @@ await t('an edit made just before a reload merges field by field when another de
   eq([e.notes, e.rating], ['typed before reload', 4]);
   ok(!store.has('hl_jpbase_v1'), 'gone once nothing is pending');
 });
-await t('GET /api/data?only=rev answers the revision alone', async () => {
-  const r = await (await fetch(BASE + '/api/data?only=rev', { headers: H })).json();
-  eq(r, { rev: (await get()).rev });
+await t('GET /api/data?only=rev answers the revision and the store’s version, not the copy', async () => {
+  const r = await (await fetch(BASE + '/api/data?only=rev', { headers: H })).json(), g = await get();
+  eq(r, { rev: g.rev, storeId: g.storeId, at: g.at });
 });
 
 console.log('\nWallets on an ordinary 409');

@@ -728,7 +728,7 @@ try {
       await noSideways();
       await p.screenshot({ path: join(tmpdir(), 'e2e-admin2fa-security-1280.png'), fullPage: true });
       // the panel keeps working in this browser: its session came with the first factor
-      await p.goto(LB2 + '/admin#members'); await p.waitForSelector('#mRows');
+      await p.goto(LB2 + '/admin#members'); await p.waitForSelector('#mRows', { state: 'attached' }); // no members: an empty body, the empty state sits under the table
       eq(errs, []);
       await ctx.close();
     });

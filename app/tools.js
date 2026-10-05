@@ -67,8 +67,9 @@ function weeklyReviewSectionHtml(){
   const {from,to}=lastCompletedWeekRange();
   const wkKey=isoWeekKey(from+3.5*86400000);
   const e=journal[wkKey]||{};
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime>=from&&t.closeTime<to&&viewFilter(t));
-  const net=closed.reduce((s,t)=>s+t.net,0);
+  const inWk=t=>t.closeTime>=from&&t.closeTime<to&&viewFilter(t);
+  const closed=allTrades.filter(t=>closedTrade(t)&&inWk(t)); // trades counted once; the week's net from money rows (a spot sell is one position and one day row)
+  const net=allTrades.filter(t=>closedMoney(t)&&inWk(t)).reduce((s,t)=>s+t.net,0);
   const sorted=[...closed].sort((a,b)=>b.net-a.net);
   const best=sorted[0], worst=sorted[sorted.length-1];
   const tl=t=>t?`<b>${esc(dispMarket(dcoin(t)))}</b> ${t.dir} · <span class="${cls(t.net)}">${fmtUsd(t.net)}</span>`:'—';

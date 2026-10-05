@@ -364,9 +364,12 @@ function peerImpTip(c){
 
 // ---- screens ----
 
+// your profile and settings sit on the title row; the text chips wrap on their own row below it (on a 360 px phone
+// a single wrapping row left the gear alone on a third line)
 function socHead(){
   return `<header class="pz-head"><div><span class="pz-kick">${SOC.cfg&&SOC.cfg.week?'Week '+esc(SOC.cfg.week.slice(-2)):'Social'}</span><h1 class="pz-h1">Social</h1></div>
-    <div class="pz-chips">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}${SOC.me.mentor?'':`<a class="pz-chip" href="#mentors" style="font-weight:700;font-size:13px;padding:0 14px">Mentors</a>`}${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':`<a class="pz-chip" href="#playbooks/shared" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('book',16)} Playbooks</a>`}${SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on?`<a class="pz-chip" href="#invite" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('plus',16)} Invite</a>`:''}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a><span style="display:flex;gap:8px"><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></span></div></header>`;
+    <span class="pz-chips"><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></span></header>
+    <div class="pz-chips" style="margin:-4px 0 12px">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}${SOC.me.mentor?'':`<a class="pz-chip" href="#mentors" style="font-weight:700;font-size:13px;padding:0 14px">Mentors</a>`}${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':`<a class="pz-chip" href="#playbooks/shared" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('book',16)} Playbooks</a>`}${SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on?`<a class="pz-chip" href="#invite" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('plus',16)} Invite</a>`:''}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a></div>`;
 }
 function socUnavailableHtml(){
   return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Daruma from your server’s <b>/daruma</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
@@ -650,7 +653,7 @@ function socPostHtml(D, id){
 }
 
 // ---- the composer ----
-function socJournalTrades(){ return allTrades.filter(t=>t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
+function socJournalTrades(){ return allTrades.filter(t=>tradeRow(t)&&t.openTime>Date.now()-30*86400000).sort((a,b)=>(b.isOpen?Infinity:b.closeTime)-(a.isOpen?Infinity:a.closeTime)).slice(0,30); }
 function socComposeHtml(D){
   const back=`<a class="pz-back" href="#social" data-soc-sub="feed">${pzI('back',20)}Feed</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
@@ -745,7 +748,8 @@ async function socPostAction(t){
   if(ds.socCchart!==undefined&&C){ C.chart=!C.chart; t.setAttribute('aria-checked',String(C.chart)); return true; }
   if(ds.socCimgdel&&C){ for(const m of C.media)if(m.id===ds.socCimgdel)try{ URL.revokeObjectURL(m.url); }catch(e){} C.media=C.media.filter(m=>m.id!==ds.socCimgdel); pzRender(); return true; }
   if(t.id==='socPostSend'){ await socPostSend(); return true; }
-  if(ds.socShare){ SOC.compose={kind:'trade',tid:ds.socShare,media:[],chart:true,side:'long'}; location.hash='#compose'; return true; }
+  if(ds.socShare){ const sec=t.closest&&t.closest('[data-pz-trade]'); if(sec)await pzSaveJournal(sec,true); // leaving the card keeps what was typed on it
+    SOC.compose={kind:'trade',tid:ds.socShare,media:[],chart:true,side:'long'}; location.hash='#compose'; return true; }
   if(ds.socMore){ const key=ds.socMore, M=SOC.more[key]=SOC.more[key]||{items:[],next:ds.next}; if(M.busy)return true; M.busy=true; pzRender();
     try{ const [kind,arg]=key.split(':'), url=kind==='feed'?'/feed?scope='+arg+'&before='+encodeURIComponent(M.next):'/profile/'+encodeURIComponent(arg)+'/posts?before='+encodeURIComponent(M.next);
       const r=await socFetch(url); M.items=M.items.concat(r.events||r.posts||[]); M.next=r.next; }catch(e){ pzNote(e.message,'err'); }
@@ -867,8 +871,8 @@ function socDuelCardHtml(v, compact){
 function socDuelEntryHtml(g){
   if(!socDuelsOn()||pzLocked('duels',g.level.level))return '';
   const c=socDuels(), d=c&&c.d; if(!d)return '';
-  const P=d.pods||[], wait=d.duels.filter(v=>v.status==='pending'&&v.awaiting).length+P.filter(v=>v.my==='invited').length, run=d.duels.filter(v=>v.status==='active').length+P.filter(v=>v.status==='active'&&v.my==='in').length, r=d.record;
-  return `<a class="pz-card pz-cardlink" href="#duels" style="margin-bottom:10px"><span class="pz-ico" style="background:rgba(182,156,255,.14);color:${PZ_COL.xp}">${pzI('medal',20)}</span><span style="flex:1;min-width:0"><b style="font-size:15px">Duels</b><span class="pz-sub" style="display:block;font-size:13px">${wait?`<b style="color:${PZ_COL.xp}">${wait} waiting for you</b> · `:''}${run?run+' running · ':''}record ${r.w}–${r.l}${r.d?'–'+r.d:''}${d.ladder&&d.ladder.on&&d.ladder.me.n?' · rating '+d.ladder.me.r:''}</span></span>${pzI('chev',18)}</a>`;
+  const P=d.pods||[], wait=d.duels.filter(v=>v.status==='pending'&&v.awaiting).length+P.filter(v=>v.my==='invited').length, run=d.duels.filter(v=>v.status==='active'&&v.me).length+P.filter(v=>v.status==='active'&&v.my==='in').length, soon=d.duels.filter(v=>v.status==='active'&&!v.me).length, r=d.record;
+  return `<a class="pz-card pz-cardlink" href="#duels" style="margin-bottom:10px"><span class="pz-ico" style="background:rgba(182,156,255,.14);color:${PZ_COL.xp}">${pzI('medal',20)}</span><span style="flex:1;min-width:0"><b style="font-size:15px">Duels</b><span class="pz-sub" style="display:block;font-size:13px">${wait?`<b style="color:${PZ_COL.xp}">${wait} waiting for you</b> · `:''}${run?run+' running · ':''}${soon?soon+' starting soon · ':''}record ${r.w}–${r.l}${r.d?'–'+r.d:''}${d.ladder&&d.ladder.on&&d.ladder.me.n?' · rating '+d.ladder.me.r:''}</span></span>${pzI('chev',18)}</a>`;
 }
 function socDuelsTodayHtml(g){
   if(!SOC.me||!socDuelsOn()||(g&&pzLocked('duels',g.level.level)))return '';
@@ -914,7 +918,7 @@ function socDuelPeopleHtml(d,pick){
     return `<${tag} class="pz-dperson"${b?' aria-disabled="true" tabindex="0"':` href="#duel/${esc(p.handle)}"`} data-pz-tip="${tip}">${socAv(p.handle,32)}<span>@${esc(p.handle)}</span><i>${b?'duel on':esc(DUEL_REL[p.rel]||p.rel)}</i></${tag}>`; }).join('')}</div>`;
 }
 // the duel already open with someone (GET /duels/with: busy), in one line
-function socDuelBusyTxt(b,h){ return b.status==='active'?(b.start&&b.start>dayKey(Date.now())?'You and @'+h+' already have a duel: accepted, it starts '+duelDate(b.start)+'.':'You and @'+h+' already have a duel running.')
+function socDuelBusyTxt(b,h){ return b.status==='active'?(b.start&&b.start>new Date().toISOString().slice(0,10)?'You and @'+h+' already have a duel: accepted, it starts '+duelDate(b.start)+'.':'You and @'+h+' already have a duel running.')
   :b.awaiting==='me'?'@'+h+' has challenged you: answer that one under Duels first.':'Your challenge to @'+h+' is waiting for an answer.'; }
 // where a 7-day Discipline comes from (the server's partner, mentee and duel views)
 function socDisc7Tip(v){ return 'Average Discipline over their last 7 trading days, '+(v?'scored by the server from their wallet’s fills.':'as their app reported it (they don’t verify from fills).'); }
@@ -1086,7 +1090,8 @@ function socPeopleHtml(D){
       :list.length?`<div class="pz-jgrid">${list.map(card).join('')}</div>${last&&last.more?`<button type="button" class="pz-ghost" data-soc-pmore="1">Show more</button>`:''}`
       :`<section class="pz-card pz-empty"><b>No one here yet</b><p class="pz-sub">${q?'Nobody matches “'+esc(q)+'”.':f==='mentor'?'This league has no mentors yet. The owner appoints them.':f==='partner'?'Nobody has said they’re looking for a partner yet. Be the first: switch it on in Profile & privacy.':'Nobody else has a public profile yet.'}</p></section>`}`;
 }
-const socPeopleDrop=()=>{ for(const k of Object.keys(SOC.cache))if(k.startsWith('people:'))delete SOC.cache[k]; };
+// after asking, accepting or challenging: the People cards, profiles and duel forms show the new state at once
+const socPeopleDrop=()=>{ for(const k of Object.keys(SOC.cache))if(/^(people|u|dw):/.test(k))delete SOC.cache[k]; };
 // ---- Mentors (#mentors, #mentors/<handle>): pick up to two, each with their rate, room and track record ----
 // Picked mentors are the only ones who see your days and the trades you send. A review costs the mentor's
 // rate in XP to spend (the first trade with each is free): held when you send, paid when they mark it
@@ -1217,7 +1222,7 @@ async function socAction(t){
       try{ if(counter)await socFetch('/duels/'+encodeURIComponent(counter),{method:'POST',body:JSON.stringify(Object.assign({action:'counter'},terms))});
         else await socFetch('/duels',{method:'POST',body:JSON.stringify(Object.assign({to:st.h},terms))}); }
       finally{ t.disabled=false; }
-      pzS.duelCounter=null; delete SOC.cache.duels; const el=$('duelMsg'); if(el)el.value='';
+      pzS.duelCounter=null; delete SOC.cache.duels; socPeopleDrop(); const el=$('duelMsg'); if(el)el.value='';
       location.hash='#duels'; done(counter?'Sent back to @'+st.h+'.':'Challenge sent to @'+st.h+'. They have 48 hours to answer.'); return true; }
     // group duels and the ladder
     if(ds.ladTab){ pzS.ladTab=ds.ladTab; pzRender(); return true; }
@@ -1252,13 +1257,14 @@ async function socAction(t){
       const fv=((SOC.cache.duels&&SOC.cache.duels.d&&SOC.cache.duels.d.duels)||[]).find(x=>x.id===id)||{};
       if(a==='forfeit'&&!confirm(ds.early?'Back out of this duel? It hasn’t started, so it won’t count either way.':'Forfeit this duel? The other side wins'+(fv.stake?' and takes your '+fv.stake+' XP stake.':'.')))return true;
       if(a==='decline'&&!confirm('Decline this challenge?'))return true;
-      const r=await socFetch('/duels/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({action:a})}); delete SOC.cache.duels;
+      const r=await socFetch('/duels/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({action:a})}); delete SOC.cache.duels; socPeopleDrop();
       done(a==='accept'?'Accepted. It runs '+duelWhen(r.duel)+'.':a==='decline'?'Declined.':a==='cancel'?'Withdrawn.':ds.early?'You backed out. It doesn’t count.':'You forfeited.'); return true; }
+    if(ds.socAllbadges){ pzS.allBadges=ds.socAllbadges; pzRender(); return true; }
     if(ds.socSub){ SOC.sub=ds.socSub; if(pzTab()!=='social')location.hash='#social'; else pzRender(); return true; }
     // partners
     if(ds.socPask||t.id==='socPAsk'){ const h=ds.socPask||(($('socPIn')||{value:''}).value.trim()); if(!h)return true;
-      await socFetch('/partners',{method:'POST',body:JSON.stringify({handle:h})}); delete SOC.cache.partners; done('Asked @'+h.replace(/^@/,'')+'. You’ll see each other’s days once they accept.'); return true; }
-    if(ds.socPaccept){ await socFetch('/partners/'+encodeURIComponent(ds.socPaccept)+'/accept',{method:'POST'}); delete SOC.cache.partners; if(SOC.me)SOC.me.partners=(SOC.me.partners||0)+1; done('You’re partners now.'); return true; }
+      await socFetch('/partners',{method:'POST',body:JSON.stringify({handle:h})}); delete SOC.cache.partners; socPeopleDrop(); done('Asked @'+h.replace(/^@/,'')+'. You’ll see each other’s days once they accept.'); return true; }
+    if(ds.socPaccept){ await socFetch('/partners/'+encodeURIComponent(ds.socPaccept)+'/accept',{method:'POST'}); delete SOC.cache.partners; socPeopleDrop(); if(SOC.me)SOC.me.partners=(SOC.me.partners||0)+1; done('You’re partners now.'); return true; }
     if(ds.socPdel){ if(!ds.what&&!confirm('End this partnership? You stop seeing each other’s days.'))return true;
       await socFetch('/partners/'+encodeURIComponent(ds.socPdel),{method:'DELETE'}); delete SOC.cache.partners; done(''); return true; }
     if(ds.socNudge){ await socFetch('/partners/'+encodeURIComponent(ds.socNudge)+'/nudge',{method:'POST',body:JSON.stringify({})}); delete SOC.cache.partners; done('Nudged. They’ll see it on their next open — or as a notification.'); return true; }

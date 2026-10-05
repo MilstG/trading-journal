@@ -183,7 +183,8 @@ await t('PUT then GET round-trips the snapshot with incremented rev', async () =
   const snap = { app: 'ledger', journal: { 'w:BTC:1': { notes: 'test entry', tags: ['a'] } }, wallets: [] };
   const w = await put(base, { rev: 0, snapshot: snap }, authH);
   eq(w.status, 200);
-  eq(await w.json(), { rev: 1 });
+  const wj = await w.json(); eq(wj.rev, 1);
+  ok(typeof wj.storeId === 'string' && wj.storeId.length >= 12 && typeof wj.at === 'string', 'the store’s id and this version’s time: ' + JSON.stringify(wj));
   const g = await fetch(base + '/api/data', { headers: authH });
   const j = await g.json();
   eq(j.rev, 1);

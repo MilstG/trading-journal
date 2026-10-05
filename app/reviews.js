@@ -38,22 +38,23 @@ function mrFeeTxt(r, role){ const f=r.fee, who=r.to?'@'+r.to:'your mentors';
   if(f.state==='held')return role==='mentor'?f.xp+' XP is yours when you mark it reviewed with a comment, until '+mrWhen(f.until):'Sent to '+who+' · '+f.xp+' XP held until it’s reviewed, or back to you '+mrWhen(f.until);
   if(f.state==='paid')return role==='mentor'?'Paid: '+f.xp+' XP':'Sent to '+who+' · '+f.xp+' XP paid';
   return role==='mentor'?'Not reviewed in time: the '+f.xp+' XP went back':'Sent to '+who+' · '+f.xp+' XP came back to you'; }
-function mrBadge(r){ return r.reviewed?`<span class="pz-pill pz-tagp mr-ok">Reviewed${r.reviewed.by?' by @'+esc(r.reviewed.by):''} ✓</span>`
-  :`<span class="pz-pill pz-tagp">${r.waiting?'Waiting for a mentor':'Mentor replied'}</span>`; }
-function mrRowHtml(r, mod){ const t=r.trade||{};
+// role: 'mentor' (it waits on you), 'mentee' (on the mentor it went to), else an admin's read-only view
+function mrBadge(r, role){ return r.reviewed?`<span class="pz-pill pz-tagp mr-ok">Reviewed${r.reviewed.by?' by @'+esc(r.reviewed.by):''} ✓</span>`
+  :`<span class="pz-pill pz-tagp">${r.waiting?(role==='mentor'?'Waiting for your reply':r.to?'Waiting for @'+esc(r.to):'Waiting for a mentor'):role==='mentor'?'You replied':'Mentor replied'}</span>`; }
+function mrRowHtml(r, mod, role){ const t=r.trade||{};
   return `<a class="pz-card pz-cardlink" href="#tr/${esc(r.id)}${mod?'/mod':''}">${socAv(r.handle,32)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
     <b style="font-size:14px">${esc((t.side==='short'?'Short ':'Long ')+(t.label||t.coin||''))} <span class="pz-sub" style="font-weight:400">· @${esc(r.handle||'?')} · ${esc(dayLabel(dayKey(t.openedAt||r.at)))}</span></b>
-    <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mrBadge(r)}<span class="pz-sub" style="font-size:12px">${r.comments} comment${r.comments===1?'':'s'} · ${socAgo(r.last)}${r.fee&&r.fee.xp?' · '+r.fee.xp+' XP '+(r.fee.state==='held'?'held':r.fee.state==='paid'?'paid':'returned'):''}</span></span></span>${pzI('chev',18)}</a>`; }
+    <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mrBadge(r,role)}<span class="pz-sub" style="font-size:12px">${r.comments} comment${r.comments===1?'':'s'} · ${socAgo(r.last)}${r.fee&&r.fee.xp?' · '+r.fee.xp+' XP '+(r.fee.state==='held'?'held':r.fee.state==='paid'?'paid':'returned'):''}</span></span></span>${pzI('chev',18)}</a>`; }
 // #reviews: trades to review (mentors), your own trades out for review, and every thread (admins, read-only)
 function mrListHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
   const c=socGet('reviews','/reviews',20000), d=c&&c.d; if(!d)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const sec=(h,L,mod,empty)=>`<section style="display:flex;flex-direction:column;gap:10px"><b class="pz-kvh">${h}</b>${L.length?L.map(r=>mrRowHtml(r,mod)).join(''):`<p class="pz-sub" style="font-size:13px">${empty}</p>`}</section>`;
+  const sec=(h,L,mod,empty,role)=>`<section style="display:flex;flex-direction:column;gap:10px"><b class="pz-kvh">${h}</b>${L.length?L.map(r=>mrRowHtml(r,mod,role)).join(''):`<p class="pz-sub" style="font-size:13px">${empty}</p>`}</section>`;
   const a=SOC.me.admin&&pzS.mrAll?socGet('admreviews','/admin/reviews',20000):null;
   return `${back}${pzHead('Mentor','Trade reviews')}<div class="pz-wide"><div class="pz-col">
-    ${d.toReview?sec('Trades to review',d.toReview.slice().sort((x,y)=>(y.waiting-x.waiting)||(y.last-x.last)),false,'No one has sent a trade yet.'):''}
-    ${d.toReview&&!d.mine.length?'':sec('Your trades with mentors',d.mine,false,d.mentorsOn?'Send one from a trade in your journal: “Ask mentor”.':'Switch on “Let mentors see my days” under What you share, then send a trade from your journal.')}</div>
+    ${d.toReview?sec('Trades to review',d.toReview.slice().sort((x,y)=>(y.waiting-x.waiting)||(y.last-x.last)),false,'No one has sent a trade yet.','mentor'):''}
+    ${d.toReview&&!d.mine.length?'':sec('Your trades with mentors',d.mine,false,d.mentorsOn?'Send one from a trade in your journal: “Ask mentor”.':'Switch on “Let mentors see my days” under What you share, then send a trade from your journal.','mentee')}</div>
     <div class="pz-col">${d.mentorsOn&&!SOC.me.mentor||(d.to&&d.to.length)?`<section class="pz-card pz-kv"><b class="pz-kvh">Your mentors</b>
       ${d.to&&d.to.length?d.to.map(x=>`<a class="pz-row-t" href="#mentors/${esc(x.handle)}" style="text-decoration:none;color:var(--pz-text)"><span>@${esc(x.handle)}</span><b>${!x.rate||x.sameOwner?'free':x.firstFree?'first trade free, then '+x.rate+' XP':x.rate+' XP a trade'}</b></a>`).join('')
         :'<span class="pz-sub" style="font-size:13px">You haven’t picked any, so a trade goes to every mentor here, free.</span>'}
@@ -63,7 +64,7 @@ function mrListHtml(D){
 }
 function mrThreadInner(d, mod){ const r=d.review, me=d.role, id=r.id, rep=SOC.confirm==='mrdel:'+id;
   const cs=d.comments.map(x=>`<div class="pz-com">${socAv(x.handle,30)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-    <span style="font-size:13px"><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor?' <span class="pz-pill pz-tagp">mentor</span>':''} <span class="pz-sub" style="font-size:11px">${socAgo(x.at)}</span></span>
+    <span style="font-size:13px"><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor&&!x.mine?' <span class="pz-pill pz-tagp">mentor</span>':''} <span class="pz-sub" style="font-size:11px">${socAgo(x.at)}</span></span>
     <span class="pz-thesis" style="font-size:14px">${esc(x.text)}</span></span></div>`).join('');
   return `<b style="font-size:15px">${r.comments} comment${r.comments===1?'':'s'}</b>${cs||'<p class="pz-sub" style="font-size:13px">No comments yet.</p>'}
     ${mod?'<p class="pz-fine">Read-only: you see this as an admin, for moderation.</p>':`<div class="pz-field"><label for="mrText" class="pz-vh">${me==='mentor'?'Comment on this trade':'Reply'}</label><textarea id="mrText" rows="3" maxlength="1000" placeholder="${me==='mentor'?'What you see, and one thing to try':'Reply to your mentor'}"></textarea></div>
@@ -78,7 +79,7 @@ function mrThreadHtml(D, id, mod){
   if(!d)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const r=d.review, t=r.trade;
   return `${back}${pzHead('@'+(r.handle||'?')+' · sent '+(Date.now()-r.at<60000?'just now':socAgo(r.at)+' ago'),(t.side==='short'?'Short ':'Long ')+(t.label||t.coin))}
-    <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:10px">${mrBadge(r)}${mrFeeTxt(r,d.role)?`<span class="pz-sub" style="font-size:12px">${esc(mrFeeTxt(r,d.role))}</span>`:''}${socTradeHtml(Object.assign({},t,{status:t.closedAt?'closed':'open'}))}
+    <div class="pz-wide"><div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:10px">${mrBadge(r,mod?null:d.role)}${mrFeeTxt(r,d.role)&&!(r.waiting&&!r.fee&&d.role==='mentee')?`<span class="pz-sub" style="font-size:12px">${esc(mrFeeTxt(r,d.role))}</span>`:''}${socTradeHtml(Object.assign({},t,{status:t.closedAt?'closed':'open'}))}
       <span class="pz-sub" style="font-size:12px">${esc(t.market==='spot'?'Spot':'Perp')} · opened ${esc(mrWhen(t.openedAt))}${t.closedAt?' · closed '+esc(mrWhen(t.closedAt)):' · still open'}${t.size!=null?' · size '+esc(MR_SIZES[t.size]):''}</span>
       ${t.note?`<div class="pz-quote"><b>Note</b><br>${esc(t.note)}</div>`:''}${t.plan?`<div class="pz-quote"><b>Plan for the day</b><br>${esc(t.plan)}</div>`:''}</section></div>
     <div class="pz-col"><section class="pz-card" style="display:flex;flex-direction:column;gap:12px">${mrThreadInner(d,mod)}</section></div></div>`;
@@ -112,6 +113,9 @@ async function mrAction(t){ const ds=t.dataset;
     if(ds.mrAll!==undefined){ pzS.mrAll=true; pzRender(); return true; }
     if(ds.mrTo){ if(pzS.mrAsk)pzS.mrAsk.to=ds.mrTo; pzRender(); return true; }
     if(ds.mrShare!==undefined){ const sec=t.closest('[data-pz-trade]'), ta=sec&&sec.querySelector('textarea'), tid=ds.mrShare||sec.dataset.pzTrade;
+      // a Daruma card's unsaved note, setup and rating go into the journal first (they were sent and then lost):
+      // the trade leaves the backlog, and the summary reads the note from the journal entry
+      if(PZ&&sec&&typeof pzSaveJournal==='function')await pzSaveJournal(sec,true);
       const extra=ds.to!==undefined&&pzS.mrAsk&&pzS.mrAsk.id===tid?pzS.mrAsk.extra:ta&&ta.value;
       let to=ds.to||null, fee=ds.fee!=null&&ds.fee!==''?+ds.fee:null;
       if(ds.to===undefined){ // picked mentors: straight away when there's one and it costs nothing, otherwise pick one and see the cost first
@@ -154,7 +158,7 @@ async function mrJournalLoad(id, fresh){
   let d=SOC.cache['tr:'+r.id]; try{ if(fresh||!d||!d.d){ d=SOC.cache['tr:'+r.id]={at:Date.now(),d:await socFetch('/reviews/'+r.id),err:null}; } }catch(e){ box.innerHTML=''; return; }
   const T=d.d, rv=T.review;
   box.innerHTML=`<label>Mentor review ${mrFeeTxt(rv,'mentee')?`<span class="mini-note">${esc(mrFeeTxt(rv,'mentee'))}</span> `:''}${rv.reviewed?`<span class="badge ok">Reviewed${rv.reviewed.by?' by @'+esc(rv.reviewed.by):''} ✓</span>`:''}</label>
-    <div class="mr-thread">${T.comments.map(x=>`<p><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor?' <span class="badge mid">mentor</span>':''} <span class="mini-note">${socAgo(x.at)}</span><br>${esc(x.text)}</p>`).join('')||'<p class="mini-note">Sent. No comments yet.</p>'}</div>
+    <div class="mr-thread">${T.comments.map(x=>`<p><b>${x.mine?'You':'@'+esc(x.handle)}</b>${x.mentor&&!x.mine?' <span class="badge mid">mentor</span>':''} <span class="mini-note">${socAgo(x.at)}</span><br>${esc(x.text)}</p>`).join('')||'<p class="mini-note">Sent. No comments yet.</p>'}</div>
     <textarea data-mr-text rows="2" maxlength="1000" placeholder="Reply to your mentor" aria-label="Reply to your mentor"></textarea>
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn ghost" data-mr-send="${esc(r.id)}">Send reply</button><button class="btn ghost" data-mr-share="${esc(id)}" data-to="" data-tip="Sends the trade’s summary again with your latest note and plan">Update the summary</button><a class="btn ghost" href="/daruma#tr/${esc(r.id)}">Open in Daruma</a></div>`;
 }

@@ -101,7 +101,7 @@ function pbsEditorHtml(p){
 }
 function pbsYoursHtml(D){
   const list=pbList(), back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime), stats=playbookStats(closed,journal,list,rFor);
+  const closed=allTrades.filter(closedTrade), stats=playbookStats(closed,journal,list,rFor); // trades: a spot day row is never one
   const M=pbsMine(), md=M&&M.d, mineBy=new Map(((md&&md.mine)||[]).map(x=>[x.src,x])), have=(md&&md.have)||{}, demo=!!pzS.demo, cf=PBS.confirm;
   const card=(p,s)=>{ if(PBS.edit===p.id)return pbsEditorHtml(p);
     const sh=mineBy.get(p.id), up=p.src&&have[p.src.id]&&have[p.src.id].version>p.src.v?have[p.src.id]:null, gone=p.src&&md&&!have[p.src.id];

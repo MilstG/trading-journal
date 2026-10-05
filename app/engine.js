@@ -452,7 +452,11 @@ function projBaseline(trades, lookbackDays, now){
   now=now||Date.now();
   const closed=trades.filter(t=>!t.isOpen&&t.closeTime&&t.closeTime<=now);
   const from=lookbackDays>0? now-lookbackDays*86400000 : -Infinity;
-  const inWin=closed.filter(t=>t.closeTime>=from);
+  const inWin0=closed.filter(t=>t.closeTime>=from);
+  if(!inWin0.length) return null;
+  // money rows for the days and the total, trade rows for the counts (moneyRow / closedTrade, inlined:
+  // the server and the tests run this bare) — a spot sell is a position and a day row, summed twice before
+  const inWin=inWin0.filter(t=>!t.spotPos), tr=inWin0.filter(t=>!t.spotRz&&!t.movedOut);
   if(!inWin.length) return null;
   const m={}; let min=Infinity;
   inWin.forEach(t=>{ const k=tzMidnight(t.closeTime); m[k]=(m[k]||0)+t.net; if(k<min)min=k; });
@@ -469,13 +473,13 @@ function projBaseline(trades, lookbackDays, now){
   const daily=[]; let active=0;
   for(let d=min; d<=end; d=addDays(d,1)){ daily.push(m[d]||0); if(m[d]!=null)active++; }
   const total=inWin.reduce((s,t)=>s+t.net,0);
-  const w=inWin.filter(t=>isWin(t.net)).length, l=inWin.filter(t=>isLoss(t.net)).length;
-  return { daily, trades:inWin.length, total,
+  const w=tr.filter(t=>isWin(t.net)).length, l=tr.filter(t=>isLoss(t.net)).length;
+  return { daily, trades:tr.length, total,
     perDay: daily.length? total/daily.length : 0,
     activeDays:active, calDays:daily.length,
     winRate:(w+l)? w/(w+l) : null,
-    expectancy: total/inWin.length,
-    tradesPerWeek: daily.length? inWin.length/(daily.length/7) : 0 };
+    expectancy: tr.length? tr.reduce((s,t)=>s+t.net,0)/tr.length : 0,
+    tradesPerWeek: daily.length? tr.length/(daily.length/7) : 0 };
 }
 // Bootstrap Monte Carlo: resample the observed daily distribution forward `horizonDays`.
 // Default is i.i.d. daily sampling; pass block>1 for a moving-block bootstrap that samples
@@ -1364,7 +1368,9 @@ function pnlAudit(fills, frows, hist, trades, win, now){
   // its first point after that fill — the P&L made before it, give or take what was still open then
   // (its points are a week apart there: the one before the fill says nothing of the days up to it)
   let before=null;
-  if(isFinite(first)&&points.length&&points[0].t<first-3*86400e3){ const after=points.find(p=>p.t>=first);
+  // Only when the curve moved before the first fill: an account whose curve sat at 0 until then made nothing
+  // before it (dates alone used to claim P&L before the first fill).
+  if(isFinite(first)&&points.length&&points[0].t<first-3*86400e3&&points.some(p=>p.t<first&&Math.abs(p.hl)>=1)){ const after=points.find(p=>p.t>=first);
     before={start:points[0].t,first,at:after?after.t:null,gap:after?after.gap:null}; }
   const windows={};
   for(const k of ['day','week','month']){ const w=win&&win[k]; if(!w||!isFinite(w.from))continue;

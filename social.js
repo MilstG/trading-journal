@@ -2800,6 +2800,7 @@ function createSocial(opts) {
           ['coach', 'Coach', SC.sanitizeCoachCfg], ['bench', 'Traders like you', Bench.sanitizeBenchCfg], ['duels', 'Duels', Duels.sanitizeDuelCfg],
           ['risk', 'Drawdown rules', Duels.sanitizeRiskCfg], ['pots', 'Buy-ins', Pots.sanitizePotCfg]]) {
           const e = body[k] ? SC.rangeError(label, body[k], k === 'unlocks' ? c.modules : c[k], fn) : null; if (e) return json(res, 400, { error: e }); }
+        { const e = SC.levelsError(body.levels) || SC.multError(body.mult); if (e) return json(res, 400, { error: e }); } // the lists rangeError skips
         if (typeof body.open === 'boolean') c.open = body.open;
         if (typeof body.inviteCode === 'string') c.inviteCode = cleanText(body.inviteCode, 40);
         if (typeof body.unlocksOn === 'boolean') c.unlocksOn = body.unlocksOn;

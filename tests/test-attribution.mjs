@@ -216,8 +216,9 @@ t('the same two denominators and the same gate exist server-side', () => {
   ok(srv.includes('Math.abs(total) >= 0.1 * (pos + neg) && maxNetShare <= 3'),
     'client and server must agree on when shareNet is meaningful');
 });
-t('basis and top are parsed and clamped', () => {
-  ok(srv.includes("String(query.basis || 'usd').toLowerCase() === 'pct' ? 'pct' : 'usd'"));
+t('basis and top are parsed and clamped (an unknown basis is a 400, not a quiet $)', () => {
+  ok(srv.includes("const basis = String(query.basis || 'usd').toLowerCase();"));
+  ok(srv.includes("if (basis !== 'usd' && basis !== 'pct') throw { code: 400, msg: 'basis must be usd|pct' };"));
   ok(srv.includes('Math.max(1, Math.min(50, Math.floor(qnum(query.top, 5))))'), 'top must be bounded');
 });
 t('by=tag is flagged as a non-partition, since a two-tag trade is double-counted', () => {

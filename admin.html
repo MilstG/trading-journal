@@ -569,9 +569,12 @@ details>summary{list-style-position:inside}
       <button class="sm fit danger" id="mbDelete"${dis}>Delete</button>${n?'<button class="sm fit" id="mbClear">Clear selection</button>':''}`; }
   function memberPg(){
     const q=UI.q.toLowerCase(), f=UI.filter;
-    return pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q)||(m.wallets||[]).some(a=>String(a).toLowerCase().includes(q)))
+    const pg=pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q)||(m.wallets||[]).some(a=>String(a).toLowerCase().includes(q)))
       &&(f==='all'||(f==='suspended'&&m.banned)||(f==='unlocked'&&m.unlocked)||(f==='added'&&m.adminMade)||(f==='coach'&&m.coachUsed>0)||(f==='unverified'&&m.walletStatus==='rejected')
       ||(f==='waiting'&&m.address&&D.wallets.approveWallets&&m.walletStatus==='pending')||(f==='nowallet'&&!m.address))));
+    // the empty state sits under the table (with the pager), not in a row: a 9-column row is wider than a phone and cut it off
+    if(!pg.items.length)pg.html=`<p class="muted" id="mEmpty" style="margin:10px 0 0">${D.members.length?'Nobody matches.':'No members yet. Add one above, or share your /daruma link and people join from the Social tab.'}</p>`+pg.html;
+    return pg;
   }
   function memberRows(){
     const list=memberPg().items;
@@ -583,8 +586,7 @@ details>summary{list-style-position:inside}
         <td class="hide-sm">${m.leagues.map(l=>`<span class="pill">${esc(leagueName(l.id))}</span>`).join(' ')||'<span class="muted">—</span>'}</td>
         <td class="hide-sm n nw">${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td>
         <td class="hide-sm n nw">${m.money&&m.money.ret!=null?`<span style="color:${m.money.ret>=0?'var(--good)':'var(--low)'}">${(m.money.ret>=0?'+':'')+(m.money.ret*100).toFixed(1)}%</span><div class="muted small">DD ${(m.money.dd*100).toFixed(1)}%</div>`:m.money&&m.money.thin?'<span class="muted" title="The account held under $100 when the 30-day window opened, so a percentage would mislead; the dollar P&L still counts.">n/a · thin start</span>':'<span class="muted">—</span>'}</td>
-        <td class="small n nw">${esc(ago(m.lastSeen))}</td></tr>`).join('')
-        ||`<tr><td colspan="9" class="muted">${D.members.length?(UI.q||UI.filter!=='all'?'Nobody matches.':''):'No members yet. Add one above, or share your /daruma link and people join from the Social tab.'}</td></tr>`}`;
+        <td class="small n nw">${esc(ago(m.lastSeen))}</td></tr>`).join('')}`;
   }
   function vMember(m){
     const grants=(m.grants||[]).slice().reverse(), grantSum=grants.reduce((a,g)=>a+g.xp,0);
@@ -836,6 +838,12 @@ details>summary{list-style-position:inside}
   // what the server's sanitizer will make of the form, for the preview
   function levelDraft(){ const b=levelBody(), t=[]; for(const v of String(b.thresholds).split(/[\s,]+/).map(Number))if(isFinite(v)&&v>0&&(!t.length||Math.round(v)>t[t.length-1]))t.push(Math.round(v));
     const titles=b.titles.map(x=>x.slice(0,30)); return {mode:b.mode==='table'?'table':'curve',base:Math.min(5000,Math.max(10,Math.round(b.base)||200)),thresholds:t,titles:titles.length?titles:D.ov.config.levels.titles}; }
+  // what the server refuses in the typed thresholds (SC.levelsError): a number levelDraft would drop, said out loud
+  function levelProblem(s){ const t=String(s).split(/[\s,]+/).filter(Boolean);
+    if(t.length>99)return 'At most 99 thresholds (levels 2 to 100), not '+t.length+'.';
+    for(let i=0;i<t.length;i++){ const n=+t[i]; if(!isFinite(n)||Math.round(n)<1)return '“'+t[i]+'” isn’t an amount of XP.';
+      if(i&&Math.round(n)<=Math.round(+t[i-1]))return 'The thresholds must go up: level '+(i+2)+' ('+t[i]+' XP) needs more XP than level '+(i+1)+' ('+t[i-1]+' XP).'; }
+    return null; }
 
   // ---------------- features ----------------
   function vFeatures(){
@@ -1352,15 +1360,24 @@ details>summary{list-style-position:inside}
       return; }
     if(d.bdel){ if(!confirm('Delete the “'+d.n+'” badge? Members who earned it lose it.'))return; return act(()=>api('/badges/'+encodeURIComponent(d.bdel),{method:'DELETE'}),'Deleted.'); }
     // levels & xp
-    if(id==='mSave'){ const tiers=val('mTiers').split(',').map(x=>x.split(':').map(Number)).filter(x=>x.length===2&&x.every(isFinite));
+    if(id==='mSave'){ const raw=val('mTiers').split(',').map(x=>x.trim()).filter(Boolean), tiers=raw.map(x=>x.split(':').map(s=>s.trim()===''?NaN:+s));
+      // say what's wrong rather than drop it: the server refuses the same (SC.multError)
       if(!tiers.length)return note('Write the tiers as weeks:multiplier, separated by commas.',true);
-      if(!tiers.every((t,i)=>t[0]>=1&&t[1]>1&&(!i||(t[0]>tiers[i-1][0]&&t[1]>tiers[i-1][1]))))return note('Weeks and multipliers must both go up, tier by tier, and each multiplier be above 1.',true);
+      const bad=raw.find((x,i)=>tiers[i].length!==2||!tiers[i].every(isFinite)); if(bad)return note('“'+bad+'” isn’t weeks:multiplier.',true);
+      if(tiers.length>8)return note('At most 8 tiers, not '+tiers.length+'.',true);
+      const out=tiers.find(t=>!Number.isInteger(t[0])||t[0]<1||t[0]>104||t[1]<1.01||t[1]>3); if(out)return note('Each tier is 1–104 whole weeks at a multiplier from 1.01 to 3 (not '+out.join(':')+').',true);
+      if(!tiers.every((t,i)=>!i||(t[0]>tiers[i-1][0]&&t[1]>tiers[i-1][1])))return note('Weeks and multipliers must both go up, tier by tier.',true);
       return act(()=>put({mult:{on:chk('mOn'),bar:+val('mBar'),tiers}}),'Multiplier saved.'); }
     if(id==='mxSave')return act(()=>put({mentorXp:{on:chk('mxOn'),review:+val('mxReview'),note:+val('mxNote'),notesPerDay:+val('mxNotes'),outcome:+val('mxOutcome'),cap:+val('mxCap')}}),'Mentoring XP saved.');
     if(id==='mrSave')return act(()=>put({mentorXp:{rates:chk('mrOn'),rateMin:+val('mrMin'),rateMax:+val('mrMax'),poolPct:+val('mrPool'),holdHours:+val('mrHold')}}),'Mentor rates saved.');
     if(id==='stSave')return act(()=>put({standing:{on:chk('stOn'),bar:+val('stBar'),grace:+val('stGrace')}}),'Standing saved.');
     if(id==='lvPreview'){ UI.levelDraft=levelDraft(); return render(); }
-    if(id==='lvSave'){ const body=levelBody(); UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
+    if(id==='lvSave'){ const body=levelBody(), bad=levelProblem(body.thresholds);
+      // a table the server would refuse: show the preview and why, instead of a "Saved" over a different table
+      if(bad&&body.mode==='table'){ UI.levelDraft=levelDraft(); render(); return note(bad+' Nothing was saved.',true); }
+      if(bad)delete body.thresholds; // the curve doesn't use them: keep the stored table rather than refuse over a hidden field
+      const cut=body.titles.filter(x=>x.length>30); if(cut.length&&!confirm('Titles keep 30 characters, so “'+cut[0]+'” becomes “'+cut[0].slice(0,30)+'”'+(cut.length>1?' (and '+(cut.length-1)+' more)':'')+'. Save anyway?'))return;
+      UI.levelDraft=null; return act(()=>put({levels:body}),'Levels saved.'); }
     if(id==='xpSave'){ const xp=nums(Object.keys(XP_LABELS),'xp_'); return act(()=>put({xp}),'XP rules saved. Members’ apps pick them up when they next open Daruma.'); }
     // features
     if(id==='fSave'||id==='fSaveGuest') return act(()=>put({unlocksOn:chk('fOn'),modules:nums(Object.keys(D.ov.meta.modules),'mod_'),guestCap:chk('fGuestOff')?0:+val('fGuest')}),'Saved.');

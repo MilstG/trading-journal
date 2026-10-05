@@ -173,7 +173,7 @@ async function setWeekChallenge(spec, idx, auto){
   // the week's first pick (automatic) is graded from Monday; one that replaces it from the swap day on
   const swap=!auto&&!!weekChallenge(now), from=swap?Math.max(mon,dateBound(pzSwapStartKey(now,allTrades))):mon;
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
-  if(spec.pid&&!params){ try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
+  if(spec.pid&&!params){ try{ const chron=allTrades.filter(t=>closedTrade(t)&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
     params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const e={...(journal[k]||{})};
   e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,params:params||{},when:spec.when,then:spec.then},
@@ -1125,14 +1125,23 @@ function pzTiltAlertPick(cands, st, now, today){
   return {pick,st:keep};
 }
 // Plain stats for a window: the full app's computeStats, plus markets, hours and daily P&L.
-function pzStatsFor(trades, fromMs){
-  const all=(trades||[]).filter(t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen);
-  if(!all.length)return null;
-  const s=computeStats(all,all);
+// trades: the closed trade rows in view (coachContext's: spot positions, never day rows). The money — Net,
+// the daily bars, the markets' nets — is the money rows of the same markets (spot by the day it was
+// realized, as the journal's cards), read from allTrades: built from the positions alone, half a stack sold
+// today counted nothing until the stack was gone (Daruma said +$50 where the journal said +$100).
+// money: those rows, when the caller has them.
+function pzStatsFor(trades, fromMs, money){
+  const all=(trades||[]).filter(t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen&&!t.spotRz);
+  if(!money){ const mk=new Set((trades||[]).map(t=>t.market)); // the markets in view: Daruma's market toggle already applied
+    money=typeof allTrades!=='undefined'&&allTrades.length?allTrades.filter(t=>moneyRow(t)&&!(t.orphan||(t.offRecord&&!t.isOpen))&&mk.has(t.market)):all; }
+  const mon=money.filter(t=>t.closeTime&&t.closeTime>=fromMs&&!t.isOpen);
+  if(!all.length&&!mon.length)return null;
+  const s=computeStats(all,mon);
   const mk={}, hr={}, dy={};
-  for(const t of all){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}); mk[m].net+=t.net; mk[m].n++;
+  for(const t of all){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}); mk[m].n++;
     const h=tzParts(t.openTime||t.closeTime).h; (hr[h]=hr[h]||{net:0,n:0}); hr[h].net+=t.net; hr[h].n++;
-    const d=dayKey(t.closeTime), o=dy[d]=dy[d]||{net:0,n:0,w:0,l:0}; o.net+=t.net; o.n++; if(isWin(t.net))o.w++; else if(isLoss(t.net))o.l++; }
+    const d=dayKey(t.closeTime), o=dy[d]=dy[d]||{net:0,n:0,w:0,l:0}; o.n++; if(isWin(t.net))o.w++; else if(isLoss(t.net))o.l++; }
+  for(const t of mon){ const m=dcoin(t); (mk[m]=mk[m]||{net:0,n:0}).net+=t.net; const d=dayKey(t.closeTime); (dy[d]=dy[d]||{net:0,n:0,w:0,l:0}).net+=t.net; }
   const markets=Object.entries(mk).map(([k,v])=>({k,...v})).sort((a,b)=>b.net-a.net);
   const hours=Object.entries(hr).map(([k,v])=>({h:+k,...v})).filter(x=>x.n>=3).sort((a,b)=>b.net-a.net);
   return {s,markets,hours,days:Object.keys(dy).sort().map(k=>({k,...dy[k]}))};
