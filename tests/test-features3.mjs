@@ -4,6 +4,7 @@
 // fill-cache compression (#8), spot FIFO cost-basis lots (#9).
 // Functions are extracted from ledger.html itself so the tests exercise exactly what ships.
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -150,6 +151,37 @@ await t('HIP-3 positions are flagged and included in totals', () => {
 await t('empty / zero-size books return null', () => {
   ok(openRiskModel([]) === null, 'empty');
   ok(openRiskModel([pos({ szi: 0 })]) === null, 'zero size');
+});
+
+console.log('\nspot in the open-risk book');
+globalThis.RISK_STABLES = vm.runInThisContext(/const RISK_STABLES=(new Set\(\[[^\]]*\]\));/.exec(html)[1]);
+globalThis.SPOT_AS_PERP = vm.runInThisContext('(' + grabBlock('const SPOT_AS_PERP={').slice('const SPOT_AS_PERP='.length) + ')');
+const spotRiskRows = evalFn('spotRiskRows');
+const W = { address: '0xa', label: 'main' };
+const hold = o => Object.assign({ coin: 'HYPE', total: 4453.6, entry: 0, mark: 94, value: 418638.4, uPnl: 418638.4, wallet: W }, o);
+await t('spot rows: stablecoins and dust stay out, wrapped tokens take the perp’s name, no cost basis is no profit figure', () => {
+  const r = spotRiskRows([hold(), hold({ coin: 'USDT0', total: 5000, value: 5000, entry: 5000, uPnl: 0 }), hold({ coin: 'MAX', total: 5e8, value: 20, entry: 4716, uPnl: -4696 }),
+    hold({ coin: 'UBTC', total: 0.5, mark: 60000, value: 30000, entry: 25000, uPnl: 5000 }), hold({ coin: 'PURR', total: -3, value: -3 })]);
+  eq(r.map(x => [x.coin, x.sym, x.spot, x.uPnl, x.liq]), [['HYPE', 'HYPE', true, null, null], ['BTC', 'UBTC', true, 5000, null]]);
+  eq(spotRiskRows([hold({ value: 99 })]).length, 0, 'under $100 is dust'); eq(spotRiskRows([hold({ value: 50 })], 0, 10).length, 1, 'the floor can be set');
+  // and under 0.5% of the whole book: a big book drops the crumbs a small one keeps
+  const crumb = hold({ coin: 'MAX', total: 5e8, value: 102, entry: 4716, uPnl: -4614 });
+  eq(spotRiskRows([hold(), crumb], 568000).map(x => x.sym), ['HYPE'], '$102 against a ~$987k book');
+  eq(spotRiskRows([crumb], 0).map(x => x.sym), ['MAX'], 'alone, $102 is above the $100 floor');
+  eq(spotRiskRows([hold({ value: 4000 })], 900000).length, 0, 'under 0.5% of a $904k book');
+  eq(spotRiskRows(null), []);
+});
+await t('a perp long and the same coin held spot read as one exposure; spot never in the danger list; its unknown uPnl adds nothing', () => {
+  const perpHype = pos({ coin: 'HYPE', szi: 1880, value: 176748, liq: 60, uPnl: 1672, wallet: W });
+  const hood = pos({ coin: 'xyz:HOOD', dex: 'xyz', szi: 1470, value: 168052, liq: 48, uPnl: -4542, wallet: W });
+  const m = openRiskModel([perpHype, hood].concat(spotRiskRows([hold()])));
+  eq(m.positions, 4 - 1, 'three rows: two perps and the spot'); near(m.gross, 176748 + 168052 + 418638.4); near(m.skew, m.gross, 1e-6, 'all long');
+  const h = m.coins.find(c => c.coin === 'HYPE'); near(h.gross, 176748 + 418638.4); eq(h.wallets, 1, 'one wallet, perp and spot');
+  eq(m.coins[0].coin, 'HYPE', 'the biggest market'); near(m.upnl, 1672 - 4542, 1e-6, 'the airdrop’s value is not profit');
+  const sp = m.rows.find(r => r.spot); eq([sp.sym, sp.liq, sp.liqDist, sp.lev, sp.uPnl, sp.side], ['HYPE', null, null, null, null, 'long']); near(sp.mark, 94);
+  eq(m.rows[m.rows.length - 1].spot, true, 'no liquidation distance: after the perps'); ok(!m.danger.some(r => r.spot));
+  eq(openRiskModel(spotRiskRows([hold()])).positions, 1, 'spot alone is a book');
+  const plain = openRiskModel([pos({ uPnl: undefined })]); eq(plain.rows[0].uPnl, 0, 'a perp without uPnl still reads 0'); eq(plain.rows[0].spot, false);
 });
 
 console.log('\nwhatIfModel \u2014 counterfactual replay (#4)');

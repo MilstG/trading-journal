@@ -57,9 +57,10 @@ function feeDragByMonth(closed){
   return Object.keys(m).sort().slice(-12).map(k=>{ const b=m[k]; const cost=b.fees-b.fund;
     return {k, cost, gross:b.gross, drag:b.gross>0?cost/b.gross:null}; });
 }
-// Net directional exposure by coin across all open perps (nets long vs short across wallets).
+// Net directional exposure by coin across the open book (nets long vs short across wallets): the perps
+// and the spot held (spotRiskRows), a perp and the same coin held spot as one exposure.
 function netExposureByCoin(){
-  const g={}; for(const p of dexPositions()){ const notional=(p.value||0)*(p.szi<0?-1:1);
+  const perps=dexPositions(), g={}; for(const p of perps.concat(spotRiskRows(spotHoldings,perps.reduce((s,x)=>s+(x.value||0),0)))){ const notional=(p.value||0)*(p.szi<0?-1:1);
     (g[p.coin]=g[p.coin]||{coin:p.coin,net:0,gross:0,wallets:new Set()}); g[p.coin].net+=notional; g[p.coin].gross+=Math.abs(p.value||0);
     if(p.wallet)g[p.coin].wallets.add(p.wallet.address); }
   return Object.values(g).map(x=>({coin:x.coin,net:x.net,gross:x.gross,wallets:x.wallets.size}))
@@ -186,7 +187,7 @@ function extraDiagHtml(closed,allv,s){
    <div class="diag-section"><h2>Structure &amp; risk</h2>
      <div class="diag-grid">
        <div class="diag-card"><h3 data-tip="How your equity curve recovers from drawdowns, and the depth of your worst losing run.">Drawdown recovery &amp; streak depth</h3>${ddHtml}</div>
-       <div class="diag-card"><h3 data-tip="Net directional exposure right now, netting offsetting longs/shorts by coin across wallets.">Open-book net exposure</h3>${(function(){const ne=netExposureByCoin();return ne.length?ne.slice(0,6).map(x=>mrow(esc(x.coin)+(x.wallets>1?' · '+x.wallets+' wallets':''),(x.net>=0?'<span class="pos-t">net long ':'<span class="neg-t">net short ')+fmtUsd(Math.abs(x.net))+'</span>','Signed sum of position notional for this coin across all wallets.')).join(''):'<p class="lead">No open perp positions.</p>';})()}</div>
+       <div class="diag-card"><h3 data-tip="Net directional exposure right now, netting offsetting longs/shorts by coin across wallets.">Open-book net exposure</h3>${(function(){const ne=netExposureByCoin();return ne.length?ne.slice(0,6).map(x=>mrow(esc(x.coin)+(x.wallets>1?' · '+x.wallets+' wallets':''),(x.net>=0?'<span class="pos-t">net long ':'<span class="neg-t">net short ')+fmtUsd(Math.abs(x.net))+'</span>','Signed sum of position notional for this coin across all wallets.')).join(''):'<p class="lead">No open positions.</p>';})()}</div>
      </div></div>
    ${feeHtml}${sizingHtml}${nfDiagExtra(closed,allv)}${planDiagHtml(closed)}`;
 }
