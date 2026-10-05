@@ -1142,6 +1142,10 @@ with counts for open reports and wallets waiting for you; on a phone they fold i
 menu under the top bar. Each page opens with its title, what it's for and its main
 action. Sections:
 
+Every list in the panel with more than ten items (members, admins and the admin log, wallets,
+leagues and their rosters, competitions, duels and the ladder, badges, levels, insights, reports,
+playbooks, referrals, peer groups, beta invites) shows ten at a time, with Prev and Next.
+
 - **Overview** — members, activity, duels, competitions, peer groups, posts and coach
   use at a glance; **Needs your attention** (reports, wallets waiting, a closed league,
   server settings to fix); top XP, tiers and recent admin activity.

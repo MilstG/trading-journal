@@ -25,14 +25,15 @@
   function rows() {
     const list = st.invites.filter(x => filter === 'all' || (filter === 'closed' ? x.state === 'expired' || x.state === 'revoked' : x.state === filter));
     if (!list.length) return '<p class="muted" style="margin:0">' + (st.invites.length ? 'None here.' : 'No invites yet. Make the first ones above.') + '</p>';
-    return `<div class="scroll"><table><thead><tr><th>For</th><th>Code</th><th>Made</th><th>Expires</th><th>Status</th><th aria-label="Actions"></th></tr></thead><tbody>${list.slice(0, 300).map(x => {
+    const pg = A().pager('invites:' + filter, list); // ten at a time, like every list in the panel
+    return `<div class="scroll"><table><thead><tr><th>For</th><th>Code</th><th>Made</th><th>Expires</th><th>Status</th><th aria-label="Actions"></th></tr></thead><tbody>${pg.items.map(x => {
       const [label, cls] = STATE[x.state] || [x.state, ''];
       const who = x.used ? (x.used.handle ? `<a href="#members/${esc(encodeURIComponent(x.used.id))}">@${esc(x.used.handle)}</a>` : '<span class="muted">deleted profile</span>') + ' · ' + esc(day(x.used.at)) : '';
       const acts = (x.code ? `<button class="sm fit" data-btcode="${esc(x.code)}">Copy code</button><button class="sm fit" data-btlink="${esc(x.code)}">Copy link</button>` : '') +
         (x.state !== 'used' ? `<button class="sm fit" data-btnew="${esc(x.id)}">New link</button>` : '') +
         `<button class="sm danger fit" data-btdel="${esc(x.id)}" data-st="${esc(x.state)}" aria-label="Delete ${esc(x.note ? 'the invite for ' + x.note : 'this invite')}">Delete</button>`;
       return `<tr><td><b>${esc(x.note || '—')}</b>${x.unlocked ? ' <span class="pill xp">unlocked</span>' : ''}</td><td><code>${x.code ? esc(x.code) : '••••-' + esc(x.tail)}</code></td><td class="nw">${esc(day(x.at))}<div class="muted small">${esc(x.by || '')}</div></td>
-        <td class="nw">${x.state === 'used' ? '—' : esc(day(x.exp))}</td><td class="nw"><span class="pill ${cls}">${esc(label)}</span> ${who}</td><td class="n nw"><div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">${acts}</div></td></tr>`; }).join('')}</tbody></table></div>`;
+        <td class="nw">${x.state === 'used' ? '—' : esc(day(x.exp))}</td><td class="nw"><span class="pill ${cls}">${esc(label)}</span> ${who}</td><td class="n nw"><div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap">${acts}</div></td></tr>`; }).join('')}</tbody></table></div>${pg.html}`;
   }
   function freshBox() {
     if (!fresh || !fresh.length) return '';
