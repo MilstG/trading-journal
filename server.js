@@ -2674,7 +2674,9 @@ function createApp(opts) {
   const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
     behaviorFor: opts.behaviorFor || behaviorFor, traderAge: engine.ok ? E.traderAge : null,
     taMult: engine.ok ? { weeks: E.taWeeks, step: E.taMultStep, of: E.taMultOf, tier: E.taMultTier, weekOf: E.isoWeekOfKey } : null,
-    taStanding: engine.ok ? { of: E.taStanding, years: E.taYears } : null, tiltFor: opts.tiltFor || tiltFor, peerSummaryFor: opts.peerSummaryFor || peerSummaryFor, seedDelay: opts.seedDelay, tradeCheck: opts.tradeCheck || tradeCheck, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled, twofa });
+    taStanding: engine.ok ? { of: E.taStanding, years: E.taYears } : null, tiltFor: opts.tiltFor || tiltFor, peerSummaryFor: opts.peerSummaryFor || peerSummaryFor, seedDelay: opts.seedDelay, tradeCheck: opts.tradeCheck || tradeCheck, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled, twofa,
+    // the private beta signs the owner's page-access cookie with this: a new AUTH_TOKEN ends it
+    ownerTag: auth ? crypto.createHash('sha256').update('daruma-access|' + auth).digest('hex') : '' });
   // readiness from WHOOP, Oura or Apple Health: the owner (AUTH_TOKEN) or a member (Pulse key)
   const wearOrigin = req => { if (publicOrigins[0]) { try { return new URL(publicOrigins[0]).origin; } catch (e) {} }
     return hostVetted && req.headers.host ? 'https://' + req.headers.host : opts.wearOrigin || null; };
@@ -2724,6 +2726,24 @@ function createApp(opts) {
     // a relay-only copy (CEX_RELAY_ONLY=1) answers nothing else but its health check
     if (cexRelay.relayOnly && url !== '/api/health') return json(res, 404, { error: 'this server is an exchange relay only' });
 
+    // --- private beta (social.gate, switched on in the admin panel): the journal, Daruma and the app's scripts
+    // only for an activated profile or the owner; everyone else gets the beta page (beta.html), where an invite
+    // is redeemed or a device signs in. It answers 200, so a service worker shows it instead of falling back to a
+    // cached copy of the app (an older worker stores it over that copy; today's never stores it, and the page
+    // clears the caches itself). /join is where invite links land.
+    const sendBeta = () => fs.readFile(path.join(__dirname, 'beta.html'), (err, buf) => {
+      if (err) return json(res, 503, { error: 'beta.html not deployed alongside server.js' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+        'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Beta-Gate': '1' });
+      res.end(buf); });
+    const betaShut = () => social.gate.active() && !social.gate.allows(req);
+    if (req.method === 'GET' && (url === '/join' || url === '/join/')) {
+      if (!betaShut()) { res.writeHead(302, { Location: '/daruma' }); return res.end(); }
+      return sendBeta();
+    }
+    if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '/ledger.html' || url === '/daruma' || url === '/keel' || url === '/pulse') && betaShut()) return sendBeta();
+    if (req.method === 'GET' && url.startsWith('/app/') && !url.startsWith('/app/fonts/') && betaShut()) return json(res, 403, { error: 'Daruma is invite-only for now.' });
+
     // --- static: the app itself ---
     // /daruma is the same app opened in its simple dial view (the page switches on its own path);
     // /daruma/ redirects so the page's relative links (help, sw.js, api/v1) resolve from the root.
@@ -2762,7 +2782,8 @@ function createApp(opts) {
       if (!f) return json(res, 404, { error: 'not found' });
       const etag = '"' + f.hash + '"';
       const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
+        // in private beta, a shared cache (a CDN) must not hand the scripts to people the beta page keeps out
+        'Cache-Control': query.v === f.hash ? (social.gate.active() ? 'private' : 'public') + ', max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
       const [enc, body] = encodedFile(req, f);
       res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
@@ -2775,7 +2796,10 @@ function createApp(opts) {
     // The Daruma end-user tutorial lives in tutorial/ (index.html plus its screenshots under img/):
     // /tutorial redirects to /tutorial/ so the page's relative img/ links resolve.
     if (req.method === 'GET' && url === '/tutorial') { res.writeHead(302, { Location: '/tutorial/' }); return res.end(); }
+    // (in private beta with "Help, docs and the tutorial stay public" off, they're behind the beta page too)
+    const docsShut = () => social.gate.active() && !social.gate.docsPublic() && !social.gate.allows(req);
     const shot = req.method === 'GET' && /^\/tutorial\/img\/([a-z0-9-]+)\.webp$/.exec(url);
+    if (shot && docsShut()) return json(res, 403, { error: 'Daruma is invite-only for now.' });
     if (shot) {
       fs.readFile(path.join(__dirname, 'tutorial', 'img', shot[1] + '.webp'), (err, buf) => {
         if (err) return json(res, 404, { error: 'not found' });
@@ -2787,6 +2811,7 @@ function createApp(opts) {
     const docFile = req.method === 'GET' && (url === '/help' || url === '/help.html') ? 'help.html'
       : req.method === 'GET' && (url === '/docs' || url === '/tech.html') ? 'tech.html'
       : req.method === 'GET' && (url === '/tutorial/' || url === '/tutorial/index.html') ? path.join('tutorial', 'index.html') : null;
+    if (docFile && docsShut()) return sendBeta();
     if (docFile) {
       fs.readFile(path.join(__dirname, docFile), (err, buf) => {
         if (err) return json(res, 404, { error: docFile + ' not deployed alongside server.js' });
@@ -2819,17 +2844,18 @@ function createApp(opts) {
         // Only the app shell is cached, one copy per screen: the journal ('/') and Keel ('/keel', which
         // '/pulse' shares) load different scripts. Other pages (help, docs) pass through and never overwrite them.
         "const C='ledger-v5',S=['/','/index.html','/ledger.html','/daruma','/keel','/pulse'];" +
-        "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.add('/')))});" +
+        "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>fetch('/').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);if(!r.headers.get('x-beta-gate'))return c.put('/',r);})))});" +
         "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>clients.claim()))});" +
         "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);" +
         "if(u.origin!==location.origin||u.pathname.startsWith('/api/')||e.request.method!=='GET')return;" +
         "if(S.includes(u.pathname)){const K=u.pathname==='/daruma'||u.pathname==='/keel'||u.pathname==='/pulse'?'/daruma':'/';" +
-        "const net=fetch(e.request).then(r=>{if(r.ok){const cp=r.clone();caches.open(C).then(c=>c.put(K,cp));}return r;});" +
+        "const net=fetch(e.request).then(r=>{if(r.ok&&!r.headers.get('x-beta-gate')){const cp=r.clone();caches.open(C).then(c=>c.put(K,cp));}return r;});" +
         "e.waitUntil(net.then(()=>{},()=>{}));" +
         "const old=()=>caches.match(K);" +
         "e.respondWith(new Promise(done=>{let sent=false;const send=r=>{if(!sent&&r){sent=true;done(r);}};" +
         "const t=setTimeout(()=>old().then(send),3000);" +
-        // a redirect (/ to /daruma with HOME_VIEW=daruma) goes to the browser as is, never the cached shell
+        // a redirect (/ to /daruma with HOME_VIEW=daruma) goes to the browser as is, never the cached shell; so does the
+        // private beta's page (X-Beta-Gate), which is never cached as the shell: it clears the caches itself
         "net.then(r=>r.ok||r.type==='opaqueredirect'?(clearTimeout(t),send(r)):old().then(c=>{clearTimeout(t);send(c||r);}),()=>old().then(c=>{clearTimeout(t);send(c||Response.error());}));}));return;}" +
         // the app's scripts: versioned URLs never change, so cache first; a new version replaces the old copy
         "if(u.pathname.startsWith('/app/')){e.respondWith(caches.open(C).then(c=>c.match(e.request).then(hit=>hit||fetch(e.request).then(r=>{" +
@@ -2897,10 +2923,11 @@ function createApp(opts) {
       });
       return;
     }
-    // the admin panel's two-factor screens (kept out of admin.html, which has a size budget)
-    if (req.method === 'GET' && url === '/admin2fa-ui.js') {
-      fs.readFile(path.join(__dirname, 'admin2fa-ui.js'), (err, buf) => {
-        if (err) return json(res, 404, { error: 'admin2fa-ui.js not deployed alongside server.js' });
+    // the admin panel's two-factor and beta screens (kept out of admin.html, which has a size budget)
+    if (req.method === 'GET' && (url === '/admin2fa-ui.js' || url === '/admin-beta-ui.js')) {
+      const file = url.slice(1);
+      fs.readFile(path.join(__dirname, file), (err, buf) => {
+        if (err) return json(res, 404, { error: file + ' not deployed alongside server.js' });
         res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
         res.end(buf);
       });

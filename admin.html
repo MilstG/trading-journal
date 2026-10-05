@@ -239,6 +239,7 @@ details>summary{list-style-position:inside}
 </div>
 <div class="note" id="note" role="status" aria-live="polite"></div>
 <script src="/admin2fa-ui.js"></script>
+<script src="/admin-beta-ui.js"></script>
 <script>
 (function(){
   const $=id=>document.getElementById(id);
@@ -262,7 +263,7 @@ details>summary{list-style-position:inside}
   // the sidebar: sections in groups; each page has a title and a line on what it's for
   const NAV=[['',[['overview','Overview'],['insights','Insights']]],['People',[['members','Members'],['wallets','Wallets']]],
     ['Compete',[['leagues','Leagues'],['competitions','Competitions'],['duels','Duels']]],['Progress',[['levels','Levels & XP'],['badges','Badges'],['features','Features']]],
-    ['Coaching',[['coach','Coach'],['routines','Routines'],['bench','Benchmarks']]],['Community',[['feed','Feed & reports'],['referrals','Referrals']]],['',[['settings','Settings']]]];
+    ['Coaching',[['coach','Coach'],['routines','Routines'],['bench','Benchmarks']]],['Community',[['feed','Feed & reports'],['referrals','Referrals']]],['',[['beta','Beta access'],['settings','Settings']]]];
   const TABS=NAV.flatMap(g=>g[1]);
   const PAGES={overview:['Overview','How the league is doing, and what needs you.'],
     insights:['Insights','Every member’s process and results, the whole league at once, or any segment of it. Segments use the “Traders like you” groups (style, trade size, experience, activity). Members are told in Profile & privacy that you can see their stats.'],
@@ -279,6 +280,7 @@ details>summary{list-style-position:inside}
     routines:['Routines','The morning prep and end-of-day questions members answer, by how they trade.'],
     referrals:['Referrals','Members’ invite links, who joined through them, and what each side earns. Run a promotion by setting its dates and amounts.'],
     feed:['Feed & reports','Reported posts, announcements to everyone, what members can post, and shared playbooks.'],
+    beta:['Beta access','While beta mode is on, only people with an activated profile open the journal and Daruma. Everyone else gets the beta page, where an invite is redeemed or a device signs in.'],
     settings:['Settings','Joining, wallets, sync, and the security of this panel.']};
   // the owner's AUTH_TOKEN, or (for an admin the owner added) this browser's Daruma member key.
   // The token is the journal's too (srv_token): the panel reuses it, stores one only after it has
@@ -367,7 +369,7 @@ details>summary{list-style-position:inside}
     lastView=view; UI.submitted=null; UI.fresh=false;
     const cnt={feed:D.reports.length?[D.reports.length,'']:null,wallets:D.wallets.approveWallets&&D.wallets.counts.pending?[D.wallets.counts.pending,'w']:null};
     $('tabs').innerHTML=NAV.map(([g,items])=>(g?`<div class="navh">${esc(g)}</div>`:'')+items.map(([k,l])=>`<a href="#${k}"${k===UI.tab?' aria-current="page"':''}><span>${esc(l)}</span>${cnt[k]?`<span class="cnt ${cnt[k][1]}" title="${cnt[k][1]?'waiting for you':'open reports'}">${cnt[k][0]}</span>`:''}</a>`).join('')).join('');
-    const f={overview:vOverview,insights:vInsights,members:vMembers,wallets:vWallets,bench:vBench,duels:vDuels,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,referrals:vReferrals,settings:vSettings}[UI.tab];
+    const f={overview:vOverview,insights:vInsights,members:vMembers,wallets:vWallets,bench:vBench,duels:vDuels,leagues:vLeagues,competitions:vComps,badges:vBadges,levels:vLevels,features:vFeatures,coach:vCoach,routines:vRoutines,feed:vFeed,referrals:vReferrals,settings:vSettings,beta:()=>window.ABETA?ABETA.view():'<p class="muted">admin-beta-ui.js didn’t load.</p>'}[UI.tab];
     $('view').innerHTML=(UI.tab==='members'&&UI.member&&D.members.some(x=>x.id===UI.member)?'':pageHead())+f();
     for(const [id,v] of keep){ const el=$(id); if(!el)continue; if(el.type==='checkbox')el.checked=v; else el.value=v; }
     const back=foc&&$(foc); if(back&&$('view').contains(back))back.focus({preventScroll:true});
@@ -644,6 +646,8 @@ details>summary{list-style-position:inside}
       <section class="card"><h2>Sign-in &amp; account</h2>
         <p class="muted" style="margin-top:0">A sign-in code links a new device to this profile — for a member you added, or someone who lost theirs.</p>
         <button data-m="code">New sign-in code</button>
+        <p class="muted small">${m.passkeys} passkey${m.passkeys===1?'':'s'} · signed in on ${m.devices} device${m.devices===1?'':'s'}</p>
+        <div class="row" style="align-items:center"><button class="fit" data-m="passkeys"${m.passkeys?'':' disabled'}>Reset passkeys</button><button class="fit" data-m="signout"${m.devices?'':' disabled'}>Sign out all devices</button></div>
         <h3>Suspend or delete</h3>
         <p class="muted" style="margin-top:0">Suspended members disappear from boards and the feed and can’t post. Deleting removes the profile, posts and competition entries.</p>
         <div class="row" style="align-items:center"><button class="fit" data-m="${m.banned?'unban':'ban'}">${m.banned?'Restore':'Suspend'}</button><button class="danger fit" data-m="remove">Delete @${esc(m.handle)}</button></div>
@@ -667,6 +671,8 @@ details>summary{list-style-position:inside}
       const tiers=[...document.querySelectorAll('[data-tier-league]')].map(s=>[s.dataset.tierLeague,+s.value]);
       return act(async()=>{ await post({action:'leagues',join:want.filter(x=>!had.includes(x)),leave:had.filter(x=>!want.includes(x))});
         for(const [lid,t] of tiers){ const cur=m.leagues.find(x=>x.id===lid); if(want.includes(lid)&&cur&&t!==cur.tier)await post({action:'tier',tier:t,league:lid}); } },'Leagues saved.'); }
+    if(a==='passkeys'){ if(!confirm('Remove @'+m.handle+'’s passkeys? They stop signing in, and @'+m.handle+' adds new ones under Account once back in.'))return; return act(()=>post({action:'passkeys'}),'Passkeys removed. Make a sign-in code if they can’t get back in.'); }
+    if(a==='signout'){ if(!confirm('Sign @'+m.handle+' out on every device? They need a passkey, their wallet or a sign-in code to get back in.'))return; return act(()=>post({action:'signout'}),'Signed out everywhere.'); }
     if(a==='code'){ const r=await act(()=>post({action:'code'})); if(r&&r.code){ UI.code={id:m.id,handle:m.handle,code:r.code,admin:!!m.admin}; render(); } return; }
     if(a==='remove'){ if(!confirm('Delete @'+m.handle+'? Their profile, posts and competition entries are removed. This can’t be undone.'))return;
       if(await act(()=>post({action:'remove'}),'Deleted.'))location.hash='#members'; return; }
@@ -1240,6 +1246,7 @@ details>summary{list-style-position:inside}
     else if(t.id==='lvMode'){ UI.levelDraft=levelDraft(); render(); }
     else if(t.id==='fGuestOff'){ $('fGuest').disabled=t.checked; if(!t.checked)$('fGuest').focus(); }
     else if(t.id&&/^rc_\d+_b$/.test(t.id)){ keepRoutines(); UI.fresh=true; render(); } });
+  window.ADM={api,note,render,esc,fmt,ago,field,box,sel,tiles}; // for the Beta access screen (admin-beta-ui.js)
   document.addEventListener('click',async ev=>{
     const qa=ev.target.closest('a[data-open]'); if(qa){ UI.open=qa.dataset.open; return; }
     const sg=ev.target.closest('tr[data-insset]'); if(sg){ UI.ins.f[sg.dataset.insset]=sg.dataset.insval; loadIns().then(render); return; } // a segment row: look at it

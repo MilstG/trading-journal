@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#050705">
+<title>Daruma · Private beta</title>
+<link rel="icon" href="/pulse-icon.svg">
+<!--
+  The private beta's door (server.js serves it in place of the journal and Daruma while beta mode is on).
+  On load it first tries this browser's own sign-in (the Daruma member key or the owner's token, both in
+  localStorage): the server swaps it for the access cookie and the page reloads into the app, so people who
+  are already in never see this. Otherwise: an invite (typed, or from a /join#CODE link) makes a profile, once;
+  a device that's activated elsewhere signs in with a passkey, the claimed wallet, or a code from a signed-in
+  device. Whatever the app cached on this device is dropped, so it can't open from the cache.
+-->
+<style>
+@font-face{font-family:Inter;font-weight:400;font-display:swap;src:url(/app/fonts/inter-400.woff2) format("woff2")}
+@font-face{font-family:Inter;font-weight:600;font-display:swap;src:url(/app/fonts/inter-600.woff2) format("woff2")}
+@font-face{font-family:"Barlow Condensed";font-weight:600;font-display:swap;src:url(/app/fonts/barlow-condensed-600.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:500;font-display:swap;src:url(/app/fonts/ibm-plex-mono-500.woff2) format("woff2")}
+:root{--bg:#050705;--card:#0b0f0a;--line:#16291a;--line2:#24402a;--text:#E8F0E6;--soft:#a9b8a8;--muted:#93a393;--acc:#7dff4f;--on-acc:#061204;--bad:#ff6b4a;--bad-bg:#1a0f0b;--bad-line:#5a2a1e;--ok-bg:#0e1a0c;--ok-line:#24502a}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14.5px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+main{max-width:420px;margin:0 auto;padding:48px 20px 28px;min-height:100vh;display:flex;flex-direction:column;gap:20px}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+h1{margin:0;font-family:"Barlow Condensed",Inter,sans-serif;font-weight:600;font-size:34px;line-height:1.05}
+h2{margin:0;font-size:15.5px;font-weight:600}
+p{margin:0}
+.hide{display:none!important}
+.center{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.logo{width:72px;height:72px;border-radius:17px;display:block}
+.logo.sm{width:36px;height:36px;border-radius:9px}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--acc);font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.top{display:flex;align-items:center;gap:10px}.top .pill{margin-left:auto}
+.soft{color:var(--soft)}.muted{color:var(--muted)}.small{font-size:12.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.card.good{border-color:var(--ok-line)}
+label{font-size:12.5px;font-weight:600;color:var(--soft)}
+input{width:100%;font:inherit;font-size:15px;padding:12px 14px;min-height:48px;border-radius:10px;border:1px solid var(--line2);background:var(--bg);color:var(--text)}
+input::placeholder{color:#5f7a5c}
+input.code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:17px;letter-spacing:.12em;text-transform:uppercase}
+input:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.handle{display:flex;align-items:center;border-radius:10px;border:1px solid var(--line2);background:var(--bg);padding:0 0 0 14px}
+.handle:focus-within{outline:2px solid var(--acc);outline-offset:2px}
+.handle span{color:var(--muted)}.handle input{border:0;background:transparent;padding-left:4px;outline:none}
+.handle b{font-size:12.5px;padding-right:14px;white-space:nowrap}
+.free{color:var(--acc)}.taken{color:var(--bad)}
+button{font:inherit;font-size:15px;font-weight:600;min-height:48px;border-radius:10px;border:1px solid var(--line2);background:var(--card);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:0 16px}
+button.primary{border:0;background:var(--acc);color:var(--on-acc)}
+button.link{border:0;background:none;min-height:40px;color:var(--acc);font-size:13.5px}
+button:disabled{opacity:.55;cursor:default}
+.stack{display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px}.row input{flex:1;min-width:0}.row button{width:auto}
+.or{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:12.5px}.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.msg{display:flex;gap:12px;padding:14px;border-radius:12px;border:1px solid}
+.msg.bad{background:var(--bad-bg);border-color:var(--bad-line)}.msg.ok{background:var(--ok-bg);border-color:var(--ok-line)}
+.msg .dot{width:28px;height:28px;border-radius:999px;display:grid;place-items:center;flex:0 0 auto;font-weight:800}
+.msg.bad .dot{background:var(--bad);color:#1a0703}.msg.ok .dot{background:var(--acc);color:var(--on-acc)}
+.msg b{display:block}.msg.bad span{color:#e0b8ad}.msg span{font-size:13px}
+.err{color:var(--bad);font-size:13px;min-height:0}
+.err:empty{display:none}
+.apps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.apps a{display:flex;flex-direction:column;gap:4px;padding:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+.apps a:hover{text-decoration:none;border-color:var(--line2)}
+.apps span{font-size:12.5px;color:var(--muted)}
+footer{margin-top:auto;display:flex;justify-content:center;gap:18px;font-size:13px}
+footer a{color:var(--muted)}
+.spin{width:28px;height:28px;border-radius:999px;border:3px solid var(--line);border-top-color:var(--acc);animation:s 1s linear infinite;margin:20vh auto 0}
+@keyframes s{to{transform:rotate(1turn)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<main>
+  <div id="vWait" aria-live="polite"><div class="spin" role="status" aria-label="Checking this device"></div></div>
+
+  <!-- the door: an invite, or sign in -->
+  <section id="vGate" class="stack hide" style="gap:20px">
+    <div class="center">
+      <img class="logo" src="/pulse-icon.svg" alt="Daruma">
+      <span class="pill">Private beta</span>
+      <h1>Daruma is invite-only for now</h1>
+      <p class="soft" id="gateMsg">We’re letting traders in a few at a time. If we sent you an invite, open the link or enter your code.</p>
+    </div>
+    <div id="badInvite" class="msg bad hide" role="alert"><div class="dot" aria-hidden="true">!</div><div><b id="badTitle"></b><span id="badText"></span></div></div>
+    <form class="card" id="fCode">
+      <label for="code" id="codeLabel">Invite code</label>
+      <input id="code" class="code" placeholder="XXXX-XXXX-XX" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="20">
+      <p class="err" id="codeErr" role="alert"></p>
+      <button class="primary" type="submit">Continue</button>
+    </form>
+    <div class="or">Already activated?</div>
+    <div class="stack">
+      <button type="button" id="bPasskey"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="4"/><path d="M10.8 10.8L20 20M16 16l2-2M18 18l2-2"/></svg>Sign in with a passkey</button>
+      <button type="button" id="bWallet"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 14.5h2"/></svg>Sign in with your wallet</button>
+      <button type="button" class="link" id="bDevice" aria-expanded="false">I have a code from my other device</button>
+      <form id="fDevice" class="card hide">
+        <label for="dcode">Code from a signed-in device (Account → Add a device) or from the admin</label>
+        <div class="row"><input id="dcode" class="code" placeholder="XXXXXXXXXX" autocomplete="one-time-code" spellcheck="false" maxlength="20"><button type="submit">Sign in</button></div>
+      </form>
+      <p class="err" id="signErr" role="alert"></p>
+    </div>
+    <footer><a href="/tutorial/">How Daruma works</a><a href="/help">Help</a><button type="button" class="link" id="bOwner" style="width:auto;min-height:0;font-size:13px;color:var(--muted)">Owner</button></footer>
+    <form id="fOwner" class="card hide">
+      <label for="otok">The server’s access token (AUTH_TOKEN)</label>
+      <div class="row"><input id="otok" type="password" autocomplete="current-password"><button type="submit">Sign in</button></div>
+    </form>
+  </section>
+
+  <!-- a good invite: pick the name -->
+  <section id="vActivate" class="stack hide" style="gap:20px">
+    <div class="top"><img class="logo sm" src="/pulse-icon.svg" alt=""><b>Daruma</b><span class="pill">Private beta</span></div>
+    <div class="msg ok"><div class="dot" aria-hidden="true">✓</div><div><b>Your invite is valid</b><span class="soft" id="inviteLine"></span></div></div>
+    <div><h1>Welcome to the beta</h1><p class="soft" style="margin-top:6px">Pick the name other traders see. You’ll add your wallet in Daruma next.</p></div>
+    <form class="stack" id="fJoin">
+      <label for="handle">Your name</label>
+      <div class="handle"><span aria-hidden="true">@</span><input id="handle" maxlength="20" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="handleHint handleState"><b id="handleState" aria-live="polite"></b></div>
+      <p class="small muted" id="handleHint">3–20 letters, numbers or underscores. Names are unique: nobody else can take yours.</p>
+      <p class="err" id="joinErr" role="alert"></p>
+      <button class="primary" type="submit" id="bJoin">Activate my profile</button>
+      <p class="small muted" style="text-align:center">This invite works once. After that you sign in with a passkey, your wallet, or a code from a signed-in device.</p>
+      <button type="button" class="link" id="bBack">Use a different code</button>
+    </form>
+  </section>
+
+  <!-- a profile from before beta mode that needs an invite -->
+  <section id="vRedeem" class="stack hide" style="gap:20px">
+    <div class="top"><img class="logo sm" src="/pulse-icon.svg" alt=""><b>Daruma</b><span class="pill">Private beta</span></div>
+    <div><h1>Bring <span id="redeemHandle"></span> into the beta</h1><p class="soft" style="margin-top:6px">Daruma is invite-only for now. Enter the invite code you were sent: it lets this profile in on every device.</p></div>
+    <form class="card" id="fRedeem">
+      <label for="rcode">Invite code</label>
+      <input id="rcode" class="code" placeholder="XXXX-XXXX-XX" autocomplete="one-time-code" spellcheck="false" maxlength="20">
+      <p class="err" id="redeemErr" role="alert"></p>
+      <button class="primary" type="submit">Let me in</button>
+    </form>
+    <button type="button" class="link" id="bOther">Sign in as someone else</button>
+  </section>
+
+  <!-- activated -->
+  <section id="vDone" class="stack hide" style="gap:22px">
+    <div class="center" style="margin-top:12px">
+      <img class="logo" src="/pulse-icon.svg" alt="" style="width:88px;height:88px;border-radius:21px">
+      <h1 id="doneTitle">You’re in</h1>
+      <p class="soft">Your profile is active. This device stays signed in.</p>
+    </div>
+    <section class="card good">
+      <h2>Add a passkey first</h2>
+      <p class="soft small">Your invite can’t be used again. A passkey lets you sign in on your phone and laptop with Face ID, a fingerprint or your device PIN. It’s under Account → Passkeys.</p>
+      <a class="primary" href="/daruma#account" style="display:flex;align-items:center;justify-content:center;min-height:48px;border-radius:10px;background:var(--acc);color:var(--on-acc);font-weight:600">Add a passkey</a>
+    </section>
+    <div class="apps">
+      <a href="/daruma"><b>Daruma</b><span>Your day, streaks and leagues. Add your wallet here.</span></a>
+      <a href="/ledger.html"><b>Journal</b><span>Every trade, stats and reviews</span></a>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const KEY = 'pz_social_key', TOK = 'srv_token', AFTER = 'pz_ws_after', TOK_BAD = 'beta_tok_bad';
+  const LS = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+  const LSset = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
+  const views = ['vWait', 'vGate', 'vActivate', 'vRedeem', 'vDone'];
+  const show = id => { for (const v of views) $(v).classList.toggle('hide', v !== id); const f = $(id).querySelector('input'); if (f && id !== 'vWait') setTimeout(() => f.focus(), 0); };
+  const norm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  const fmtCode = c => c.length > 8 ? c.slice(0, 4) + '-' + c.slice(4, 8) + '-' + c.slice(8) : c;
+  const day = ms => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  async function api(p, o) { o = o || {};
+    const r = await fetch('/api/social' + p, { method: o.method || (o.body ? 'POST' : 'GET'), credentials: 'same-origin',
+      headers: Object.assign(o.body ? { 'Content-Type': 'application/json' } : {}, o.headers || {}), body: o.body ? JSON.stringify(o.body) : undefined });
+    let d = {}; try { d = await r.json(); } catch (e) {}
+    if (!r.ok) { const e = new Error(d.error || ('Something went wrong (' + r.status + '). Try again.')); e.status = r.status; e.data = d; throw e; }
+    return d; }
+  // in: the app opens (an invite link's /join goes to Daruma; anything else reloads where it was)
+  // a browser that doesn't keep the cookie (blocked cookies, an extension) would land back here: after two tries in a
+  // few seconds, it stays here and says so instead of reloading for ever
+  const goIn = () => { let n = 0; try { const g = JSON.parse(sessionStorage.getItem('beta_go') || 'null'); n = g && Date.now() - g.at < 15000 ? g.n : 0;
+      sessionStorage.setItem('beta_go', JSON.stringify({ n: n + 1, at: Date.now() })); } catch (e) {}
+    if (n >= 2) { try { sessionStorage.removeItem('beta_go'); } catch (e) {} show('vGate');
+      $('signErr').textContent = 'You’re signed in, but this browser didn’t keep the sign-in cookie. Allow cookies for this site (and turn off blockers for it), then reload.'; return; }
+    if (/^\/join\/?$/.test(location.pathname)) location.replace('/daruma'); else location.reload(); };
+  // a device that signed in here: the app picks the key up as its own, with its usual welcome
+  const signedIn = (r, note) => { LSset(KEY, r.key); try { sessionStorage.setItem(AFTER, note || ''); } catch (e) {} goIn(); };
+  const busy = (el, on) => { if (el) el.disabled = on; };
+
+  // whatever the app cached here can't open it any more (the service worker stays, for reminders)
+  try { if (window.caches) caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {}); } catch (e) {}
+
+  let code = '', redeemFor = '';
+  // an invite link: /join#XXXX-XXXX-XX (the code stays out of server logs); taken off the address bar
+  { let h = (location.hash || '').slice(1); try { h = decodeURIComponent(h); } catch (e) {} // a link a messenger cut short
+    h = h.replace(/^(code|invite)=/i, ''); const c = norm(h);
+    if (c.length >= 10) { code = c; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} } }
+
+  fetch('/api/social/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => { if (c && c.beta && c.beta.message) $('gateMsg').textContent = c.beta.message; }).catch(() => {});
+
+  async function boot() {
+    // this browser is signed in already: swap that for the access cookie
+    const key = LS(KEY); let needs = false;
+    if (key) {
+      try { await api('/access', { method: 'POST', headers: { 'X-Pulse-Key': key } }); return goIn(); }
+      catch (e) { if (e.data && e.data.needsInvite) { needs = true; redeemFor = e.data.handle || ''; } }
+    }
+    const tok = LS(TOK); // the owner gets in with the token, even when their profile here would need an invite
+    if (tok && LS(TOK_BAD) !== String(tok.length) + tok.slice(-4)) {
+      try { await api('/access', { method: 'POST', headers: { Authorization: 'Bearer ' + tok } }); return goIn(); }
+      catch (e) { if (e.status === 401) LSset(TOK_BAD, String(tok.length) + tok.slice(-4)); } // a stale token isn't sent again on every visit
+    }
+    if (needs) { $('redeemHandle').textContent = '@' + redeemFor; if (code) $('rcode').value = fmtCode(code); return show('vRedeem'); }
+    if (code) return checkCode(code);
+    show('vGate');
+  }
+
+  // ---- an invite ----
+  function badInvite(e) {
+    const st = e.data && e.data.state;
+    if (st === 'used' || st === 'expired' || st === 'revoked') {
+      $('badTitle').textContent = st === 'used' ? 'This invite has already been used' : st === 'expired' ? 'This invite has expired' : 'This invite was withdrawn';
+      $('badText').textContent = st === 'used' ? 'Each invite activates one profile, once. If that was you, sign in below.' : 'Ask the person who invited you for a new one: the old one stops working when they make it.';
+      $('badInvite').classList.remove('hide'); $('codeLabel').textContent = 'Got a new code?'; $('codeErr').textContent = ''; $('code').value = '';
+    } else { $('badInvite').classList.add('hide'); $('codeErr').textContent = e.message; }
+    show('vGate');
+  }
+  async function checkCode(c) {
+    try { const r = await api('/beta/check', { body: { code: c } });
+      if (r.off) return goIn();
+      code = c; $('inviteLine').textContent = 'Code ' + fmtCode(c) + ' · works until ' + day(r.expiresAt);
+      $('joinErr').textContent = ''; show('vActivate');
+    } catch (e) { if (e.data && e.data.off) return goIn(); badInvite(e); }
+  }
+  $('fCode').addEventListener('submit', ev => { ev.preventDefault(); const c = norm($('code').value);
+    if (c.length < 10) { $('codeErr').textContent = 'An invite code has 10 letters and numbers.'; return; }
+    busy(ev.submitter, true); checkCode(c).finally(() => busy(ev.submitter, false)); });
+  $('bBack').addEventListener('click', () => { code = ''; $('code').value = ''; show('vGate'); });
+
+  // the name: checked as it's typed (names are unique, whatever their capitals)
+  let nameT = null, nameSeq = 0;
+  $('handle').addEventListener('input', () => { clearTimeout(nameT); const h = $('handle').value.trim().replace(/^@/, ''), s = $('handleState');
+    s.textContent = ''; s.className = '';
+    if (!h) return;
+    if (!/^[A-Za-z0-9_]{3,20}$/.test(h)) { s.textContent = h.length < 3 ? '' : 'Letters, numbers, _'; s.className = 'taken'; return; }
+    const n = ++nameSeq;
+    nameT = setTimeout(() => api('/beta/check', { body: { code, handle: h } }).then(r => { if (n !== nameSeq) return;
+      s.textContent = r.handleFree ? 'Free' : 'Taken'; s.className = r.handleFree ? 'free' : 'taken'; }).catch(() => {}), 450); });
+  $('fJoin').addEventListener('submit', async ev => { ev.preventDefault();
+    const h = $('handle').value.trim().replace(/^@/, '');
+    if (!/^[A-Za-z0-9_]{3,20}$/.test(h)) { $('joinErr').textContent = 'Pick a name of 3–20 letters, numbers or underscores.'; return; }
+    busy($('bJoin'), true); $('joinErr').textContent = '';
+    try { const r = await api('/join', { body: { handle: h, beta: code } });
+      LSset(KEY, r.key); try { sessionStorage.setItem(AFTER, 'Welcome, @' + r.me.handle + '.'); } catch (e) {}
+      $('doneTitle').textContent = 'You’re in, @' + r.me.handle; show('vDone');
+    } catch (e) { if (e.data && e.data.state && e.data.state !== 'open') badInvite(e); else $('joinErr').textContent = e.message; }
+    finally { busy($('bJoin'), false); } });
+
+  // ---- a profile from before beta mode: an invite lets it in ----
+  $('fRedeem').addEventListener('submit', async ev => { ev.preventDefault(); const c = norm($('rcode').value);
+    if (c.length < 10) { $('redeemErr').textContent = 'An invite code has 10 letters and numbers.'; return; }
+    busy(ev.submitter, true);
+    try { await api('/beta/redeem', { body: { code: c }, headers: { 'X-Pulse-Key': LS(KEY) } }); goIn(); }
+    catch (e) { $('redeemErr').textContent = e.message; } finally { busy(ev.submitter, false); } });
+  $('bOther').addEventListener('click', () => show('vGate'));
+
+  // ---- signing in on a device that's already activated somewhere ----
+  const signErr = e => { $('signErr').textContent = e.message; };
+  const pkBuf = s => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const pkB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  $('bPasskey').addEventListener('click', async ev => {
+    if (!window.PublicKeyCredential || !navigator.credentials) return signErr(new Error('This browser can’t use passkeys. Try your wallet, or a code from a signed-in device.'));
+    busy(ev.currentTarget, true); $('signErr').textContent = '';
+    try { const o = await api('/passkey/login/start', { body: {} });
+      let c; try { c = await navigator.credentials.get({ publicKey: { challenge: pkBuf(o.challenge), rpId: o.rpId, timeout: o.timeout, userVerification: o.userVerification } }); }
+      catch (e) { throw new Error(e && e.name === 'NotAllowedError' ? 'No passkey was used. Try again, or sign in another way.' : 'The passkey didn’t work: ' + (e && e.message || e)); }
+      const r = c.response, cred = { id: c.id, rawId: pkB64u(c.rawId), type: c.type, response: { clientDataJSON: pkB64u(r.clientDataJSON),
+        authenticatorData: pkB64u(r.authenticatorData), signature: pkB64u(r.signature), userHandle: r.userHandle ? pkB64u(r.userHandle) : null } };
+      const d = await api('/passkey/login/finish', { body: { credential: cred } }); signedIn(d, 'Signed in as @' + d.me.handle + '.');
+    } catch (e) { signErr(e); } finally { busy($('bPasskey'), false); } });
+  const utf8Hex = s => '0x' + Array.from(new TextEncoder().encode(s), b => b.toString(16).padStart(2, '0')).join('');
+  $('bWallet').addEventListener('click', async ev => {
+    const eth = window.ethereum;
+    if (!eth || typeof eth.request !== 'function') return signErr(new Error('No wallet in this browser. Use a browser with MetaMask or Rabby, or your wallet app’s browser — or a code from a signed-in device.'));
+    busy(ev.currentTarget, true); $('signErr').textContent = '';
+    try { const acct = String(((await eth.request({ method: 'eth_requestAccounts' })) || [])[0] || '').toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(acct)) throw new Error('Your wallet didn’t share an account.');
+      const st = await api('/login/start', { body: { address: acct } });
+      let signature; try { signature = await eth.request({ method: 'personal_sign', params: [utf8Hex(st.message), acct] }); }
+      catch (e) { throw new Error(e && e.code === 4001 ? 'You cancelled the signature.' : 'Your wallet couldn’t sign: ' + (e && e.message || e)); }
+      const d = await api('/login/finish', { body: { nonce: st.nonce, signature } }); signedIn(d, 'Signed in as @' + d.me.handle + '.');
+    } catch (e) { signErr(e); } finally { busy($('bWallet'), false); } });
+  $('bDevice').addEventListener('click', ev => { const f = $('fDevice'), open = f.classList.toggle('hide') === false; ev.currentTarget.setAttribute('aria-expanded', String(open)); if (open) $('dcode').focus(); });
+  $('fDevice').addEventListener('submit', async ev => { ev.preventDefault(); busy(ev.submitter, true); $('signErr').textContent = '';
+    try { const d = await api('/link/finish', { body: { code: $('dcode').value } }); signedIn(d, 'Signed in as @' + d.me.handle + '.'); }
+    catch (e) { signErr(e); } finally { busy(ev.submitter, false); } });
+  // the owner: the server's token signs this browser in to the journal too
+  $('bOwner').addEventListener('click', () => { $('fOwner').classList.toggle('hide'); if (!$('fOwner').classList.contains('hide')) $('otok').focus(); });
+  $('fOwner').addEventListener('submit', async ev => { ev.preventDefault(); const tok = $('otok').value.trim(); if (!tok) return;
+    busy(ev.submitter, true); $('signErr').textContent = '';
+    try { await api('/access', { method: 'POST', headers: { Authorization: 'Bearer ' + tok } }); LSset(TOK, tok); LSset(TOK_BAD, null); goIn(); }
+    catch (e) { signErr(e); } finally { busy(ev.submitter, false); } });
+
+  boot().catch(() => show('vGate'));
+})();
+</script>
+</body>
+</html>
