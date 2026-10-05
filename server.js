@@ -2782,7 +2782,8 @@ function createApp(opts) {
       if (!f) return json(res, 404, { error: 'not found' });
       const etag = '"' + f.hash + '"';
       const head = { 'Content-Type': 'text/javascript; charset=utf-8', 'ETag': etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': query.v === f.hash ? 'public, max-age=31536000, immutable' : 'no-cache' };
+        // in private beta, a shared cache (a CDN) must not hand the scripts to people the beta page keeps out
+        'Cache-Control': query.v === f.hash ? (social.gate.active() ? 'private' : 'public') + ', max-age=31536000, immutable' : 'no-cache' };
       if ((req.headers['if-none-match'] || '') === etag) { res.writeHead(304, head); return res.end(); }
       const [enc, body] = encodedFile(req, f);
       res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
@@ -2843,7 +2844,7 @@ function createApp(opts) {
         // Only the app shell is cached, one copy per screen: the journal ('/') and Keel ('/keel', which
         // '/pulse' shares) load different scripts. Other pages (help, docs) pass through and never overwrite them.
         "const C='ledger-v5',S=['/','/index.html','/ledger.html','/daruma','/keel','/pulse'];" +
-        "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.add('/')))});" +
+        "self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>fetch('/').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);if(!r.headers.get('x-beta-gate'))return c.put('/',r);})))});" +
         "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>clients.claim()))});" +
         "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);" +
         "if(u.origin!==location.origin||u.pathname.startsWith('/api/')||e.request.method!=='GET')return;" +

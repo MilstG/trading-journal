@@ -177,7 +177,13 @@ footer a{color:var(--muted)}
     if (!r.ok) { const e = new Error(d.error || ('Something went wrong (' + r.status + '). Try again.')); e.status = r.status; e.data = d; throw e; }
     return d; }
   // in: the app opens (an invite link's /join goes to Daruma; anything else reloads where it was)
-  const goIn = () => { if (/^\/join\/?$/.test(location.pathname)) location.replace('/daruma'); else location.reload(); };
+  // a browser that doesn't keep the cookie (blocked cookies, an extension) would land back here: after two tries in a
+  // few seconds, it stays here and says so instead of reloading for ever
+  const goIn = () => { let n = 0; try { const g = JSON.parse(sessionStorage.getItem('beta_go') || 'null'); n = g && Date.now() - g.at < 15000 ? g.n : 0;
+      sessionStorage.setItem('beta_go', JSON.stringify({ n: n + 1, at: Date.now() })); } catch (e) {}
+    if (n >= 2) { try { sessionStorage.removeItem('beta_go'); } catch (e) {} show('vGate');
+      $('signErr').textContent = 'You’re signed in, but this browser didn’t keep the sign-in cookie. Allow cookies for this site (and turn off blockers for it), then reload.'; return; }
+    if (/^\/join\/?$/.test(location.pathname)) location.replace('/daruma'); else location.reload(); };
   // a device that signed in here: the app picks the key up as its own, with its usual welcome
   const signedIn = (r, note) => { LSset(KEY, r.key); try { sessionStorage.setItem(AFTER, note || ''); } catch (e) {} goIn(); };
   const busy = (el, on) => { if (el) el.disabled = on; };
@@ -187,23 +193,25 @@ footer a{color:var(--muted)}
 
   let code = '', redeemFor = '';
   // an invite link: /join#XXXX-XXXX-XX (the code stays out of server logs); taken off the address bar
-  { const h = decodeURIComponent((location.hash || '').slice(1)).replace(/^(code|invite)=/i, ''); const c = norm(h);
+  { let h = (location.hash || '').slice(1); try { h = decodeURIComponent(h); } catch (e) {} // a link a messenger cut short
+    h = h.replace(/^(code|invite)=/i, ''); const c = norm(h);
     if (c.length >= 10) { code = c; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} } }
 
   fetch('/api/social/config', { credentials: 'same-origin' }).then(r => r.json()).then(c => { if (c && c.beta && c.beta.message) $('gateMsg').textContent = c.beta.message; }).catch(() => {});
 
   async function boot() {
     // this browser is signed in already: swap that for the access cookie
-    const key = LS(KEY);
+    const key = LS(KEY); let needs = false;
     if (key) {
       try { await api('/access', { method: 'POST', headers: { 'X-Pulse-Key': key } }); return goIn(); }
-      catch (e) { if (e.data && e.data.needsInvite) { redeemFor = e.data.handle || ''; $('redeemHandle').textContent = '@' + redeemFor; if (code) $('rcode').value = fmtCode(code); return show('vRedeem'); } }
+      catch (e) { if (e.data && e.data.needsInvite) { needs = true; redeemFor = e.data.handle || ''; } }
     }
-    const tok = LS(TOK);
+    const tok = LS(TOK); // the owner gets in with the token, even when their profile here would need an invite
     if (tok && LS(TOK_BAD) !== String(tok.length) + tok.slice(-4)) {
       try { await api('/access', { method: 'POST', headers: { Authorization: 'Bearer ' + tok } }); return goIn(); }
       catch (e) { if (e.status === 401) LSset(TOK_BAD, String(tok.length) + tok.slice(-4)); } // a stale token isn't sent again on every visit
     }
+    if (needs) { $('redeemHandle').textContent = '@' + redeemFor; if (code) $('rcode').value = fmtCode(code); return show('vRedeem'); }
     if (code) return checkCode(code);
     show('vGate');
   }

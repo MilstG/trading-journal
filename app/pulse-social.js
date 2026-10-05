@@ -194,6 +194,7 @@ function socBoot(){
       await wsGuestPeek();
       let after=null; try{ after=sessionStorage.getItem(WS_AFTER_STORE); sessionStorage.removeItem(WS_AFTER_STORE); }catch(_){}
       if(after!==null){ if(after)pzNote(after); if(PZ)acctAfterSignIn().catch(()=>{}); } },e=>{
+      if(e.data&&e.data.needsInvite){ pzNote(e.message,'err'); return; } // private beta: kept, for the beta page's invite step
       if(e.status===401||e.status===403){ SOC.key=null; vaultForget(); try{ localStorage.removeItem(SOC_KEY_STORE); }catch(_){} if(e.status===403)pzNote(e.message,'err'); } }); })
     .catch(()=>{}).finally(()=>{ if(PZ)pzRender(); else if(typeof allTrades!=='undefined'&&allTrades.length)render(); });
 }

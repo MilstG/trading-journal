@@ -525,8 +525,9 @@ const inviteNorm = s => String(s == null || typeof s === 'object' ? '' : s).toUp
 const inviteShow = c => c.slice(0, 4) + '-' + c.slice(4, 8) + '-' + c.slice(8);
 const MAX_INVITES = 5000;
 const ACCESS_COOKIE = 'daruma_access';
-const cookieOf = (req, name) => { for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('=');
-  if (i > 0 && p.slice(0, i).trim() === name) return p.slice(i + 1).trim(); } return ''; };
+// every value a cookie of this name has (a stale one set for a parent domain or another path can come first)
+const cookiesOf = (req, name) => { const out = []; for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('=');
+  if (i > 0 && p.slice(0, i).trim() === name) out.push(p.slice(i + 1).trim()); } return out.slice(0, 10); };
 const POST_KINDS = ['trade', 'plan', 'note'];
 const TRADE_STATUS = ['planned', 'open', 'closed', 'cancelled'];
 const COIN_RE = /^[A-Za-z0-9@/:._-]{1,24}$/;
@@ -668,7 +669,7 @@ function createSocial(opts) {
   S.config.duels = Duels.sanitizeDuelCfg(S.config.duels, null);
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
   S.config.pots = Pots.sanitizePotCfg(S.config.pots, null);
-  S.config.beta = sanitizeBetaCfg(S.config.beta, null);
+  S.config.beta = sanitizeBetaCfg(S.config.beta, S.config.beta); // (as prev too: who switched it on, and when, are kept)
   // the private beta's invites by id ({id, h: sha256 of the code, tail, note, at, exp, by, unlocked, leagues,
   // used: member id, usedAt, revoked: when}) and the key its access cookies are signed with (made once)
   if (!S.beta || typeof S.beta !== 'object' || Array.isArray(S.beta)) S.beta = {};
@@ -804,7 +805,7 @@ function createSocial(opts) {
     return null; };
   // who this request is, for the beta: the access cookie, else a member key or the owner's token sent with it
   const accessOf = req => {
-    const c = cookieOf(req, ACCESS_COOKIE), byC = c ? accessOfCookie(c) : null; if (byC) return byC;
+    for (const c of cookiesOf(req, ACCESS_COOKIE)) { const byC = accessOfCookie(c); if (byC) return byC; }
     const m = req.headers['x-pulse-key'] ? byKey(req) : null; if (m && !m.banned && (!betaOn() || betaAllowed(m))) return { member: m };
     if (adminConfigured && req.headers['authorization'] && authOk(req)) return { owner: true };
     return null; };
@@ -2637,7 +2638,7 @@ function createSocial(opts) {
       return json(res, 200, { ok: true });
     }
     if (head === 'config' && M === 'GET')
-      return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
+      return json(res, 200, { enabled: adminConfigured, open: S.config.open, inviteRequired: betaOn() || !!S.config.inviteCode, unlocksOn: S.config.unlocksOn,
         beta: betaOn() ? { on: true, message: S.config.beta.message } : { on: false },
         unlocks: S.config.unlocks, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
@@ -3210,7 +3211,7 @@ function createSocial(opts) {
       // private beta: a single-use invite from the admin panel, in place of the open door and the shared code
       const beta = betaOn(); let inv = null;
       if (beta) { if (limited(req, 'beta', 30, 600000)) return json(res, 429, { error: 'Too many tries from here. Try again in a few minutes.' });
-        inv = inviteBy(body.beta); const st = inviteState(inv);
+        inv = inviteBy(body.beta || body.invite); const st = inviteState(inv); // (the app's own join form sends it as invite)
         if (st !== 'open') return json(res, 403, { error: INVITE_ERR[st], state: st, beta: true }); }
       else {
       if (!S.config.open) return json(res, 403, { error: 'This league isn’t taking new members right now.' });
@@ -3400,6 +3401,10 @@ function createSocial(opts) {
     const me = byKey(req);
     if (!me) return json(res, 401, { error: 'not a member' });
     if (me.banned) return json(res, 403, { error: 'This profile was removed from the league.' });
+    // private beta: a profile it doesn't let in (from before, with "keep access" off) waits for an invite here
+    // too, not only at the pages; it can still delete itself
+    if (betaOn() && !betaAllowed(me) && !(head === 'me' && M === 'DELETE'))
+      return json(res, 403, { error: 'Daruma is invite-only for now. Enter the invite code you were sent to bring @' + me.handle + ' in.', needsInvite: true, beta: true });
 
     // ---------- passkeys: add one on this device, list, remove ----------
     if (head === 'passkey' && parts[1] === 'register' && M === 'POST') {

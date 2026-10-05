@@ -48,6 +48,7 @@ try {
     const r = await admin('/beta', { method: 'PUT', body: { on: true, message: 'Ask @owner on Telegram for an invite.' } });
     eq(r.status, 200); eq(r.d.config.on, true); eq(r.d.config.since, clock); eq(r.d.config.by, 'owner');
     eq((await call('/config')).d.beta, { on: true, message: 'Ask @owner on Telegram for an invite.' });
+    eq((await call('/config')).d.inviteRequired, true, 'the app’s own join form asks for a code');
     ok((await admin('/log')).d.log.some(l => /^PUT beta/.test(l.what)));
   });
 
@@ -60,6 +61,7 @@ try {
     ok(!(await page('/help')).gate, 'the docs stay public by default');
     const sw = await page('/sw.js'); eq(sw.status, 200);
     ok(sw.body.includes("r.ok&&!r.headers.get('x-beta-gate')"), 'the service worker never keeps the beta page as the app shell');
+    ok(sw.body.includes("if(!r.headers.get('x-beta-gate'))return c.put('/',r)") && !sw.body.includes("c.add('/')"), 'nor when it installs');
   });
 
   await t('what a visitor without a profile sends waits for an invite; open joining and the shared code stop', async () => {
@@ -100,7 +102,9 @@ try {
     const r = await call('/join', { body: { handle: 'ana_trades', beta: inv.code } });
     eq(r.status, 200); newKey = r.d.key; newCookie = r.cookie; ok(newCookie);
     const p = await page('/daruma', newCookie); ok(!p.gate, 'the cookie opens Daruma'); ok(p.body.includes('<script src="app/'), 'the app itself');
-    eq((await page('/app/core.js', newCookie)).status, 200);
+    const js = await fetch(B + '/app/core.js?v=x', { headers: { Cookie: newCookie } }); eq(js.status, 200);
+    const cur = (await page('/daruma', newCookie)).body.match(/app\/core\.js\?v=([a-z0-9]+)/);
+    ok(cur, 'the page names its scripts by version'); eq((await fetch(B + '/app/core.js?v=' + cur[1], { headers: { Cookie: newCookie } })).headers.get('cache-control'), 'private, max-age=31536000, immutable', 'no shared cache keeps gated scripts');
     const again = await call('/join', { body: { handle: 'someone_else', beta: inv.code } }); eq(again.status, 403); eq(again.d.state, 'used');
     eq((await call('/beta/check', { body: { code: inv.code } })).status, 410);
     const x = (await admin('/beta')).d.invites.find(i => i.note === 'Ana');
@@ -108,6 +112,15 @@ try {
     eq((await admin('/members')).d.members.find(m => m.handle === 'ana_trades').joinedWith, 'beta');
     // an open invite link, already in: straight to Daruma
     eq((await page('/join', newCookie)).location, '/daruma');
+  });
+
+  await t('a stale cookie of the same name sent first doesn’t hide the good one', async () => {
+    ok(!(await page('/', 'daruma_access=m.' + oldId + '.' + 'B'.repeat(32) + '; ' + newCookie)).gate);
+  });
+  await t('the app’s own join form (the owner, while beta mode is on) sends the code as invite', async () => {
+    const x = (await admin('/beta/invites', { body: { count: 1 } })).d.invites[0];
+    const r = await call('/join', { body: { handle: 'owners_alt', invite: x.code } }); eq(r.status, 200); eq(r.d.me.handle, 'owners_alt');
+    await admin('/members/' + r.d.me.id, { body: { action: 'remove' } });
   });
 
   await t('the cookie is the server’s: forged, tampered or another member’s id doesn’t open anything', async () => {
@@ -136,6 +149,9 @@ try {
     ok(!(await page('/', newCookie)).gate, 'a profile an invite made still gets in');
     const r = await call('/access', { method: 'POST', body: {}, key: oldKey }); eq(r.status, 403); eq(r.d.needsInvite, true); eq(r.d.handle, 'early');
     eq((await call('/seen', { body: { addresses: [] }, key: oldKey })).status, 403);
+    // its key doesn't reach the member API either (an app tab left open, a script): only the invite step
+    const me = await call('/me', { key: oldKey }); eq(me.status, 403); eq(me.d.needsInvite, true);
+    eq((await call('/posts', { body: { kind: 'note', text: 'hi' }, key: oldKey })).status, 403);
     const red = await call('/beta/redeem', { body: { code: inv2.code }, key: oldKey }); eq(red.status, 200); ok(red.cookie);
     ok(!(await page('/', red.cookie)).gate); ok(!(await page('/', before)).gate, 'the device’s cookie works again');
     eq((await call('/beta/redeem', { body: { code: inv2.code }, key: newKey })).status, 410, 'spent');
@@ -216,7 +232,8 @@ try {
     await new Promise(res => app.close(res)); app._social.close();
     app = mk(); B = await listen(app);
     ok(!(await page('/', newCookie)).gate); ok((await page('/')).gate);
-    eq((await admin('/beta')).d.counts.used, 3);
+    eq((await admin('/beta')).d.counts.used, 4);
+    const cfg = (await admin('/beta')).d.config; eq(cfg.by, 'owner'); ok(cfg.since > 0, 'who switched it on, and when, are kept');
   });
 
   await t('switched off, everything is as it was: the app opens for anyone and joining is open again', async () => {

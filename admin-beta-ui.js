@@ -43,7 +43,7 @@
   function view() {
     if (!st) { if (!loading) refresh(); return '<p class="muted">Loading…</p>'; }
     if (st.error) return `<p class="warn">${esc(st.error)}</p>`;
-    const c = st.config, F = A(), ttl = [7, 14, 30, 60, 90].map(d => [d, d + ' days']);
+    const c = st.config, F = A(), ttl = [...new Set([7, 14, 30, 60, 90, c.ttlDays])].sort((a, b) => a - b).map(d => [d, d + (d === 1 ? ' day' : ' days')]);
     const lead = st.active ? `<span class="pill ok">On</span> <span class="muted small">since ${esc(day(c.since))}${c.by ? ' · by ' + esc(c.by) : ''}</span>` : '<span class="pill">Off</span> <span class="muted small">anyone can open the app; Settings → Joining applies</span>';
     return `<div class="two"><section class="card"><div class="ch"><h2>Private beta mode</h2><div>${lead}</div></div>
         ${F.box('btOn', 'Private beta mode', c.on, 'On: the journal, Daruma and their data need an activated profile; guest mode and open joining stop; this panel works as before. Off: everything goes back to how it was, and no one’s profile or data changes.')}
@@ -51,7 +51,7 @@
         ${F.box('btKeep', 'Profiles from before keep access', c.keepExisting, F.fmt(st.existing) + ' profile' + (st.existing === 1 ? '' : 's') + ' didn’t come by an invite. Untick and they need one too: the beta page asks them for a code the first time.')}
         ${F.box('btDocs', 'Help, docs and the tutorial stay public', c.publicDocs, 'So you can send people there before they’re in.')}
         <h3>Invites and the beta page</h3>
-        <div class="row">${F.field('btTtl', 'New invites last', F.sel('btTtl', ttl, ttl.some(t => t[0] === c.ttlDays) ? c.ttlDays : 14))}</div>
+        <div class="row">${F.field('btTtl', 'New invites last', F.sel('btTtl', ttl, c.ttlDays))}</div>
         ${F.field('btMsg', 'Line under the beta page’s title', `<input id="btMsg" maxlength="300" value="${esc(c.message)}" placeholder="We’re letting traders in a few at a time. If we sent you an invite, open the link or enter your code.">`, 'Empty shows the line in the placeholder. Put where to ask for an invite here, if you like.')}
         <div class="actions"><button class="primary" id="btSave">Save</button></div></section>
       <section class="card" id="btMake"><h2>Create invites</h2>
