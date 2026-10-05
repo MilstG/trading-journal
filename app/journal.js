@@ -1564,16 +1564,18 @@ function renderDataHealth(){
   // seams, and a server to do it from: the fills behind them may still be in Hyperliquid's archive (archive.js)
   const canArc=cov&&cov.gaps&&typeof SRV!=='undefined'&&SRV.enabled&&!SRV.badAuth;
   el.innerHTML='⚠ <b>Data health:</b> '+items.join(' · ')+(canArc?' <button class="df-btn" id="arcOpen" style="margin-left:6px">Recover from the archive…</button>':'');
-  const b=$('arcOpen'); if(b)b.onclick=toggleArchivePanel;
+  const b=$('arcOpen'); if(b)b.onclick=()=>toggleArchivePanel($('dataHealth'));
 }
 // Recovering the fills behind the seams from Hyperliquid's node-data archive on S3, through the server
 // (archive.js): a coverage check (what the archive holds, what the seams need, what it would cost), a
 // sample hour, then the backfill with a spending cap. The server merges what it finds into its fill
 // cache; the next load merges that into this browser's (data-io.js: srvArchived) and reconstructs.
 let _arcTimer=null;
-async function toggleArchivePanel(){
+// Opened from the Data health strip (seams on record) or from the server-sync bar (always there, so a
+// check, a diagnose or a running backfill stays reachable once the seams are gone); anchored below either.
+async function toggleArchivePanel(anchor){
   let p=$('arcPanel'); if(p){ p.remove(); clearTimeout(_arcTimer); return; }
-  const host=$('dataHealth'); if(!host)return;
+  const host=(anchor&&anchor.nodeType===1?anchor:null)||$('dataHealth'); if(!host)return;
   p=document.createElement('div'); p.id='arcPanel'; p.className='reconwarn'; p.style.cssText='margin-top:-6px;margin-bottom:12px';
   host.insertAdjacentElement('afterend',p);
   const usd=n=>'$'+(+n||0).toFixed(2), mb=b=>(b/1048576).toFixed(1)+' MB', gbOf=b=>(b/1073741824).toFixed(2)+' GB';
