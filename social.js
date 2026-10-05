@@ -317,6 +317,8 @@ function boardRisk(mo, board, risk) {
 function boardRows(members, board, opts) {
   opts = opts || {};
   const B = Object.prototype.hasOwnProperty.call(BOARDS, board) ? BOARDS[board] : null; if (!B) return null;
+  // callers inside the module pass todayKey from the module's clock (opts.now): the windowed boards
+  // (discipline's last 7 days) must follow the same time as everything else, the tests' included
   const todayK = opts.todayKey || utcDayKey(Date.now());
   const week = opts.week || isoWeekOfKey(todayK);
   // process boards read posted stats; money boards read only what the server fetched from the chain
@@ -853,7 +855,7 @@ function createSocial(opts) {
     if (si) return { dayFrom: si.start, dayTo: todayKey(), weeks: null, days: Math.round((Date.parse(todayKey()) - Date.parse(si.start)) / 86400000) + 1 };
     return L.period === 'month' ? { weeks: monthWeeks(S.league.week), days: monthDays() } : { weeks: null, days: 7 }; };
   const leagueBoard = (L, board, viewer, keep) => { const W = leagueWindow(L); return boardRows(keep ? leagueMembers(L).filter(keep) : leagueMembers(L), board, {
-    tier: L.tiers && board === L.metric && viewer ? leagueTier(L, viewer) : undefined, tierAll: true, week: S.league.week, risk: leagueRisk(L),
+    tier: L.tiers && board === L.metric && viewer ? leagueTier(L, viewer) : undefined, tierAll: true, todayKey: todayKey(), week: S.league.week, risk: leagueRisk(L),
     weeks: board === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: board === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days }); };
   // a monthly league's boards cover the month so far: the same window its rollover ranks on
   const monthDays = () => Math.max(1, Math.round((Date.parse(todayKey()) - Date.parse(isoWeekMonday(monthWeeks(S.league.week)[0]))) / 86400000) + 1);
@@ -3932,7 +3934,7 @@ function createSocial(opts) {
     if (head === 'leagues' && parts[1] && !parts[2] && M === 'GET') {
       const L = own(S.leagues, arg) ? S.leagues[arg] : Object.values(S.leagues).find(x => String(x.num) === arg.replace(/^#/, '')) || null;
       if (!L || (!L.open && !own(L.members, me.id))) return json(res, 404, { error: 'No such league.' });
-      const W = leagueWindow(L), top = boardRows(leagueMembers(L).filter(m => !offBoards(S.members[m.id])), L.metric, { risk: leagueRisk(L), week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
+      const W = leagueWindow(L), top = boardRows(leagueMembers(L).filter(m => !offBoards(S.members[m.id])), L.metric, { todayKey: todayKey(), risk: leagueRisk(L), week: S.league.week, weeks: L.metric === 'xp' && W.weeks ? W.weeks : undefined, dayFrom: L.metric === 'xp' ? W.dayFrom : undefined, dayTo: W.dayTo, days: W.days });
       return json(res, 200, { league: Object.assign(leagueOut(L, me), { createdAt: L.createdAt, hall: (L.hall || []).slice().reverse().map(h => ({ season: h.season, label: h.label, n: h.n,
           // as the members stand today: a suspended one isn't named, and returns or dollars only show while still shared
           podium: h.podium.map(r => { const pm = own(S.members, r.id) ? S.members[r.id] : null;
@@ -3967,7 +3969,7 @@ function createSocial(opts) {
       const board = own(BOARDS, query.board) ? query.board : 'discipline', global = query.scope === 'global';
       refreshAll(me); // background, the viewer first; boards show what's cached
       let rows, L = null;
-      if (global) rows = boardRows(members().filter(m => m.share.global && !standingLapsed(m)), board, { week: S.league.week, risk: leagueRisk(null) });
+      if (global) rows = boardRows(members().filter(m => m.share.global && !standingLapsed(m)), board, { todayKey: todayKey(), week: S.league.week, risk: leagueRisk(null) });
       else { L = own(S.leagues, query.league) && own(S.leagues[query.league].members, me.id) ? S.leagues[query.league] : own((S.leagues.main || {}).members || {}, me.id) ? S.leagues.main : leaguesOf(me)[0] || null;
         rows = L ? leagueBoard(L, board, me, standingOn() ? m => !standingLapsed(m) : null) : []; }
       const mine = rows.find(r => r.id === me.id) || null;
