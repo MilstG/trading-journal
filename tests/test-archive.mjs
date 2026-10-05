@@ -364,7 +364,10 @@ await t('archive-fills: the owner for any wallet (its cache takes them in), a me
     eq([o.status, o.body.through, o.body.first, o.body.last], [200, '20260617', '20260615', '20260617'], JSON.stringify(o.body).slice(0, 300));
     ok(o.body.fills.some(f => f.tid === 7777) && o.body.fills.length === 4, 'the wallet’s whole history from the index: ' + o.body.fills.length);
     const full = await call(b4, '/api/v1/cache/' + ADDR); ok(full.body.fills.fills.some(f => f.tid === 7777), 'the owner’s server cache took the lost close in');
+    eq(o.body.archivedAt, full.body.fills.archived.at, 'the asking browser gets the cache’s new mark, so it never downloads the cache again for these');
     ok(full.body.fills.archived && full.body.fills.archived.n === 1, 'and notes it, so the owner’s other devices merge it');
+    const again = await get('/api/v1/archive-fills/' + ADDR, { Authorization: 'Bearer owner' }); eq(again.body.archivedAt, undefined, 'nothing new for the cache: no new mark');
+    eq((await call(b4, '/api/v1/cache/' + ADDR)).body.fills.archived.at, full.body.fills.archived.at, 'and the cache is left alone');
     const later = await get('/api/v1/archive-fills/' + ADDR + '?from=20260617', { Authorization: 'Bearer owner' }); eq([later.body.fills.length, later.body.through], [0, '20260617'], 'from the day after: nothing new');
     eq((await get('/api/v1/archive-fills/' + ADDR)).status, 401, 'nobody: no');
     const join = async (address) => (await (await fetch(b4 + '/api/social/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ handle: 'm' + Math.random().toString(36).slice(2, 8) }, address ? { address } : {})) })).json()).key;
@@ -551,13 +554,14 @@ await t('the browser asks for old history on load: the whole of it once, then fr
   const { grabFn: g } = makeExtractor(readAppSource(join(here, '..', 'ledger.html')));
   const asked = [];
   const ctx = { Date, Set, JSON, SRV: { enabled: true }, owner: true, SOC: { key: 'k1' },
-    reply: { through: '20261003', fills: [{ tid: 1, oid: 1, time: 5 }, { tid: 2, oid: 2, time: 6 }] } };
+    reply: { through: '20261003', archivedAt: 42, fills: [{ tid: 1, oid: 1, time: 5 }, { tid: 2, oid: 2, time: 6 }] } };
   ctx.srvOwner = () => ctx.owner;
   ctx.srvFetch = async p => { asked.push(['owner', p]); return { ok: true, json: async () => ctx.reply }; };
   ctx.fetch = async (p, o) => { asked.push([o.headers['X-Pulse-Key'], p]); return { ok: true, json: async () => ctx.reply }; };
   vm.createContext(ctx); vm.runInContext(g('srvIndexFills'), ctx);
   const A = '0x' + 'c'.repeat(40), fc = { fills: [{ tid: 1, oid: 1, time: 5 }] };
   eq(await ctx.srvIndexFills(A, fc), 1, 'the fill it had is not added twice'); eq(fc.indexThrough, '20261003'); ok(fc.indexDirty && fc.indexTriedAt > 0);
+  eq(fc.archivedAt, 42, 'the server cache’s new mark is taken as its own');
   eq(asked.pop(), ['owner', '/api/v1/archive-fills/' + A], 'the whole history the first time');
   eq(await ctx.srvIndexFills(A, fc), 0); eq(asked.length, 0, 'not again within 6 hours');
   fc.indexTriedAt = Date.now() - 7 * 3600e3; fc.indexThrough = '20260101';

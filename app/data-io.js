@@ -91,6 +91,7 @@ async function srvIndexFills(a, fc){
     const seen=new Set(fc.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time)); let n=0;
     for(const f of j.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fc.fills.push(f); n++; } }
     if(j.through&&!(fc.indexThrough>=j.through))fc.indexThrough=j.through;
+    if(j.archivedAt)fc.archivedAt=j.archivedAt; // the server cache took these in: its new mark is ours, no re-download for them
     return n;
   }catch(e){ return 0; } }
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
@@ -208,7 +209,7 @@ async function loadWallet(w,fresh,spotP){
     if(seededTrunc&&!fr.truncated)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
   } else { fills=fr.fills; added=fills.length; }
   // old history from the index (srvIndexFills): this load's fills, with the cache's note of how far it reached
-  const ixc={fills,indexThrough:fcache&&fcache.indexThrough,indexTriedAt:fcache&&fcache.indexTriedAt};
+  const ixc={fills,indexThrough:fcache&&fcache.indexThrough,indexTriedAt:fcache&&fcache.indexTriedAt,archivedAt:fcache&&fcache.archivedAt};
   const indexedNew=await srvIndexFills(a,ixc); added+=indexedNew; // a wallet the API serves nothing for any more included
   const nAll=fills.length; fills=dedupeFills(fills); const removed=nAll-fills.length; // a combined fill and its pieces, served by two sources
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
@@ -219,7 +220,7 @@ async function loadWallet(w,fresh,spotP){
   if(trunc)truncNote=truncNoteOf(labelFor(w),trunc);
   // nothing new: the stored copy is already current, so skip re-compressing it
   if(archivedNew)added+=archivedNew;
-  if(!fcache||added>0||removed>0||fcache.seeded||ixc.indexDirty||twapFull!==!!fcache.twapFull||JSON.stringify(trunc||null)!==JSON.stringify(fcache.trunc||null)){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:fcache&&fcache.archivedAt,trunc,indexThrough:ixc.indexThrough,indexTriedAt:ixc.indexTriedAt})); }catch(e){} }
+  if(!fcache||added>0||removed>0||fcache.seeded||ixc.indexDirty||twapFull!==!!fcache.twapFull||JSON.stringify(trunc||null)!==JSON.stringify(fcache.trunc||null)){ try{ await idbSet(fcKey,cacheExtras(await packFillCache(fills,lastT),{twapFull,archivedAt:ixc.archivedAt,trunc,indexThrough:ixc.indexThrough,indexTriedAt:ixc.indexTriedAt})); }catch(e){} }
   const posP=fetchPositions(a,hip3DexsFromFills(fills));
   const [fnew,lnew,ch,sbal,port]=await Promise.all([fundP,ledP,posP,spotStP,portP]);
   const fm=mergeRows(fdc&&fdc.rows,fnew,fundKey), lm=mergeRows(lgc&&lgc.rows,lnew,ledgerRowId);

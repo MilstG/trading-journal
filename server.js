@@ -845,10 +845,11 @@ function createApp(opts) {
       const before = fills.length; fills = cleanFills(E, fills); added -= Math.min(added, before - fills.length);
       if (!added) return { added: 0, count: c.fills.length }; // nothing new: no write, so no device downloads the cache again for it
       const last = fills.reduce((m, f) => f.time > m ? f.time : m, 0);
-      gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: Date.now(), fills,
-        archived: { at: Date.now(), n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
+      const at = Date.now();
+      gzWrite(fillsFile(a), Object.assign({}, c, { last, count: fills.length, savedAt: at, fills,
+        archived: { at, n: ((c.archived && c.archived.n) || 0) + added, hours: info && info.hours || 0, bytes: info && info.bytes || 0 } }));
       _tradesMemo = null; fillMetaMemo.delete(a);
-      return { added, count: fills.length };
+      return { added, count: fills.length, at };
   }
   const readLedgerCache = a => { const c = gzRead(ledgerFile(a)); return (c && c.v === 1 && Array.isArray(c.rows)) ? c : null; };
   const readMarket = () => { try { return JSON.parse(fs.readFileSync(marketFile, 'utf8')); } catch (e) { return null; } };
@@ -1981,8 +1982,10 @@ function createApp(opts) {
       if (m) { const now = Date.now(), t = (ixAsks.get(m.id) || []).filter(x => now - x < 3600e3); if (t.length >= 6) return send(429, { error: 'try again later' }); t.push(now); ixAsks.set(m.id, t); }
       const from = query && /^\d{8}$/.test(String(query.from || '')) ? String(query.from) : null;
       let r; try { r = await archive.indexFills(a, from); } catch (e) { return send(e.code === 503 ? 503 : 502, { error: e.message }); }
-      if (owner && r.fills.length && readFillCache(a)) { try { mergeArchived(a, r.fills, { index: true, bytes: r.bytes }); } catch (e) {} }
-      const body = JSON.stringify({ through: r.through, first: r.first, last: r.last, fills: r.fills });
+      // the browser asking already has these: it takes the cache's new archived mark as its own, so its
+      // next load doesn't download the whole server cache again for fills it merged here
+      let archivedAt; if (owner && r.fills.length && readFillCache(a)) { try { const w = mergeArchived(a, r.fills, { index: true, bytes: r.bytes }); if (w.added) archivedAt = w.at; } catch (e) {} }
+      const body = JSON.stringify({ through: r.through, first: r.first, last: r.last, fills: r.fills, archivedAt });
       const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
       const out = gz ? await new Promise((ok, no) => zlib.gzip(body, (e, b) => e ? no(e) : ok(b))) : body; // a whole history can be tens of MB: off the event loop
       res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
