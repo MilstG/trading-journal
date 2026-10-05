@@ -1315,7 +1315,7 @@ function pzConnectHtml(){
       ${settings.wallets.length&&!busy?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map(w=>esc(labelFor(w))).join(', ')}. Add another address, or look around with sample data.</p>`:''}
       <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid or Lighter" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
       ${errHtml}`}</div>
-    <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>
+    <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>${/^https?:$/.test(location.protocol)?'<a class="pz-wl-link" href="/tutorial/">How it works →</a>':''}
       <span class="pz-wl-safe" id="pzWlSafe">${pzI('lock',14)}Read-only. ${cex?'A key that can’t trade or withdraw.':'No wallet connection, no signature, no keys.'}</span></div>
     <p class="pz-fine pz-wl-sync">Your journal ${synced?(SRV.needsAuth?'syncs to this server.':'syncs to this server, which has no access token (AUTH_TOKEN): anyone with the link can read and change it.'):'stays in this browser.'}${!cex&&SRV.enabled?' The address is shared with this app’s admin and counted anonymously in “traders like you”.':''}</p>
     ${(link?'':acctConnectHtml())||tokenAsk?`<div class="pz-wl-more">
