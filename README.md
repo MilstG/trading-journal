@@ -1063,9 +1063,11 @@ tutorial stay open.
 
 - **Invites** are single use. Make them in a batch, one per name (only you see the names),
   each lasting 7 to 90 days. Each one is a `/join#CODE` link, plus the same code to type, which you
-  send yourself (the server sends no email). The code is shown once, when it's made: only its
-  hash is kept. The list shows which are waiting, who each one activated, and which expired.
-  **Withdraw** an unused invite, or give someone a **New link** (the old one stops working).
+  send yourself (the server sends no email). The list shows which are waiting, who each one
+  activated, and which expired. A waiting invite's **Copy code** and **Copy link** work at any time (the
+  server keeps a code only until it's used). **Delete** kills an invite's link and takes it off the list,
+  **Clear expired** removes every dead one at once, and **New link** gives someone a fresh invite in
+  place of a lost or expired one (the old link stops working).
 - **Activating** an invite makes a profile: the person picks a name (names are unique,
   whatever their capitals, and the page says whether one is free as it's typed). The page
   then asks them to add a passkey. **Other devices** sign in without an invite: a passkey,
