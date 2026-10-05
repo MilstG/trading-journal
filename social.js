@@ -317,6 +317,8 @@ function boardRisk(mo, board, risk) {
 function boardRows(members, board, opts) {
   opts = opts || {};
   const B = Object.prototype.hasOwnProperty.call(BOARDS, board) ? BOARDS[board] : null; if (!B) return null;
+  // callers inside the module pass todayKey from the module's clock (opts.now): the windowed boards
+  // (discipline's last 7 days) must follow the same time as everything else, the tests' included
   const todayK = opts.todayKey || utcDayKey(Date.now());
   const week = opts.week || isoWeekOfKey(todayK);
   // process boards read posted stats; money boards read only what the server fetched from the chain
