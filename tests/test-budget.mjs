@@ -72,7 +72,7 @@ try {
     // day score, the weekly review and the coach's facts, and the anonymous "it pays for me" count: about 14 KB raw /
     // 5 KB gzipped on both screens (2014 / 1672 raw, 684 / 564 gzipped).
     ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2045, 695],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1690, 570],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1700, 575],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

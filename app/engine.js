@@ -1323,6 +1323,11 @@ function tableFilter(t){ return !t.orphan && !t.spotRz && (view==='combined' ? t
 // A spot position is never money (its sells are in the day rows); a day row is never a trade.
 function tradeRow(t){ return !t.spotRz; }
 function moneyRow(t){ return !t.spotPos; }
+// The two closed populations, for every corner that needs "closed trades" without the period: the
+// completed trades (perp trades and spot round trips; not a balance that merely left, not a result
+// the fills can't give) and the realized money (perp trades and spot day rows). f narrows further.
+function closedTrades(f){ return allTrades.filter(t=>!t.isOpen&&t.closeTime&&tradeRow(t)&&!t.movedOut&&!(t.orphan||t.offRecord)&&(!f||f(t))); }
+function closedMoney(f){ return allTrades.filter(t=>!t.isOpen&&t.closeTime&&moneyRow(t)&&!(t.orphan||t.offRecord)&&(!f||f(t))); }
 // The all-time net the fills can't give: Hyperliquid's own P&L for a market ('perp', 'spot' or
 // 'combined' — what its app and trackers such as Hyperdash show, unrealized included) with the
 // fill-based sum beside it, when seams were found or, for perps, the two differ materially.

@@ -958,7 +958,7 @@ async function adoptHabit(spec){
   if(same){ await Store.set(S_KEY,settings); return same; }
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
   if(spec.pid&&!params){ // same contract as pins and rules: thresholds fixed at adoption, never re-derived
-    try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
+    try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
       params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const h={id:'h'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tpl:spec.tpl||null,kind:spec.kind,
     part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,

@@ -69,7 +69,7 @@ function netExposureByCoin(){
 function guardrailSignals(){
   const out=[];
   // trading with no plan filed — fires regardless of history depth (it's a habit nudge)
-  const up=unplannedToday(allTrades,journal);
+  const up=unplannedToday(allTrades.filter(t=>tradeRow(t)&&!t.movedOut),journal);
   if(up.unplanned)
     out.push({type:'unplanned',txt:`<b>${up.n}</b> trades today with no plan filed. The end-of-day review will ask why — write the bias, plan, and max loss in <b>Review → Day journal</b> before the next entry.`});
   // open positions breaking one of your rules-from-findings (entry-knowable conditions only)
@@ -86,7 +86,7 @@ function guardrailSignals(){
     if(unplanned.length)
       out.push({type:'unplanned',txt:`<b>${unplanned.length}</b> open position${unplanned.length===1?' has':'s have'} no written stop (${unplanned.slice(0,3).map(t=>esc(dispMarket(dcoin(t))))
         .join(', ')}${unplanned.length>3?', \u2026':''}). Open the trade row and fill <b>entry / stop / target</b> now \u2014 a plan written while the trade is live counts; one written after the close is hindsight.`}); }
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // a result the fills can't give is no evidence
+  const closed=closedTrades().sort((a,b)=>b.closeTime-a.closeTime); // completed trades only: a result the fills can't give, a spot day row or a balance that left is no evidence
   if(closed.length<20)return out;
   const now=Date.now();
   // sizing creep vs capital
@@ -651,11 +651,11 @@ function renderHeaderSummary(){
 }
 function renderTape(){
   const el=$('tape'); if(!el)return;
-  const closedAll=allTrades.filter(t=>!t.isOpen&&t.closeTime&&!t.orphan&&!t.offRecord).sort((a,b)=>b.closeTime-a.closeTime); // off-record results would misstate today's total
+  const closedAll=closedTrades().sort((a,b)=>b.closeTime-a.closeTime); // the chips are trades; the total below is money (spot by the day it was realized)
   if(!closedAll.length){ el.classList.add('hide'); return; }
   const day0=tzMidnight(Date.now()); // same "today" as the tripwire and daily analytics
   const today=closedAll.filter(t=>t.closeTime>=day0);
-  const tNet=today.reduce((s,t)=>s+t.net,0);
+  const tNet=closedMoney(t=>t.closeTime>=day0).reduce((s,t)=>s+t.net,0);
   const fmtT=ms=>{ const p=tzParts(ms); // tz-toggle clock — the "TODAY" cut is tz-aware, so the printed times must be too
     return ms>=day0 ? String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0')
     : (p.mo+1)+'/'+p.day; };
@@ -670,8 +670,9 @@ function renderPulse(){
   const el=$('pulse'); const inv=allTrades.filter(viewFilter);
   if(!inv.length){ el.classList.add('hide'); return; }
   const now=Date.now();
+  // the net is money (spot by the day it was realized); the count is of completed trades
   const win=(from)=>{ const xs=inv.filter(t=>t.closeTime>=from&&t.closeTime<=now);
-    return {net:xs.reduce((s,t)=>s+t.net,0), n:xs.length}; };
+    return {net:xs.filter(moneyRow).reduce((s,t)=>s+t.net,0), n:xs.filter(t=>tradeRow(t)&&!t.movedOut&&!t.isOpen).length}; };
   const spans=[['Today',win(tzMidnight(now))],['7D',win(now-7*86400000)],['30D',win(now-30*86400000)]];
   el.classList.remove('hide');
   el.innerHTML=spans.map(([k,v])=>`<div class="p-item" data-tip="Realized net PnL and trade count for this window (current market view — ignores the period selector below)."><span class="p-k">${k}</span><span class="p-v ${v.n?cls(v.net):''}">${v.n?fmtUsd(v.net):'—'}</span><span class="p-n">${v.n} trade${v.n===1?'':'s'}</span></div>`).join('');
@@ -683,7 +684,7 @@ function renderReview(){
 }
 function renderReviewInner(){
   const el=$('reviewView'); if(!el)return;
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const closed=closedTrades(viewFilter);
   if(!closed.length){ el.innerHTML=dayJournalSectionHtml()+habitsSectionHtml()+goalsSectionHtml()+playbooksSectionHtml()+'<div class="diag-section"><p class="lead">No closed trades in this view yet.</p></div>'; wireDayJournal(); wireHabits(); wireGoals(); wirePlaybooks(); return; }
   let procHtml=''; try{ procHtml=processSectionHtml(); }catch(e){ console.warn('process score failed',e); }
   const now=Date.now(), DAY=86400000;
@@ -951,7 +952,7 @@ function pbToggleNa(btn){
 let _pbEdit=null; // playbook id being edited, 'new', or null
 function playbooksSectionHtml(){
   const list=pbList();
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const closed=closedTrades(viewFilter);
   const stats=playbookStats(closed,journal,list,rFor), near=pbNearSetups(closed,journal,list);
   const mrow=(l,v,tip)=>`<div class="metric-row"${tip?` data-tip="${esc(tip)}"`:''}><span class="ml">${l}</span><span class="mv">${v}</span></div>`;
   const pct=x=>x==null?'—':Math.round(x*100)+'%';
@@ -1275,7 +1276,7 @@ function monthlyGoalModel(closed, goals, now){
 }
 function goalsSectionHtml(){
   const g=settings.goals||{};
-  const allClosed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const allClosed=closedMoney(viewFilter); // the month's P&L against the goal: money, spot by the day it was realized
   const m=monthlyGoalModel(allClosed,g);
   const inp=(id,val,ph,tip)=>`<div class="field"><label data-tip="${esc(tip)}">${ph}</label><input type="number" id="${id}" min="0" step="any" value="${val>0?esc(val):''}"></div>`;
   let progress='<p class="lead">Set a goal to see this month tracked against it. Goals are commitments made calmly — the month holds you to them.</p>';
@@ -1423,7 +1424,7 @@ const PROJ_BLOCKS=[[0,'resample: i.i.d. daily'],[5,'resample: 5-day blocks'],[7,
 function renderProjection(){
   const el=$('projView'); if(!el)return;
   if(_projChart){ _projChart.destroy(); _projChart=null; }
-  const closed=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t));
+  const closed=closedTrades(viewFilter);
   if(closed.length<5){ el.innerHTML='<div class="diag-section"><p class="lead">Need at least 5 closed trades in this view to project forward. Load more history first.</p></div>'+nfSizerHtml(); nfWireSizer(); return; }
   let base=projBaseline(closed,_proj.look), look=_proj.look;
   if((!base||base.trades<5)&&_proj.look>0){ base=projBaseline(closed,0); look=0; } // fall back to all history if the window is too thin

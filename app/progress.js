@@ -173,7 +173,7 @@ async function setWeekChallenge(spec, idx, auto){
   // the week's first pick (automatic) is graded from Monday; one that replaces it from the swap day on
   const swap=!auto&&!!weekChallenge(now), from=swap?Math.max(mon,dateBound(pzSwapStartKey(now,allTrades))):mon;
   let params=spec.params&&Object.keys(spec.params).length?spec.params:null;
-  if(spec.pid&&!params){ try{ const chron=allTrades.filter(t=>!t.isOpen&&t.closeTime&&viewFilter(t)).sort((a,b)=>a.closeTime-b.closeTime);
+  if(spec.pid&&!params){ try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
     params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const e={...(journal[k]||{})};
   e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,params:params||{},when:spec.when,then:spec.then},
