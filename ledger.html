@@ -1008,6 +1008,9 @@ body.light .pz-chart .pz-thr{border-top-color:#AEB7C2}
 body.light .pz-tag.leak,body.light .pz-tag.caution{background:#FDECE8;color:#A3341E}
 body.light .pz-tag.edge,body.light .pz-tag.win{background:#E6F6EF;color:#0A6B44}
 body.light .pz-tag.info{background:#E8F1FB;color:#2F4A6B}
+body.light .pz-tag.ninja,body.light .pz-tags .pz-tag.ninja,body.light .pz-chipbtn.pz-ninja-badge{background:linear-gradient(90deg,#FBF1D6,#EEE8FB);color:#7A5600}
+body.light .pz-ninja,body.light .pz-ninja-title{color:#9A6B00}
+body.light .pz-ninja-seal{background:#FFF8E6;color:#9A6B00;box-shadow:0 0 0 2px #C9971F}
 body.light .pz-pill[aria-checked="true"],body.light .pz-cta,body.light .pz-stars button[aria-checked="true"]{color:#FFFFFF}
 body.light .pz-step button,body.light .pz-badge[aria-pressed="true"],body.light .pz-badge .pz-bc,body.light .pz-stars button,body.light .pz-quote,body.light .pz-bonus .pz-bc,body.light .pz-bcell[aria-pressed="true"]{background:#EEF1F5}
 body.light .pz-cta .pz-xpb{background:rgba(255,255,255,.22);color:#FFFFFF}
@@ -1233,6 +1236,15 @@ body.pz-quiet-on{overflow:hidden}
 .pz-tag.leak,.pz-tag.caution{background:#3A1E16;color:#FFB39E}
 .pz-tag.edge,.pz-tag.win{background:#173A2C;color:#9DF2CB}
 .pz-tag.info{background:#1B2330;color:#B9CBE2}
+.pz-tag.ninja,.pz-tags .pz-tag.ninja{display:inline-flex;align-items:center;gap:4px;background:linear-gradient(90deg,#2B2413,#221B38);color:#F4C04E}
+/* High Ninja: a gold star by the name, a gold-to-violet ring round the picture, the role's badge */
+.pz-ninja{display:inline-flex;vertical-align:-2px;color:#F4C04E}
+.pz-ninja-ring{position:relative;display:inline-flex;flex-shrink:0;padding:4px;border-radius:50%!important;background:conic-gradient(from 210deg,#F4C04E,#B69CFF,#F4C04E,#FFB25A,#F4C04E)}
+.pz-ninja-ring>.pz-av{box-shadow:0 0 0 2px var(--pz-bg,#0B0D10)}
+.pz-ninja-ring.big{padding:5px}
+.pz-ninja-seal{position:absolute;right:-2px;bottom:-2px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%!important;background:#1A1608;color:#F4C04E;box-shadow:0 0 0 2px #F4C04E}
+.pz-ninja-title{align-self:flex-start;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#F4C04E}
+.pz-chipbtn.pz-ninja-badge{background:linear-gradient(90deg,#2B2413,#221B38);color:#F4C04E;box-shadow:inset 0 0 0 1px #5A4718}
 .pz-ins b{display:block;font-size:14px;font-weight:600;margin-bottom:2px}
 .pz-ins span{font-size:13px;color:var(--pz-muted)}
 .pz-q{font-size:15px;font-weight:700;margin:0 0 8px}

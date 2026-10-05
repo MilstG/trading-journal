@@ -114,6 +114,7 @@ tr.click{cursor:pointer}
 .pill.xp{background:#221B38;color:var(--xp)}
 .pill.wait{background:#2B2413;color:#F9DC8E}
 .pill.warnp{background:#3A2418;color:#FFB39E}
+.pill.ninja{background:linear-gradient(90deg,#2B2413,#221B38);color:#F4C04E;box-shadow:inset 0 0 0 1px #5A4718}
 .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
 .note{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#1B2027;border:1px solid var(--line2);border-radius:10px;padding:10px 16px;color:var(--soft);max-width:92vw;z-index:40;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 .note.err{border-color:#6A2E20;color:#FFB39E}
@@ -501,7 +502,7 @@ details>summary{list-style-position:inside}
       ${r.habits.length?`<h3>Habits they’re working on</h3><ul style="margin:0;padding-left:18px">${r.habits.map(h=>`<li>${esc(h)}</li>`).join('')}</ul>`:''}</section>`;
   }
   // ---------------- members ----------------
-  const pills=m=>[m.admin?'<span class="pill ok">admin</span>':'',m.claimed?'<span class="pill ok">claimed ✓</span>':'',m.passkeys?`<span class="pill">${m.passkeys} passkey${m.passkeys===1?'':'s'}</span>`:'',m.verified?'<span class="pill ok" title="Their Discipline is read from their wallet’s fills">Discipline verified</span>':'',m.unlocked?'<span class="pill xp">unlocked</span>':'',m.standing==='lapsed'?'<span class="pill ban" title="Their perks are locked until their last 20 trading days are back at the bar (or their wallet is verified)">standing lapsed</span>':m.standing==='slipping'||m.standing==='unverified'?`<span class="pill wait" title="In their days of grace">standing ${m.standing==='slipping'?'slipping':'unverified'}</span>`:'',
+  const pills=m=>[m.admin?'<span class="pill ok">admin</span>':'',m.ninja?'<span class="pill ninja" title="Fully unlocked while they hold the role, with the star on their profile">✦ High Ninja</span>':'',m.claimed?'<span class="pill ok">claimed ✓</span>':'',m.passkeys?`<span class="pill">${m.passkeys} passkey${m.passkeys===1?'':'s'}</span>`:'',m.verified?'<span class="pill ok" title="Their Discipline is read from their wallet’s fills">Discipline verified</span>':'',m.unlocked?'<span class="pill xp">unlocked</span>':'',m.standing==='lapsed'?'<span class="pill ban" title="Their perks are locked until their last 20 trading days are back at the bar (or their wallet is verified)">standing lapsed</span>':m.standing==='slipping'||m.standing==='unverified'?`<span class="pill wait" title="In their days of grace">standing ${m.standing==='slipping'?'slipping':'unverified'}</span>`:'',
     m.adminMade&&!m.keys?'<span class="pill">not signed in yet</span>':'',m.banned?'<span class="pill ban">suspended</span>':''].filter(Boolean).join(' ');
   const codeBox=c=>{ const link=c.admin?adminLinkFor(c.code):linkFor(c.code); return `<div class="okbox" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><div><div class="small">${c.admin?'Admin sign-in link':'Sign-in code'} for @${esc(c.handle)} · good for 7 days${c.admin?' — send it to them; opening it signs them in here':''}</div><div class="code">${esc(c.code)}</div></div>
       <div class="fit row" style="align-items:center"><button class="sm fit" data-copy="${esc(link)}">Copy link</button><button class="sm fit" data-copy="${esc(c.code)}">Copy code</button><button class="sm fit" id="codeDone">Done</button></div></div>
@@ -512,7 +513,7 @@ details>summary{list-style-position:inside}
   // so the owner's journal and the server stay the owner's. Only the owner adds or removes them.
   // "POST members/<id> · grant" -> "gave XP to @sam"
   const ACT_WORDS={grant:'gave XP to',ungrant:'undid XP for',ban:'suspended',unban:'restored',remove:'deleted',edit:'edited',admin:'made an admin:',unadmin:'removed as admin:',
-    code:'made a sign-in code for',unlock:'fully unlocked',lock:'locked',mentor:'made a mentor:',unmentor:'removed as mentor:',coach:'set the coach allowance for',tier:'changed the tier of',
+    code:'made a sign-in code for',unlock:'fully unlocked',lock:'locked',ninja:'made a High Ninja:',unninja:'took High Ninja from',mentor:'made a mentor:',unmentor:'removed as mentor:',coach:'set the coach allowance for',tier:'changed the tier of',
     leagues:'changed the leagues of',award:'awarded a badge to',revoke:'took a badge back from'};
   const NOUNS={leagues:'league',competitions:'competition',badges:'badge',events:'feed post'};
   function logWords(what){ const m=/^(\w+) ([\w-]+)(?:\/([^ ]+))?(?: · (\w+))?/.exec(what||''); if(!m)return what;
@@ -554,7 +555,7 @@ details>summary{list-style-position:inside}
       <section class="card"><div class="ch"><h2>Members <span class="sub2">· ${D.members.length}</span></h2></div>
       <div class="toolbar">
         <input id="q" placeholder="Search by name or address" aria-label="Search members" value="${esc(UI.q)}">
-        <div>${sel('mFilter',[['all','Everyone'],['suspended','Suspended'],['unlocked','Fully unlocked'],['added','Added by you'],['coach','Used the coach today'],['unverified','Wallet unverified'],['waiting','Wallet waiting for you'],['nowallet','No wallet']],UI.filter,' aria-label="Filter"')}</div>
+        <div>${sel('mFilter',[['all','Everyone'],['suspended','Suspended'],['unlocked','Fully unlocked'],['ninja','High Ninjas'],['added','Added by you'],['coach','Used the coach today'],['unverified','Wallet unverified'],['waiting','Wallet waiting for you'],['nowallet','No wallet']],UI.filter,' aria-label="Filter"')}</div>
       </div>
       <div class="bulk${UI.msel.size?' on':''}" id="mBulk">${mBulkHtml()}</div>
       <div class="scroll"><table><thead><tr><th style="width:34px"><input type="checkbox" id="mSelAll" aria-label="Select everyone on this page"></th><th>Member</th><th>Wallet</th><th>Level</th><th class="hide-sm n">Streak</th><th class="hide-sm">Leagues</th><th class="hide-sm n">Coach</th><th class="hide-sm n">30d return</th><th class="n">Last seen</th></tr></thead><tbody id="mRows">${memberRows()}</tbody></table></div><div id="mPager">${memberPg().html}</div>
@@ -570,7 +571,7 @@ details>summary{list-style-position:inside}
   function memberPg(){
     const q=UI.q.toLowerCase(), f=UI.filter;
     const pg=pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q)||(m.wallets||[]).some(a=>String(a).toLowerCase().includes(q)))
-      &&(f==='all'||(f==='suspended'&&m.banned)||(f==='unlocked'&&m.unlocked)||(f==='added'&&m.adminMade)||(f==='coach'&&m.coachUsed>0)||(f==='unverified'&&m.walletStatus==='rejected')
+      &&(f==='all'||(f==='suspended'&&m.banned)||(f==='unlocked'&&m.unlocked)||(f==='ninja'&&m.ninja)||(f==='added'&&m.adminMade)||(f==='coach'&&m.coachUsed>0)||(f==='unverified'&&m.walletStatus==='rejected')
       ||(f==='waiting'&&m.address&&D.wallets.approveWallets&&m.walletStatus==='pending')||(f==='nowallet'&&!m.address))));
     // the empty state sits under the table (with the pager), not in a row: a 9-column row is wider than a phone and cut it off
     if(!pg.items.length)pg.html=`<p class="muted" id="mEmpty" style="margin:10px 0 0">${D.members.length?'Nobody matches.':'No members yet. Add one above, or share your /daruma link and people join from the Social tab.'}</p>`+pg.html;
@@ -623,7 +624,8 @@ details>summary{list-style-position:inside}
         ${grants.length?`<h3>History</h3><div class="scroll"><table><tbody>${pager('grants:'+m.id,grants).items.map(g=>`<tr><td><b>${g.xp>0?'+':''}${fmt(g.xp)}</b></td><td>${esc(g.why)}</td><td class="muted small">${esc(ago(g.at))}</td><td><button class="sm danger" data-ungrant="${esc(g.id)}">Undo</button></td></tr>`).join('')}</tbody></table></div>${pager('grants:'+m.id,grants).html}`:''}
       </section>
       <section class="card"><h2>Access</h2>
-        ${box('mUnlocked','Fully unlocked',m.unlocked,'Every feature regardless of level, and the unlocked coach allowance.')}
+        ${box('mNinja','✦ High Ninja',!!m.ninja,'A role: the High Ninja badge and a gold star ring on their profile, the star by their name in the feed and People, and fully unlocked while they hold it. Taking it away leaves “Fully unlocked” below as you set it.')}
+        ${box('mUnlocked','Fully unlocked',!!m.unlockedOwn,'Every feature regardless of level, and the unlocked coach allowance.'+(m.ninja?' They have it anyway as a High Ninja.':''))}
         ${box('mMentor','Mentor',m.mentor,'Sees the days of members who let mentors in (scores, slips, nightly lesson) and can leave them notes.'+(m.mentorXp?' Earned '+m.mentorXp.toLocaleString()+' XP mentoring so far.':''))}
         ${ME.owner?box('mAdmin','Admin',m.admin,'Can use this admin panel with their own profile (everything except adding or removing admins). Send them the link from “New sign-in code”, or they open /admin on a device where they use Daruma.'):m.admin?'<p class="muted small">Admin — only the owner changes that.</p>':''}
         ${m.admin?'<p class="muted small">Admins ask the coach without a limit.</p>':field('mCoach','Coach messages a day',`<input id="mCoach" type="number" min="0" max="1000" placeholder="default (${m.unlocked?cc.dailyUnlocked:cc.daily})" value="${m.coachDaily!=null?m.coachDaily:''}">`,'Empty uses the default from the Coach tab. 0 switches the coach off for them.')}
@@ -658,9 +660,9 @@ details>summary{list-style-position:inside}
     if(a==='mapwallet'){ const ad=val('mMap').trim(); if(!ADDR.test(ad))return note('That isn’t a wallet address (0x and 40 hex characters).',true);
       return act(()=>post({action:'link',address:ad}),'Wallet mapped to @'+m.handle+'.'); }
     if(a==='coachreset') return act(()=>post({action:'coachreset'}),'@'+m.handle+' can ask the coach again today'+(m.address?' (their wallet’s count is reset too)':'')+'.');
-    if(a==='access'){ const v=$('mCoach')?val('mCoach').trim():'', un=chk('mUnlocked');
+    if(a==='access'){ const v=$('mCoach')?val('mCoach').trim():'', un=chk('mUnlocked'), nj=chk('mNinja');
       const mt=chk('mMentor'), ad=ME.owner?chk('mAdmin'):!!m.admin;
-      return act(async()=>{ if(un!==m.unlocked)await post({action:un?'unlock':'lock'}); if(mt!==!!m.mentor)await post({action:mt?'mentor':'unmentor'}); if(ad!==!!m.admin)await post({action:ad?'admin':'unadmin'}); if($('mCoach'))await post({action:'coach',daily:v===''?null:+v}); },'Access saved.'); }
+      return act(async()=>{ if(nj!==!!m.ninja)await post({action:nj?'ninja':'unninja'}); if(un!==!!m.unlockedOwn)await post({action:un?'unlock':'lock'}); if(mt!==!!m.mentor)await post({action:mt?'mentor':'unmentor'}); if(ad!==!!m.admin)await post({action:ad?'admin':'unadmin'}); if($('mCoach'))await post({action:'coach',daily:v===''?null:+v}); },'Access saved.'); }
     if(a==='leagues'){ const want=[...document.querySelectorAll('input[name=mLeague]')].filter(i=>i.checked).map(i=>i.value), had=m.leagues.map(x=>x.id);
       const tiers=[...document.querySelectorAll('[data-tier-league]')].map(s=>[s.dataset.tierLeague,+s.value]);
       return act(async()=>{ await post({action:'leagues',join:want.filter(x=>!had.includes(x)),leave:had.filter(x=>!want.includes(x))});
