@@ -606,7 +606,7 @@ try {
       const man = await cdp.send('Page.getAppManifest');
       ok(/\/(manifest|pulse)\.webmanifest$/.test(man.url), path + ' manifest: ' + man.url);
       eq((await cdp.send('Page.getInstallabilityErrors')).installabilityErrors, [], path + ' is installable');
-      eq(await p.$eval('link[rel=apple-touch-icon]', l => l.getAttribute('href')), icon);
+      eq((await p.$eval('link[rel=apple-touch-icon]', l => l.getAttribute('href'))).replace(/\?v=[0-9a-f]{12}$/, ''), icon);
       const M = JSON.parse(man.data);
       ok(M.icons.some(i => i.sizes === '512x512' && i.purpose === 'maskable') && M.icons.some(i => i.sizes === '192x192'), JSON.stringify(M.icons));
       for (const i of M.icons) eq((await fetch(BASE + i.src)).headers.get('content-type'), 'image/png', i.src);

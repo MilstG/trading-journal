@@ -156,7 +156,7 @@ t('the page switches on /daruma or ?daruma (and the old /keel and /pulse) before
     vm.runInNewContext(early, sb);
     eq(cls.has('pz-mode'), on, path + search);
     eq(replaced, shown || null, path + ' shows as /daruma');
-    if (on) { eq(attrs['link[rel="manifest"]'], '/pulse.webmanifest'); eq(sb.document.title, 'Daruma — Ledger'); }
+    if (on) { eq(attrs['link[rel="manifest"]'], '/pulse.webmanifest'); eq(sb.document.title, 'Daruma'); }
   }
 });
 t('Pulse forces the coach layer on and redraws only its own view', () => {
@@ -184,15 +184,19 @@ await t('/daruma (and the old /keel and /pulse) serve the app, their trailing-sl
     // iPhone's Add to Home Screen reads these from the markup as served, never from the page's own scripts
     const head = async pth => { const h = await (await fetch(b + pth)).text(); return h.slice(0, h.indexOf('<style')); };
     const dh = await head('/daruma');
-    ok(dh.includes('<title>Daruma — Ledger</title>') && dh.includes('<meta name="apple-mobile-web-app-title" content="Daruma">'), 'Daruma installs under its own name');
-    ok(dh.includes('<link rel="apple-touch-icon" href="/icons/pulse-180.png">') && dh.includes('<link rel="manifest" href="/pulse.webmanifest">'), 'with its PNG icon and manifest');
+    ok(dh.includes('<title>Daruma</title>') && dh.includes('<meta name="apple-mobile-web-app-title" content="Daruma">'), 'Daruma installs under its own name');
+    const icon = /<link rel="apple-touch-icon" href="(\/icons\/pulse-180\.png\?v=[0-9a-f]{12})">/.exec(dh);
+    ok(icon && dh.includes('<link rel="manifest" href="/pulse.webmanifest">'), 'with its PNG icon, addressed by content hash, and its manifest');
+    const r1 = await fetch(b + icon[1]); eq([r1.status, r1.headers.get('cache-control')], [200, 'public, max-age=31536000, immutable'], 'the current icon caches for good');
+    const r0 = await fetch(b + '/icons/pulse-180.png?v=000000000000'); eq([r0.status, r0.headers.get('cache-control')], [200, 'no-cache'], 'an old address is served but never kept');
     ok(!dh.includes('href="data:'), 'no data: icon or manifest left in the served head');
     const jh = await head('/');
     ok(jh.includes('<title>Ledger — Hyperliquid Trade Journal</title>') && jh.includes('<meta name="apple-mobile-web-app-title" content="Ledger">'), 'the journal keeps its name');
-    ok(jh.includes('<link rel="apple-touch-icon" href="/icons/ledger-180.png">') && jh.includes('<link rel="manifest" href="/manifest.webmanifest">'), 'with its PNG icon and manifest');
+    ok(/<link rel="apple-touch-icon" href="\/icons\/ledger-180\.png\?v=[0-9a-f]{12}">/.test(jh) && jh.includes('<link rel="manifest" href="/manifest.webmanifest">'), 'with its PNG icon and manifest');
     for (const pth of ['/daruma/', '/keel/', '/pulse/']) { const rd = await fetch(b + pth + '?x=1', { redirect: 'manual' }); eq(rd.status, 302); eq(rd.headers.get('location'), '/daruma?x=1'); }
     const m = await (await fetch(b + '/pulse.webmanifest')).json();
-    eq(m.start_url, '/daruma'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq(m.short_name, 'Daruma'); eq(m.icons.map(i => i.src + ' ' + i.purpose), ['/icons/pulse-192.png any', '/icons/pulse-512.png any', '/icons/pulse-maskable-512.png maskable']);
+    eq(m.start_url, '/daruma'); eq(m.id, '/pulse', 'the old id, so installs made as Pulse update in place'); eq([m.name, m.short_name], ['Daruma', 'Daruma']);
+    eq(m.icons.map(i => i.src.replace(/\?v=[0-9a-f]{12}$/, '#v') + ' ' + i.purpose), ['/icons/pulse-192.png#v any', '/icons/pulse-512.png#v any', '/icons/pulse-maskable-512.png#v maskable'], 'each icon addressed by its content hash');
     const ic = await fetch(b + '/pulse-icon.svg'); eq(ic.headers.get('content-type'), 'image/svg+xml');
     ok((await ic.text()).includes('stroke-dasharray="72 100"'), 'the icon is the daruma mark (icons/daruma.svg), its outline 72% painted');
     for (const n of ['pulse-180', 'pulse-192', 'pulse-512', 'pulse-maskable-512']) eq((await fetch(b + '/icons/' + n + '.png')).headers.get('content-type'), 'image/png', n);
