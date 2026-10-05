@@ -112,10 +112,12 @@ figure{margin:0}
 
 /* steps */
 ol.steps{list-style:none;padding:0;margin:18px 0 26px;counter-reset:step;max-width:none}
-ol.steps>li{counter-increment:step;display:grid;grid-template-columns:40px minmax(0,1fr);gap:14px;padding:16px 0;border-top:1px solid var(--line);margin:0}
+ol.steps>li{counter-increment:step;display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:14px;row-gap:0;align-items:start;padding:16px 0;border-top:1px solid var(--line);margin:0}
+/* heading and text both sit in the text column; the number spans their rows */
+ol.steps>li>*{grid-column:2;min-width:0}
 ol.steps>li:last-child{border-bottom:1px solid var(--line)}
-ol.steps>li::before{content:counter(step);font:600 15px/40px var(--mono);text-align:center;width:40px;height:40px;border-radius:50%;background:var(--acc);color:var(--acc-ink)}
-ol.steps b{display:block;font-size:16px;margin-bottom:2px}
+ol.steps>li::before{grid-column:1;grid-row:1 / span 2;content:counter(step);font:600 15px/40px var(--mono);text-align:center;width:40px;height:40px;border-radius:50%;background:var(--acc);color:var(--acc-ink)}
+ol.steps b{display:block;font-size:16px;line-height:1.35;margin:9px 0 4px}
 ol.steps p{margin:0;color:var(--muted)}
 
 /* callouts */
