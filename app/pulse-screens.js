@@ -584,7 +584,7 @@ function socRowsHtml(rows, board, emptyText, key){
 }
 // one "Ranked by" picker instead of a row of pills under the tabs
 function socRankSel(id, opts, cur){
-  return `<div class="pz-rankby"><span class="pz-lbl" style="color:var(--pz-muted)">Ranked by</span><div class="pz-chiprow" role="group" aria-label="Ranked by">${opts.map(([k,l])=>`<button type="button" class="pz-chipbtn" data-soc-rankfor="${id}" data-v="${esc(k)}" aria-pressed="${k===cur}">${esc(l)}</button>`).join('')}</div><select id="${id}" hidden aria-hidden="true" tabindex="-1">${opts.map(([k,l])=>`<option value="${esc(k)}"${k===cur?' selected':''}>${esc(l)}</option>`).join('')}</select></div>`;
+  return `<div class="pz-rankby"><span class="pz-lbl" style="color:var(--pz-muted)">Ranked by</span><div class="pz-chiprow pz-wrapr" role="group" aria-label="Ranked by">${opts.map(([k,l])=>`<button type="button" class="pz-chipbtn" data-soc-rankfor="${id}" data-v="${esc(k)}" aria-pressed="${k===cur}">${esc(l)}</button>`).join('')}</div><select id="${id}" hidden aria-hidden="true" tabindex="-1">${opts.map(([k,l])=>`<option value="${esc(k)}"${k===cur?' selected':''}>${esc(l)}</option>`).join('')}</select></div>`;
 }
 function socOptHtml(d){
   const need={boards:'Process leaderboards',verify:'Verify my discipline',ret:'Show % return',usd:'Show dollar P&L',global:'Global leaderboards'};
