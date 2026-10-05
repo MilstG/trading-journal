@@ -17,6 +17,9 @@
 //   CEX_RELAY_SECRET=<long random string>         (the same value on both servers)
 // The far copy runs with CEX_RELAY_ONLY=1 and the same CEX_RELAY_SECRET: it then answers
 // nothing but /api/health and this relay, and only to callers that present the secret.
+//
+// Limits: CEX_RELAY_PER_MIN (each caller, a minute), CEX_RELAY_ALL_PER_MIN (everyone together) and
+// CEX_RELAY_IN_FLIGHT (requests waiting on an exchange at once).
 'use strict';
 
 const HOSTS = {
@@ -40,6 +43,22 @@ const HEADERS = {
 const QUERY_RE = /^[A-Za-z0-9=&%._~-]{0,4096}$/;
 const HVAL_RE = /^[A-Za-z0-9._+/=-]{1,256}$/;
 const MAX_ANSWER = 8 * 1024 * 1024;
+// the far copy wraps the exchange's answer in JSON, and escaping can grow it
+const MAX_RELAYED = 2 * MAX_ANSWER + 64 * 1024;
+
+// an answer's text, counted in bytes as it arrives: past max the read stops and it's null (an answer
+// with no Content-Length, or a wrong one, is never held whole); answers without a stream (tests) still capped
+async function readCapped(res, max) {
+  const cl = res.headers && typeof res.headers.get === 'function' ? +res.headers.get('content-length') : 0;
+  const rd = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+  if (cl > max) { if (rd) rd.cancel().catch(() => {}); return null; }
+  if (!rd) { const t = typeof res.text === 'function' ? await res.text() : JSON.stringify(await res.json()); return Buffer.byteLength(String(t)) > max ? null : String(t); }
+  const parts = []; let n = 0;
+  for (;;) { const { done, value } = await rd.read(); if (done) break;
+    n += value.byteLength; if (n > max) { rd.cancel().catch(() => {}); return null; }
+    parts.push(value); }
+  return Buffer.concat(parts).toString('utf8');
+}
 
 // an exchange refusing the caller's country: Binance answers 451; Bybit's CDN a 403 page
 function geoRefusal(status, body) {
@@ -89,7 +108,11 @@ function createCexRelay(opts) {
   const upstream = v => String(env['CEX_RELAY_URL_' + v.toUpperCase()] || env.CEX_RELAY_URL || '').replace(/\/+$/, '');
   const hostOf = (venue, host) => venue === 'bybit' && host === 'api' && /^[a-z0-9.-]+$/i.test(env.BYBIT_API_HOST || '') ? env.BYBIT_API_HOST : HOSTS[venue][host];
   const perMin = Math.max(10, parseInt(env.CEX_RELAY_PER_MIN, 10) || 1200);
+  // everyone together: many callers (or many members) can't each spend a full budget at once
+  const allPerMin = Math.max(perMin, parseInt(env.CEX_RELAY_ALL_PER_MIN, 10) || 6000);
+  const maxInFlight = Math.max(1, parseInt(env.CEX_RELAY_IN_FLIGHT, 10) || 32);
   const counts = new Map(); // caller -> {min, n}
+  const all = { min: -1, n: 0 }; let inFlight = 0;
 
   // a caller's budget: a full first load is a few hundred requests, so the default is generous
   function allow(who) {
@@ -99,6 +122,7 @@ function createCexRelay(opts) {
     if (counts.size > 5000) for (const [k, v] of counts) if (v.min !== m) counts.delete(k);
     return ++c.n <= perMin;
   }
+  const allowAll = () => { const m = Math.floor(now() / 60000); if (all.min !== m) { all.min = m; all.n = 0; } return ++all.n <= allPerMin; };
 
   async function forward(r) {
     const up = upstream(r.venue);
@@ -112,8 +136,11 @@ function createCexRelay(opts) {
           headers: { 'Content-Type': 'application/json', 'X-Relay-Secret': secret },
           body: JSON.stringify({ venue: r.venue, host: r.host, path: r.path, query: r.query, headers: r.headers }) });
       } catch (e) { return { status: 0, error: 'the relay at ' + up + ' didn’t answer (' + (e && e.message || e) + ')' }; }
-      let j = null; try { j = await res.json(); } catch (e) {}
+      let raw = '', j = null; try { raw = await readCapped(res, MAX_RELAYED); } catch (e) {}
+      if (raw == null) return { status: 0, error: 'the relay at ' + up + ' answered with too much' };
+      try { j = JSON.parse(raw); } catch (e) {}
       if (!res.ok || !j) return { status: 0, error: 'the relay at ' + up + ' answered HTTP ' + res.status + (j && j.error ? ': ' + j.error : '') };
+      if (typeof j.body === 'string' && Buffer.byteLength(j.body) > MAX_ANSWER) return { status: 0, error: 'the exchange’s answer was too large' };
       return { status: j.status, body: j.body, geo: !!j.geo, detail: j.detail, via: 'relay' };
     }
     const url = 'https://' + hostOf(r.venue, r.host) + r.path + (r.query ? '?' + r.query : '');
@@ -123,8 +150,8 @@ function createCexRelay(opts) {
         headers: Object.assign({ 'Accept': 'application/json', 'User-Agent': 'ledger-relay' }, r.headers) });
     } catch (e) { return { status: 0, error: 'couldn’t reach ' + (r.venue === 'bybit' ? 'Bybit' : 'Binance') + ' (' + (e && e.message || e) + ')' }; }
     let body = '';
-    try { body = await res.text(); } catch (e) {}
-    if (body.length > MAX_ANSWER) return { status: 0, error: 'the exchange’s answer was too large' };
+    try { body = await readCapped(res, MAX_ANSWER); } catch (e) {}
+    if (body == null) return { status: 0, error: 'the exchange’s answer was too large' };
     if (geoRefusal(res.status, body)) return { status: res.status, body: '', geo: true, detail: geoDetail(body) };
     return { status: res.status, body };
   }
@@ -133,9 +160,13 @@ function createCexRelay(opts) {
   async function handle(body, who) {
     if (!who) return [401, { error: 'unauthorized' }];
     if (!allow(who)) return [429, { error: 'too many exchange requests — wait a minute' }];
+    if (!allowAll()) return [429, { error: 'the relay is busy with exchange requests — wait a minute' }];
     const r = checkRequest(body);
     if (r.error) return [400, { error: r.error }];
-    const out = await forward(r);
+    // each one waits up to 30 s on an exchange: a burst can't pile up open requests without end
+    if (inFlight >= maxInFlight) return [503, { error: 'the relay is busy — try again in a moment' }];
+    inFlight++; let out;
+    try { out = await forward(r); } finally { inFlight--; }
     if (out.error) return [502, { error: out.error }];
     return [200, out];
   }

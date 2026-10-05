@@ -416,6 +416,43 @@ await t('no caller, no relay; each caller has a per-minute budget', async () => 
   eq((await relay.handle({ venue: 'bybit', host: 'api', path: '/v5/market/time' }, 'm:1'))[0], 429);
   eq((await relay.handle({ venue: 'bybit', host: 'api', path: '/v5/market/time' }, 'm:2'))[0], 200);
 });
+const TIME = { venue: 'bybit', host: 'api', path: '/v5/market/time' };
+await t('everyone together has a per-minute ceiling too', async () => {
+  let clock = NOW; const relay = Relay.createCexRelay({ env: { CEX_RELAY_PER_MIN: '10', CEX_RELAY_ALL_PER_MIN: '15' }, fetchImpl: exchangeMock, now: () => clock });
+  for (let i = 0; i < 10; i++) eq((await relay.handle(TIME, 'm:1'))[0], 200);
+  for (let i = 0; i < 5; i++) eq((await relay.handle(TIME, 'm:2'))[0], 200);
+  eq((await relay.handle(TIME, 'm:2'))[0], 429, 'm:2 is under its own budget, but the relay’s is spent');
+  eq((await relay.handle(TIME, 'm:3'))[0], 429, 'a new caller too');
+  clock += 60000; eq((await relay.handle(TIME, 'm:3'))[0], 200, 'the next minute');
+});
+await t('only so many requests wait on an exchange at once', async () => {
+  const gates = []; const f = (u, o) => new Promise((res, rej) => gates.push({ res: () => res(exchangeMock(u, o)), rej }));
+  const relay = Relay.createCexRelay({ env: { CEX_RELAY_IN_FLIGHT: '2' }, fetchImpl: f, now: () => NOW });
+  const a = relay.handle(TIME, 'm:1'), b = relay.handle(TIME, 'm:2');
+  await new Promise(r => setTimeout(r, 0)); eq(gates.length, 2);
+  const [code, out] = await relay.handle(TIME, 'm:3'); eq(code, 503); ok(/busy/.test(out.error)); eq(gates.length, 2, 'never sent');
+  gates[0].res(); gates[1].rej(new Error('socket hang up'));
+  eq((await a)[0], 200); eq((await b)[0], 502, 'a failed one gives its place back too');
+  const c = relay.handle(TIME, 'm:3'), d = relay.handle(TIME, 'm:3');
+  await new Promise(r => setTimeout(r, 0)); eq(gates.length, 4); gates[2].res(); gates[3].res();
+  eq([(await c)[0], (await d)[0]], [200, 200]);
+});
+await t('an oversized answer is cut off as it streams in, without a Content-Length', async () => {
+  let pulled = 0; const endless = () => new Response(new ReadableStream({ pull(c) { pulled++; c.enqueue(new Uint8Array(1 << 20).fill(32)); } }), { status: 200 });
+  const relay = Relay.createCexRelay({ env: {}, fetchImpl: async () => endless(), now: () => NOW });
+  const [code, out] = await relay.handle(TIME, 'owner');
+  eq(code, 502); ok(/too large/.test(out.error), out.error); ok(pulled <= 12, 'stopped near 8 MB, read ' + pulled + ' MB');
+  // and from a chained relay, whose answer is the far copy's
+  pulled = 0; const chained = Relay.createCexRelay({ env: { CEX_RELAY_URL: 'https://relay.example.com', CEX_RELAY_SECRET: 's3cret-shared-value' }, fetchImpl: async () => endless(), now: () => NOW });
+  const [code2, out2] = await chained.handle(TIME, 'owner');
+  eq(code2, 502); ok(/too much/.test(out2.error), out2.error); ok(pulled <= 20, 'read ' + pulled + ' MB');
+  // a Content-Length past the cap is refused before reading anything
+  pulled = 0; const big = Relay.createCexRelay({ env: {}, fetchImpl: async () => { const r = endless(); r.headers.set('content-length', String(9 * 1024 * 1024)); return r; }, now: () => NOW });
+  ok(/too large/.test((await big.handle(TIME, 'owner'))[1].error)); ok(pulled <= 1);
+  // a normal streamed answer still comes through whole
+  const fine = Relay.createCexRelay({ env: {}, fetchImpl: async () => new Response('{"time":' + NOW + ',"x":"é"}', { status: 200 }), now: () => NOW });
+  eq(JSON.parse((await fine.handle(TIME, 'owner'))[1].body), { time: NOW, x: 'é' });
+});
 
 console.log('\nRelay over HTTP (server.js)');
 const listen = app => new Promise(res => app.listen(0, () => res('http://127.0.0.1:' + app.address().port)));

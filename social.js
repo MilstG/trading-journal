@@ -71,6 +71,7 @@ const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const MAX_MEMBERS = 5000;
 const WALLETS_SEEN_MAX = 20000; // wallets entered in the app that the owner's Wallets list keeps
+const SEEN_ALL_MAX = 300;       // POST /seen from everyone together per 10 minutes (each IP has its own 30): many IPs can't flood it
 const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
 // guestCap: people using Pulse without a profile stop at this level (their XP still counts, and creating a
@@ -1591,6 +1592,9 @@ function createSocial(opts) {
   // counted seed wallets are read again daily, left-out ones weekly (a new trader may have traded enough since);
   // a counted one whose re-reads keep failing stops counting after SEED_STALE
   const BENCH_FRESH = 21 * 86400000, SEED_REFRESH = 86400000, SEED_SKIP_REFRESH = 7 * 86400000, SEED_STALE = 28 * 86400000, SEED_MAX = 5000;
+  // wallets entered in the app come from anyone: they hold at most SEED_APP_MAX of the seed places and add at most
+  // SEED_APP_DAY a UTC day, so anonymous traffic never crowds out (or outweighs) the owner's own seeds
+  const SEED_APP_MAX = 1000, SEED_APP_DAY = 200;
   const benchRows = () => {
     const rows = [], mine = new Set(), src = []; let seeds = 0;
     for (const m of members()) {
@@ -1633,10 +1637,11 @@ function createSocial(opts) {
   let seedBusy = false, seedTimer = null, closing = false;
   const seedDelay = opts.seedDelay != null ? opts.seedDelay : 4000;
   const seedDue = x => x.st === 'ok' ? !!x.re || now() - (x.done || 0) > SEED_REFRESH : x.st === 'skip' && now() - (x.done || 0) > SEED_SKIP_REFRESH;
-  const nextSeed = () => { let due = null;
-    for (const [a, x] of Object.entries(S.benchSeeds)) { if (x.st === 'queued') return a;
+  // the owner's queued seeds go before ones entered in the app, so an app backlog never holds them up
+  const nextSeed = () => { let due = null, app = null;
+    for (const [a, x] of Object.entries(S.benchSeeds)) { if (x.st === 'queued') { if (x.by !== 'app') return a; app = app || a; continue; }
       if (seedDue(x) && (!due || x.done < S.benchSeeds[due].done)) due = a; }
-    return due; };
+    return app || due; };
   const seedWhy = r => { const c = S.config.bench;
     return r.why === 'few' ? (r.n || 0) + ' closed trade' + (r.n === 1 ? '' : 's') + ' in the last ' + c.days + ' days (needs ' + c.minTrades + ')'
       : r.why === 'short' ? 'under 2 weeks of trading in the last ' + c.days + ' days'
@@ -2521,17 +2526,20 @@ function createSocial(opts) {
     // seed wallet, so the benchmarks count it (anonymously, like any seed) once it has traded enough
     if (head === 'seen' && !parts[1] && M === 'POST') {
       if (limited(req, 'seen', 30, 600000)) return json(res, 429, { error: 'Too many requests from here. Try again in a few minutes.' });
+      if (limited(req, 'seen:all', SEEN_ALL_MAX, 600000, true)) return json(res, 429, { error: 'Too many requests right now. Try again in a few minutes.' });
       const list = [...new Set((Array.isArray(body.addresses) ? body.addresses : []).slice(0, 20)
         .filter(a => typeof a === 'string' && ADDR_RE.test(a)).map(a => a.toLowerCase()))];
       if (!list.length) return json(res, 400, { error: 'no wallet addresses' });
-      const t = now(), day = utcDayKey(t); let seen = false, seeded = false;
+      const t = now(), day = utcDayKey(t); let seen = false, seeded = false, appN = 0, appDay = 0;
+      for (const x of Object.values(S.benchSeeds)) if (x.by === 'app') { appN++; if (utcDayKey(x.added || 0) === day) appDay++; }
       for (const a of list) {
         const w = own(S.walletsSeen, a) ? S.walletsSeen[a] : null;
         if (!w) { S.walletsSeen[a] = { first: t, last: t }; seen = true; }
         else if (utcDayKey(w.last || 0) !== day) { w.last = t; seen = true; }
         // a wallet the owner rejected stays out; the owner can still add it by hand under Benchmarks
-        if (!own(S.benchSeeds, a) && walletStatus(a) !== 'rejected' && Object.keys(S.benchSeeds).length < SEED_MAX) {
-          S.benchSeeds[a] = { st: 'queued', added: t, by: 'app' }; seeded = true; }
+        // past the app's share or today's allowance it's still listed, just not read for the benchmarks
+        if (!own(S.benchSeeds, a) && walletStatus(a) !== 'rejected' && appN < SEED_APP_MAX && appDay < SEED_APP_DAY && Object.keys(S.benchSeeds).length < SEED_MAX) {
+          S.benchSeeds[a] = { st: 'queued', added: t, by: 'app' }; seeded = true; appN++; appDay++; }
       }
       const all = Object.keys(S.walletsSeen);
       if (all.length > WALLETS_SEEN_MAX) { // the least recently seen go first
