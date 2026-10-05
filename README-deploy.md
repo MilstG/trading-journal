@@ -375,6 +375,8 @@ Two ways to fix it:
 | `CEX_RELAY_SECRET` | *(unset)* | Shared by the main server and the relay copy |
 | `CEX_RELAY_ONLY` | *(off)* | `1` on the relay copy: relay and health check only |
 | `CEX_RELAY_PER_MIN` | `1200` | Relayed requests per caller per minute (a first two-year Bybit load is a few hundred) |
+| `CEX_RELAY_ALL_PER_MIN` | `6000` | Relayed requests per minute from everyone together (never below `CEX_RELAY_PER_MIN`) |
+| `CEX_RELAY_IN_FLIGHT` | `32` | Relayed requests waiting on an exchange at once; past it the relay answers 503 |
 | `BYBIT_API_HOST` | `api.bybit.com` | Another Bybit API host if your account lives on one (e.g. a regional entity's) |
 
 If a member puts an IP restriction on their Binance key, it must include the IP the
