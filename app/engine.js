@@ -242,6 +242,7 @@ let ledFlows=[], ledSkipped=0; // classified capital flows (deposits/withdrawals
 let _fetchHealth={funding:false,ledger:false,twap:false}; // partial-fetch flags for the persistent data-health line
 // how much of the account's history the fills the exchange still serves explain (data-io.js: coverageOf), across loaded wallets
 let dataCoverage=null;
+let dataAudit=null; // per wallet: the fills set against the exchange's own perp P&L curve (pnlAudit)
 let spotHoldings=[], spotAccountValue=null, spotMaps={nameByCoin:{},markBySym:{'USDC':1}};
 // portfolio-margin wallets' balances (one pool for spot and perps): counted in both accountValue and
 // spotAccountValue, so a combined total takes this off to count them once
@@ -1332,6 +1333,38 @@ function moneyRow(t){ return !t.spotPos; }
 // each caller decides when the all-time, every-dex figure applies to what it shows.
 // several wallets' curves as one: at every time any of them has a point, the sum of each one's latest
 // value so far (a step series). Pure.
+// A perp P&L audit for one wallet: the fills and funding the journal holds, set against Hyperliquid's
+// own perp P&L curve at each of its points. gap = (closedPnl − fees + funding summed up to that time)
+// − the exchange's figure then: + when the fills hold more than it counts. A step in the gap that stays is P&L the fills don't hold (or hold twice); a
+// step that comes back is an open position's unrealized P&L, which the exchange's points include.
+// win: the exchange's recent windows {day,week,month: {pnl, vlm, from}} against the fills in each.
+function pnlAudit(fills, frows, hist, trades, win, now){
+  now=now||Date.now();
+  const ev=[]; let closed=0, fees=0, vol=0, funding=0, first=Infinity, n=0;
+  for(const f of (fills||[])){ const c=String(f.coin||''); if(!isPerp(c))continue;
+    const p=parseFloat(f.closedPnl)||0, fe=parseFloat(f.fee)||0, t=+f.time;
+    closed+=p; fees+=fe; vol+=Math.abs(parseFloat(f.sz)*parseFloat(f.px))||0; n++;
+    if(t<first)first=t; ev.push([t,p-fe,Math.abs(parseFloat(f.sz)*parseFloat(f.px))||0]); }
+  for(const r of (frows||[])){ const u=+r.usdc||0; funding+=u; ev.push([+r.time,u,0]); }
+  ev.sort((a,b)=>a[0]-b[0]);
+  const fundingAttributed=(trades||[]).filter(t=>t.market==='perp').reduce((s,t)=>s+(t.funding||0),0);
+  const points=[]; let i=0, cum=0;
+  for(const [t,v] of (hist||[])){ while(i<ev.length&&ev[i][0]<=t){ cum+=ev[i][1]; i++; } points.push({t,hl:v,fills:cum,gap:cum-v}); }
+  const steps=[];
+  for(let k=1;k<points.length;k++){ const d=points[k].gap-points[k-1].gap; if(Math.abs(d)>=1000)steps.push({from:points[k-1].t,to:points[k].t,delta:d,gap:points[k].gap}); }
+  // the account's record before its first fill: what the fills stand away from the exchange's curve at
+  // its first point after that fill — the P&L made before it, give or take what was still open then
+  // (its points are a week apart there: the one before the fill says nothing of the days up to it)
+  let before=null;
+  if(isFinite(first)&&points.length&&points[0].t<first-3*86400e3){ const after=points.find(p=>p.t>=first);
+    before={start:points[0].t,first,at:after?after.t:null,gap:after?after.gap:null}; }
+  const windows={};
+  for(const k of ['day','week','month']){ const w=win&&win[k]; if(!w||!isFinite(w.from))continue;
+    let p=0,v=0; for(const e of ev){ if(e[0]>=w.from&&e[0]<=now){ p+=e[1]; v+=e[2]; } }
+    windows[k]={from:w.from,hlPnl:w.pnl,hlVlm:w.vlm,fillsPnl:p,fillsVlm:v}; }
+  return {first:isFinite(first)?first:null, fills:n, closed, fees, vol, funding, fundingAttributed, fundingRows:(frows||[]).length,
+    points, steps, before, windows, gapNow:points.length?points[points.length-1].gap:null};
+}
 function sumSeries(list){
   const L=(list||[]).filter(s=>Array.isArray(s)&&s.length); if(!L.length)return [];
   if(L.length===1)return L[0].slice();

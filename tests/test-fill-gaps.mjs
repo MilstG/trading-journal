@@ -183,7 +183,20 @@ t('the gap is judged like with like: open trades’ realized and the positions�
 });
 
 t('the exchange’s curves: summed across wallets as a step series, per market, with their drawdown', () => {
-  vm.runInContext(['sumSeries', 'verifiedCurve', 'curveDrawdown', 'reconcileSplit', 'curveSlice', 'verifiedCurveFor', 'moneyRow', 'historyNote'].map(grabFn).join('\n'), ctx);
+  vm.runInContext(['sumSeries', 'verifiedCurve', 'curveDrawdown', 'reconcileSplit', 'curveSlice', 'verifiedCurveFor', 'moneyRow', 'historyNote', 'isPerp', 'pnlAudit'].map(grabFn).join('\n'), ctx);
+  // the audit: fills and funding summed at each of the exchange's points; a step that stays is P&L the fills don't hold
+  { const D = 86400e3, T = Date.UTC(2026, 0, 1);
+    const fills = [{ coin: 'BTC', closedPnl: '0', fee: '1', sz: '1', px: '100', time: T + D }, { coin: 'BTC', closedPnl: '50', fee: '1', sz: '1', px: '150', time: T + 2 * D },
+      { coin: '@107', closedPnl: '999', fee: '0', sz: '1', px: '1', time: T + 2 * D }, { coin: 'xyz:HOOD', closedPnl: '-10', fee: '0', sz: '2', px: '50', time: T + 9 * D }];
+    const frows = [{ coin: 'BTC', time: T + 1.5 * D, usdc: -3 }, { coin: 'ETH', time: T + 20 * D, usdc: -5 }];
+    const hist = [[T - 30 * D, 0], [T - 23 * D, -400], [T + 3 * D, -355], [T + 10 * D, -365], [T + 21 * D, -370]];
+    const a = ctx.pnlAudit(fills, frows, hist, [{ market: 'perp', funding: -3 }], { week: { from: T + 5 * D, pnl: -15, vlm: 100 } }, T + 21 * D);
+    eq([a.fills, a.closed, a.fees, a.vol, a.funding, a.fundingAttributed, a.first], [3, 40, 2, 350, -8, -3, T + D], 'spot fills stay out');
+    eq(a.points.map(p => p.gap), [0, 400, 400, 400, 400], 'the gap opens before the first fill and stays');
+    eq(a.steps.length, 0, 'under $1,000 it is not a step');
+    eq(a.before, { start: T - 30 * D, first: T + D, at: T + 3 * D, gap: 400 }, 'the fills already 400 ahead of the curve at its first point after the first fill');
+    eq(a.windows.week, { from: T + 5 * D, hlPnl: -15, hlVlm: 100, fillsPnl: -15, fillsVlm: 100 });
+    const big = ctx.pnlAudit(fills, [], [[T, 0], [T + 3 * D, -2000]], [], null, T + 3 * D); eq(big.steps.map(x => x.delta), [2048]); }
   eq(ctx.sumSeries([[[1, 10], [3, 30]], [[2, 5], [3, 6]]]), [[1, 10], [2, 15], [3, 36]], 'each wallet’s latest value so far, summed at every time');
   eq(ctx.sumSeries([[[1, 1]]]), [[1, 1]]); eq(ctx.sumSeries([]), []);
   ctx.hlPnl = { all: 100, perp: 40, hist: { all: [[1, 0], [2, 100]], perp: [[1, 0], [2, 40]] } };

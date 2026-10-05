@@ -36,7 +36,7 @@ async function removeWallet(i){
   allTrades=allTrades.filter(t=>!t.wallet||t.wallet.address!==w.address);
   openPositions=openPositions.filter(p=>!p.wallet||p.wallet.address!==w.address);
   spotHoldings=spotHoldings.filter(p=>!p.wallet||p.wallet.address!==w.address);
-  hlPnl={all:null,perp:null}; dataCoverage=null;
+  hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
   // per-wallet equity isn't tracked, so the aggregates are unknowable until the next load —
   // null beats keeping the removed wallet's money in the capital card's equity
   accountValue=null; spotAccountValue=null; unifiedAccountValue=null;
@@ -95,7 +95,7 @@ async function bootFromCache(){
     if(per.some(x=>!x)||allTrades.length)return false; // a wallet with no cache waits for the real load
     allTrades=per.flat().sort((x,y)=>y.openTime-x.openTime); spotMaps=sm;
     if(view&&view.v===1&&view.key===walletsSig()){ openPositions=view.positions||[]; accountValue=view.accountValue??null; spotHoldings=view.spotHoldings||[];
-      spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
+      spotAccountValue=view.spotAccountValue??null; unifiedAccountValue=view.unifiedAccountValue??null; hlPnl=view.hlPnl||{all:null,perp:null}; dataCoverage=view.dataCoverage||null; dataAudit=null; ledFlows=view.ledFlows||[]; ledSkipped=view.ledSkipped||0; }
     $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide');
     try{ render(); }catch(e){ console.warn('cached render',e); }
     // the saved positions are hours or days old: the intraday open-P&L baseline waits for live ones
@@ -198,8 +198,9 @@ async function loadWallet(w,fresh,spotP){
   // how much of this wallet's history the fills explain: served volume against the exchange's own, and
   // the seams the reconstruction found (position changes with no fill behind them)
   const coverage=coverageOf(fills,perpTr,port); coverage.label=labelFor(w);
+  let audit=null; try{ audit=pnlAudit(fills,fm.rows,port.hist&&port.hist.perp,perpTr,port.win); audit.label=labelFor(w); audit.address=a; }catch(e){}
   return {added,cached:!!fcache,truncNote,flows,skipped:cf.skipped,nFills:fills.length,trades:perpTr.concat(spotTr),positions:ch.positions,
-    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage};
+    accountValue:unified!=null?unified:ch.accountValue,port,spotHold,spotVal:unified!=null?unified:spotVal,spotHas:sbal.length>0||unified!=null,unified,coverage,audit};
 }
 // one failed wallet, in words: "Couldn't reach Hyperliquid for main — check your connection"
 function loadFailNote(w,err){ err=String(err||'');
@@ -213,7 +214,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
   $('loadAll').disabled=true;
   let trades=[], positions=[], accVals=[], spotHold=[], spotAccVals=[], uniVals=[], totalFills=0, failed=[];
   let portAll=0, portPerp=0, portAllHas=false, portPerpHas=false, portMissing=0; const histAll=[], histPerp=[], spanAcc={day:{all:[],perp:[]},week:{all:[],perp:[]},month:{all:[],perp:[]}};
-  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null;
+  let truncated=[], newFills=0, cachedN=0, flowsAcc=[], skippedAcc=0, covAcc=null, auditAcc=[];
   _fetchHealth={funding:false,ledger:false,twap:false}; // fresh load, fresh health
   try{
     // spot metadata and every wallet load side by side — two wallets at a time, so a long list
@@ -236,6 +237,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
         for(const k in spanAcc){ const sp=r.port.hist.spans&&r.port.hist.spans[k]; if(!sp)continue; if(sp.all&&sp.all.length)spanAcc[k].all.push(sp.all); if(sp.perp&&sp.perp.length)spanAcc[k].perp.push(sp.perp); } }
       spotHold=spotHold.concat(r.spotHold); if(r.spotHas)spotAccVals.push(r.spotVal); if(r.unified!=null)uniVals.push(r.unified);
       if(r.coverage)covAcc=mergeCoverage(covAcc,r.coverage);
+      if(r.audit)auditAcc.push(r.audit);
     });
     if(!trades.length && !positions.length && !spotHold.length){
       // check BEFORE clobbering globals: an auto-refresh where every wallet failed
@@ -257,7 +259,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
       for(const id in _excM) if(_excM[id]&&_excM[id].openMeas&&closedIds.has(id)) delete _excM[id]; }
     const spans={}; for(const k in spanAcc)if(spanAcc[k].all.length||spanAcc[k].perp.length)spans[k]={all:sumSeries(spanAcc[k].all),perp:sumSeries(spanAcc[k].perp)};
     hlPnl={all:portAllHas?portAll:null, perp:portPerpHas?portPerp:null, hist:(histAll.length||histPerp.length)?{all:sumSeries(histAll),perp:sumSeries(histPerp),spans}:null, partial:portMissing>0};
-    dataCoverage=covAcc;
+    dataCoverage=covAcc; dataAudit=auditAcc.length?auditAcc:null;
     try{ $('empty').classList.add('hide'); $('app').classList.remove('hide'); $('setupPanel').classList.add('hide'); render(); }
     catch(e){ console.error(e); setErr('Data loaded, but hit an error drawing the dashboard ('+e.message+'). Please reload.'); return; }
     saveLastView();
@@ -499,7 +501,7 @@ async function loadFromPaste(fills,opts){
   [...perpTr,...spotTr].forEach(t=>t.wallet={address:'paste',label:'pasted'});
   if(opts.sample)sampleEnter(); else sampleLeave(); // pasted fills are the user's own
   allTrades=[...perpTr,...spotTr].sort((a,b)=>b.openTime-a.openTime);
-  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null;
+  openPositions=[]; accountValue=null; spotHoldings=[]; spotAccountValue=null; unifiedAccountValue=null; hlPnl={all:null,perp:null}; dataCoverage=null; dataAudit=null;
   resetDerivedState(); // pasted world: old wallets' capital flows / clusters / caches must not leak into it
   fillsTruncated=[];
   // a big history: let the browser breathe between taking in the worker's trades and the first full
