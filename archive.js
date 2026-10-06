@@ -423,7 +423,7 @@ function createArchive(deps) {
     if (!ix) return null;
     const base = cfg.indexPrefix + 'd/', r = await ix.list(base, '/', 20);
     const seen = r.prefixes.map(p => p.slice(base.length).replace(/\/$/, '')).filter(d => /^\d{8}$/.test(d)).sort(), queue = seen.filter(d => !doneDays.has(d));
-    await Promise.all(Array.from({ length: 16 }, async () => { for (let d; (d = queue.shift());) if (isIndexed(await doneSummary(ix, base + d + '/_done'))) doneDays.add(d); }));
+    await Promise.all(Array.from({ length: 48 }, async () => { for (let d; (d = queue.shift());) if (isIndexed(await doneSummary(ix, base + d + '/_done'))) doneDays.add(d); }));
     const days = seen.filter(d => doneDays.has(d)), first = days[0] || null, last = days[days.length - 1] || null, inc = new Set(seen.filter(d => !doneDays.has(d)));
     if (first) for (let t = ymd(first); t <= ymd(last); t += 86400e3) { const d = dayKeyOf(hourOf(t)); if (!doneDays.has(d)) inc.add(d); }
     let progress = null; try { progress = JSON.parse((await ix.get(cfg.indexPrefix + 'progress.json', { maxBytes: 1 << 20 })).toString('utf8')); } catch (e) {}
@@ -432,7 +432,8 @@ function createArchive(deps) {
   // One wallet's fills out of the index: its shard's file for every finished day (from `fromDay` on), a
   // few at a time. A finished day without the shard's file is a day the wallet had no fills. ctl: index
   // (indexDays' answer, when the caller has it), live() — false once the job is stopped, and no further
-  // day is fetched — and maxGB, the budget the downloads together may not pass.
+  // day is fetched — maxGB, the budget the downloads together may not pass, and conc, how many days are read
+  // at once (a whole history is hundreds of small files, one round trip to the bucket's region each).
   async function indexFetch(addr, fromDay, onProgress, ctl) {
     ctl = ctl || {}; const live = ctl.live || (() => true), maxGB = ctl.maxGB || Infinity, budget = maxGB * 1073741824;
     const d = ctl.index || await indexDays(); if (!d) throw Object.assign(new Error('no index bucket is configured (ARCHIVE_INDEX_BUCKET)'), { code: 503 });
@@ -446,7 +447,7 @@ function createArchive(deps) {
       bytes += buf.length; files++; if (bytes > budget) throw overBudget(maxGB, 'the index downloads');
       const x = extractFillsFromObject(buf, addr); for (const f of x.fills) fills.push(f); // not push(...): a busy wallet's day overflows the call stack
       if (onProgress) onProgress({ done: files + missing, total: days.length, fills: fills.length, bytes }); } } catch (e) { halt = halt || e; } };
-    await Promise.all(Array.from({ length: 8 }, worker));
+    await Promise.all(Array.from({ length: Math.max(1, ctl.conc || 8) }, worker));
     if (halt instanceof Error) throw halt;
     return { fills, days: days.length, files, missing, bytes, first: d.first, last: d.last, incomplete: d.incomplete.filter(inRange), stopped: halt === 'stopped' };
   }
@@ -461,7 +462,7 @@ function createArchive(deps) {
     const p = (async () => {
       const d = await indexDays();
       if (!d || !d.last) return { fills: [], through: null, first: null, last: null, bytes: 0 };
-      const r = await indexFetch(addr, fromDay, null, { index: d, maxGB: 1 });
+      const r = await indexFetch(addr, fromDay, null, { index: d, maxGB: 1, conc: 32 });
       const prev = day => dayKeyOf(hourOf(ymd(day) - 86400e3));
       return { fills: r.fills, through: r.incomplete.length ? prev(r.incomplete[0]) : d.last, first: d.first, last: d.last, bytes: r.bytes };
     })().finally(() => inflight.delete(key));
