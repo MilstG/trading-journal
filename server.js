@@ -2535,9 +2535,9 @@ function createApp(opts) {
   const zoneDay = (tz) => { let f; try { f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }); }
     catch (e) { f = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }); }
     return ms => f.format(ms); };
-  const behaviorFor = (addr, tz) => {
-    const k = String(addr).toLowerCase() + '|' + (tz || 'UTC');
-    if (!behaviorInflight.has(k)) behaviorInflight.set(k, behaviorForOnce(addr, tz).finally(() => behaviorInflight.delete(k)));
+  const behaviorFor = (addr, tz, w) => {
+    const k = String(addr).toLowerCase() + '|' + (tz || 'UTC') + '|' + (w ? JSON.stringify(w) : '');
+    if (!behaviorInflight.has(k)) behaviorInflight.set(k, behaviorForOnce(addr, tz, w).finally(() => behaviorInflight.delete(k)));
     return behaviorInflight.get(k);
   };
   // the wallet's last 6 months of fills (Trader Age reads that far back), topped up from the exchange
@@ -2577,7 +2577,8 @@ function createApp(opts) {
     const fills = await recentFills(addr); if (!Array.isArray(fills)) return null;
     return fillsMatchTrade(fills, t);
   };
-  const behaviorForOnce = async (addr, tz) => {
+  // w: the Discipline weights per slip (findings.js activeWeights), or null to count every slipped trade the same
+  const behaviorForOnce = async (addr, tz, w) => {
     if (!engine.ok || !E.pzBehaviorDays) return null;
     const a = String(addr).toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
     const fills = await recentFills(a); if (!fills) return null;
@@ -2586,7 +2587,7 @@ function createApp(opts) {
     const trades = [...E.attributeFunding(E.reconstructTrades(fills, a, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(fills, a, 'spot'), [])].filter(E.tradeRow); // trade rows: perp trades and spot positions, not spot day rows
     const closed = trades.filter(t => !t.isOpen && t.closeTime && E.tradeRow(t) && !t.movedOut);
     // days on the member's own clock (the zone their app reports), so both sides score the same days
-    return E.pzBehaviorDays(closed, { dayOf: zoneDay(tz || 'UTC'), isLoss: n => n < -1 /* same fixed rule as the app's PZ_LOSS */ })
+    return E.pzBehaviorDays(closed, { dayOf: zoneDay(tz || 'UTC'), isLoss: n => n < -1 /* same fixed rule as the app's PZ_LOSS */, w: w || null })
       .map(d => ({ k: d.key, s: d.score, n: d.n, f: Object.keys(d.flags || {}).filter(x => d.flags[x] > 0) }));
   };
   // Live tilt alerts for a member with Pulse closed: the same cached fills, today's patterns by the

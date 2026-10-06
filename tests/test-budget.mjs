@@ -102,8 +102,12 @@ try {
     // loading goes out at once: about 2 KB raw on both screens, under 1 KB gzipped (+1 on each).
     // Mentoring both sides agree to: requests and answers, note threads, the week's focus, a mentee's 28 days at a
     // glance and "did this help?": about 15 KB raw, 3 KB gzipped on both (2168 / 1855, 732 / 626).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2170, 733],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1857, 627],
+    // Oct 2026: the research run brought to members (app/features/research.js on both screens: the feed, your slips
+    // priced, the "What the data says" screen) and its hooks in the coach, the leaks, the tilt alerts, the weekly
+    // challenge, the Discipline weights and the results boards' trade bar and luck notes: about 15 KB raw / 6 KB
+    // gzipped on each screen (2185 / 1872 raw, 739 / 633 gzipped).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2188, 740],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1875, 634],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

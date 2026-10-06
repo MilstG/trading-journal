@@ -73,6 +73,7 @@ function pzProgressHtml(D){
   const leakHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your leaks · 30 days</b><span class="pz-sub" style="font-size:12px">vs the 30 before</span></div>
     ${leaks.length?leaks.map(x=>{ const tr=x.n<x.prevN?'down':x.n>x.prevN?'up':'flat', p=x.plug;
       return `<div class="pz-leak"><div class="pz-kvrow"><b style="font-size:14px">${esc(x.label)}</b><b style="color:${x.cost<0?PZ_COL.low:'var(--pz-soft)'};white-space:nowrap" title="${esc(signedPlain(x.cost))}">${x.n?esc(pzSigned(x.cost)):'—'}</b></div>
+        ${(pr=>pr&&pr.own?`<span style="font-size:13px">${esc(rfPriceLine(pr))}</span>`:'')(typeof rfPriceOf==='function'?rfPriceOf(D,x.slip):null)}
         <span class="pz-sub" style="font-size:12px">${x.n} trade${x.n===1?'':'s'} · ${tr==='down'?'<span style="color:'+PZ_COL.good+'">▼ fewer</span> than the 30 days before ('+x.prevN+')':tr==='up'?'<span style="color:'+PZ_COL.low+'">▲ more</span> than before ('+x.prevN+')':'same as before'}</span>
         ${p?(p.done?`<div class="pz-kvrow"><span class="pz-chipbtn ok">${pzI('check',14,3)} Plugged ${esc(dayLabel(p.done))}</span>${p.back?`<button type="button" class="pz-ghost pz-sm" style="width:auto" data-pz-plug="${esc(x.slip)}">It’s back — plug again</button>`:''}</div>`:`<div class="pz-plug"><span class="pz-steps">${[0,1,2].map(i=>`<i class="${i<p.cleanRun?'on':''}"></i>`).join('')}</span><span class="pz-sub" style="font-size:12px">${p.cleanRun} of 3 clean trading weeks · ${pzPlugWeekNote(p)}</span><button type="button" class="pz-kudo" data-pz-unplug="${esc(x.slip)}">Stop</button></div>`)
           :x.n?`<button type="button" class="pz-ghost pz-sm" data-pz-plug="${esc(x.slip)}">Plug this leak</button>`:''}</div>`; }).join('')
@@ -710,7 +711,8 @@ function socRowsHtml(rows, board, emptyText, key){
   if(!rows.length)return `<section class="pz-card"><p class="pz-sub">${esc(emptyText)}</p></section>`;
   const pg=pzPage('rows:'+(key||board),rows), mine=rows.find(r=>r.me), mineOff=mine&&!pg.items.includes(mine);
   // past a drawdown cap: listed last, crossed out, with the reason
-  const li=r=>`<li class="pz-li${r.me?' me':''}"><span class="pz-rank${r.rank<=3&&!r.out?' top':''}">${r.out?'–':r.rank}</span>${socAv(r.handle)}
+  // under the owner's trade bar (few): listed after the ranked ones, unranked
+  const li=r=>`<li class="pz-li${r.me?' me':''}"${r.few?' style="opacity:.7"':''}><span class="pz-rank${r.rank<=3&&!r.out&&!r.few?' top':''}">${r.out||r.few?'–':r.rank}</span>${socAv(r.handle)}
     <a class="pz-who" href="#u/${esc(r.handle)}"><b${r.out?' style="text-decoration:line-through;color:var(--pz-muted)"':''}>${r.me?'You':'@'+esc(r.handle)}</b><span${r.out?' style="color:var(--pz-err-t)"':''}>${esc(r.sub||'')}</span></a><span class="pz-val">${r.out?'Out':esc(socValue(board,r.value))}</span></li>`;
   return `<ol class="pz-list" aria-label="Standings">${pg.items.map(li).join('')}</ol>${pg.html}${mineOff?`<ol class="pz-list" aria-label="Your place">${li(mine)}</ol>`:''}`;
 }
@@ -744,20 +746,22 @@ function socLeagueHtml(g){
     <a class="pz-link" href="#lg/${esc(L.id)}" style="min-height:0">Info${pzI('chev',14)}</a></section>`;
   const chipsB=socRankSel('socBoardSel',[['rank','League ranking · '+L.metricLabel],...SOC_BOARDS.filter(([k])=>k!==L.metric)],b);
   const quiet=L.members<=1?`<section class="pz-card pz-kv"><b class="pz-kvh">It’s quiet here</b><p class="pz-sub" style="font-size:13px">You’re the only trader in this league so far. ${SOC.cfg&&SOC.cfg.inviteRequired?'Joining needs the owner’s invite code: ask them to share it.':'Anyone who opens your server’s Daruma link can join.'}</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" style="width:auto;padding:0 16px" data-pz-copyurl="${esc(location.origin+'/daruma')}">Copy the link</button><a class="pz-ghost pz-sm" href="#people" style="width:auto;padding:0 16px">Find people</a></div></section>`:'';
-  let list='', note='', opt='', mine='';
+  let list='', note='', opt='', mine='', luckSrc=null;
   // the note says what this league's ranking covers: its season, its month, or its week — and only promises promotion where there are tiers
   const ranks=L.season?'this season ('+L.season.label+')':L.period==='month'?'this month':'this week';
   const leagueNote=L.metric==='xp'?'XP earned '+ranks+' — process, never profit.'+(L.season?' The top three when the season ends take the podium and a badge.':L.tiers?' The top of each tier moves up '+(L.period==='month'?'when the month ends':'on Monday')+', the bottom moves down.':'')
     :L.season?(SOC_BOARD_NOTE[d.board]||'')+' Ranked over '+ranks+'; the top three take the podium.':socMoneyNote(d.board,L.risk,ranks);
-  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=socMineHtml(d.me,d.size,d.board); }
+  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=socMineHtml(d.me,d.size,d.board); luckSrc=d.luck; }
   else { const c2=socGet('lb:'+L.id+':'+b,'/leaderboard?board='+b+'&league='+encodeURIComponent(L.id),30000), d2=c2&&c2.d;
     list=d2?socRowsHtml(d2.rows,b,'No one on this board yet.'):`<p class="pz-sub">${c2&&c2.err?esc(c2.err):'<span class="pz-spin"></span>Loading…'}</p>`; note=socMoneyNote(b,d2&&d2.risk,ranks); opt=socOptHtml(d2)+socOffBoardsHtml(d2);
-    mine=d2?socMineHtml(d2.me,d2.total,b):''; }
-  return `${quiet}${chipsL}${banner}${chipsB}<p class="pz-sub" style="font-size:12px">${esc(note)}</p>${opt}${mine}${list}`;
+    mine=d2?socMineHtml(d2.me,d2.total,b):''; luckSrc=d2&&d2.luck; }
+  const luck=socLuckNote(luckSrc);
+  return `${quiet}${chipsL}${banner}${chipsB}<p class="pz-sub" style="font-size:12px">${esc(note)}${luck?' '+esc(luck):''}</p>${opt}${mine}${list}`;
 }
 // your place on a board, or why you're off it (past the drawdown cap: out for the period, listed last)
 function socMineHtml(me,of,board){ if(!me)return '';
   return me.out?`<p class="pz-sub" style="font-size:13px;color:var(--pz-err-t)">You’re out of this ranking for now: ${esc((me.sub||'').replace(/^Out: /,''))}.</p>`
+    :me.few?`<p class="pz-sub" style="font-size:13px">You’re listed, not ranked yet: ${esc((me.sub||'').split(' · ').pop())} in this window.</p>`
     :`<p class="pz-sub" style="font-size:13px">You’re <b>#${me.rank}</b> of ${of} with ${esc(socValue(board,me.value))}.</p>`; }
 // a lapsed standing takes you off the leaderboards (your league's own table still counts you)
 function socOffBoardsHtml(d){ return d&&d.offBoards?'<p class="pz-warn">You’re off the leaderboards while your standing is lapsed. Your league table still counts you. <a href="#age">Your standing</a></p>':''; }
@@ -770,7 +774,8 @@ function socBoardsHtml(g){
     <button type="button" role="switch" class="pz-switch" id="socGlobSw" data-soc-global="${on?'0':'1'}" aria-checked="${on}" aria-labelledby="socGlobL"><i></i></button></div></section>`;
   const list=d?socRowsHtml(d.rows,b,on?'No one on this board yet.':'No one has opted in to this board yet — be the first.'):`<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const mine=d?socMineHtml(d.me,d.total,b):'';
-  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(socMoneyNote(b,d&&d.risk,'over the last 30 days'))}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
+  const luck=d?socLuckNote(d.luck):'';
+  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(socMoneyNote(b,d&&d.risk,'over the last 30 days'))}${luck?' '+esc(luck):''}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
 }
 // find a league by name or number
 function socFindHtml(D){

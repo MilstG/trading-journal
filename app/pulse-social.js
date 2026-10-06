@@ -41,6 +41,14 @@ function socMoneyNote(b,risk,span){ const base=SOC_BOARD_NOTE[b]||'';
   const cap=risk&&risk.cap?Math.round(risk.cap*100)+'%':'';
   const rule=!risk?'':risk.mode==='off'?' No drawdown cap.':risk.mode==='penalty'&&b!=='usd'?' Past a '+cap+' drawdown, the return is docked for every 1% over.':' Past a '+cap+' drawdown you’re out'+(span==='over the last 30 days'?'':' for '+span)+', listed last.';
   return base.replace(/\.$/,'')+(span?' '+span:'')+'.'+rule; }
+// beside a results board or duel: how many trades a ranking on results needs before it's more skill than luck (the
+// league's research run, findings.js), and the bar the owner ranks from. luck: the board's {need, minTrades}, else the feed's.
+function socLuckNote(luck){
+  if(!luck)return ''; // not a results board
+  const need=luck&&luck.need||(typeof rfData==='function'&&rfData()&&rfData().rel?rfData().rel.need:null), min=luck&&luck.minTrades||0;
+  if(!need&&!min)return '';
+  return (need?'Results rank reliably from about '+need.toLocaleString('en-US')+' trades a trader; before that, much of the order is luck.':'')
+    +(min?' Members with fewer than '+min.toLocaleString('en-US')+' verified trades in the window are listed after the ranked ones.':''); }
 const SOC_COMP_KIND={discipline:'Discipline',survivor:'Survivor',journal:'Journal streak',return:'Return under a drawdown cap'};
 const SOC_COMP_HOW={
   discipline:'Your daily process score, averaged over the competition days. Profit doesn’t count: a red day with a clean process scores the same as a green one.',
@@ -914,6 +922,7 @@ function socDuelCardHtml(v, compact){
         <div>${socAv(o.handle,40)}<b style="color:${themCol}">${esc(duelScoreTxt(v,v.them))}</b><span class="pz-sub">@${esc(o.handle)} · ${esc((v.them&&v.them.note)||'')}</span></div></div>
       ${banner}${compact?'':duelMarks(v)}
       ${v.me&&v.me.missing?'<p class="pz-fine" style="margin:0">Your days count once “Verify my discipline” is on.</p>':''}
+      ${v.type==='ret'&&!compact&&!done&&socLuckNote({need:null})?`<p class="pz-fine" style="margin:0">${esc(socLuckNote({need:null}))} A ${v.period==='month'?'month':'week'} of results is mostly luck: play it for fun, judge it on process.</p>`:''}
       ${done?`<div class="pz-grid2"><a class="pz-ghost" href="#u/${esc(o.handle)}">Their profile</a><button type="button" class="pz-cta" data-duel-act="rematch" data-id="${v.id}" data-h="${esc(o.handle)}">Rematch</button></div>`
         :compact?`<a class="pz-link" href="#duels" style="min-height:0;align-self:flex-start">Details ›</a>`:`<button type="button" class="pz-linkbtn" data-duel-act="forfeit" data-id="${v.id}" style="align-self:flex-start">Forfeit</button>`}</section>`;
   }

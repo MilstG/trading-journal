@@ -1349,7 +1349,10 @@ function renderCoach(){
   else if(recent){ const q=tradeQuestion(recent,journal[recent.id],_excM[recent.id]);
     today={v:`Your ${esc(dispMarket(dcoin(recent)))} ${recent.dir.toLowerCase()} (<span class="${cls(recent.net)}">${signedPlain(recent.net)}</span>) closed ${fmtDur(Date.now()-recent.closeTime)} ago. ${esc(q.q)}`,act:'<button class="btn ghost coach-go" data-go="inbox">Answer →</button>'}; }
   else { const top=ctx.findings.find(f=>f.tone==='leak'||f.tone==='caution');
-    if(top){ const spec=resolveHabitSpec(top.habit);
+    // the slip that costs you most against your own trades in the same spot (features/research.js), when it's sure
+    let pr=null; if(typeof rfPriced==='function')try{ pr=rfPriced({g:gameContext()}).find(r=>r.own&&r.sure)||null; }catch(e){}
+    if(pr)today={v:`<b>Your costliest slip: ${esc(pr.label.toLowerCase())}.</b> ${esc(rfPriceLine(pr))}`,act:pzPlugs().some(p=>p.slip===pr.slip&&!p.dropped&&!p.done)?'':`<button class="btn ghost coach-plug" data-slip="${esc(pr.slip)}">Plug this leak</button>`};
+    else if(top){ const spec=resolveHabitSpec(top.habit);
       today={v:`<b>${esc(top.title)}.</b> ${esc(top.action)}`,act:spec&&!habitAdopted(spec)?'<button class="btn ghost coach-adopt">Adopt as habit</button>':''}; } }
   if(today)rows.push({k:'Today',...today});
   // first: it fills the per-day slip flags a plugged leak's habit is judged by
@@ -1377,6 +1380,7 @@ function renderCoach(){
   const lv=$('coachLvl'); if(lv)lv.onclick=()=>coachGo('progress');
   const hb=$('coachHide'); if(hb)hb.onclick=async()=>{ await setCoachMode(false);
     setStatus('Coach mode is off \u2014 turn it back on in the settings panel (\u2699) under Coach mode.'); };
+  const pl=el.querySelector('.coach-plug'); if(pl)pl.onclick=async()=>{ pl.disabled=true; await pzPlugStart(pl.dataset.slip); renderCoach(); };
   const ad=el.querySelector('.coach-adopt');
   if(ad)ad.onclick=async()=>{ const top=ctx.findings.find(f=>f.tone==='leak'||f.tone==='caution'); const spec=top&&resolveHabitSpec(top.habit); if(!spec)return;
     ad.disabled=true; await adoptHabit(spec); renderCoach(); };

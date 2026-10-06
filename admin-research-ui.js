@@ -67,10 +67,35 @@
     const r=P.report, sp=r.sample||{}, d=ms=>ms?new Date(ms).toISOString().slice(0,10):'—';
     const head=tiles([['Wallets',fmt(sp.wallets)],['With closed trades',fmt(sp.withTrades)],['Trades',fmt(sp.trades)],['Period',sp.span&&sp.span.to?fmt(Math.round((sp.span.to-sp.span.from)/864e5))+' days':'—',d(sp.span&&sp.span.from)+' to '+d(sp.span&&sp.span.to)]]);
     const secs=RS_SECTIONS.filter(([k])=>r[k]&&r[k].text&&r[k].text.length).map(([k,t,sub])=>`<section class="card"><h2>${esc(t)}</h2>${sub?`<p class="muted small" style="margin-top:0">${esc(sub)}</p>`:''}<ul class="small" style="padding-left:18px;margin:0">${r[k].text.map(x=>`<li style="margin:4px 0">${esc(x)}</li>`).join('')}</ul></section>`).join('');
-    return runCard+`<section class="card"><div class="ch"><h2>Results <span class="sub2">· ${esc(ago(P.at||P.status&&P.status.finishedAt))}</span></h2><button class="fit" id="rsDownload">Download the full report</button></div>${head}
+    return runCard+shareCard(S)+`<section class="card"><div class="ch"><h2>Results <span class="sub2">· ${esc(ago(P.at||P.status&&P.status.finishedAt))}</span></h2><button class="fit" id="rsDownload">Download the full report</button></div>${head}
       <p class="hint">${(r.notes||[]).map(esc).join(' ')}</p></section>${secs}`;
   }
 
+  // what members see of the report (GET /api/social/findings), and what the product takes from it (findings.js)
+  const RS_SLIPS={revenge:'Re-entry within 15 minutes of a loss',afterTwo:'Trading on after two losses',sizeUp:'Sizing up after a loss',addLoser:'Adding to a loser',overtrade:'Overtrading',heldLoser:'Holding a loser too long'};
+  function shareCard(S){
+    const c=S.research||{}, g=S.suggest; if(!g)return '';
+    const sw=(id,on,label,hint)=>`<label class="inline" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="${id}"${on?' checked':''}><span><b>${esc(label)}</b><br><span class="muted small">${esc(hint)}</span></span></label>`;
+    const W=g.weights||{};
+    return `<section class="card"><h2>What members see</h2>
+      <p class="muted small" style="margin-top:0">Members get group figures from the last run, each resting on at least the number of wallets below, never a wallet’s own numbers: what each slip costs (set beside their own trades in their app), how many trades a results ranking needs, whether Discipline says anything about next month, what improvers changed and the crowd’s hourly flow (a day behind).</p>
+      ${sw('rsShare',c.share,'Share the findings with members','Off: members see only their own numbers.')}
+      ${sw('rsCrowd',c.crowd,'Include the crowd’s hourly flow','Each hour’s net buying or selling by everyone, the top and the bottom skill quarter, in five steps; an hour with fewer than 3 wallets of a group traded says nothing.')}
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end"><label>Fewest wallets behind a figure<br><input type="number" id="rsMinW" min="5" max="1000" value="${+c.minWallets||10}" style="width:110px"></label>
+        <label>Results boards rank from (trades in the window, 0 = off)<br><input type="number" id="rsMinT" min="0" max="5000" value="${+c.minTrades||0}" style="width:110px"></label>
+        ${g.need?`<button class="fit" id="rsUseNeed" data-n="${g.need}">Use the report’s ${fmt(g.need)}</button>`:''}</div>
+      <p class="hint">${g.need?'This run says a ranking on results needs about '+fmt(g.need)+' trades a trader to be 0.7 reliable. Members see that beside results boards and duels either way; ranking from it puts members with fewer trades below the ranked ones, unranked.':'This run couldn’t say how many trades a reliable ranking needs.'}</p>
+      ${sw('rsWeights',c.weights,'Weigh slips in the Discipline score by what they cost','A slipped trade takes off its heaviest slip’s weight instead of a whole trade. Verified members’ days are read again when this changes.')}
+      <p class="muted small">Weights from this run: ${Object.keys(RS_SLIPS).map(k=>esc(RS_SLIPS[k])+' '+(W[k]!=null?W[k]:1)).join(' · ')}</p>
+      <button class="primary fit" id="rsSave">Save</button></section>`;
+  }
+  document.addEventListener('click', async ev => {
+    const b0 = ev.target.closest('button');
+    if (b0 && b0.id === 'rsUseNeed') { const i = $('rsMinT'); if (i) i.value = b0.dataset.n; return; }
+    if (b0 && b0.id === 'rsSave' && !busy) return run(async () => {
+      await api('/config', { method: 'PUT', body: { research: { share: $('rsShare').checked, crowd: $('rsCrowd').checked, weights: $('rsWeights').checked, minWallets: +$('rsMinW').value, minTrades: +$('rsMinT').value } } });
+      D.rs = null; }, 'Saved.');
+  });
   document.addEventListener('click', async ev => {
     const b = ev.target.closest('button'); if (!b || busy) return;
     if (b.id === 'rsRun') return run(async () => { D.rs = await api('/research/run', { body: { scope: $('rsAll') && $('rsAll').checked ? 'all' : 'members' } }); }, 'Research started.');
