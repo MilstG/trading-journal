@@ -95,6 +95,35 @@ async function srvIndexFills(a, fc){
     if(j.archivedAt)fc.archivedAt=j.archivedAt; // the server cache took these in: its new mark is ours, no re-download for them
     return n;
   }catch(e){ return 0; } }
+// After a load has drawn: each Hyperliquid wallet's archived fills from the index (srvIndexFills, with its
+// own every-6-hours and through-yesterday gates, read off the stored cache without unpacking it), merged
+// into the fill cache by key, then one quiet reload rebuilds the trades with them. The download runs while
+// the app is usable; only the merge holds the load lock (a load reads the cache early and writes it late,
+// so the two must not overlap). One pass at a time.
+let _ixBg=null;
+function indexInBackground(){
+  if(_ixBg||typeof SRV==='undefined'||!SRV.enabled)return _ixBg;
+  _ixBg=(async()=>{ let total=0;
+    for(const w of settings.wallets.filter(x=>venueOf(x)==='hyperliquid')){ const a=w.address, k='flc:'+a;
+      let raw=null; try{ raw=await idbGet(k); }catch(e){}
+      if(!raw)continue; // not loaded yet (or failed): the next load has it
+      const ixc={fills:[],indexThrough:raw.indexThrough,indexTriedAt:raw.indexTriedAt,archivedAt:raw.archivedAt};
+      await srvIndexFills(a,ixc); if(!ixc.indexDirty)continue; // not due, or nobody to ask as
+      for(let i=0;_loading&&i<2400;i++)await sleep(250); if(_loading)continue;
+      _loading=true;
+      try{ const fc=await idbGet(k).then(unpackFillCache).catch(()=>null); if(!fc||!Array.isArray(fc.fills))continue;
+        const seen=new Set(fc.fills.map(f=>f.tid+'-'+f.oid+'-'+f.time)); let n=0;
+        for(const f of ixc.fills){ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); fc.fills.push(f); n++; } }
+        if(ixc.indexThrough&&!(fc.indexThrough>=ixc.indexThrough))fc.indexThrough=ixc.indexThrough;
+        fc.indexTriedAt=ixc.indexTriedAt; if(ixc.archivedAt)fc.archivedAt=ixc.archivedAt;
+        const last=fc.fills.reduce((m,f)=>f.time>m?f.time:m,0);
+        await idbSet(k,cacheExtras(await packFillCache(fc.fills,last),fc)); total+=n;
+      }catch(e){ console.warn('index merge',e); }
+      finally{ _loading=false; } }
+    if(total){ await loadAll({auto:true}); setStatus('Older history added from the archive: '+total.toLocaleString('en-US')+' fill'+(total===1?'':'s')+'.'); if(PZ)pzNote('Older history added from the archive'); }
+  })().catch(e=>console.warn('index pass',e)).finally(()=>{ _ixBg=null; });
+  return _ixBg;
+}
 // what the dashboard showed last time (positions, balances, capital flows), so the next start can show it at once
 const VIEW_KEY='view:last', walletsSig=()=>settings.wallets.map(w=>String(w.address).toLowerCase()).sort().join(',');
 let _viewAt=0; // when what's on screen was loaded from the exchange (Daruma's offline line says so)
@@ -210,8 +239,11 @@ async function loadWallet(w,fresh,spotP){
     if(seededTrunc&&!fr.truncated)truncNote=labelFor(w)+' (the server’s copy is missing older history)';
   } else { fills=fr.fills; added=fills.length; }
   // old history from the index (srvIndexFills): this load's fills, with the cache's note of how far it reached
+  // Only a wallet the API serves nothing for any more waits for it here (there is nothing else to show);
+  // every other load is drawn from the API's fills and the index merges in behind it (indexInBackground):
+  // reading a whole history out of the index is one S3 file per day and kept first loads waiting minutes.
   const ixc={fills,indexThrough:fcache&&fcache.indexThrough,indexTriedAt:fcache&&fcache.indexTriedAt,archivedAt:fcache&&fcache.archivedAt};
-  const indexedNew=await srvIndexFills(a,ixc); added+=indexedNew; // a wallet the API serves nothing for any more included
+  if(!fills.length){ setStatus('Reading '+labelFor(w)+'’s history from the archive…',true); added+=await srvIndexFills(a,ixc); }
   const nAll=fills.length; fills=dedupeFills(fills); const removed=nAll-fills.length; // a combined fill and its pieces, served by two sources
   const lastT=fills.reduce((m,f)=>f.time>m?f.time:m,0);
   // A truncated fetch (from zero: the exchange's window; incremental: a gap between the cache and now
@@ -362,6 +394,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     if(PZ){ const m=orphanNoteOnce(allTrades.filter(t=>t.orphan)); if(m)pzNote(m); }
     // new fills for today: check them for a tilt pattern before drawing (the banner shows on this render)
     if(PZ){ pzBeforeDraw(()=>{ try{ pzTiltAlertCheck(); }catch(e){ console.warn('tilt alerts',e); } }); pzRender(); } }
+  if(allTrades.length&&!_sample)indexInBackground(); // the archive's older history, behind what's drawn
   // measuring excursions fetches candles: wait until the browser is idle so it never competes with the first paint
   if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }

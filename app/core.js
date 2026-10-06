@@ -818,6 +818,7 @@ async function fetchAllFills(addr, since=0){
   const fillSame=f=>[f.coin,f.time,f.side,f.sz,f.px,f.startPosition].join('|'); // local: the tests and the server lift this function out on its own
   let start=since, all=[], pages=0, truncated=false; const seen=new Set(), same=new Set();
   const add=f=>{ const id=f.tid+'-'+f.oid+'-'+f.time; if(!seen.has(id)){ seen.add(id); same.add(fillSame(f)); all.push(f);} };
+  const twP=fetchTwapFills(addr,since); // its own endpoint and pages: asked alongside the fills, not after them
   while(pages<60){
     const batch=await hlPost({type:'userFillsByTime',user:addr,startTime:start,aggregateByTime:true});
     if(!Array.isArray(batch)||batch.length===0) break;
@@ -838,7 +839,7 @@ async function fetchAllFills(addr, since=0){
   if(all.length>=10000) truncated=true;
   // TWAP slice fills live in a separate endpoint and are NOT in userFills — merge them in so
   // TWAP-executed trades reconstruct correctly instead of silently going missing.
-  const tw=await fetchTwapFills(addr,since);
+  const tw=await twP;
   for(const f of tw.fills) if(!same.has(fillSame(f))) add(f);
   if(tw.partial&&typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.twap=true;
   return {fills:all, truncated, why:truncated?(capped?'cap':'window'):null, first, twapPartial:!!tw.partial};
