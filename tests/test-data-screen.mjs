@@ -64,4 +64,26 @@ t('a day is kept when half its traded notional went through as maker; a day with
   eq(habitDayResults(h, days, byDay, null, null, {}), [{ key: '2026-09-01', kept: true }, { key: '2026-09-02', kept: false }]);
   eq(habitDayResults({ kind: 'maker', pct: 80 }, days, byDay, null, null, {})[0].kept, false, 'its own target');
 });
+
+console.log('\nReplay drills');
+const { drillPool, drillPoint, drillOutcomes } = await evalModule(['drillPool', 'drillPoint', 'drillOutcomes', 'replayPnlAt']);
+// a long from 100: bought 10 at 9:00, price dips to 96 by 11:00, back to 104, sold 10 at 104 at 15:00; hourly candles
+const HR = 3600000, D9 = Date.parse('2026-09-10T09:00:00Z');
+const lt = { id: 'L', dir: 'Long', avgEntry: 100, openTime: D9, closeTime: D9 + 6 * HR, events: [[D9, 100, 10, 1], [D9 + 6 * HR, 104, 10, -1]] };
+const closes = [99, 100, 98, 96, 99, 102, 103, 104, 104]; // candles from 8:00
+const cs = closes.map((c, i) => [D9 + (i - 1) * HR, c + 0.5, c - 0.5, c, i ? closes[i - 1] : c]);
+t('the moment it hurt most: the candle that closed furthest against you while held', () => {
+  const p = drillPoint(lt, cs, HR); eq([p.at, p.px, p.hurt], [D9 + 3 * HR, 96, true]);
+  eq(drillPoint(Object.assign({}, lt, { closeTime: D9 + 2 * HR }), cs, HR), null, 'under 3 candles inside the hold');
+  const up = cs.map(c => [c[0], c[1] + 10, c[2] + 10, c[3] + 10, c[4] + 10]); eq(drillPoint(lt, up, HR).hurt, false, 'never against you: the middle of the hold');
+});
+t('what each call would have made from there, against what you did', () => {
+  const o = drillOutcomes(lt, { at: D9 + 3 * HR, px: 96 });
+  eq([o.pos, o.cut, o.hold, o.add], [10, -40, 40, 120], 'cut at 96: −40; held to 104: +40; add 10 more at 96, out at 104: +120');
+});
+t('which trades can be drilled', () => {
+  const now = D9 + 86400000, open = Object.assign({}, lt, { id: 'O', isOpen: true }), quick = Object.assign({}, lt, { id: 'Q', closeTime: D9 + 60000 }), old = Object.assign({}, lt, { id: 'X', closeTime: D9 - 100 * 86400000 });
+  eq(drillPool([lt, open, quick, old], { now }).map(x => x.id), ['L']);
+  eq(drillPool([lt], { now, skip: ['L'] }), [], 'one you drilled already');
+});
 report('data screen');

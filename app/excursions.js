@@ -246,15 +246,17 @@ function candleOpen(candles,i){ const k=candles[i];
   if(isFinite(k[4]))return k[4];
   if(i>0&&isFinite(candles[i-1][3]))return candles[i-1][3];
   return isFinite(k[3])?k[3]:(k[1]+k[2])/2; }
-async function ensureTradeCandles(t){
+async function ensureTradeCandles(t, pad){
   // fetch (cache-aware) candles for one trade's window, falling back coarser like the main scan.
+  // pad: {before, after} candles of context around it (one each by default; replay drills ask for more)
   // Sample candles are drawn, not fetched, and never cached: the sample trades move with the clock.
   const now=Date.now(), demo=typeof isDemoData==='function'&&isDemoData();
   for(let pass=0;pass<3;pass++){
     const itv=chooseItv(t,now,pass), k=excKey(t.coin,itv.name,candleVenue(t));
     let cache=null; if(!demo){ try{ cache=await idbGet('cnd:'+k); }catch(e){} }
     if(!cache||cache.v!==1||!Array.isArray(cache.candles)||!Array.isArray(cache.ranges))cache={v:1,candles:[],ranges:[]};
-    const want=[t.openTime-itv.ms,(t.isOpen?now:t.closeTime)+itv.ms];
+    const pb=((pad&&pad.before)||1)*itv.ms, pa=((pad&&pad.after)||1)*itv.ms;
+    const want=[t.openTime-pb,(t.isOpen?now:t.closeTime)+pa];
     for(const u of uncoveredRanges(want,cache.ranges)){
       if(u[1]-u[0]<=itv.ms)continue;
       try{ const c=await venueFetchCandles(candleVenue(t),t.coin,itv.name,u[0],u[1]);
@@ -263,7 +265,7 @@ async function ensureTradeCandles(t){
       }catch(e){ return null; }
     }
     if(!demo){ try{ await idbSet('cnd:'+k,cache); }catch(e){} }
-    const a=t.openTime-itv.ms, b=(t.isOpen?now:t.closeTime)+itv.ms;
+    const a=want[0], b=want[1];
     const win=cache.candles.filter(c=>c[0]>=a&&c[0]<=b);
     if(win.length)return {candles:win,itv};
   }
