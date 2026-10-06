@@ -725,7 +725,9 @@ function pzTodayHtml(D){
   const safe=f=>{ try{ return f(); }catch(err){ console.warn('today section',err); return ''; } };
   const F=safe(()=>pzTodayFacts(D))||null;
   const foldIds=new Set([...PZ_FOLD,...(day?[]:['session'])]), fold=(id,h)=>h&&foldIds.has(id)&&!pzFoldOpen(id)?pzFoldHtml(id):h;
-  const on=id=>pzShow('today',id), sec=(id,f)=>fold(id,on(id)?safe(f):''), more=(id,k)=>fold(id,F&&on(id)?safe(()=>k(D,F)):'');
+  // each card's root element carries data-use="<id>" (features/usage.js counts which cards are shown and acted on)
+  const tag=(id,h)=>h?h.replace(/^(\s*<[a-zA-Z][a-zA-Z0-9-]*)/,'$1 data-use="'+id+'"'):h;
+  const on=id=>pzShow('today',id), sec=(id,f)=>tag(id,fold(id,on(id)?safe(f):'')), more=(id,k)=>tag(id,fold(id,F&&on(id)?safe(()=>k(D,F)):''));
   return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g,D.inbox.length))}
     ${safe(()=>pzTaBannerHtml(D))}
     ${safe(()=>typeof taStandingBannerHtml==='function'?taStandingBannerHtml():'')}

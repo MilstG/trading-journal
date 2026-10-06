@@ -10,7 +10,7 @@
   const api = (p, o) => A().api(p, o), render = () => A().render(), note = (m, e) => A().note(m, e);
   const esc = s => A().esc(s), fmt = n => A().fmt(n), ago = ms => A().ago(ms), sel = (...a) => A().sel(...a), tiles = l => A().tiles(l);
   const tab = () => location.hash.slice(1).split('/')[0];
-  const D = {}, UI = { res: { win: 28, ver: false } };
+  const D = {}, UI = { res: { win: 28, ver: false }, use: { days: 30 } };
   let busy = false;
   async function run(fn, msg) { if (busy) return; busy = true;
     try { await fn(); if (msg) note(msg); } catch (e) { note(e.message, true); } finally { busy = false; } render(); }
@@ -32,6 +32,19 @@
       <div class="scroll"><table><thead><tr><th>First…</th><th>Members</th><th>Measured</th><th title="Discipline points, after minus before, against members who hadn’t had one yet">Discipline vs not yet</th><th title="Percentage points of trading days with a slip">Slip days vs not yet</th><th>Raw change</th><th>Discipline before</th></tr></thead><tbody>
       ${Object.values(R.effects).map(x=>`<tr><td>${esc(x.label)}</td><td>${fmt(x.exposed)}</td><td>${fmt(x.measured)}</td><td${col(x.did)}>${ci(x.did)}</td><td${colSlip(x.didSlip)}>${ci(x.didSlip)}</td><td>${x.raw==null?'—':(x.raw>0?'+':'')+x.raw}</td><td>${x.before==null?'—':x.before}</td></tr>`).join('')}
       </tbody></table></div><p class="hint">${fmt(R.members)} members with trading days (${fmt(R.verified)} verified from fills${R.onlyVerified?'':', '+fmt(R.app)+' from the app'}).</p></section>`;
+  }
+  // what gets used in Daruma (GET /admin/usage): screens and Today cards, totals across members, never per person
+  async function loadUse(){ try{ D.use=await api('/usage?days='+UI.use.days); }catch(e){ D.use={err:e.message}; } }
+  function useCard(){
+    const U=D.use; if(!U){ D.use={loading:true}; loadUse().then(render); }
+    const top=`<section class="card"><div class="ch"><h2>What gets used</h2>${sel('useDays',[[7,'Last 7 days'],[30,'Last 30 days']],UI.use.days,' aria-label="Window"')}</div>`;
+    if(!U||U.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(U.err)return top+`<p class="warn">${esc(U.err)}</p></section>`;
+    if(!U.rows.length)return top+'<p class="muted">Nothing yet: apps send this with their stats, so it fills in as members use Daruma.</p></section>';
+    const tbl=(kind,title)=>{ const R=U.rows.filter(r=>r.kind===kind); return R.length?`<h3 style="margin:12px 0 6px">${title}</h3><div class="scroll"><table><thead><tr><th>${kind==='screen'?'Screen':'Today card'}</th><th title="Members who ${kind==='screen'?'opened it':'had it on screen'}">${kind==='screen'?'Opened':'Seen'} by</th><th>Pressed something</th><th>Presses</th></tr></thead><tbody>
+      ${R.map(r=>`<tr${r.low?' style="opacity:.7"':''}><td>${esc(r.name)}${r.low?' <span class="pill">bottom third</span>':''}</td><td>${fmt(r.opened)}${r.reach!=null?` <span class="muted small">${r.reach}%</span>`:''}</td><td>${fmt(r.acted)}${r.acts!=null?` <span class="muted small">${r.acts}% of them</span>`:''}</td><td>${fmt(r.presses)}</td></tr>`).join('')}</tbody></table></div>`:''; };
+    return top+`<p class="muted small" style="margin-top:0">${fmt(U.active)} members used Daruma in the last ${U.days} days. Counted on each device and sent with their stats: which screens they opened, which Today cards were on screen, and how often they pressed something there. Totals only. The bottom third by members who pressed something is where to look for something to cut or merge.</p>
+      ${tbl('screen','Screens')}${tbl('card','Today cards')}</section>`;
   }
   // ---------------- research: the report run on the league's own wallets (GET/POST /admin/research/run) ----------------
   async function loadRs(){ try{ D.rs=await api('/research/run'); }catch(e){ D.rs={err:e.message}; return; }
@@ -105,11 +118,12 @@
       document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) { note(e.message, true); } }
   });
   document.addEventListener('change', ev => { const t = ev.target;
+    if (t.id === 'useDays') { UI.use.days = +t.value; loadUse().then(render); return; }
     if (t.id === 'resWin' || t.id === 'resVer') { if (t.id === 'resWin') UI.res.win = +t.value; else UI.res.ver = t.value === '1'; loadRes().then(render); } });
   window.ARES = {
     view: () => { const h = vResearch(); setTimeout(pollRs, 0); return h; },
-    card: resCard,
+    card: () => resCard() + useCard(),
     // fresh numbers each time a tab is opened
-    enter: t => { if (t === 'insights') D.res = null; if (t === 'research') D.rs = null; },
+    enter: t => { if (t === 'insights') { D.res = null; D.use = null; } if (t === 'research') D.rs = null; },
   };
 })();

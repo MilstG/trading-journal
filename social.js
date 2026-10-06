@@ -3073,6 +3073,8 @@ function createSocial(opts) {
       if (M !== 'GET') { S.adminLog.push({ at: now(), by: who.by, what: (M + ' ' + parts.slice(1).join('/') + (body && typeof body.action === 'string' ? ' · ' + body.action.slice(0, 20) : '')).slice(0, 120) });
         if (S.adminLog.length > 500) S.adminLog = S.adminLog.slice(-400); touch('adminLog'); }
       // ---- insights: each member's numbers, and the whole base / any segment of it ----
+      // ---- what gets used in Daruma: screens and Today cards, totals across members ----
+      if (sub === 'usage' && M === 'GET') return json(res, 200, Insights.usageTable(members().filter(m => !m.banned), { days: [7, 30].includes(+query.days) ? +query.days : 30, now: now() }));
       if (sub === 'insights' && M === 'GET') {
         const today = todayKey(), all = members();
         const rows = all.map(m => Insights.memberRow(m, { today, leagues: leaguesOf(m).map(L => L.id) }));
@@ -4710,6 +4712,7 @@ function createSocial(opts) {
         if (b) { b.ret = null; b.dd = null; } // returns are read on chain on the server (benchRows), never taken from the app
         if (!!b !== !!me.bench) benchDirty = true; me.bench = b ? Object.assign(b, { at: now() }) : null; }
       me.weekXp = weekXpOf(me.weekXp, next);
+      if (body.use !== undefined) me.use = Insights.mergeUse(me.use, Insights.sanitizeUse(body.use)); // what gets used (Admin → Insights, totals only)
       awardCheck(me);
       for (const p of pairsOf(me)) if (p.status === 'active') pairSync(p);
       racePass(me, raceBefore);

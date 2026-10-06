@@ -113,7 +113,8 @@ try {
     // Replay drills (drills.js, Daruma only, ~10 KB raw / 4 KB gzipped): 1908 / 648.
     // The coach's lookups over your trades (coach-tools.js, Daruma only, ~6 KB raw / 3 KB gzipped) and the chat's round
     // trip; the maker-share habit and lesson-beside-alert on both screens: 1914 / 651 (the journal 2187 / 740).
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1916, 652],
+    // What gets used (usage.js, Daruma only, ~3 KB raw / 1 KB gzipped, and the data-use mark on Today's cards): 1917 / 652.
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1919, 653],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

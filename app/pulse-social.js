@@ -263,7 +263,7 @@ function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;
   let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor&&SOC.me&&(SOC.me.myMentors||[]).length),!!(SOC.share&&SOC.share.usd)),
-    {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())})); }catch(e){ return; }
+    {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())},typeof pzUseSync==='function'?{use:pzUseSync()}:{})); }catch(e){ return; }
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
   SOC.timer=setTimeout(()=>{ SOC.lastSentAt=Date.now();
@@ -573,7 +573,7 @@ function socSharingHtml(D){
   SOC.draft=SOC.draft||{...SOC.share};
   const w=socWallet();
   return `${back}${pzHead('Profile & privacy','What you share')}
-  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades stay on this device. The league only gets the numbers you switch on below; the owner and admins see those by name, to run the league. <a href="help#social" target="_blank" rel="noopener">More</a></p>
+  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades stay on this device. The league only gets the numbers you switch on below; the owner and admins see those by name, to run the league. The app also counts which screens and cards you open (never what's in them), which the owner sees only as totals across members. <a href="help#social" target="_blank" rel="noopener">More</a></p>
   <div class="pz-wide"><div class="pz-col">
     <div class="pz-field"><span style="font-size:15px;font-weight:700">Profile picture</span><div style="display:flex;align-items:center;gap:14px">${socAv(SOC.me.handle,64)}
       <label class="pz-ghost pz-sm" for="socAvFile" style="cursor:pointer">${SOC.me.av?'Change picture':'Add a picture'}</label><input type="file" id="socAvFile" accept="image/*" class="pz-vh">${SOC.me.av?'<button type="button" class="pz-linkbtn" data-soc-avdel>Remove</button>':''}</div></div>

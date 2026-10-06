@@ -188,5 +188,36 @@ function insights(rows, members, f, o) {
   };
 }
 
-module.exports = { METRICS, SLIPS, LEVEL_BANDS, ACTIVITY, FILTERS, MIN_SEG, memberRow, valueOf, matches, summarize, breakdown, funnel, cohorts, weekly, slipTotals,
+// ---- what gets used: Daruma's screens and Today cards, as totals across members (never per person) ----
+// The app sends, per day on the member's clock: o, screens opened ('tab:name'); s, Today cards on screen ('card:id');
+// a, presses per screen or card. Kept 35 days per member. usageTable -> one row per screen or card: how many active
+// members opened (or saw) it and how many pressed something on it, over the window; the bottom third by members who
+// acted is flagged, as a place to look for something to cut or merge.
+const USE_KEY = /^(tab|card):[a-z0-9_-]{1,40}$/, USE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+function sanitizeUse(b) {
+  const out = {}; if (!b || typeof b !== 'object' || Array.isArray(b)) return out;
+  const list = a => [...new Set((Array.isArray(a) ? a : []).filter(x => typeof x === 'string' && USE_KEY.test(x)))].slice(0, 60);
+  for (const k of Object.keys(b).filter(k => USE_DAY.test(k)).sort().slice(-14)) { const d = b[k]; if (!d || typeof d !== 'object') continue;
+    const a = {}; if (d.a && typeof d.a === 'object' && !Array.isArray(d.a)) for (const [x, n] of Object.entries(d.a).slice(0, 120)) { const v = Math.round(+n); if (USE_KEY.test(x) && v > 0) a[x] = Math.min(v, 10000); }
+    out[k] = { o: list(d.o), s: list(d.s), a }; }
+  return out;
+}
+function mergeUse(prev, next) { const o = Object.assign({}, prev && typeof prev === 'object' ? prev : {}, next || {}); return Object.fromEntries(Object.keys(o).sort().slice(-35).map(k => [k, o[k]])); }
+function usageTable(members, o) {
+  o = Object.assign({ days: 30, now: Date.now() }, o || {}); const from = keyOf(o.now - (o.days - 1) * DAY), rows = new Map();
+  const row = k => { if (!rows.has(k)) rows.set(k, { key: k, kind: k.startsWith('tab:') ? 'screen' : 'card', name: k.slice(k.indexOf(':') + 1), opened: new Set(), acted: new Set(), presses: 0 }); return rows.get(k); };
+  let active = 0;
+  for (const m of members || []) { const U = m && m.use; if (!U || typeof U !== 'object') continue; let any = false;
+    for (const [day, d] of Object.entries(U)) { if (day < from || !d) continue; any = true;
+      for (const k of [...(d.o || []), ...(d.s || [])]) row(k).opened.add(m.id);
+      for (const [k, n] of Object.entries(d.a || {})) { const r = row(k); r.acted.add(m.id); r.opened.add(m.id); r.presses += n; } }
+    if (any) active++; }
+  const out = [...rows.values()].map(r => ({ key: r.key, kind: r.kind, name: r.name, opened: r.opened.size, acted: r.acted.size, presses: r.presses,
+    reach: active ? Math.round(100 * r.opened.size / active) : null, acts: r.opened.size ? Math.round(100 * r.acted.size / r.opened.size) : null }))
+    .sort((a, b) => b.acted - a.acted || b.opened - a.opened || a.key.localeCompare(b.key));
+  for (const kind of ['screen', 'card']) { const K = out.filter(r => r.kind === kind), n = Math.floor(K.length / 3); for (const r of K.slice(K.length - n)) r.low = true; }
+  return { days: o.days, active, rows: out };
+}
+
+module.exports = { sanitizeUse, mergeUse, usageTable, METRICS, SLIPS, LEVEL_BANDS, ACTIVITY, FILTERS, MIN_SEG, memberRow, valueOf, matches, summarize, breakdown, funnel, cohorts, weekly, slipTotals,
   percentileIn, percentileFromDeciles, insights, bandOf, activityOf };
