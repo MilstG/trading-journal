@@ -96,8 +96,10 @@ try {
     // finding.js, recap.js, first-look.js: ~32 KB raw / ~13 KB gzipped, compressed one file each, a third of it
     // comments), their CSS in the page (~2 KB raw on both) and the reminder switches: 2134 / 1821 raw, 723 / 616 gzipped.
     // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2148, 728],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1835, 621],
+    // Mentoring both sides agree to: requests and answers, note threads, the week's focus, a mentee's 28 days at a
+    // glance and "did this help?": about 13 KB raw, 2 KB gzipped on both (2161 / 1848, 730 / 623).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2164, 731],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1851, 624],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
