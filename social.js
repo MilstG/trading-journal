@@ -1446,6 +1446,9 @@ function createSocial(opts) {
           const m = S.members[mv.id]; if (!m) continue; L.members[mv.id].tier = mv.to;
           if (L.id === 'main') m.tier = mv.to;
           if (mv.to > mv.from && m.share && m.share.feed) pushEvent(m, { type: 'league', text: 'moved up to ' + TIERS[mv.to] + (L.id === 'main' ? ' league' : ' in ' + L.name) });
+          const where = L.id === 'main' ? TIERS[mv.to] + ' league' : TIERS[mv.to] + ' in ' + L.name;
+          if (mv.to > mv.from) notify(m, 'league', 'You moved up to ' + where + '. New week, new table: the top ' + (TIERS[mv.to + 1] ? 'quarter moves up again.' : 'tier — hold it.'), { title: 'Promoted', url: '/daruma#social' });
+          else notify(m, 'league', 'You dropped to ' + where + ' this week. A strong week of reviews and journaling puts you back in the promotion zone.', { title: 'New league week', url: '/daruma#social' });
         }
       }
       L.week = wk;
@@ -2291,12 +2294,13 @@ function createSocial(opts) {
 
   // ---- inbox and web push: nudges, mentor notes, season results and the daily reminders ----
   const push = opts.push || null; // { publicKey, send(sub, message) -> status }
-  // social kinds (kudos, follow, race, outcome, adopt, streak) on by default; quiet hours and a daily cap hold
-  // those back (they still land in the inbox), and tiltMute holds back race and duel news while you're tilting
-  const PUSH_KINDS = ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook', 'referral', 'kudos', 'follow', 'race', 'outcome', 'adopt', 'streak', 'tiltMute'];
+  // social news (kudos and followers: 'social'; the league week and the race: 'league'), plan outcomes, adopted rules
+  // and pair streaks on by default; quiet hours and a daily cap hold those back (they still land in the inbox),
+  // and tiltMute holds back league and duel news while you're tilting
+  const PUSH_KINDS = ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook', 'referral', 'league', 'social', 'outcome', 'adopt', 'streak', 'tiltMute'];
   const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, referral: true,
-      kudos: true, follow: true, race: true, outcome: true, adopt: true, streak: true, tiltMute: true, cap: 5, quiet: { on: true, from: '22:00', to: '07:00' }, on: { morning: true, eod: true } }, prev || {});
+      league: true, social: true, outcome: true, adopt: true, streak: true, tiltMute: true, cap: 5, quiet: { on: true, from: '22:00', to: '07:00' }, on: { morning: true, eod: true } }, prev || {});
     if (p && typeof p === 'object') {
       for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && HM_RE.test(p[k])) o[k] = p[k];
       for (const k of PUSH_KINDS) if (typeof p[k] === 'boolean') o[k] = p[k];
@@ -2304,7 +2308,7 @@ function createSocial(opts) {
       if (p.quiet && typeof p.quiet === 'object') o.quiet = { on: p.quiet.on !== false, from: HM_RE.test(p.quiet.from) ? p.quiet.from : o.quiet.from, to: HM_RE.test(p.quiet.to) ? p.quiet.to : o.quiet.to };
       if (p.on && typeof p.on === 'object') o.on = { morning: p.on.morning !== false, eod: p.on.eod !== false }; }
     return o; };
-  const CAPPED_KINDS = new Set(['kudos', 'follow', 'race', 'outcome', 'adopt', 'comment', 'streak']), COMPETE_KINDS = new Set(['race', 'duel']);
+  const CAPPED_KINDS = new Set(['social', 'league', 'outcome', 'adopt', 'comment', 'streak']), COMPETE_KINDS = new Set(['league', 'duel']);
   const inQuiet = (q, hm) => { if (!q || !q.on) return false; const a = mins(q.from), b = mins(q.to), x = mins(hm); return a <= b ? x >= a && x < b : x >= a || x < b; };
   // tilting, for the mute: two or more slips today, on the member's own calendar
   const tilting = m => { const d = dayOfM(m, zoneKey((m.stats && m.stats.tz) || 'UTC', now())); return !!(d && Array.isArray(d.f) && d.f.length >= 2); };
@@ -2330,6 +2334,57 @@ function createSocial(opts) {
     m.inbox = [...(m.inbox || []), it].slice(-INBOX_MAX); touch(m);
     if (pushOk(m, kind)) sendPush(m, { title: extra && extra.title || 'Daruma', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/daruma#today' }).catch(() => {});
   };
+  // kudos and new followers: the first one in six hours says who and what; the rest wait and come
+  // together as one line when the six hours are up (cheerFlush, from tick). A kudos taken back and
+  // given again, or an unfollow and follow, never says it twice.
+  const CHEER_GAP = 6 * 3600000;
+  const cheer = (m, who, kind, key, text) => {
+    if (!m || m.banned || !who || who.id === m.id) return;
+    const c = m.cheer = Object.assign({ at: 0, seen: [], kudos: 0, follow: 0, who: [] }, m.cheer);
+    const k = who.id + ':' + key; if (c.seen.includes(k)) return; c.seen = [...c.seen, k].slice(-300);
+    if (now() - c.at >= CHEER_GAP && !c.kudos && !c.follow) { c.at = now(); notify(m, 'social', '@' + who.handle + ' ' + text, { title: kind === 'follow' ? 'New follower' : 'Kudos', url: kind === 'follow' ? '/daruma#u/' + encodeURIComponent(who.handle) : '/daruma#social' }); }
+    else { c[kind]++; if (!c.who.includes(who.handle)) c.who = [...c.who, who.handle].slice(0, 3); touch(m); } };
+  const cheerFlush = () => { let n = 0;
+    for (const m of members()) { const c = m.cheer; if (!c || (!c.kudos && !c.follow) || now() - c.at < CHEER_GAP || m.banned) continue;
+      const what = [c.kudos ? c.kudos + ' kudos' : '', c.follow ? c.follow + ' new follower' + (c.follow === 1 ? '' : 's') : ''].filter(Boolean).join(' and ');
+      const total = new Set(c.who).size, from = c.who.length ? ' from @' + c.who[0] + (c.kudos + c.follow > 1 ? ' and others' : '') : '';
+      notify(m, 'social', what + from + '.', { title: total > 1 || c.kudos + c.follow > 1 ? 'People noticed' : c.follow ? 'New follower' : 'Kudos', url: '/daruma#social' });
+      Object.assign(c, { at: now(), kudos: 0, follow: 0, who: [] }); n++; }
+    if (n) save(null); return n; };
+  // the end of a league week: one line, once a week, to a member whose spot is on the line — inside the
+  // promotion zone, close behind it, or in the relegation zone. Only weekly leagues ranked on XP: what moves
+  // them is logging and reviewing, never trading more. From 30 hours before the week closes (Monday 00:00
+  // UTC), between 10:00 and 21:00 on the member's own clock.
+  const stakesOf = (m, wk) => {
+    const Ls = leaguesOf(m).filter(L => L.tiers && L.metric === 'xp' && L.period !== 'month').sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : 0));
+    for (const L of Ls) {
+      const tier = leagueTier(L, m);
+      const rows = members().filter(x => own(L.members, x.id) && !x.banned && leagueTier(L, x) === tier).map(x => ({ id: x.id, v: offBoards(x) ? 0 : leagueValue(x, L, wk) }))
+        .sort((a, b) => b.v - a.v || a.id.localeCompare(b.id));
+      const n = rows.length, k = leagueMoveCount(n); if (!k) continue;
+      const i = rows.findIndex(r => r.id === m.id); if (i < 0) continue;
+      const me = rows[i].v, name = TIERS[tier] + (L.id === 'main' ? '' : ' in ' + L.name), up = tier < TIERS.length - 1, down = tier > 0;
+      if (up && i < k && me > 0) return { L, zone: 'up', name, rank: i + 1, n, lead: i + 1 < n ? me - rows[k].v : null };
+      if (down && i >= n - k) return { L, zone: 'down', name, rank: i + 1, n, gap: rows[n - k - 1].v - me + 1 };
+      if (up && i < k + 3) return { L, zone: 'near', name, rank: i + 1, n, gap: Math.max(1, rows[k - 1].v - me + 1) };
+    }
+    return null; };
+  const stakesPass = t => {
+    const wk = isoWeekOfKey(todayKey()); if (S.league.week !== wk) ensureWeek();
+    const left = Date.parse(isoWeekMonday(wk) + 'T00:00:00Z') + 7 * 86400000 - t; if (left > 30 * 3600000 || left < 3600000) return 0;
+    const hrs = Math.round(left / 3600000), when = hrs > 20 ? 'about a day' : hrs + ' hour' + (hrs === 1 ? '' : 's');
+    let n = 0, seen = 0;
+    for (const m of members()) {
+      if (m.banned || m.stakesWeek === wk || !leaguesOf(m).length) continue;
+      const hm = localHM((m.stats && m.stats.tz) || 'UTC', t); if (hm < '10:00' || hm >= '21:00') continue;
+      const st = stakesOf(m, wk); m.stakesWeek = wk; touch(m); seen++; if (!st) continue;
+      const xp = v => Math.round(v).toLocaleString('en-US') + ' XP';
+      const text = st.zone === 'up' ? 'You’re #' + st.rank + ' in ' + st.name + ', in the promotion zone' + (st.lead != null && st.lead > 0 ? ', ' + xp(st.lead) + ' clear' : '') + '. ' + when[0].toUpperCase() + when.slice(1) + ' left to hold it.'
+        : st.zone === 'down' ? 'You’re in the relegation zone in ' + st.name + '. ' + xp(st.gap) + ' gets you clear; ' + when + ' left. A review or journaling today’s trades counts.'
+        : 'You’re ' + xp(st.gap) + ' from the promotion zone in ' + st.name + ', with ' + when + ' left. A review or journaling today’s trades counts.';
+      notify(m, 'league', text, { title: st.zone === 'up' ? 'Hold your spot' : st.zone === 'down' ? 'League week ends soon' : 'Promotion is close', url: '/daruma#social' }); n++;
+    }
+    if (seen) save(null); return n; };
   // morning and evening reminders on the member's own clock, once a day each; the evening one
   // only on a day they traded and haven't reviewed yet
   const localHM = (tz, ms) => { try { return fmtFor('hm', tz || 'UTC').format(ms); } catch (e) { return new Date(ms).toISOString().slice(11, 16); } };
@@ -2341,6 +2396,8 @@ function createSocial(opts) {
     try { duelSweep(); } catch (e) { console.warn('[ledger] duels: ' + (e && e.message)); }
     try { holdSweep(); } catch (e) { console.warn('[ledger] mentor holds: ' + (e && e.message)); }
     if (S.config.bench.seeds !== false) seedSchedule(); // daily re-reads of seed wallets come due on their own
+    try { cheerFlush(); } catch (e) { console.warn('[ledger] kudos notes: ' + (e && e.message)); }
+    try { stakesPass(now()); } catch (e) { console.warn('[ledger] league stakes: ' + (e && e.message)); }
     try { if (S.config.bench.on) benchNow(); } catch (e) {} // a daily build keeps the weekly history going without anyone asking
     if (!push || ticking) return 0; ticking = true; const t = now(), jobs = [];
     try {
@@ -2349,7 +2406,10 @@ function createSocial(opts) {
         const pr = m.push.prefs = sanitizePrefs(null, m.push.prefs), tz = (m.stats && m.stats.tz) || 'UTC', day = zoneKey(tz, t), hm = localHM(tz, t);
         const sent = m.push.sent = m.push.sent || {};
         if (pr.on.morning && sent.morning !== day && due(hm, pr.morning)) { sent.morning = day; touch(m);
-          jobs.push(() => sendPush(m, { title: 'Morning prep', body: 'Thirty seconds: sleep, calm, focus, then your rules for today.', tag: 'pulse-morning', url: '/daruma#checkin' })); }
+          // Monday's says the week's finding is in (the app picks it from the member's own trades: the server never sees it)
+          const monday = new Date(Date.parse(day + 'T12:00:00Z')).getUTCDay() === 1;
+          jobs.push(() => sendPush(m, monday ? { title: 'New week', body: 'Your finding of the week is in. Then thirty seconds of prep: sleep, calm, focus, your rules.', tag: 'pulse-morning', url: '/daruma#today' }
+            : { title: 'Morning prep', body: 'Thirty seconds: sleep, calm, focus, then your rules for today.', tag: 'pulse-morning', url: '/daruma#checkin' })); }
         const today = m.stats && Array.isArray(m.stats.days) ? m.stats.days.find(d => d.k === day) : null;
         if (pr.on.eod && sent.eod !== day && due(hm, pr.eod) && today && !today.r) { sent.eod = day; touch(m);
           jobs.push(() => sendPush(m, { title: 'Review your day', body: 'Five minutes: one lesson, one focus for tomorrow.', tag: 'pulse-eod', url: '/daruma#review' })); }
@@ -2357,15 +2417,6 @@ function createSocial(opts) {
         if (pr.streak !== false && sent.streak !== day && due(hm, pr.eod)) for (const p of pairsOf(m)) { if (p.status !== 'active') continue;
           const o = otherIn(p, m), st = pairStreak(p); if (!o || o.banned || st.n < 1 || st.done[m.id] || !st.done[o.id]) continue;
           sent.streak = day; touch(m); jobs.push(() => sendPush(m, { title: 'Pair streak', body: '@' + o.handle + ' showed up today. Your ' + st.n + '-day streak together ends at midnight unless you do too.', tag: 'pulse-streak', url: '/daruma#journal' })); break; }
-        // the weekly league's last day (Sunday on their clock, from 09:00): where they'd land if it ended now
-        const ML = S.leagues.main;
-        if (pr.race !== false && sent.race !== S.league.week && new Date(day + 'T00:00:00Z').getUTCDay() === 0 && due(hm, '09:00') && ML && ML.tiers && ML.period !== 'month' && own(ML.members, m.id) && !offBoards(m)) {
-          sent.race = S.league.week; touch(m);
-          const rows = leagueBoard(ML, ML.metric, m).filter(r => !r.out), r = rows.find(x => x.id === m.id), n = rows.length, k = leagueMoveCount(n), t = leagueTier(ML, m);
-          const txt = !r || !k ? '' : r.rank <= k && t < TIERS.length - 1 ? 'If the week ended now, you’d move up to ' + TIERS[t + 1] + '. It ends tonight.'
-            : r.rank > n - k && t > 0 ? 'If the week ended now, you’d drop to ' + TIERS[t - 1] + '. It ends tonight.'
-            : t < TIERS.length - 1 && r.rank - k <= 3 ? 'You’re ' + (r.rank - k) + ' place' + (r.rank - k === 1 ? '' : 's') + ' from moving up to ' + TIERS[t + 1] + '. The week ends tonight.' : '';
-          if (txt) notify(m, 'race', txt, { title: 'League race', url: '/daruma#social' }); }
       }
       if (jobs.length) save(null); // the members touched above
       // eight at a time: one slow push service doesn't hold up everyone else's reminder
@@ -2517,7 +2568,7 @@ function createSocial(opts) {
       for (const [id, x1] of a) { if (told >= 3 || id === m.id) continue; const x0 = b.get(id); if (x0 == null || !(x0 < r0) || !(x1 > r1)) continue;
         const x = S.members[id]; if (!x || x.banned || (x.raceSent && x.raceSent.day === day)) continue;
         x.raceSent = { day }; told++;
-        notify(x, 'race', '@' + m.handle + ' passed you in ' + L.name + '. You’re #' + x1 + (k ? x1 > k ? ', ' + (x1 - k) + ' place' + (x1 - k === 1 ? '' : 's') + ' from the promotion line' : ', still in the promotion places' : '') + '.', { title: 'League race', url: '/daruma#social' }); touch(x); } }
+        notify(x, 'league', '@' + m.handle + ' passed you in ' + L.name + '. You’re #' + x1 + (k ? x1 > k ? ', ' + (x1 - k) + ' place' + (x1 - k === 1 ? '' : 's') + ' from the promotion line' : ', still in the promotion places' : '') + '.', { title: 'League race', url: '/daruma#social' }); touch(x); } }
   } catch (e) { /* the race is news, never a reason for a sync to fail */ } };
 
   // ---- notifications that group: the same news within the hour (a day for follows) updates one line ----
@@ -4378,10 +4429,8 @@ function createSocial(opts) {
       if (e.member === me.id) return json(res, 400, { error: 'That’s your own post.' });
       const liked = tx(() => { if (q('DELETE FROM kudos WHERE event = ? AND member = ?').run(e.id, me.id).changes) { q('UPDATE events SET kudos = max(0, kudos - 1) WHERE id = ?').run(e.id); return false; }
         q('INSERT INTO kudos (event, member, at) VALUES (?, ?, ?)').run(e.id, me.id, now()); q('UPDATE events SET kudos = kudos + 1 WHERE id = ?').run(e.id); return true; });
-      const author = liked && own(S.members, e.member) ? S.members[e.member] : null;
-      if (author) { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
-        const what = e.type === 'post' ? ({ trade: 'trade', plan: 'plan', note: 'note' }[d.kind] || 'post') : 'milestone', bit = cleanText(e.type === 'post' ? e.text : e.text + (e.quote ? ': ' + e.quote : ''), 60);
-        notifyGroup(author, 'kudos', 'kudos:' + e.id, me.handle, who => namesOf(who) + ' gave kudos to your ' + what + ': “' + bit + ((e.text || '').length > 60 ? '…' : '') + '”', { title: 'Kudos', url: e.type === 'post' ? '/daruma#post/' + e.id : '/daruma#social' }); save(author); }
+      if (liked && e.member && own(S.members, e.member)) { const to = S.members[e.member];
+        cheer(to, me, 'kudos', e.id, e.type === 'post' ? 'gave kudos to your post.' : 'gave kudos: you ' + String(e.text || 'did something worth it').slice(0, 120) + '.'); save(to); }
       return json(res, 200, { kudos: q('SELECT kudos FROM events WHERE id = ?').get(e.id).kudos, liked });
     }
     if (head === 'profile' && parts[1] && M === 'GET') {
@@ -4475,11 +4524,9 @@ function createSocial(opts) {
     }
     if (head === 'follow' && parts[1] && (M === 'POST' || M === 'DELETE')) {
       const m = byHandle(arg); if (!m || m.banned || m.id === me.id) return json(res, 404, { error: 'No one by that name.' });
-      const was = (S.follows[me.id] || []).includes(m.id), f = S.follows[me.id] = (S.follows[me.id] || []).filter(x => x !== m.id);
-      if (M === 'POST') f.push(m.id);
-      save('follows');
-      if (M === 'POST' && !was) { const n = followersOf(m.id); notifyGroup(m, 'follow', 'follow', me.handle, who => namesOf(who) + ' followed you. You have ' + n + ' follower' + (n === 1 ? '' : 's') + '.', { title: 'New follower', url: '/daruma#u/' + me.handle }, 86400000); save(m); }
-      return json(res, 200, { following: M === 'POST' });
+      const f = S.follows[me.id] = (S.follows[me.id] || []).filter(x => x !== m.id);
+      if (M === 'POST') { f.push(m.id); cheer(m, me, 'follow', 'f', 'started following you.'); touch(m); }
+      save('follows'); return json(res, 200, { following: M === 'POST' });
     }
     const compVisible = c => !c.league || (own(S.leagues, c.league) && own(S.leagues[c.league].members, me.id)) || !!c.entrants[me.id];
     if (head === 'competitions' && M === 'GET' && !parts[1]) {

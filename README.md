@@ -649,6 +649,39 @@ restarts it tomorrow; one kept through all six is kept for good. Lessons are
 tagged with the slip they're about (from their words or that day's slips), and
 quiet mode shows the one that matches what's tilting you.
 
+**Moments worth celebrating.** A level, a perfect week, a discipline-streak mark (5, 10, 20, 30,
+50 … days), an achievement, a completed challenge or a new badge gets a card over the screen with a
+short burst of confetti and a tap of vibration on a phone (neither with reduced motion), and the
+biggest of them leads when several land at once. It shows on Today, Progress, Badges or a report
+card, never in the middle of journaling or a form. Each device remembers what it last celebrated
+(`pzCele` in local storage); its first look only notes where things stand, things earned more than
+three days ago aren't news (old history merging in behind the first draw), and a level that jumps
+by more than three at once (a profile's server XP arriving) is taken quietly. Never in sample mode.
+(`app/features/celebrate.js`)
+
+**Days off the screen.** On a day with no trades and no perp open, Today has a card with last week's
+report card, the lessons library, the latest recap, and **I'm sitting out today on purpose**, which
+marks the day as a rest day (`rest` on the day's journal entry) and counts it in the month's recap.
+A rest day earns no XP, on purpose: XP for not trading could be claimed every day with no effort, and
+the leagues rank on XP. (`app/features/offday.js`)
+
+**Finding of the week.** One thing your own trades show, on Today all week: the strongest of the
+coach's findings that it calls probably or very likely real (edges and leaks), not shown in the six
+weeks before. With nothing new that's real there's no card; **Got it** puts it away until next week,
+and Monday's morning reminder says a new one is in. (`app/features/finding.js`)
+
+**Recap.** `#recap` is your month or your year in process: Discipline against the period before,
+clean days, the best streak, perfect weeks, XP, badges (never the ones for results), achievements,
+reviews, plans, lessons, rest days, and the slip that shrank the most. **Share my month** draws the
+"Share my week" card for the period. No dollars anywhere. For the first week of a month Today says
+last month's recap is ready (the first two weeks of January: last year's). Progress links to it
+under Report cards. (`app/features/recap.js`)
+
+**First look.** Someone new (a journal with nothing in it yet, decided once per device) gets a card
+on Today for two weeks or until **Got it**: their last 30 trading days already scored, the slip that
+cost them most with **Plug this leak**, the XP their history already earned, and the next step.
+(`app/features/first-look.js`)
+
 **Process goals.** Up to three at a time, on Progress: a month's Discipline
 average (70/80/90, at least five trading days), weeks without one slip (2/4/8;
 the clock restarts after one), a share of the month's trades journaled, a
@@ -897,7 +930,18 @@ link to join *your* league. A server upgraded from an older version imports its
 - **Reminders (web push).** In Daruma's settings, **Remind me on this device** sends a
   morning prep reminder and, on days you traded and haven't reviewed, an evening
   review reminder, at times you pick on your own clock; partner nudges, mentor notes,
-  season results and tilt alerts (see Tilt alerts above) come the same way. It's standard web push, encrypted end to end
+  season results and tilt alerts (see Tilt alerts above) come the same way. So do two kinds with
+  their own switches, both on by default:
+  - **League week.** From 30 hours before a league week closes (Monday 00:00 UTC), between 10:00 and
+    21:00 on the member's clock, one line, once a week, to a member whose spot is on the line: in the
+    promotion zone ("#2 in Bronze, 100 XP clear"), within three places of it ("151 XP from the
+    promotion zone"), or in the relegation zone. Only weekly leagues ranked on XP, since what moves
+    those is logging and reviewing, never trading more. And at the rollover, the member who moved up
+    or down is told.
+  - **Kudos and followers.** The first kudos or new follower in six hours says who and what at once;
+    the rest wait and come as one line when the six hours are up ("3 kudos and 1 new follower from
+    @ann and others"). Kudos taken back and given again, or an unfollow and follow, never say it twice.
+  All of these land in the inbox (Today → New for you) whether or not push is on. It's standard web push, encrypted end to end
   (RFC 8291) with the server's own keys — no third-party service. On iPhone it needs
   Daruma added to the Home Screen.
 
@@ -1178,12 +1222,13 @@ playbooks, referrals, peer groups, beta invites) shows ten at a time, with Prev 
   - **Headline medians:** Discipline over 30 days, days journaled, win rate,
     profit factor and 30-day return.
   - **From joining to active:** joined → wallet → synced → traded → journaled →
-    seen in 30 / 7 days → verified.
+    reviewed → seen in 30 / 7 days → verified.
   - **Week by week:** Discipline, members trading and days journaled for the last
     8 weeks, plus the slips that happen most.
   - **How members spread** on any measure (a histogram with deciles).
   - **Segments:** a table split by any dimension (click one to look at it), and
-    retention by month joined.
+    retention by month joined: synced, came back a week or more after joining (the week-1
+    drop-off), journaling, and seen in 30 / 7 days.
   - **Members:** a sortable list, including **"Slipping"** (Discipline down 10 or
     more on the 30 days before).
 

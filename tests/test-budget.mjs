@@ -92,9 +92,12 @@ try {
     // X, Telegram and Discord on profiles (the row, the three fields, the copy button): about 1.5 KB raw on both.
     // Social's redesign (four tabs, the week strip, the Compete hub, the feed's activity rail, the tabbed profile):
     // about 13 KB raw and 4 KB gzipped on both.
+    // Oct 2026: coming back for the right reasons — five Daruma-only features (app/features/celebrate.js, offday.js,
+    // finding.js, recap.js, first-look.js: ~32 KB raw / ~13 KB gzipped, compressed one file each, a third of it
+    // comments), their CSS in the page (~2 KB raw on both) and the reminder switches: 2134 / 1821 raw, 723 / 616 gzipped.
     // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2145, 727],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1800, 606],
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2148, 728],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1835, 621],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

@@ -48,6 +48,8 @@ t('the funnel, cohorts and who’s slipping', () => {
   ];
   const f = I.funnel(rows, NOW); eq([f.joined, f.wallet, f.synced, f.traded30, f.journaling, f.active7], [2, 1, 1, 1, 1, 1]);
   eq(I.cohorts(rows, NOW).map(c => [c.month, c.joined]), [['2026-09', 1], ['2026-08', 1]]);
+  eq(I.cohorts(rows, NOW).map(c => [c.back7, c.journaled]), [[1, 1], [0, 0]], 'a: joined 40 days ago, seen yesterday; b: never seen');
+  eq(f.reviewing, 0, 'no day reviewed');
   const out = I.insights(rows, [], {}, { now: NOW, today: TODAY, sort: 'slipping' });
   eq(out.members.map(r => r.handle), ['a'], 'Discipline 90 → 40');
 });
