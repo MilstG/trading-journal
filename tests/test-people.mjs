@@ -76,5 +76,27 @@ try {
     const p = (await call('/profile/cat_mentor', { key: K.bob.key })).d.profile, a = (await call('/profile/ann_trades', { key: K.bob.key })).d.profile;
     eq([p.mentor, a.seeking, a.mentor], [true, true, false]);
   });
+  await t('X, Telegram and Discord on a profile: usernames only, links give their name, a private profile keeps them', async () => {
+    const put = (key, socials, extra) => call('/me', { method: 'PUT', key, body: Object.assign({ socials }, extra || {}) });
+    let r = await put(K.ann.key, { x: '@Ann_X', telegram: 'https://t.me/ann_trades?start=1', discord: '@Ann.Trades' });
+    eq([r.status, r.d.me.socials], [200, { x: 'Ann_X', telegram: 'ann_trades', discord: 'ann.trades' }], 'the @ goes, a link gives its name, Discord is lowercased');
+    eq((await put(K.ann.key, { x: 'https://twitter.com/ann_x2/status/123' })).d.me.socials, { x: 'ann_x2', telegram: 'ann_trades', discord: 'ann.trades' }, 'twitter.com links too; the others stay');
+    eq((await put(K.ann.key, { x: 'www.x.com/ann_x' })).d.me.socials.x, 'ann_x');
+    for (const [s, re] of [[{ x: 'way_too_long_for_x' }, /X username is 1–15/], [{ x: 'https://evil.example/ann' }, /X username/], [{ telegram: 'abc' }, /Telegram username is 5–32/],
+      [{ telegram: 't.me/+joinchat' }, /Telegram username/], [{ discord: 'Ann Trades' }, /Discord username is 2–32/], [{ discord: 'a' }, /Discord username/]]) {
+      r = await put(K.ann.key, s, { bio: 'changed' }); eq(r.status, 400, JSON.stringify(s)); ok(re.test(r.d.error), r.d.error); }
+    const me = (await call('/me', { key: K.ann.key })).d.me;
+    eq([me.bio, me.socials], ['Swing trader, ETH and SOL', { x: 'ann_x', telegram: 'ann_trades', discord: 'ann.trades' }], 'a rejected one saves nothing');
+    eq((await put(K.ann.key, { telegram: '' })).d.me.socials, { x: 'ann_x', discord: 'ann.trades' }, 'empty takes one off');
+    eq((await call('/profile/ann_trades', { key: K.bob.key })).d.profile.socials, { x: 'ann_x', discord: 'ann.trades' }, 'others see them');
+    eq((await call('/me', { method: 'PUT', key: K.ann.key, body: { bio: 'Swing trader' } })).d.me.socials, { x: 'ann_x', discord: 'ann.trades' }, 'a save without them keeps them');
+    ok(!('socials' in (await put(K.ann.key, { x: '', discord: '' })).d.me), 'all empty: none');
+    eq((await put(K.ann.key, { x: 'ann_x' })).status, 200); ok(!('socials' in (await put(K.ann.key, null)).d.me), 'null takes them all off');
+    // cat's profile is private: cat sees their own (to edit them), no one else gets them
+    eq((await put(K.cat.key, { x: 'cat_x', telegram: 'cat_mentor', discord: 'cat' })).d.me.socials, { x: 'cat_x', telegram: 'cat_mentor', discord: 'cat' });
+    eq((await call('/profile/cat_mentor', { key: K.cat.key })).d.profile.socials.x, 'cat_x');
+    const priv = (await call('/profile/cat_mentor', { key: K.bob.key })).d.profile;
+    eq(priv.private, true); ok(!('socials' in priv) && !/cat_x/.test(JSON.stringify(priv)), JSON.stringify(priv));
+  });
 } finally { await new Promise(r => app.close(r)); }
 report('people');

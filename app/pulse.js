@@ -1583,7 +1583,7 @@ function wirePulse(){
     if(t.id.startsWith('pzSetup_')){ const slot=t.closest('[data-pz-trade]'), sl=slot&&slot.querySelector('[data-pz-pbslot]'), id=slot&&slot.dataset.pzTrade;
       const cur=sl&&sl.querySelector('[data-pz-pb]'), p=playbookFor(t.value,pbList()); // the same playbook still named: keep what's ticked
       if(sl&&(cur?cur.dataset.pzPb:'')!==(p?p.id:''))sl.innerHTML=pzPbCheckHtml(id,t.value); return; }
-    if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; } if(t.id==='socBio'){ SOC.draftBio=t.value; return; }
+    if(t.id==='socHandle2'){ SOC.draftHandle=t.value; return; } if(t.id==='socBio'){ SOC.draftBio=t.value; return; } if(t.dataset.socSocial){ (SOC.draftSocials=SOC.draftSocials||{})[t.dataset.socSocial]=t.value; return; }
     if(t.id==='socPq'){ clearTimeout(SOC.pqT); SOC.pqT=setTimeout(()=>{ SOC.pq=t.value.trim(); SOC.ppage=0; pzRender(); const el=$('socPq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='socMq'){ clearTimeout(SOC.mqT); SOC.mqT=setTimeout(()=>{ SOC.mq=t.value.trim(); pzRender(); const el=$('socMq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
     if(t.id==='socLq'){ clearTimeout(SOC.lqT); SOC.lqT=setTimeout(()=>{ SOC.lq=t.value.trim(); pzRender(); const el=$('socLq'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },300); return; }
@@ -1623,7 +1623,7 @@ function wirePulse(){
   { const n=$('pzNote'); if(n)n.addEventListener('click',()=>{ if(pzS.note&&pzS.note.kind!=='busy')pzNote(null); }); }
   let prevTab=pzTab(); window.addEventListener('hashchange',()=>{ const tb=pzTab(); SOC.confirm=null; if(pzS.note&&pzS.note.kind==='err')pzNote(null);
     // a half-typed comment or update belongs to the post it was written on
-    for(const id of ['socCText','socUNote','socUExit']){ const el=$(id); if(el)el.value=''; } if(tb==='checkin')pzS.ck=null; if(tb!=='journal')pzS.jundo=null; if(tb==='sharing'&&prevTab!=='account'){ SOC.draft=null; SOC.draftHandle=null; SOC.draftBio=null; } prevTab=tb; pzRender(); window.scrollTo(0,0); });
+    for(const id of ['socCText','socUNote','socUExit']){ const el=$(id); if(el)el.value=''; } if(tb==='checkin')pzS.ck=null; if(tb!=='journal')pzS.jundo=null; if(tb==='sharing'&&prevTab!=='account'){ SOC.draft=null; SOC.draftHandle=null; SOC.draftBio=null; SOC.draftSocials=null; } prevTab=tb; pzRender(); window.scrollTo(0,0); });
   // the join screen's "What you share" stays open across re-renders (each switch re-renders the screen)
   document.addEventListener('toggle',ev=>{ if(ev.target&&ev.target.id==='socShareBox')pzS.joinShare=ev.target.open; },true);
   window.addEventListener('beforeinstallprompt',()=>{ if(pzS.sheet||!location.hash||location.hash==='#today')pzRender(); });

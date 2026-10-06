@@ -48,7 +48,7 @@ const SOC_COMP_HOW={
   journal:'Journal every closed trade, day after day. Your longest run of fully journaled trading days counts.',
   return:'Return over the competition dates, read from your wallet on chain.'};
 const PZ_UNLOCK_DEFAULTS={unlocksOn:true,unlocks:{trends:2,share:3,compete:4}};
-var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'league',board:'rank',cfilter:'mine',feed:'following',
+var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'feed',board:'rank',cfilter:'mine',feed:'following',
   cache:{},busy:{},lastSent:'',lastSentAt:0,timer:null,draft:null,avs:{},more:{},upd:{},compose:null,confirm:null};
 try{ SOC.key=localStorage.getItem(SOC_KEY_STORE)||null; }catch(e){}
 // An invite link (/keel?invite=CODE, from the owner's Settings) fills the code in for them: kept on this
@@ -368,12 +368,10 @@ function peerImpTip(c){
 
 // ---- screens ----
 
-// your profile and settings sit on the title row; the text chips wrap on their own row below it (on a 360 px phone
-// a single wrapping row left the gear alone on a third line)
+// the title row: find people, and your profile (mentors, playbooks, invites and settings moved to the People and You tabs)
 function socHead(){
   return `<header class="pz-head"><div><span class="pz-kick">${SOC.cfg&&SOC.cfg.week?'Week '+esc(SOC.cfg.week.slice(-2)):'Social'}</span><h1 class="pz-h1">Social</h1></div>
-    <span class="pz-chips"><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a><a class="pz-chip icon" href="#sharing" aria-label="What you share">${pzI('gear',20)}</a></span></header>
-    <div class="pz-chips" style="margin:-4px 0 12px">${SOC.me.mentor?`<a class="pz-chip" href="#mentor" style="font-weight:700;font-size:13px;padding:0 14px">Mentees</a>`:''}${SOC.me.mentor||SOC.me.admin||(SOC.share&&SOC.share.mentor)?`<a class="pz-chip" href="#reviews" style="font-weight:700;font-size:13px;padding:0 14px">Reviews</a>`:''}${SOC.me.mentor?'':`<a class="pz-chip" href="#mentors" style="font-weight:700;font-size:13px;padding:0 14px">Mentors</a>`}${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':`<a class="pz-chip" href="#playbooks/shared" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('book',16)} Playbooks</a>`}${SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on?`<a class="pz-chip" href="#invite" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('plus',16)} Invite</a>`:''}<a class="pz-chip" href="#people" style="font-weight:700;font-size:13px;padding:0 14px">${pzI('social',16)} Find people</a></div>`;
+    <span class="pz-chips"><a class="pz-chip icon" href="#people" aria-label="Find people">${pzI('social',20)}</a><a class="pz-chip icon" href="#u/${esc(SOC.me.handle)}" aria-label="My profile">${socAv(SOC.me.handle,30)}</a></span></header>`;
 }
 function socUnavailableHtml(){
   return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">Social lives on the Ledger server this page comes from. Open Daruma from your server’s <b>/daruma</b> link to join the league${/^https?:$/.test(location.protocol)?' — this server didn’t answer just now; try again in a moment.':'.'}</p></section>`;
@@ -466,15 +464,41 @@ function socCompHtml(D, id){
       ${act}</div>
       <div class="pz-col">${rows?`<ol class="pz-list" aria-label="Standings">${rows}</ol>${spg.html}`:'<section class="pz-card"><p class="pz-sub">No one has joined yet.</p></section>'}</div></div>`;
 }
+// what people wrote (posts, League notices, a weekly-challenge lesson, a habit) goes in the column; badges,
+// levels and joins go in the activity rail beside it
+const socIsPost=e=>!!(e.post||e.admin||(e.type==='challenge'||e.type==='habit')&&e.quote);
+const SOC_FKINDS=[['all','All'],['trade','Trades'],['plan','Plans'],['note','Notes']];
+// the rail folds milestones together: the same news for several people on one line, then the rest by person
+function socActGroups(L){
+  const byText=new Map(), used=new Set(), byWho=new Map(), out=[];
+  for(const e of L){ if(!byText.has(e.text))byText.set(e.text,[]); byText.get(e.text).push(e); }
+  for(const [text,es] of byText){ const who=[...new Map(es.map(e=>[String(e.handle).toLowerCase(),e])).values()].sort((a,b)=>!!b.mine-!!a.mine); // you first, never in "and N more"
+    if(who.length>1){ out.push({many:who,text,at:es[0].at}); es.forEach(e=>used.add(e)); } }
+  for(const e of L){ if(used.has(e))continue; const k=String(e.handle).toLowerCase(); if(!byWho.has(k))byWho.set(k,[]); byWho.get(k).push(e); }
+  for(const es of byWho.values())out.push({one:es[0],texts:[...new Set(es.map(e=>e.text))],quote:(es.find(e=>e.quote)||{}).quote,pb:es.find(e=>e.type==='playbook'&&e.pb),at:es[0].at});
+  return out.sort((a,b)=>b.at-a.at);
+}
+function socActRow(G){
+  const nm=e=>e.mine?'You':'@'+esc(e.handle);
+  if(G.many){ const n=G.many.slice(0,3).map(nm), more=G.many.length-n.length;
+    return `<li><span class="pz-avs">${G.many.slice(0,3).map(e=>socAv(e.handle,24)).join('')}</span><span><b>${more?n.join(', ')+' and '+more+' more':n.slice(0,-1).join(', ')+' and '+n[n.length-1]}</b> ${esc(G.text)}</span><span class="pz-at">${socAgo(G.at)}</span></li>`; }
+  const e=G.one, T=G.texts.map(esc), txt=T.length>2?T[0]+', '+T[1]+' and '+(T.length-2)+' more':T.join(' and ');
+  return `<li>${socAv(e.handle,24)}<span><a href="#u/${esc(e.handle)}" style="font-weight:700;text-decoration:none">${nm(e)}</a> ${txt}${G.quote?`<span class="pz-sub" style="display:block;font-size:12px">${esc(G.quote)}</span>`:''}${G.pb?` <a class="pz-link" href="#playbooks/${esc(G.pb.pb)}" style="min-height:0;font-size:12px;display:inline">See the playbook</a>`:''}</span><span class="pz-at">${socAgo(G.at)}</span></li>`;
+}
 function socFeedHtml(){
-  const S=SOC.feed, c=socGet('feed:'+S,'/feed?scope='+S,20000), d=c&&c.d;
+  const S=SOC.feed, c=socGet('feed:'+S,'/feed?scope='+S,20000), d=c&&c.d, F=SOC.fkind||'all';
   const seg=`<div class="pz-seg full" role="group" aria-label="Show">${[['following','Following'],['discover','Discover']].map(([k,l])=>`<button type="button" data-soc-feed="${k}" aria-pressed="${S===k}">${l}</button>`).join('')}</div>`;
-  const top=`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px">${seg}</div>${socNewPostBtn()}</div>`;
+  const top=`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div style="flex:1;min-width:220px">${seg}</div>${socNewPostBtn()}</div>`;
   if(!d)return `${top}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const sug=d.suggest&&d.suggest.length?`<section style="display:flex;flex-direction:column;gap:8px"><span class="pz-lbl" style="color:var(--pz-muted)">Traders to follow</span><div class="pz-grid3">${d.suggest.map(p=>`<a class="pz-tile" href="#u/${esc(p.handle)}" style="align-items:center;text-align:center;text-decoration:none;color:var(--pz-text)">${socAv(p.handle,40)}<b style="font-size:13px">@${esc(p.handle)}</b><span class="pz-t">${esc(p.tierName)} · ${esc(p.why)}</span></a>`).join('')}</div></section>`:'';
-  const list=socWithMore('feed:'+S,d.events), ev=list.map(e=>socEvHtml(e)).join('');
-  const empty=S==='following'?'Nothing here yet. Follow traders from Discover or the leaderboards and their posts and milestones show up here.':'No posts yet.';
-  return `${top}${sug}${ev?`<div class="pz-jgrid">${ev}</div>${socMoreHtml('feed:'+S,d.next)}`:`<section class="pz-card"><p class="pz-sub">${empty}</p></section>`}`;
+  const list=socWithMore('feed:'+S,d.events), posts=list.filter(socIsPost).filter(e=>F==='all'||e.post&&e.post.kind===F), groups=socActGroups(list.filter(e=>!socIsPost(e)));
+  const kinds=`<div class="pz-chiprow pz-wrapr" role="group" aria-label="Kind of post">${SOC_FKINDS.map(([k,l])=>`<button type="button" class="pz-chipbtn" data-soc-fkind="${k}" aria-pressed="${F===k}">${l}</button>`).join('')}</div>`;
+  const more=socMoreHtml('feed:'+S,d.next), end=!more&&posts.length?`<section class="pz-card"><p class="pz-sub" style="margin:0;font-size:13px">${S==='following'?'That’s every post from people you follow. <button type="button" class="pz-linkbtn" data-soc-feed="discover">Browse Discover</button>':'That’s everything for now.'}</p></section>`:'';
+  const empty=F!=='all'?'No '+(SOC_FKINDS.find(x=>x[0]===F)||['',''])[1].toLowerCase()+' here yet.':S==='following'?(groups.length?'No posts yet from people you follow. Their badges and milestones are under League activity.':'Nothing here yet. Follow traders from Discover or the leaderboards and their posts and milestones show up here.'):'No posts yet.';
+  const main=`<div class="pz-fmain">${kinds}${posts.length?posts.map(e=>socEvHtml(e)).join(''):`<section class="pz-card"><p class="pz-sub" style="margin:0">${empty}</p></section>`}${more}${end}</div>`;
+  const shown=SOC.actAll?groups:groups.slice(0,5);
+  const act=groups.length?`<section class="pz-card"><b style="font-size:15px">League activity</b><ul class="pz-act" style="margin-top:6px">${shown.map(socActRow).join('')}</ul>${groups.length>shown.length?`<button type="button" class="pz-linkbtn" data-soc-actall="1">Show all ${groups.length}</button>`:''}</section>`:'';
+  const sug=d.suggest&&d.suggest.length?`<section class="pz-card"><b style="font-size:15px">Traders to follow</b><ul class="pz-act" style="margin-top:6px">${d.suggest.map(p=>`<li style="align-items:center">${socAv(p.handle,32)}<span style="min-width:0;flex:1"><a href="#u/${esc(p.handle)}" style="font-weight:700;text-decoration:none">@${esc(p.handle)}</a><span class="pz-sub" style="display:block;font-size:12px">${esc(p.tierName)} · ${esc(p.why)}</span></span><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-follow="${esc(p.handle)}" data-on="0">Follow</button></li>`).join('')}</ul></section>`:'';
+  return `${top}<div class="pz-feedb">${main}${act||sug?`<aside class="pz-frail" aria-label="League activity">${act}${sug}</aside>`:''}</div>`;
 }
 function socSocialHtml(D){
   socBoot();
@@ -482,41 +506,51 @@ function socSocialHtml(D){
   if(!SOC.cfg)return `${pzHead('Leagues · competitions · friends','Social')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
   if(SOC.cfg.enabled===false)return `${pzHead('Leagues · competitions · friends','Social')}<section class="pz-card"><p class="pz-sub">The league opens once the server owner sets an access token (AUTH_TOKEN). Without one, anyone with the link could read the owner’s journal.</p></section>`;
   if(!SOC.me)return socJoinHtml();
-  const body=SOC.sub==='feed'?socPartnersHtml()+socFeedHtml():SOC.sub==='boards'?socBoardsHtml(D.g):socLeagueHtml(D.g)+`<section style="display:flex;flex-direction:column;gap:10px;margin-top:10px"><span class="pz-lbl" style="color:var(--pz-muted)">Competitions</span>${socCompeteHtml(D.g)}</section>`;
-  return `${socHead()}${socSubTabs()}${socDuelEntryHtml(D.g)}${body}`;
+  const sub=socSubOf(), body=sub==='feed'?socWeekHtml(D.g)+socFeedHtml():sub==='compete'?socCompeteHubHtml(D.g):sub==='people'?socPeopleTabHtml():socYouTabHtml();
+  return `${socHead()}${socSubTabs(D.g)}<div style="margin-top:14px">${body}</div>`;
 }
 function socProfileHtml(D, handle){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
   const c=socGet('u:'+handle.toLowerCase(),'/profile/'+encodeURIComponent(handle),30000), d=c&&c.d, p=d&&d.profile;
   if(!p)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const T=(SOC.cfg&&SOC.cfg.tiers)||[];
-  const follow=p.isMe?`<a class="pz-ghost" href="#sharing">Edit what you share</a>`
-    :`<button type="button" class="${p.isFollowing?'pz-ghost':'pz-cta'}" data-soc-follow="${esc(p.handle)}" data-on="${p.isFollowing?1:0}">${p.isFollowing?'Following':'Follow'}</button>
-      ${p.partner==='active'?'<p class="pz-sub" style="margin:0;font-size:13px;text-align:center">Your accountability partner · <a href="#social" data-soc-sub="feed">See them</a></p>'
-        :p.partner==='sent'?'<p class="pz-sub" style="margin:0;font-size:13px;text-align:center">Partner request sent: waiting for them to accept</p>'
-        :p.partner==='asked'?`<button type="button" class="pz-cta" data-soc-ppartner="${esc(p.handle)}">Accept as partner</button>`
-        :`<button type="button" class="pz-ghost" data-soc-${p.seeking?'ppartner':'pask'}="${esc(p.handle)}">Ask to be accountability partners</button>`}
-      ${p.duelWith?`<a class="pz-ghost" href="#duels">${pzI('medal',16)} ${p.duelWith==='active'?'Your duel with @'+esc(p.handle):'A challenge is waiting'}</a>`:p.duelsOpen&&socDuelsOn()&&!pzLocked('duels',D.g.level.level)?`<a class="pz-ghost" href="#duel/${esc(p.handle)}">${pzI('medal',16)} Challenge to a duel</a>`:''}${!p.isMe&&p.mentor?`<button type="button" class="pz-ghost" data-soc-pmentor="${esc(p.handle)}">${pzI('coach',16)} Ask @${esc(p.handle)} to mentor you</button>`:''}`;
+  const T=(SOC.cfg&&SOC.cfg.tiers)||[], tab=SOC.ptab&&SOC.ptab.h===p.handle?SOC.ptab.t:'posts';
+  // one main button (Follow), a duel beside it when there is one, and the rest under "More"
+  const duel=p.isMe?'':p.duelWith?`<a class="pz-ghost" href="#duels">${pzI('medal',16)} ${p.duelWith==='active'?'Your duel':'A challenge is waiting'}</a>`:p.duelsOpen&&socDuelsOn()&&!pzLocked('duels',D.g.level.level)?`<a class="pz-ghost" href="#duel/${esc(p.handle)}">${pzI('medal',16)} Challenge to a duel</a>`:'';
+  const menu=p.isMe?'':[!['active','sent','asked'].includes(p.partner)?`<button type="button" class="pz-ghost" data-soc-${p.seeking?'ppartner':'pask'}="${esc(p.handle)}">Ask to be accountability partners</button>`:'',
+    p.mentor?`<button type="button" class="pz-ghost" data-soc-pmentor="${esc(p.handle)}">${pzI('coach',16)} Ask @${esc(p.handle)} to mentor you</button>`:''].filter(Boolean).join('');
+  const acts=p.isMe?`<div class="pz-pact"><a class="pz-ghost" href="#sharing">Edit profile and what you share</a></div>`
+    :`<div class="pz-pact"><button type="button" class="${p.isFollowing?'pz-ghost':'pz-cta'}" data-soc-follow="${esc(p.handle)}" data-on="${p.isFollowing?1:0}">${p.isFollowing?'Following':'Follow'}</button>${duel}${menu?`<details class="pz-more"><summary aria-label="More"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></summary><div class="pz-menu">${menu}</div></details>`:''}</div>
+    ${p.partner==='active'?'<p class="pz-sub" style="margin:0;font-size:13px">Your accountability partner · <a href="#social" data-soc-sub="people">See them</a></p>'
+      :p.partner==='sent'?'<p class="pz-sub" style="margin:0;font-size:13px">Partner request sent: waiting for them to accept</p>'
+      :p.partner==='asked'?`<button type="button" class="pz-cta" data-soc-ppartner="${esc(p.handle)}">Accept as partner</button>`:''}`;
+  const tile=(cls,n,t)=>`<div class="pz-tile${cls?' '+cls:''}"><span class="pz-n">${n}</span><span class="pz-t">${t}</span></div>`, dw=p.duels&&(p.duels.w+p.duels.l+p.duels.d);
   const tiles=p.private?'<section class="pz-card"><p class="pz-sub">This profile is private.</p></section>'
-    :`<div class="pz-grid3"><div class="pz-tile good"><span class="pz-n">${p.discipline30==null?'—':p.discipline30}</span><span class="pz-t">Discipline · 30d${p.verified?' · verified':''}</span></div>
-      <div class="pz-tile warm"><span class="pz-n">${p.streak}</span><span class="pz-t">Day streak · best ${p.best}</span></div>
-      <div class="pz-tile"><span class="pz-n">${p.badgeN+(p.ninja?1:0)}</span><span class="pz-t">Badges</span></div></div>${p.duels&&(p.duels.w+p.duels.l+p.duels.d)?`<div class="pz-tile" style="flex-direction:row;align-items:center;justify-content:space-between"><span class="pz-t">Duels${p.rating!=null?` · <b style="color:${PZ_COL.xp}">${p.rating}</b> rating`:''}</span><span class="pz-n" style="font-size:22px"><span style="color:${PZ_COL.good}">${p.duels.w}</span> – <span style="color:${PZ_COL.low}">${p.duels.l}</span>${p.duels.d?' – '+p.duels.d:''}</span></div>`:''}${p.pods&&p.pods.n?`<div class="pz-tile" style="flex-direction:row;align-items:center;justify-content:space-between"><span class="pz-t">Group duels won</span><span class="pz-n" style="font-size:22px">${p.pods.w} <span class="pz-sub" style="font-size:13px">of ${p.pods.n}</span></span></div>`:''}`;
+    :`<div class="pz-gridf">${tile('good',p.discipline30==null?'—':p.discipline30,'Discipline · 30d'+(p.verified?' · verified':''))}${tile('warm',p.streak,'Day streak · best '+p.best)}${dw?tile('',`<span style="color:${PZ_COL.good}">${p.duels.w}</span>–<span style="color:${PZ_COL.low}">${p.duels.l}</span>${p.duels.d?'–'+p.duels.d:''}`,'Duels'+(p.rating!=null?' · rating '+p.rating:'')):''}${tile('',p.badgeN+(p.ninja?1:0),'Badges')}</div>`;
   const money=p.ret!=null||p.usd!=null?`<section class="pz-card" style="display:flex;justify-content:space-between;gap:12px"><span><span class="pz-t pz-sub" style="font-size:12px">30-day return${p.isMe?' (only you see this unless you share it)':''}</span><br><b style="font-family:var(--pz-num);font-size:26px;color:${p.ret>=0?PZ_COL.good:PZ_COL.low}">${p.ret!=null?socValue('ret',p.ret):'—'}</b>${p.usd!=null?` <span class="pz-sub">${esc(signedPlain(p.usd))}</span>`:''}</span><span style="text-align:right"><span class="pz-sub" style="font-size:12px">Max drawdown</span><br><b style="font-family:var(--pz-num);font-size:26px">${p.dd!=null?(p.dd*100).toFixed(1)+'%':'—'}</b></span></section>`:'';
-  const habits=p.habits&&p.habits.length?`<section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 4px">Habits ${p.isMe?'you run':'they run'}</b>${p.habits.map(h=>`<div class="pz-toggle"><span style="flex:1;font-size:14px;line-height:1.4">${esc(h)}</span>${p.isMe?'':`<button type="button" class="pz-kudo" data-soc-adopt="${esc(h)}">Adopt</button>`}</div>`).join('')}</section>`:'';
+  const pods=p.pods&&p.pods.n?`<div class="pz-tile" style="flex-direction:row;align-items:center;justify-content:space-between"><span class="pz-t">Group duels won</span><span class="pz-n" style="font-size:22px">${p.pods.w} <span class="pz-sub" style="font-size:13px">of ${p.pods.n}</span></span></div>`:'';
+  const habits=p.habits&&p.habits.length?`<section class="pz-card" style="padding:6px 16px">${p.habits.map(h=>`<div class="pz-toggle"><span style="flex:1;font-size:14px;line-height:1.4">${esc(h)}</span>${p.isMe?'':`<button type="button" class="pz-kudo" data-soc-adopt="${esc(h)}">Adopt</button>`}</div>`).join('')}</section>`:'';
   // a few badges as chips, the rest as a count (a long-time member has eighty-odd; the tile above has the total)
-  const bshow=pzS.allBadges===p.handle?p.badges||[]:(p.badges||[]).slice(0,6), bmore=(p.badges||[]).length-bshow.length;
+  const bshow=pzS.allBadges===p.handle?p.badges||[]:(p.badges||[]).slice(0,12), bmore=(p.badges||[]).length-bshow.length;
   const ninjaB=p.ninja?`<span class="pz-chipbtn pz-ninja-badge" title="A role the league owner gives" style="height:32px;display:inline-flex;align-items:center;gap:6px;cursor:default">${pzI('shuriken',14,2.2)}High Ninja</span>`:'';
   const badges=p.badges&&p.badges.length||ninjaB?`<section style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${ninjaB}${(p.badges?bshow:[]).map(b=>`<span class="pz-chipbtn" style="height:32px;display:inline-flex;align-items:center;gap:6px;cursor:default">${pzI('medal',14)}${esc(b)}</span>`).join('')}${bmore>0?`<button type="button" class="pz-linkbtn" data-soc-allbadges="${esc(p.handle)}" style="margin-left:4px">+${bmore} more</button>`:''}</section>`:'';
   const ev=(d.events||[]).map(e=>`<div class="pz-ins"><span class="pz-sub" style="font-size:12px;min-width:34px">${socAgo(e.at)}</span><span><b>${esc(e.text)}</b>${e.quote?`<span>${esc(e.quote)}</span>`:''}</span></div>`).join('');
-  return `${back}<section style="display:flex;align-items:center;gap:14px">${p.ninja?`<span class="pz-ninja-ring big">${socAv(p.handle,72)}<span class="pz-ninja-seal">${pzI('shuriken',14,2.4)}</span></span>`:socAv(p.handle,72)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><h1 class="pz-h1" style="font-family:Inter,system-ui,sans-serif;font-size:22px;font-weight:800">@${esc(p.handle)}${p.ninja?' '+socNinjaMark(18):''}</h1>${p.ninja?'<span class="pz-ninja-title">High Ninja</span>':''}
+  const mk='u:'+p.handle.toLowerCase(), ps=socWithMore(mk,d.posts||[]);
+  const postsT=`${p.isMe?`<div style="display:flex;justify-content:flex-end">${socNewPostBtn()}</div>`:''}${ps.length?ps.map(e=>socEvHtml(e)).join('')+socMoreHtml(mk,d.postsNext):`<section class="pz-card"><p class="pz-sub" style="margin:0">${p.isMe?'Share a trade you took or one you’re planning, with your thesis. It shows here and in your followers’ feeds.':'No posts yet.'}</p></section>`}
+    ${ev?`<section class="pz-card" style="padding:4px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">Milestones</b>${ev}</section>`:''}`;
+  // posts first; habits, badges and results each get a tab when there's something in them
+  const tabs=[['posts','Posts',postsT],['habits','Habits',habits],['badges','Badges',badges],['results','Results',money+pods]].filter(x=>x[0]==='posts'||x[2]), cur=tabs.find(x=>x[0]===tab)||tabs[0];
+  return `<div class="pz-prof">${back}<section style="display:flex;align-items:center;gap:14px">${p.ninja?`<span class="pz-ninja-ring big">${socAv(p.handle,72)}<span class="pz-ninja-seal">${pzI('shuriken',14,2.4)}</span></span>`:socAv(p.handle,72)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><h1 class="pz-h1" style="font-family:Inter,system-ui,sans-serif;font-size:22px;font-weight:800">@${esc(p.handle)}${p.ninja?' '+socNinjaMark(18):''}</h1>${p.ninja?'<span class="pz-ninja-title">High Ninja</span>':''}
       <span class="pz-sub" style="font-size:13px">Level ${p.level} · ${esc(p.title)} · ${esc(T[p.tier]||p.tierName)} league</span><span class="pz-sub" style="font-size:12px">${p.followers} follower${p.followers===1?'':'s'} · ${p.following} following${p.address?' · '+esc(walletShort(p.address)):''}</span></span></section>
-    ${p.bio?`<p class="pz-bio">${esc(p.bio)}</p>`:p.isMe?`<p class="pz-fine"><a href="#sharing">Add a picture and a line about how you trade</a></p>`:''}
-    <div class="pz-wide"><div class="pz-col">${follow}${tiles}${money}${badges}</div><div class="pz-col">${habits}${ev?`<section class="pz-card" style="padding:4px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">Recent</b>${ev}</section>`:''}</div>
-      ${(()=>{ const mk='u:'+p.handle.toLowerCase(), ps=socWithMore(mk,d.posts||[]); if(!ps.length&&!p.isMe)return '';
-        return `<section class="pz-span" style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b style="font-size:17px">Posts</b>${p.isMe?socNewPostBtn():''}</div>
-          ${ps.length?`<div class="pz-jgrid">${ps.map(e=>socEvHtml(e)).join('')}</div>${socMoreHtml(mk,d.postsNext)}`:'<section class="pz-card"><p class="pz-sub">Share a trade you took or one you’re planning, with your thesis. It shows here and in your followers’ feeds.</p></section>'}</section>`; })()}</div>`;
+    ${p.bio?`<p class="pz-bio">${esc(p.bio)}</p>`:p.isMe?`<p class="pz-fine"><a href="#sharing">Add a picture, a line about how you trade, and your X, Telegram or Discord</a></p>`:''}
+    ${socSocialsHtml(p.socials)}${acts}${tiles}
+    ${p.private&&!p.isMe?'':`${tabs.length>1?`<div class="pz-seg full" role="group" aria-label="Profile">${tabs.map(([k,l])=>`<button type="button" data-soc-ptab="${k}" data-h="${esc(p.handle)}" aria-pressed="${cur[0]===k}">${l}</button>`).join('')}</div>`:''}<div class="pz-stack">${cur[2]}</div>`}</div>`;
 }
+// X, Telegram and Discord on a profile: links out, and Discord (no page by username) copies the name
+const SOC_SOCIALS=[['x','X'],['telegram','Telegram'],['discord','Discord']];
+function socSocialsHtml(so){ so=so||{}; if(!so.x&&!so.telegram&&!so.discord)return '';
+  const ln=(u,l,n)=>`<a class="pz-kudo" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${l} <span style="font-weight:600">@${esc(n)}</span></a>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px">${so.x?ln('https://x.com/'+so.x,'X',so.x):''}${so.telegram?ln('https://t.me/'+so.telegram,'Telegram',so.telegram):''}${so.discord?`<button type="button" class="pz-kudo" data-soc-discord="${esc(so.discord)}" aria-label="Copy Discord username ${esc(so.discord)}">Discord <span style="font-weight:600">${esc(so.discord)}</span></button>`:''}</div>`; }
 function socSharingHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
@@ -529,6 +563,8 @@ function socSharingHtml(D){
       <label class="pz-ghost pz-sm" for="socAvFile" style="cursor:pointer">${SOC.me.av?'Change picture':'Add a picture'}</label><input type="file" id="socAvFile" accept="image/*" class="pz-vh">${SOC.me.av?'<button type="button" class="pz-linkbtn" data-soc-avdel>Remove</button>':''}</div></div>
     <div class="pz-field"><label for="socHandle2">Public name</label><input type="text" id="socHandle2" maxlength="20" value="${esc(SOC.draftHandle!=null?SOC.draftHandle:SOC.me.handle)}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
     <div class="pz-field"><label for="socBio">Bio</label><textarea id="socBio" rows="2" maxlength="160" placeholder="What you trade and how, in a line">${esc(SOC.draftBio!=null?SOC.draftBio:SOC.me.bio||'')}</textarea><span class="pz-fine">Up to 160 characters, on your profile.</span></div>
+    ${SOC_SOCIALS.map(([k,l])=>`<div class="pz-field"><label for="socS_${k}">${l}</label><input type="text" id="socS_${k}" data-soc-social="${k}" maxlength="100" placeholder="@username" value="${esc(SOC.draftSocials&&SOC.draftSocials[k]!=null?SOC.draftSocials[k]:(SOC.me.socials||{})[k]||'')}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>`).join('')}
+    <p class="pz-fine" style="margin:-4px 0 0">Usernames only, on your profile unless it’s private. Leave one empty to take it off.</p>
     ${socToggles(SOC.draft,'data-soc-draft')}</div>
   <div class="pz-col">
     ${SOC.me.walletStatus==='pending'?'<p class="pz-warn">Your wallet is waiting for the league owner’s approval. Until then it doesn’t count for returns, verified Discipline or return competitions.</p>'
@@ -591,7 +627,7 @@ const SOC_PKIND={trade:'Trade',plan:'Planned trade',note:'Note'};
 function socEvHtml(e, full){
   const who=e.admin?`<span class="pz-av" style="background:#3FE0A0" aria-hidden="true">${pzI('bolt',16)}</span>`:socAv(e.handle,36);
   const name=e.admin?'<b>League</b>':`<a href="#u/${esc(e.handle)}" style="color:var(--pz-text);font-weight:700;text-decoration:none">${e.mine?'You':'@'+esc(e.handle)}</a>${e.ninja?' '+socNinjaMark(13):''}`;
-  const kudo=e.admin||e.mine?(e.mine&&e.kudos?`<span class="pz-fine">${e.kudos} kudos</span>`:''):`<button type="button" class="pz-kudo" data-soc-kudos="${esc(e.id)}" aria-pressed="${e.liked}" aria-label="Kudos, ${e.kudos}">${pzI('check',16)}${e.kudos}</button>`;
+  const kudo=e.admin||e.mine?(e.mine&&e.kudos?`<span class="pz-fine">${e.kudos} kudos</span>`:''):`<button type="button" class="pz-kudo" data-soc-kudos="${esc(e.id)}" aria-pressed="${e.liked}" aria-label="Kudos, ${e.kudos}">${pzI('check',16)}${e.kudos||'Kudos'}</button>`;
   if(!e.post)return `<article class="pz-card pz-ev"><div class="pz-evh">${who}
       <span style="flex:1;min-width:0;display:flex;flex-direction:column"><span style="font-size:14px;line-height:1.35">${name} ${esc(e.text)}</span><span class="pz-sub" style="font-size:11px">${socAgo(e.at)}</span></span></div>
       ${e.quote?`<div class="pz-quote">${esc(e.quote)}</div>`:''}
@@ -607,7 +643,7 @@ function socEvHtml(e, full){
     ${media}
     ${P.outcome?`<div class="pz-quote"><b style="color:var(--pz-text)">Update${P.outcomeAt?' · '+socAgo(P.outcomeAt):''}</b><br>${esc(P.outcome)}</div>`:''}
     ${P.kind==='plan'?'<p class="pz-fine">A member’s own plan, shared for accountability. Not advice.</p>':''}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${kudo}${full?'':`<a class="pz-kudo" href="${href}" aria-label="Comments, ${P.comments}">${pzI('chat',16)}${P.comments}</a>`}</div></article>`;
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${kudo}${full?'':`<a class="pz-kudo" href="${href}" aria-label="Comments, ${P.comments}">${pzI('chat',16)}${P.comments||'Reply'}</a>`}</div></article>`;
 }
 // the feed's older pages, fetched by cursor and kept under the first page
 function socMoreHtml(key, next){ const M=SOC.more[key];
@@ -621,7 +657,7 @@ function socKeepOlder(name, c){ const M=SOC.more[name]; if(!M||!c||!c.d)return;
   const old=(name.startsWith('u:')?c.d.posts:c.d.events)||[], have=new Set(M.items.map(e=>e.id));
   M.items=old.filter(e=>!have.has(e.id)).concat(M.items); }
 function socNewPostBtn(){ const pc=SOC.cfg&&SOC.cfg.posts; if(pc&&!pc.on)return '';
-  return `<a class="pz-cta pz-sm" href="#compose" style="width:auto;min-height:44px;padding:0 18px;display:inline-flex;align-items:center;gap:6px">${pzI('plus',16)}Post a trade</a>`; }
+  return `<a class="pz-cta pz-sm" href="#compose" style="width:auto;min-height:44px;padding:0 18px;display:inline-flex;align-items:center;gap:6px">${pzI('plus',16)}New post</a>`; }
 
 // ---- one post, its comments, and (for its author) the outcome ----
 function socPostHtml(D, id){
@@ -872,12 +908,6 @@ function socDuelCardHtml(v, compact){
         :compact?`<a class="pz-link" href="#duels" style="min-height:0;align-self:flex-start">Details ›</a>`:`<button type="button" class="pz-linkbtn" data-duel-act="forfeit" data-id="${v.id}" style="align-self:flex-start">Forfeit</button>`}</section>`;
   }
   return `<section class="pz-card pz-duel"><div class="pz-kvrow"><b style="font-size:14px">${esc(v.label)} · @${esc(o.handle)}</b><span class="pz-sub" style="font-size:12px">${v.status==='declined'?(v.mine==='sent'?'declined':'you declined'):v.status==='expired'?'expired':'cancelled'}</span></div></section>`;
-}
-function socDuelEntryHtml(g){
-  if(!socDuelsOn()||pzLocked('duels',g.level.level))return '';
-  const c=socDuels(), d=c&&c.d; if(!d)return '';
-  const P=d.pods||[], wait=d.duels.filter(v=>v.status==='pending'&&v.awaiting).length+P.filter(v=>v.my==='invited').length, run=d.duels.filter(v=>v.status==='active'&&v.me).length+P.filter(v=>v.status==='active'&&v.my==='in').length, soon=d.duels.filter(v=>v.status==='active'&&!v.me).length, r=d.record;
-  return `<a class="pz-card pz-cardlink" href="#duels" style="margin-bottom:10px"><span class="pz-ico" style="background:rgba(182,156,255,.14);color:${PZ_COL.xp}">${pzI('medal',20)}</span><span style="flex:1;min-width:0"><b style="font-size:15px">Duels</b><span class="pz-sub" style="display:block;font-size:13px">${wait?`<b style="color:${PZ_COL.xp}">${wait} waiting for you</b> · `:''}${run?run+' running · ':''}${soon?soon+' starting soon · ':''}record ${r.w}–${r.l}${r.d?'–'+r.d:''}${d.ladder&&d.ladder.on&&d.ladder.me.n?' · rating '+d.ladder.me.r:''}</span></span>${pzI('chev',18)}</a>`;
 }
 function socDuelsTodayHtml(g){
   if(!SOC.me||!socDuelsOn()||(g&&pzLocked('duels',g.level.level)))return '';
@@ -1264,7 +1294,9 @@ async function socAction(t){
       if(a==='decline'&&!confirm('Decline this challenge?'))return true;
       const r=await socFetch('/duels/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({action:a})}); delete SOC.cache.duels; socPeopleDrop();
       done(a==='accept'?'Accepted. It runs '+duelWhen(r.duel)+'.':a==='decline'?'Declined.':a==='cancel'?'Withdrawn.':ds.early?'You backed out. It doesn’t count.':'You forfeited.'); return true; }
+    if(ds.socPtab){ SOC.ptab={h:ds.h,t:ds.socPtab}; pzRender(); return true; }
     if(ds.socAllbadges){ pzS.allBadges=ds.socAllbadges; pzRender(); return true; }
+    if(ds.socDiscord){ try{ await navigator.clipboard.writeText(ds.socDiscord); pzNote('Copied '+ds.socDiscord+', their Discord username.'); }catch(e){ pzNote('Their Discord username: '+ds.socDiscord); } return true; }
     if(ds.socSub){ SOC.sub=ds.socSub; if(pzTab()!=='social')location.hash='#social'; else pzRender(); return true; }
     // partners
     if(ds.socPask||t.id==='socPAsk'){ const h=ds.socPask||(($('socPIn')||{value:''}).value.trim()); if(!h)return true;
@@ -1288,13 +1320,16 @@ async function socAction(t){
       const r=await socFetch('/me',{method:'PUT',body:JSON.stringify({share})}); SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; done(on?'You’re on the global leaderboards.':'You left the global leaderboards.'); return true; }
     if(ds.socLgjoin){ const inv=($('socLgInv')||{value:''}).value.trim();
       const r=await socFetch('/leagues/'+encodeURIComponent(ds.socLgjoin)+'/join',{method:'POST',body:JSON.stringify({invite:inv})});
-      SOC.lg=r.league.id; SOC.board='rank'; SOC.sub='league'; SOC.cache={}; done('Welcome to '+r.league.name+'.'); location.hash='#social'; return true; }
+      SOC.lg=r.league.id; SOC.board='rank'; SOC.sub='compete'; SOC.rscope='league'; SOC.cache={}; done('Welcome to '+r.league.name+'.'); location.hash='#social'; return true; }
     if(ds.socLgleave){ if(!confirm('Leave this league? Your XP and badges stay; you just leave its ranking.'))return true;
       await socFetch('/leagues/'+encodeURIComponent(ds.socLgleave)+'/join',{method:'DELETE'}); SOC.lg=null; SOC.cache={}; done('You left the league.'); return true; }
-    if(ds.socLgopen){ SOC.lg=ds.socLgopen; SOC.board='rank'; SOC.sub='league'; location.hash='#social'; return true; }
+    if(ds.socLgopen){ SOC.lg=ds.socLgopen; SOC.board='rank'; SOC.sub='compete'; SOC.rscope='league'; location.hash='#social'; return true; }
     if(ds.socBoard){ SOC.board=ds.socBoard; pzRender(); return true; }
     if(ds.socCf){ SOC.cfilter=ds.socCf; pzRender(); return true; }
-    if(ds.socFeed){ SOC.feed=ds.socFeed; pzRender(); return true; }
+    if(ds.socFeed){ SOC.feed=ds.socFeed; SOC.actAll=false; pzRender(); return true; }
+    if(ds.socFkind){ SOC.fkind=ds.socFkind; pzRender(); return true; }
+    if(ds.socActall){ SOC.actAll=true; pzRender(); return true; }
+    if(ds.socRscope){ SOC.rscope=ds.socRscope; pzRender(); return true; }
     if(ds.socDraft){ SOC.draft=SOC.draft||{...(SOC.share||SOC_DEFAULT_SHARE)}; SOC.draft[ds.socDraft]=!SOC.draft[ds.socDraft]; t.setAttribute('aria-checked',String(SOC.draft[ds.socDraft])); return true; }
     if(ds.socKudos){ const r=await socFetch('/kudos/'+encodeURIComponent(ds.socKudos),{method:'POST'}); t.setAttribute('aria-pressed',String(r.liked)); t.setAttribute('aria-label','Kudos, '+r.kudos); t.lastChild.textContent=r.kudos; socStale(); return true; }
     if(ds.socFollow){ const on=ds.on==='1'; await socFetch('/follow/'+encodeURIComponent(ds.socFollow),{method:on?'DELETE':'POST'}); done(on?'Unfollowed.':'Following @'+ds.socFollow+'. Their milestones show up in your feed.'); return true; }
@@ -1321,11 +1356,11 @@ async function socAction(t){
         done('Welcome, @'+r.me.handle+'.'+(r.walletTaken?' Your wallet is claimed by another profile, so it wasn’t added.':'')); return true; }
       case 'socSaveShare': { const h=($('socHandle2')||{value:''}).value.trim(), share=SOC.draft||SOC.share;
         let r, taken=false;
-        const bio=$('socBio')?$('socBio').value:undefined;
-        try{ r=await socFetch('/me',{method:'PUT',body:JSON.stringify({handle:h,share,address:socAddressFor(share),bio})}); }
+        const bio=$('socBio')?$('socBio').value:undefined, socials=$('socS_x')?Object.fromEntries(SOC_SOCIALS.map(([k])=>[k,$('socS_'+k).value])):undefined;
+        try{ r=await socFetch('/me',{method:'PUT',body:JSON.stringify({handle:h,share,address:socAddressFor(share),bio,socials})}); }
         catch(e){ if(!(e.status===409&&e.data&&e.data.walletTaken))throw e; taken=true; // save the rest without that wallet
-          r=await socFetch('/me',{method:'PUT',body:JSON.stringify({handle:h,share,address:null,bio})}); }
-        SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.draftHandle=null; SOC.draftBio=null; SOC.lastSent='';
+          r=await socFetch('/me',{method:'PUT',body:JSON.stringify({handle:h,share,address:null,bio,socials})}); }
+        SOC.me=r.me; PZ_CFG.rev++; SOC.share=r.share; SOC.draft=null; SOC.draftHandle=null; SOC.draftBio=null; SOC.draftSocials=null; SOC.lastSent='';
         done(taken?'Saved — without your wallet: another profile claimed it, so its numbers can’t count for you.':'Saved.'); return true; }
       case 'socLeave': { if(!confirm('Leave the league and delete your profile, posts and competition entries? Your journal isn’t touched.'))return true;
         await socFetch('/me',{method:'DELETE'}); SOC.key=null; SOC.me=null; PZ_CFG.rev++; SOC.share=null; SOC.cache={}; vaultForget(); try{ localStorage.removeItem(SOC_KEY_STORE); }catch(e){}

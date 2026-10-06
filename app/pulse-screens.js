@@ -581,8 +581,67 @@ function pzCoachHtml(D){
       <button type="button" role="switch" class="pz-switch" data-pz-cdetail aria-checked="${detailOn}" aria-labelledby="pzCdL"${st.detailAllowed===false?' disabled':''}><i></i></button></div>
     <p class="pz-fine">The coach sees a summary built on this device: scores, slips, habits, plans and reviews. It doesn’t give trade signals. Answers can be wrong — your rules come first.${msgs.length?' <button type="button" class="pz-linkbtn" id="pzCoachClear">Clear this chat</button>':''}</p></div>`;
 }
-function socSubTabs(){
-  return `<div class="pz-seg full" role="group" aria-label="Social">${[['league','League'],['boards','Boards'],['feed','Feed']].map(([k,l])=>`<button type="button" data-soc-sub="${k}" aria-pressed="${(SOC.sub==='compete'?'league':SOC.sub)===k}">${l}</button>`).join('')}</div>`;
+// Social's four rooms: what people post, how you rank, who you trade alongside, and your own corner
+// (the old League and Boards tabs, and a "compete" left in state, open Compete)
+const SOC_SUBS=[['feed','Feed'],['compete','Compete'],['people','People'],['you','You']];
+function socSubOf(){ return SOC_SUBS.some(([k])=>k===SOC.sub)?SOC.sub:SOC.sub==='league'||SOC.sub==='boards'?'compete':'feed'; }
+// duel challenges and group-duel invites waiting on your answer
+function socWaitN(g){ if(!socDuelsOn()||(g&&pzLocked('duels',g.level.level)))return 0; const c=socDuels(), d=c&&c.d; if(!d||d.on===false)return 0;
+  return d.duels.filter(v=>v.status==='pending'&&v.awaiting).length+(d.pods||[]).filter(v=>v.my==='invited'&&(v.status==='pending'||v.status==='active')).length; }
+function socSubTabs(g){
+  const cur=socSubOf(), wait=socWaitN(g);
+  return `<div class="pz-seg full" role="group" aria-label="Social">${SOC_SUBS.map(([k,l])=>`<button type="button" data-soc-sub="${k}" aria-pressed="${cur===k}">${l}${k==='compete'&&wait?` <span class="pz-cnt" aria-label="${wait} waiting for you">${wait}</span>`:''}</button>`).join('')}</div>`;
+}
+const socLeagueGet=()=>socGet('league:'+(SOC.lg||''),'/league'+(SOC.lg?'?id='+encodeURIComponent(SOC.lg):''),30000);
+// the top of Feed: only what needs you this week (a duel to answer, a partner to answer or nudge) and where you stand
+function socWeekHtml(g){
+  const out=[], wait=socWaitN(g), pc=socGet('partners','/partners',30000), P=pc&&pc.d?pc.d.partners:[];
+  const recv=P.filter(p=>p.status==='received'), nudge=P.find(p=>p.status==='active'&&p.canNudge), ld=(socLeagueGet()||{}).d, T=(SOC.cfg&&SOC.cfg.tiers)||PZ_TIERS;
+  if(wait)out.push(`<a class="pz-wk hot" href="#duels"><span class="pz-wkl">Duels</span><b>${wait} waiting for you</b><span class="pz-wka">Answer ›</span></a>`);
+  if(recv.length)out.push(`<button type="button" class="pz-wk hot" data-soc-sub="people"><span class="pz-wkl">Partners</span><b>@${esc(recv[0].handle)}${recv.length>1?' and '+(recv.length-1)+' more':''} asked to partner</b><span class="pz-wka">Answer ›</span></button>`);
+  if(ld&&ld.league&&ld.me&&!ld.me.out)out.push(`<button type="button" class="pz-wk" data-soc-sub="compete"><span class="pz-wkl">${esc(ld.league.name)}</span><b><span class="pz-wkn">#${ld.me.rank}</span> of ${ld.size}${ld.league.tiers&&T[ld.tier]?' · '+esc(T[ld.tier]):''}</b><span class="pz-wka">${ld.promote?'Top '+ld.promote+' move up':esc(ld.league.metricLabel)}</span></button>`);
+  if(nudge)out.push(`<div class="pz-wk"><span class="pz-wkl">Partner</span><b>@${esc(nudge.handle)} · ${(nudge.view||{}).streak||0}-day streak</b><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px;align-self:flex-start" data-soc-nudge="${esc(nudge.id)}">Nudge</button></div>`);
+  return out.length?`<section class="pz-week" aria-label="This week"><span class="pz-lbl" style="color:var(--pz-muted)">This week</span><div class="pz-wkrow">${out.slice(0,3).join('')}</div></section>`:'';
+}
+// a card that opens another screen: icon, title, one line
+function socLinkCard(href,ico,t,s){ return `<a class="pz-card pz-cardlink" href="${href}"><span class="pz-ico" style="background:var(--pz-tint-n)">${pzI(ico,20)}</span><span style="flex:1;min-width:0"><b style="font-size:15px">${t}</b><span class="pz-sub" style="display:block;font-size:13px">${s}</span></span>${pzI('chev',18)}</a>`; }
+// Compete: leagues, boards, duels and competitions in one place: where you stand, what you're in, what's open, the rankings
+function socCompeteHubHtml(g){
+  const T=(SOC.cfg&&SOC.cfg.tiers)||PZ_TIERS, lv=g.level.level, duelsOk=socDuelsOn()&&!pzLocked('duels',lv);
+  const ld=(socLeagueGet()||{}).d, dc=duelsOk?socDuels():null, dd=dc&&dc.d&&dc.d.on!==false?dc.d:null, cc=socGet('comps','/competitions',30000), all=cc&&cc.d?cc.d.competitions:null;
+  const tile=(cls,t,n,s,href)=>`<${href?'a':'div'} class="pz-tile${cls?' '+cls:''}"${href?` href="${href}" style="text-decoration:none;color:var(--pz-text)"`:''}><span class="pz-t">${t}</span><span class="pz-n">${n}</span><span class="pz-t">${s}</span></${href?'a':'div'}>`;
+  const L=ld&&ld.league, me=ld&&ld.me, r=dd&&dd.record, lad=dd&&dd.ladder&&dd.ladder.on?dd.ladder:null;
+  const mine=all?all.filter(x=>x.joined&&x.status!=='finished'):[], open=all?all.filter(x=>!x.joined&&x.status!=='finished'):[], past=all?all.filter(x=>x.status==='finished'):[];
+  const tiles=[L?tile('good',esc(L.name),me&&!me.out?'#'+me.rank:'—',me&&!me.out?'of '+ld.size+(L.tiers&&T[ld.tier]?' · '+esc(T[ld.tier]):''):me&&me.out?'out for now':'no score yet'):tile('','League','—','not in one yet','#leagues'),
+    dd?tile('',lad&&lad.me.n>0?'Duel rating':'Duels',lad&&lad.me.n>0?lad.me.r:r.w+'–'+r.l+(r.d?'–'+r.d:''),lad&&lad.me.n>0?r.w+'–'+r.l+(r.d?'–'+r.d:'')+' won–lost':'won–lost','#duels'):'',
+    all?tile('','Competitions',mine.length,'you’re in',''):''].filter(Boolean).join('');
+  const P=dd?dd.pods||[]:[], inv=dd?dd.duels.filter(v=>v.status==='pending'&&v.awaiting):[], act=dd?dd.duels.filter(v=>v.status==='active'&&v.me):[],
+    pinv=P.filter(v=>v.my==='invited'&&(v.status==='pending'||v.status==='active')), pact=P.filter(v=>v.status==='active'&&v.my==='in');
+  const inHtml=inv.map(v=>socDuelCardHtml(v,true)).join('')+pinv.map(v=>socPodCardHtml(v,true)).join('')+act.map(v=>socDuelCardHtml(v,true)).join('')+pact.map(v=>socPodCardHtml(v,true)).join('')+mine.map(x=>socCompCard(x,lv)).join('');
+  const sec=(t,right,body)=>`<section class="pz-stack"><div class="pz-kvrow"><span class="pz-lbl" style="color:var(--pz-muted)">${t}</span>${right||''}</div>${body}</section>`;
+  const youre=sec('You’re in',dd?`<a class="pz-link" href="#duels" style="min-height:0">All duels ${pzI('chev',14)}</a>`:'',inHtml||`<section class="pz-card"><p class="pz-sub" style="margin:0">Nothing running right now. Join a competition below${dd?' or challenge someone to a duel':''}.</p></section>`);
+  const openS=sec('Open to join',`<a class="pz-link" href="#leagues" style="min-height:0">Find leagues ${pzI('chev',14)}</a>`,
+    (all?open.length?open.map(x=>socCompCard(x,lv)).join(''):'<section class="pz-card"><p class="pz-sub" style="margin:0">No open competitions. The league owner creates them — check back soon.</p></section>':`<p class="pz-sub">${cc&&cc.err?esc(cc.err):'<span class="pz-spin"></span>Loading…'}</p>`)
+    +(past.length?`<details class="pz-card pz-past"><summary>Finished competitions (${past.length})</summary><div class="pz-stack" style="margin-top:10px">${past.slice(0,10).map(x=>socCompCard(x,lv)).join('')}</div></details>`:''));
+  const rs=SOC.rscope==='global'?'global':'league';
+  const ranks=`<section class="pz-stack"><div class="pz-kvrow"><b style="font-size:17px">Rankings</b><div class="pz-seg" role="group" aria-label="Rankings">${[['league','League'],['global','Global']].map(([k,l])=>`<button type="button" data-soc-rscope="${k}" aria-pressed="${rs===k}">${l}</button>`).join('')}</div></div>${rs==='global'?socBoardsHtml(g):socLeagueHtml(g)}</section>`;
+  return `<div class="pz-kvrow" style="margin-bottom:12px;flex-wrap:wrap"><span class="pz-fine" style="flex:1;min-width:200px">Prizes are badges, XP and bragging rights, never money.</span>${dd?`<a class="pz-cta pz-sm" href="#people/duels" style="width:auto;padding:0 18px">${pzI('medal',16)} Challenge someone</a>`:''}</div>
+    ${tiles?`<div class="pz-gridf">${tiles}</div>`:''}<div class="pz-wide" style="margin-top:16px"><div class="pz-col">${youre}${openS}</div><div class="pz-col">${ranks}</div></div>`;
+}
+// People: your accountability partners, then the ways to find more people and bring friends in
+function socPeopleTabHtml(){
+  const M=SOC.me;
+  return `${socPartnersHtml()}<div class="pz-jgrid">${socLinkCard('#people','social','Find traders','Search by name, or see who’s open to duels or looking for a partner')}
+    ${M.mentor?socLinkCard('#mentor','coach','Your mentees','The members you mentor, day by day'):socLinkCard('#mentors','coach','Mentors','Pick an experienced member to watch your process')}
+    ${M.mentor||M.admin||(SOC.share&&SOC.share.mentor)?socLinkCard('#reviews','book','Trade reviews','Trades sent to a mentor, and their answers'):''}
+    ${SOC.cfg&&SOC.cfg.referrals&&SOC.cfg.referrals.on?socLinkCard('#invite','plus','Invite a friend','Bring someone you trade with into the league'):''}</div>`;
+}
+// You: your profile as others see it, and the settings behind it
+function socYouTabHtml(){
+  const M=SOC.me;
+  return `<a class="pz-card pz-cardlink" href="#u/${esc(M.handle)}">${socAv(M.handle,48)}<span style="flex:1;min-width:0"><b style="font-size:16px">@${esc(M.handle)}</b><span class="pz-sub" style="display:block;font-size:13px">Your profile, as others see it</span></span>${pzI('chev',18)}</a>
+    <div class="pz-jgrid" style="margin-top:14px">${socLinkCard('#sharing','gear','Profile & privacy','Picture, bio, your X, Telegram and Discord, and what you share')}${socLinkCard('#account','shield','Account','Sign-in, devices, your wallet and journal sync')}
+    ${SOC.cfg&&SOC.cfg.playbooks&&SOC.cfg.playbooks.on===false?'':socLinkCard('#playbooks/shared','book','Playbooks','Playbooks members shared with the league')}</div>`;
 }
 // how often a league's ranking starts over: its seasons when it has them, else its period
 const socPeriod=L=>L.season?(L.season.id.includes('-Q')?'quarterly seasons':'monthly seasons'):L.period==='month'?'monthly':'weekly';
@@ -718,7 +777,7 @@ function socPartnersHtml(){
 function socPartnerStripHtml(){
   if(!SOC.me||!SOC.me.partners)return '';
   const c=socGet('partners','/partners',60000), L=c&&c.d?c.d.partners.filter(p=>p.status==='active'):[]; if(!L.length)return '';
-  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your partners</b><a class="pz-link" href="#social" data-soc-sub="feed" style="min-height:0">All ›</a></div>
+  return `<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your partners</b><a class="pz-link" href="#social" data-soc-sub="people" style="min-height:0">All ›</a></div>
     ${L.map(p=>{ const v=p.view||{}; return `<div class="pz-kvrow" style="gap:10px">${socAv(p.handle,28)}<span style="flex:1;min-width:0;font-size:13px"><b>@${esc(p.handle)}</b> · ${v.streak||0}-day streak · ${v.slips7?`<span style="color:${PZ_COL.low}">${v.slips7} slip${v.slips7===1?'':'s'}</span>`:'no slips'} in their last 7 trading days</span>${p.canNudge?`<button type="button" class="pz-linkbtn" data-soc-nudge="${esc(p.id)}">Nudge</button>`:''}</div>`; }).join('')}</section>`;
 }
 // nudges, mentor notes and season results, until you've read them

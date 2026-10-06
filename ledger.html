@@ -1534,6 +1534,36 @@ body.light .pz-hlpill.pays{background:#E6F6EF;color:#0A9A63} body.light .pz-hlpi
 .pz-kudo{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;border-radius:20px!important;border:1px solid var(--pz-line2);background:none;color:var(--pz-soft);font-size:13px;font-weight:700;cursor:pointer}
 .pz-kudo[aria-pressed="true"]{background:#10201A;border-color:#1D3A2E;color:var(--pz-good)}
 #pz a.pz-kudo{text-decoration:none;color:var(--pz-soft)}
+/* Social: the feed's posts column and its activity rail (the rail goes on top when they stack) */
+.pz-feedb{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start}
+.pz-fmain{flex:999 1 520px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.pz-frail{flex:1 1 280px;min-width:0;display:flex;flex-direction:column;gap:14px}
+@media (max-width:899px){.pz-frail{order:-1}}
+.pz-act{list-style:none;margin:0;padding:0}
+.pz-act li{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--pz-line);font-size:13px;line-height:1.45;color:var(--pz-soft)}
+.pz-act li:first-child{border-top:0}
+.pz-act b,.pz-act a{color:var(--pz-text)}
+.pz-act .pz-at{margin-left:auto;padding-left:6px;font-family:var(--pz-num);font-size:11px;color:var(--pz-muted);white-space:nowrap}
+.pz-avs{display:flex;flex-shrink:0}.pz-avs>*{margin-left:-8px;border-radius:50%!important;box-shadow:0 0 0 2px var(--pz-card)}.pz-avs>*:first-child{margin-left:0}
+/* Social: four tabs, the "this week" strip and the Compete hub */
+.pz-cnt{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:4px;border-radius:9px!important;background:var(--pz-low);color:#1a0603;font-size:11px;font-weight:800}
+.pz-week{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+.pz-wkrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.pz-wk{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);text-decoration:none;text-align:left;font:inherit;cursor:pointer}
+#pz a.pz-wk{color:var(--pz-text)}div.pz-wk{cursor:default}
+.pz-wk.hot{border-color:color-mix(in srgb,var(--pz-low) 45%,var(--pz-line))}
+.pz-wkl{font-size:12px;font-weight:600;color:var(--pz-muted)}.pz-wk.hot .pz-wkl{color:var(--pz-low)}
+.pz-wk b{font-size:14px;line-height:1.35}.pz-wkn{font-family:var(--pz-num);font-size:20px}.pz-wka{font-size:12px;color:var(--pz-soft)}
+.pz-gridf{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.pz-stack{display:flex;flex-direction:column;gap:10px}
+.pz-past summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--pz-soft)}
+/* Social: a profile's actions (one main button, the rest under "More") */
+.pz-prof{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.pz-pact{display:flex;gap:8px;align-items:stretch}.pz-pact>.pz-cta,.pz-pact>.pz-ghost{flex:1;min-width:0}
+.pz-more{position:relative;flex-shrink:0}
+.pz-more>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:48px;height:100%;min-height:48px;border-radius:16px!important;border:1px solid var(--pz-line2);color:var(--pz-text);cursor:pointer}
+.pz-more>summary::-webkit-details-marker{display:none}
+.pz-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:min(300px,80vw);display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:18px!important;background:var(--pz-card);border:1px solid var(--pz-line2);box-shadow:0 12px 30px rgba(0,0,0,.45)}
 .pz-pbcheck{border:1px solid var(--pz-line2);border-radius:12px;padding:8px 12px 10px;margin:0;display:flex;flex-direction:column;gap:2px}
 .pz-pbcheck legend{font-size:12px;color:var(--pz-muted);padding:0 4px}
 .pz-pbr{display:flex;gap:10px;align-items:flex-start;min-height:36px;padding:6px 0;font-size:14px;line-height:1.35;cursor:pointer}
