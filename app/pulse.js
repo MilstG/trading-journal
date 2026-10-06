@@ -140,7 +140,7 @@ var pzS={ring:'discipline',range:30,badge:null,ck:null,sheet:false,custom:null,j
 function pzTab(){ const h=(location.hash||'').slice(1);
   { const i=h.indexOf('/'), f=i>0?pzFeatTab(h.slice(0,i)):null; if(f&&f.tab.arg&&f.tab.arg.test(h.slice(i+1)))return f.tab.name; } // a feature's screen with an argument (#name/arg)
   if(/^u\/[A-Za-z0-9_]{3,20}$/.test(h))return 'profile'; if(/^mentee\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentee'; if(/^mentors\/[A-Za-z0-9_]{3,20}$/.test(h))return 'mentorp'; if(/^c\/[0-9a-f]{4,24}$/.test(h))return 'comp'; if(/^lg\/[a-z0-9-]{1,40}$/.test(h))return 'lginfo'; if(/^post\/[0-9a-f]{12}$/.test(h))return 'post'; if(/^tr\/[0-9a-f]{12}(\/mod)?$/.test(h))return 'tr'; if(/^duel\/[A-Za-z0-9_]{3,20}$/.test(h))return 'duelnew';
-  if(/^link=[A-Za-z0-9-]{4,20}$/.test(h))return 'today'; if(/^people\/(duels|partner|mentor)$/.test(h))return 'people';
+  if(/^link=[A-Za-z0-9-]{4,20}$/.test(h))return 'today'; if(/^people\/(duels|partner|mentor|following)$/.test(h))return 'people';
   return PZ_TABS.includes(h)?h:'today'; }
 function pzHashArg(){ return (location.hash||'').slice(1).split('/')[1]||''; }
 const PZI={
