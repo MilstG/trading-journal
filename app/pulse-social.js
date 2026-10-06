@@ -49,7 +49,7 @@ const SOC_COMP_HOW={
   return:'Return over the competition dates, read from your wallet on chain.'};
 const PZ_UNLOCK_DEFAULTS={unlocksOn:true,unlocks:{trends:2,share:3,compete:4}};
 var SOC={cfg:null,cfgTried:false,key:null,me:null,share:null,sub:'feed',board:'rank',cfilter:'mine',feed:'following',
-  cache:{},busy:{},lastSent:'',lastSentAt:0,timer:null,draft:null,avs:{},more:{},upd:{},compose:null,confirm:null};
+  cache:{},busy:{},lastSent:'',lastSentAt:0,timer:null,draft:null,avs:{},rings:{},more:{},upd:{},compose:null,confirm:null};
 try{ SOC.key=localStorage.getItem(SOC_KEY_STORE)||null; }catch(e){}
 // An invite link (/keel?invite=CODE, from the owner's Settings) fills the code in for them: kept on this
 // device until they join, and taken off the address bar so it isn't shared on by accident.
@@ -147,11 +147,15 @@ function socValue(board,v){ if(v==null)return '—';
   if(board==='riskadj')return v.toFixed(1);
   return Math.round(v).toLocaleString(); }
 function socAgo(ms){ const m=Math.max(0,Math.round((Date.now()-ms)/60000)); return m<1?'just now':m<60?m+'m':m<1440?Math.round(m/60)+'h':Math.round(m/1440)+'d'; }
-function socAv(h,size){ const u=SOC.avs[String(h||'').toLowerCase()];
-  if(u)return `<img class="pz-av" src="${esc(u)}" alt="" aria-hidden="true" loading="lazy" decoding="async"${size?` style="width:${size}px;height:${size}px"`:''}>`;
+// earned rings (tiers reached, High Ninja, a 30-day pair streak, duel and season podiums, Rulemaker)
+const SOC_RINGS={'tier-1':'#CDD3DA','tier-2':'#F4C04E','tier-3':'#8FD9E8','tier-4':'#B69CFF',ninja:'#F4C04E',pair:'#F5A742',duel:'#C77DFF',podium:'#F4C04E',rule:'#E8D9A0'};
+const socRingCss=(id,size)=>{ const c=SOC_RINGS[id]; if(!c)return ''; const w=size>=60?3:2, g=size>=60?3:2;
+  return `box-shadow:0 0 0 ${g}px var(--pz-bg,#0B0D10),0 0 0 ${g+w}px ${c}${id==='podium'?`,0 0 0 ${g+w+2}px var(--pz-bg,#0B0D10),0 0 0 ${g+w*2+2}px ${c}`:id==='ninja'?`,0 0 10px 2px rgba(244,192,78,.35)`:''};`; };
+function socAv(h,size){ const k=String(h||'').toLowerCase(), u=SOC.avs[k], rg=socRingCss(SOC.rings[k],size||36);
+  if(u)return `<img class="pz-av" src="${esc(u)}" alt="" aria-hidden="true" loading="lazy" decoding="async"${size||rg?` style="${size?`width:${size}px;height:${size}px;`:''}${rg}"`:''}>`;
   const P=['#B69CFF','#5AA9FF','#FFB25A','#3FE0A0','#F4C04E','#FF9A7E','#9FB4C8'];
   let x=0; for(const c of String(h||''))x=(x*31+c.charCodeAt(0))>>>0;
-  return `<span class="pz-av" aria-hidden="true" style="background:${P[x%P.length]}${size?`;width:${size}px;height:${size}px;font-size:${Math.round(size*0.36)}px`:''}">${esc(String(h||'?').slice(0,2).toUpperCase())}</span>`; }
+  return `<span class="pz-av" aria-hidden="true" style="background:${P[x%P.length]}${size?`;width:${size}px;height:${size}px;font-size:${Math.round(size*0.36)}px`:''};${rg}">${esc(String(h||'?').slice(0,2).toUpperCase())}</span>`; }
 
 // the High Ninja role (the owner gives it in the admin panel): a gold star by the name wherever it shows
 function socNinjaMark(sz){ return `<span class="pz-ninja" title="High Ninja" role="img" aria-label="High Ninja">${pzI('shuriken',sz||14,2.2)}</span>`; }
@@ -498,7 +502,8 @@ function socFeedHtml(){
   const shown=SOC.actAll?groups:groups.slice(0,5);
   const act=groups.length?`<section class="pz-card"><b style="font-size:15px">League activity</b><ul class="pz-act" style="margin-top:6px">${shown.map(socActRow).join('')}</ul>${groups.length>shown.length?`<button type="button" class="pz-linkbtn" data-soc-actall="1">Show all ${groups.length}</button>`:''}</section>`:'';
   const sug=d.suggest&&d.suggest.length?`<section class="pz-card"><b style="font-size:15px">Traders to follow</b><ul class="pz-act" style="margin-top:6px">${d.suggest.map(p=>`<li style="align-items:center">${socAv(p.handle,32)}<span style="min-width:0;flex:1"><a href="#u/${esc(p.handle)}" style="font-weight:700;text-decoration:none">@${esc(p.handle)}</a><span class="pz-sub" style="display:block;font-size:12px">${esc(p.tierName)} · ${esc(p.why)}</span></span><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 14px" data-soc-follow="${esc(p.handle)}" data-on="0">Follow</button></li>`).join('')}</ul></section>`:'';
-  return `${top}<div class="pz-feedb">${main}${act||sug?`<aside class="pz-frail" aria-label="League activity">${act}${sug}</aside>`:''}</div>`;
+  const tr=d.topRules&&d.topRules.length?`<section class="pz-card"><b style="font-size:15px">Most adopted this week</b><ol class="pz-act" style="margin-top:6px">${d.topRules.map((r,i)=>`<li><span class="pz-rk">${i+1}</span><span style="flex:1;min-width:0">“${esc(r.text)}” <a href="#u/${esc(r.handle)}" style="font-weight:600;text-decoration:none">@${esc(r.handle)}</a></span><span class="pz-at">+${r.n}</span></li>`).join('')}</ol></section>`:'';
+  return `${top}<div class="pz-feedb">${main}${act||sug||tr?`<aside class="pz-frail" aria-label="League activity">${act}${tr}${sug}</aside>`:''}</div>`;
 }
 function socSocialHtml(D){
   socBoot();
@@ -529,7 +534,9 @@ function socProfileHtml(D, handle){
     :`<div class="pz-gridf">${tile('good',p.discipline30==null?'—':p.discipline30,'Discipline · 30d'+(p.verified?' · verified':''))}${tile('warm',p.streak,'Day streak · best '+p.best)}${dw?tile('',`<span style="color:${PZ_COL.good}">${p.duels.w}</span>–<span style="color:${PZ_COL.low}">${p.duels.l}</span>${p.duels.d?'–'+p.duels.d:''}`,'Duels'+(p.rating!=null?' · rating '+p.rating:'')):''}${tile('',p.badgeN+(p.ninja?1:0),'Badges')}</div>`;
   const money=p.ret!=null||p.usd!=null?`<section class="pz-card" style="display:flex;justify-content:space-between;gap:12px"><span><span class="pz-t pz-sub" style="font-size:12px">30-day return${p.isMe?' (only you see this unless you share it)':''}</span><br><b style="font-family:var(--pz-num);font-size:26px;color:${p.ret>=0?PZ_COL.good:PZ_COL.low}">${p.ret!=null?socValue('ret',p.ret):'—'}</b>${p.usd!=null?` <span class="pz-sub">${esc(signedPlain(p.usd))}</span>`:''}</span><span style="text-align:right"><span class="pz-sub" style="font-size:12px">Max drawdown</span><br><b style="font-family:var(--pz-num);font-size:26px">${p.dd!=null?(p.dd*100).toFixed(1)+'%':'—'}</b></span></section>`:'';
   const pods=p.pods&&p.pods.n?`<div class="pz-tile" style="flex-direction:row;align-items:center;justify-content:space-between"><span class="pz-t">Group duels won</span><span class="pz-n" style="font-size:22px">${p.pods.w} <span class="pz-sub" style="font-size:13px">of ${p.pods.n}</span></span></div>`:'';
-  const habits=p.habits&&p.habits.length?`<section class="pz-card" style="padding:6px 16px">${p.habits.map(h=>`<div class="pz-toggle"><span style="flex:1;font-size:14px;line-height:1.4">${esc(h)}</span>${p.isMe?'':`<button type="button" class="pz-kudo" data-soc-adopt="${esc(h)}">Adopt</button>`}</div>`).join('')}</section>`:'';
+  const runs=new Map((p.rules||[]).map(r=>[r.text.toLowerCase(),r.n])), rl=[...(p.habits||[]),...(p.rules||[]).map(r=>r.text).filter(t=>!(p.habits||[]).some(h=>h.toLowerCase()===t.toLowerCase()))];
+  const habits=rl.length?`<section class="pz-card" style="padding:6px 16px">${p.adoptN?`<div class="pz-kvrow" style="margin:10px 0 2px"><b style="font-size:15px">Rules others run</b><span class="pz-runsn">${p.adoptN} adoption${p.adoptN===1?'':'s'}</span></div>`:''}${rl.map(h=>{ const n=runs.get(h.toLowerCase())||0;
+    return `<div class="pz-toggle"><span style="flex:1;font-size:14px;line-height:1.4">${esc(h)}</span>${n?`<span class="pz-runsn" title="Traders who run it">${n}</span>`:''}${p.isMe?'':`<button type="button" class="pz-kudo" data-soc-adopt="${esc(h)}" data-from="${esc(p.handle)}">Adopt</button>`}</div>`; }).join('')}</section>`:'';
   // a few badges as chips, the rest as a count (a long-time member has eighty-odd; the tile above has the total)
   const bshow=pzS.allBadges===p.handle?p.badges||[]:(p.badges||[]).slice(0,12), bmore=(p.badges||[]).length-bshow.length;
   const ninjaB=p.ninja?`<span class="pz-chipbtn pz-ninja-badge" title="A role the league owner gives" style="height:32px;display:inline-flex;align-items:center;gap:6px;cursor:default">${pzI('shuriken',14,2.2)}High Ninja</span>`:'';
@@ -540,7 +547,8 @@ function socProfileHtml(D, handle){
     ${ev?`<section class="pz-card" style="padding:4px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">Milestones</b>${ev}</section>`:''}`;
   // posts first; habits, badges and results each get a tab when there's something in them
   const tabs=[['posts','Posts',postsT],['habits','Habits',habits],['badges','Badges',badges],['results','Results',money+pods]].filter(x=>x[0]==='posts'||x[2]), cur=tabs.find(x=>x[0]===tab)||tabs[0];
-  return `<div class="pz-prof">${back}<section style="display:flex;align-items:center;gap:14px">${p.ninja?`<span class="pz-ninja-ring big">${socAv(p.handle,72)}<span class="pz-ninja-seal">${pzI('shuriken',14,2.4)}</span></span>`:socAv(p.handle,72)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><h1 class="pz-h1" style="font-family:Inter,system-ui,sans-serif;font-size:22px;font-weight:800">@${esc(p.handle)}${p.ninja?' '+socNinjaMark(18):''}</h1>${p.ninja?'<span class="pz-ninja-title">High Ninja</span>':''}
+  const lk=p.look||{};
+  return `<div class="pz-prof">${back}${lk.theme?`<div class="pz-theme th-${esc(lk.theme)}" aria-hidden="true"></div>`:''}<section style="display:flex;align-items:center;gap:14px${lk.theme?';margin-top:-46px;padding-left:12px':''}">${p.ninja&&!lk.ring?`<span class="pz-ninja-ring big">${socAv(p.handle,72)}<span class="pz-ninja-seal">${pzI('shuriken',14,2.4)}</span></span>`:socAv(p.handle,72)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><h1 class="pz-h1" style="font-family:Inter,system-ui,sans-serif;font-size:22px;font-weight:800">@${esc(p.handle)}${p.ninja?' '+socNinjaMark(18):''}</h1>${lk.titleName?`<span class="pz-ninja-title">${esc(lk.titleName)}</span>`:p.ninja?'<span class="pz-ninja-title">High Ninja</span>':''}
       <span class="pz-sub" style="font-size:13px">Level ${p.level} · ${esc(p.title)} · ${esc(T[p.tier]||p.tierName)} league</span><span class="pz-sub" style="font-size:12px">${p.followers} follower${p.followers===1?'':'s'} · ${p.following} following${p.address?' · '+esc(walletShort(p.address)):''}</span></span></section>
     ${p.bio?`<p class="pz-bio">${esc(p.bio)}</p>`:p.isMe?`<p class="pz-fine"><a href="#sharing">Add a picture, a line about how you trade, and your X, Telegram or Discord</a></p>`:''}
     ${socSocialsHtml(p.socials)}${acts}${tiles}
@@ -604,6 +612,7 @@ function pzLockedHtml(title, need, g){
 function socLearnAv(x,depth){ if(!x||typeof x!=='object'||depth>6)return;
   if(Array.isArray(x)){ for(const y of x)socLearnAv(y,depth+1); return; }
   if(typeof x.handle==='string'&&'av' in x){ const k=x.handle.toLowerCase(); if(x.av)SOC.avs[k]=x.av; else delete SOC.avs[k]; }
+  if(typeof x.handle==='string'&&'ring' in x){ const k=x.handle.toLowerCase(); if(x.ring)SOC.rings[k]=x.ring; else delete SOC.rings[k]; }
   for(const k in x){ const v=x[k]; if(v&&typeof v==='object')socLearnAv(v,depth+1); } }
 const socPx=v=>{ if(v==null||!isFinite(v))return '—'; const d=v>=1000?1:v>=100?2:v>=1?4:6; return (+v).toLocaleString(undefined,{maximumFractionDigits:d}); };
 const socSignedN=(v,suf,dp)=>(v>=0?'+':'−')+Math.abs(v).toFixed(dp==null?2:dp)+suf;
@@ -626,12 +635,13 @@ const SOC_PKIND={trade:'Trade',plan:'Planned trade',note:'Note'};
 // one feed row: a milestone (as before) or a member's post
 function socEvHtml(e, full){
   const who=e.admin?`<span class="pz-av" style="background:#3FE0A0" aria-hidden="true">${pzI('bolt',16)}</span>`:socAv(e.handle,36);
-  const name=e.admin?'<b>League</b>':`<a href="#u/${esc(e.handle)}" style="color:var(--pz-text);font-weight:700;text-decoration:none">${e.mine?'You':'@'+esc(e.handle)}</a>${e.ninja?' '+socNinjaMark(13):''}`;
+  const name=e.admin?'<b>League</b>':`<a href="#u/${esc(e.handle)}" style="color:var(--pz-text);font-weight:700;text-decoration:none">${e.mine?'You':'@'+esc(e.handle)}</a>${e.ninja?' '+socNinjaMark(13):''}${e.title?` <span class="pz-etitle">${esc(e.title)}</span>`:''}`;
   const kudo=e.admin||e.mine?(e.mine&&e.kudos?`<span class="pz-fine">${e.kudos} kudos</span>`:''):`<button type="button" class="pz-kudo" data-soc-kudos="${esc(e.id)}" aria-pressed="${e.liked}" aria-label="Kudos, ${e.kudos}">${pzI('check',16)}${e.kudos||'Kudos'}</button>`;
   if(!e.post)return `<article class="pz-card pz-ev"><div class="pz-evh">${who}
       <span style="flex:1;min-width:0;display:flex;flex-direction:column"><span style="font-size:14px;line-height:1.35">${name} ${esc(e.text)}</span><span class="pz-sub" style="font-size:11px">${socAgo(e.at)}</span></span></div>
       ${e.quote?`<div class="pz-quote">${esc(e.quote)}</div>`:''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${kudo}${e.type==='habit'&&e.quote&&!e.mine?`<button type="button" class="pz-kudo" data-soc-adopt="${esc(e.quote)}">Adopt this habit</button>`:''}${e.type==='playbook'&&e.pb?`<a class="pz-kudo" href="#playbooks/${esc(e.pb)}" style="text-decoration:none">${pzI('book',16)} See the playbook</a>`:''}</div></article>`;
+      ${e.adopted?`<div class="pz-runs">${pzI('check',14)}<span><b>${e.adopted} trader${e.adopted===1?'':'s'}</b> ${e.adopted===1?'runs':'run'} this rule</span></div>`:''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${kudo}${(e.type==='habit'||e.type==='challenge')&&e.quote&&!e.mine?`<button type="button" class="pz-kudo" data-soc-adopt="${esc(e.quote)}" data-from="${esc(e.handle)}">Adopt this rule</button>`:''}${e.type==='playbook'&&e.pb?`<a class="pz-kudo" href="#playbooks/${esc(e.pb)}" style="text-decoration:none">${pzI('book',16)} See the playbook</a>`:''}</div></article>`;
   const P=e.post, href='#post/'+esc(e.id), long=e.text.length>420||e.text.split('\n').length>7;
   const media=P.media.length?`<div class="pz-media${P.media.length===1?' one':''}">${P.media.map((u,i)=>`<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Picture ${i+1} with the post" loading="lazy" decoding="async"></a>`).join('')}</div>`:'';
   return `<article class="pz-card pz-ev pz-post"><div class="pz-evh">${who}
@@ -1295,6 +1305,13 @@ async function socAction(t){
       const r=await socFetch('/duels/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({action:a})}); delete SOC.cache.duels; socPeopleDrop();
       done(a==='accept'?'Accepted. It runs '+duelWhen(r.duel)+'.':a==='decline'?'Declined.':a==='cancel'?'Withdrawn.':ds.early?'You backed out. It doesn’t count.':'You forfeited.'); return true; }
     if(ds.socPtab){ SOC.ptab={h:ds.h,t:ds.socPtab}; pzRender(); return true; }
+    // what reaches your phone from other members: each kind, and quiet hours on or off
+    if(ds.socNp){ const pr=Object.assign({},SOC.me.push&&SOC.me.push.prefs), k=ds.socNp;
+      if(k==='quiet'){ const on=!(pr.quiet&&pr.quiet.on===false); pr.quiet=Object.assign({from:'22:00',to:'07:00'},pr.quiet,{on:!on}); } else pr[k]=pr[k]===false;
+      const r=await socFetch('/push',{method:'PUT',body:JSON.stringify({prefs:pr})}); SOC.me.push.prefs=r.prefs; pzRender(); return true; }
+    // your look: a ring, a profile theme, a title (an empty value takes it off)
+    if(ds.socLook){ const r=await socFetch('/me',{method:'PUT',body:JSON.stringify({look:{[ds.socLook]:ds.v||''}})}); Object.assign(SOC.me,r.me); socLearnAv(r.me,0);
+      delete SOC.cache['u:'+SOC.me.handle.toLowerCase()]; done(); return true; }
     if(ds.socAllbadges){ pzS.allBadges=ds.socAllbadges; pzRender(); return true; }
     if(ds.socDiscord){ try{ await navigator.clipboard.writeText(ds.socDiscord); pzNote('Copied '+ds.socDiscord+', their Discord username.'); }catch(e){ pzNote('Their Discord username: '+ds.socDiscord); } return true; }
     if(ds.socSub){ SOC.sub=ds.socSub; if(pzTab()!=='social')location.hash='#social'; else pzRender(); return true; }
@@ -1336,7 +1353,8 @@ async function socAction(t){
     if(ds.socJoin&&ds.buyin&&!confirm('Put up '+ds.buyin+' XP to join?\n\n'+socLoseLine(+ds.buyin)+'\n\nBack out before it starts and you get it back.'))return true;
     if(ds.socJoin){ await socFetch('/competitions/'+encodeURIComponent(ds.socJoin)+'/join',{method:'POST'}); done('You’re in. Good luck — play your process.'); return true; }
     if(ds.socLeave){ if(!confirm('Leave this competition?'))return true; await socFetch('/competitions/'+encodeURIComponent(ds.socLeave)+'/join',{method:'DELETE'}); done('You left the competition.'); return true; }
-    if(ds.socAdopt){ await adoptHabit(socHabitSpec(ds.socAdopt)); done('Added to your habits. It’s tracked by the day journal’s “I followed the plan”.'); return true; }
+    if(ds.socAdopt){ await adoptHabit(socHabitSpec(ds.socAdopt)); if(ds.from)socFetch('/adopt',{method:'POST',body:JSON.stringify({from:ds.from,text:ds.socAdopt})}).catch(()=>{});
+      done('Added to your habits. It’s tracked by the day journal’s “I followed the plan”.'); return true; }
     if(ds.pzAppear){ await setAppearance(ds.pzAppear); return true; }
     if(ds.pzColorway){ await setColorway(ds.pzColorway); return true; }
     if((t.id||(t.dataset&&t.dataset.pkDel))&&await acctAction(t))return true;
