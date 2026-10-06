@@ -99,7 +99,7 @@ console.log('\nIn the app: each change maps to a habit, and its numbers read pla
     eq(peerImpHabit({ metric: 'rev', improversDelta: -9 }), { slip: 'revenge' });
     eq(peerImpHabit({ metric: 'jour', improversDelta: 20 }), { tpl: 'journal-all' });
     eq(peerImpHabit({ metric: 'sizeUp', improversDelta: -40 }), { slip: 'sizeUp' });
-    eq(peerImpHabit({ metric: 'fees', improversDelta: -5 }).kind, 'self');
+    eq(peerImpHabit({ metric: 'fees', improversDelta: -5 }), { tpl: 'maker-half' }, 'the maker-share habit, checked from fills');
     eq(peerImpHabit({ metric: 'tw', improversDelta: 30 }), null, 'trading more isn’t offered as a habit');
     ok(!peerImpHas({ slip: 'revenge' })); habits.push({ kind: 'slip', slip: 'revenge' }, { tpl: 'journal-all' });
     ok(peerImpHas({ slip: 'revenge' }) && peerImpHas({ tpl: 'journal-all' }) && !peerImpHas({ slip: 'overtrade' }), 'already in your habits');
