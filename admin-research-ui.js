@@ -1,0 +1,90 @@
+// The admin panel's research screens: Admin → Research (the research report run on the league's own wallets:
+// GET/POST /admin/research/run, GET /admin/research/report) and the "Does the product work?" card in Insights
+// (GET /admin/research). admin.html loads this before its own script; it stays out of admin.html because that page
+// has a size budget. It reaches the panel through window.ADM (api, render and the helpers), which admin.html sets
+// up, and answers its own buttons and selects (ids starting with rs and res).
+(function () {
+  'use strict';
+  const A = () => window.ADM;
+  const $ = id => document.getElementById(id);
+  const api = (p, o) => A().api(p, o), render = () => A().render(), note = (m, e) => A().note(m, e);
+  const esc = s => A().esc(s), fmt = n => A().fmt(n), ago = ms => A().ago(ms), sel = (...a) => A().sel(...a), tiles = l => A().tiles(l);
+  const tab = () => location.hash.slice(1).split('/')[0];
+  const D = {}, UI = { res: { win: 28, ver: false } };
+  let busy = false;
+  async function run(fn, msg) { if (busy) return; busy = true;
+    try { await fn(); if (msg) note(msg); } catch (e) { note(e.message, true); } finally { busy = false; } render(); }
+
+  // does the product work? each member's Discipline before and after a first mentor review, duel, playbook,
+  // pod or partner, against members who hadn't had one yet over the same weeks (GET /admin/research)
+  async function loadRes(){ try{ D.res=await api('/research?window='+UI.res.win+(UI.res.ver?'&verified=1':'')); }catch(e){ D.res={err:e.message}; } }
+  function resCard(){
+    const R=D.res; if(!R){ D.res={loading:true}; loadRes().then(render); }
+    const ctl=`<div class="row" style="gap:8px;min-width:280px">${sel('resWin',[[14,'14 days either side'],[28,'28 days either side'],[56,'56 days either side']],UI.res.win,' aria-label="Window"')}
+      ${sel('resVer',[['','All days'],['1','Verified days only']],UI.res.ver?'1':'',' aria-label="Which days"')}</div>`;
+    const top=`<section class="card"><div class="ch"><h2>Does the product work?</h2>${ctl}</div>`;
+    if(!R||R.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(R.err)return top+`<p class="warn">${esc(R.err)}</p></section>`;
+    const ci=b=>b&&b.v!=null?`${b.v>0?'+':''}${b.v}${b.lo!=null?` <span class="muted small">[${b.lo>0?'+':''}${b.lo}, ${b.hi>0?'+':''}${b.hi}]</span>`:''}`:'—';
+    const col=b=>b&&b.lo!=null?(b.lo>0?' style="color:var(--good)"':b.hi<0?' style="color:var(--low)"':''):'';
+    const colSlip=b=>b&&b.lo!=null?(b.hi<0?' style="color:var(--good)"':b.lo>0?' style="color:var(--low)"':''):'';
+    return top+`<p class="muted small">Each member’s Discipline over the ${R.window} days after their first one, minus the ${R.window} days before, against the same change for members who hadn’t had one yet (the same calendar weeks). Needs 4 trading days on each side. Coloured when the 95% range leaves out zero. ${esc(R.note)}</p>
+      <div class="scroll"><table><thead><tr><th>First…</th><th>Members</th><th>Measured</th><th title="Discipline points, after minus before, against members who hadn’t had one yet">Discipline vs not yet</th><th title="Percentage points of trading days with a slip">Slip days vs not yet</th><th>Raw change</th><th>Discipline before</th></tr></thead><tbody>
+      ${Object.values(R.effects).map(x=>`<tr><td>${esc(x.label)}</td><td>${fmt(x.exposed)}</td><td>${fmt(x.measured)}</td><td${col(x.did)}>${ci(x.did)}</td><td${colSlip(x.didSlip)}>${ci(x.didSlip)}</td><td>${x.raw==null?'—':(x.raw>0?'+':'')+x.raw}</td><td>${x.before==null?'—':x.before}</td></tr>`).join('')}
+      </tbody></table></div><p class="hint">${fmt(R.members)} members with trading days (${fmt(R.verified)} verified from fills${R.onlyVerified?'':', '+fmt(R.app)+' from the app'}).</p></section>`;
+  }
+  // ---------------- research: the report run on the league's own wallets (GET/POST /admin/research/run) ----------------
+  async function loadRs(){ try{ D.rs=await api('/research/run'); }catch(e){ D.rs={err:e.message}; return; }
+    if(D.rs.hasReport&&(!D.rsRep||D.rsRep.at!==D.rs.finishedAt)){ try{ D.rsRep=Object.assign(await api('/research/report'),{at:D.rs.finishedAt}); }catch(e){ D.rsRep=null; } } }
+  // while a run goes, the page keeps itself up to date
+  let rsPoll=null;
+  function pollRs(){ clearTimeout(rsPoll); rsPoll=null; if(tab()!=='research'||!D.rs||D.rs.state!=='running')return;
+    rsPoll=setTimeout(async()=>{ rsPoll=null; if(tab()!=='research')return;
+      if(busy||document.visibilityState!=='visible')return pollRs();
+      await loadRs(); if(tab()==='research'&&!busy)render(); else pollRs(); },4000); }
+  const RS_SECTIONS=[['slips','What each slip costs','Each wallet’s slipped trades against its own trades that faced the same test and passed it. R is the wallet’s typical trade.'],
+    ['forward','Does Discipline predict next month?',''],['persistence','Skill or luck?','How well each measure ranks wallets the same way in two back-to-back 90-day windows, and how many trades a reliable ranking needs.'],
+    ['improvers','Traders like them who improved',''],['effects','Does the product work?','The same as Insights → Does the product work?, at the time of the run.'],['market','Market views','Skill tiers are set on the first half of the period and read on the second.']];
+  function vResearch(){
+    const S=D.rs; if(!S){ loadRs().then(render); return '<section class="card"><p class="muted">Loading…</p></section>'; }
+    if(S.err)return `<section class="card"><p class="warn">Couldn’t load research: ${esc(S.err)}</p></section>`;
+    const A=S.available||{members:0,all:0}, run=S.state==='running', mins=n=>Math.max(1,Math.ceil(n*2*1.5/60));
+    const PH={fills:'Reading fills',prices:'Reading prices',analysis:'Working it out'};
+    const pct=S.phase==='fills'?(S.total?S.done/S.total:0):S.phase==='analysis'?(S.total?Math.min(1,(S.analysed||0)/S.total):0):1;
+    const when=S.finishedAt?ago(S.finishedAt):'';
+    const lastLine=S.state==='done'?`Last run ${esc(when)}${S.by?' by '+esc(S.by):''}: ${fmt(S.total)} wallet${S.total===1?'':'s'}${S.scope==='all'?' (members, seed and entered wallets)':' (members’ wallets)'}${S.bots?', '+fmt(S.bots)+' left out as bots':''}${S.failed?', '+fmt(S.failed)+' couldn’t be read':''}.`
+      :S.state==='error'?`<span class="warn">The last run stopped with an error ${esc(when)}: ${esc(S.error||'')}</span>`:S.state==='stopped'?`The last run was stopped ${esc(when)}.`:'No run yet.';
+    const runCard=`<section class="card"><h2>Run on members’ wallets</h2>
+      <p class="muted small" style="margin-top:0">Reads each wallet’s last 300 days of public fills from Hyperliquid, one request every 1.5 seconds (wallets read in the last day are reused), then works the report out in the background. The server keeps answering while it runs. With fewer than about 50 wallets most figures read “too few to bound”.</p>
+      ${run?`<div class="prog" style="display:flex;align-items:center;gap:10px;margin:12px 0"><span class="fit small">${esc(PH[S.phase]||'Working')}</span><div class="bar" role="progressbar" aria-valuenow="${Math.round(pct*100)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${Math.round(pct*100)}%"></i></div>
+          <span class="fit muted small">${S.phase==='fills'?fmt(S.done)+' of '+fmt(S.total)+' wallets':S.phase==='analysis'?fmt(S.analysed||0)+' of '+fmt(S.total):''}</span></div>
+        <button class="fit" id="rsStop">Stop</button>`
+      :`<div style="margin:12px 0"><label class="inline"><input type="checkbox" id="rsAll"${A.all>A.members?'':' disabled'}> Also the seed wallets and wallets entered in the app (${fmt(A.all)} in all)</label></div>
+        <button class="primary fit" id="rsRun"${A.members?'':' disabled'}>Run on members’ wallets (${fmt(A.members)})</button>
+        <p class="hint">${A.members?'About '+mins(A.members)+' minute'+(mins(A.members)===1?'':'s')+' for members’ wallets'+(A.all>A.members?', '+mins(A.all)+' with the others':'')+'.':'No member has a wallet yet.'}</p>`}
+      <p class="small" style="margin:10px 0 0">${lastLine}</p></section>`;
+    const P=D.rsRep; if(!P||!P.report)return runCard;
+    const r=P.report, sp=r.sample||{}, d=ms=>ms?new Date(ms).toISOString().slice(0,10):'—';
+    const head=tiles([['Wallets',fmt(sp.wallets)],['With closed trades',fmt(sp.withTrades)],['Trades',fmt(sp.trades)],['Period',sp.span&&sp.span.to?fmt(Math.round((sp.span.to-sp.span.from)/864e5))+' days':'—',d(sp.span&&sp.span.from)+' to '+d(sp.span&&sp.span.to)]]);
+    const secs=RS_SECTIONS.filter(([k])=>r[k]&&r[k].text&&r[k].text.length).map(([k,t,sub])=>`<section class="card"><h2>${esc(t)}</h2>${sub?`<p class="muted small" style="margin-top:0">${esc(sub)}</p>`:''}<ul class="small" style="padding-left:18px;margin:0">${r[k].text.map(x=>`<li style="margin:4px 0">${esc(x)}</li>`).join('')}</ul></section>`).join('');
+    return runCard+`<section class="card"><div class="ch"><h2>Results <span class="sub2">· ${esc(ago(P.at||P.status&&P.status.finishedAt))}</span></h2><button class="fit" id="rsDownload">Download the full report</button></div>${head}
+      <p class="hint">${(r.notes||[]).map(esc).join(' ')}</p></section>${secs}`;
+  }
+
+  document.addEventListener('click', async ev => {
+    const b = ev.target.closest('button'); if (!b || busy) return;
+    if (b.id === 'rsRun') return run(async () => { D.rs = await api('/research/run', { body: { scope: $('rsAll') && $('rsAll').checked ? 'all' : 'members' } }); }, 'Research started.');
+    if (b.id === 'rsStop') return run(async () => { D.rs = await api('/research/run', { body: { action: 'stop' } }); }, 'Stopping…');
+    if (b.id === 'rsDownload') { try { const r = await api('/research/report?html=1'), a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([r.html || ''], { type: 'text/html' })); a.download = 'research-report-' + new Date().toISOString().slice(0, 10) + '.html';
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) { note(e.message, true); } }
+  });
+  document.addEventListener('change', ev => { const t = ev.target;
+    if (t.id === 'resWin' || t.id === 'resVer') { if (t.id === 'resWin') UI.res.win = +t.value; else UI.res.ver = t.value === '1'; loadRes().then(render); } });
+  window.ARES = {
+    view: () => { const h = vResearch(); setTimeout(pollRs, 0); return h; },
+    card: resCard,
+    // fresh numbers each time a tab is opened
+    enter: t => { if (t === 'insights') D.res = null; if (t === 'research') D.rs = null; },
+  };
+})();
