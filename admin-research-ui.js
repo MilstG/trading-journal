@@ -57,7 +57,7 @@
   async function loadUse(){ try{ D.use=await api('/usage?days='+UI.use.days); }catch(e){ D.use={err:e.message}; } }
   function useCard(){
     const U=D.use; if(!U){ D.use={loading:true}; loadUse().then(render); }
-    const top=`<section class="card"><div class="ch"><h2>What gets used</h2>${sel('useDays',[[7,'Last 7 days'],[30,'Last 30 days']],UI.use.days,' aria-label="Window"')}</div>`;
+    const top=`<section class="card"><div class="ch"><h2>What gets used</h2><div class="row" style="min-width:180px">${sel('useDays',[[7,'Last 7 days'],[30,'Last 30 days']],UI.use.days,' aria-label="Window"')}</div></div>`;
     if(!U||U.loading)return top+'<p class="muted">Loading…</p></section>';
     if(U.err)return top+`<p class="warn">${esc(U.err)}</p></section>`;
     if(!U.rows.length)return top+'<p class="muted">Nothing yet: apps send this with their stats, so it fills in as members use Daruma.</p></section>';

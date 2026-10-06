@@ -29,7 +29,7 @@ function luckLines(L, span){
   if(!L||L.few)return null;
   const lead=L.net>=0?'best':'worst', big=L.share!=null&&L.share>=0.5;
   return {head:`${signedPlain(L.net)} ${span} is ${signedPlain(L.without)} without your ${lead} trade`,
-    lean:`${luckTrade(L.lean)}: ${signedPlain(L.lean.net)}${big?', '+Math.round(L.share*100)+'% of the result':''}.`, big,
+    lean:`${luckTrade(L.lean)}: ${signedPlain(L.lean.net)}${big?(L.share>1?', more than the whole result':', '+Math.round(L.share*100)+'% of the result'):''}.`, big,
     avg:`Average trade ${signedPlain(L.avg)}; the range your ${L.n} trades allow runs from ${signedPlain(L.lo)} to ${signedPlain(L.hi)}. ${Math.round(L.pPos*100)}% of resamples came out above zero: ${luckSure(L.pPos)}.`};
 }
 function luckWin(D, days){ const from=Date.now()-days*86400000; return luckOf(((D.g&&D.g.ctx&&D.g.ctx.closed)||[]).filter(t=>t.closeTime>=from)); }

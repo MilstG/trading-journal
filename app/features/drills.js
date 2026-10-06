@@ -63,7 +63,7 @@ function drillChartHtml(cur, reveal){
 function drillsScreenHtml(D){
   const back=`<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a>`, head=pzHead('Practice on your own trades','Replay drills'), S=drillState(), cur=DR.cur;
   const stats=S.n?`<section class="pz-card pz-kv"><b class="pz-kvh">Your drills · ${S.n}</b><div class="pz-grid3">${['hold','cut','add'].map(k=>{ const b=S.by[k]||{n:0,beat:0};
-    return `<div class="pz-tile"><span class="pz-n">${b.n}</span><span class="pz-t">${DR_CH[k]}${b.n?' · beat what you did '+b.beat+'×':''}</span></div>`; }).join('')}</div>
+    return `<div class="pz-tile"><span class="pz-n">${b.n}</span><span class="pz-t">${DR_CH[k]}${b.n&&k!=='hold'?' · '+b.beat+' of '+b.n+' better than what you did':''}</span></div>`; }).join('')}</div>
     <p class="pz-fine" style="margin:0">“Beat” is hindsight: the call made more than what you actually did. Look for a pattern in your calls, not a score.</p></section>`:'';
   let body;
   if(DR.busy)body='<section class="pz-card"><p class="pz-sub" style="margin:0"><span class="pz-spin"></span>Finding a trade and its candles…</p></section>';
