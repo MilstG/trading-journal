@@ -147,6 +147,14 @@ const sameText = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(S
 const cleanPost = (s, max) => String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ')
   .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
 const cleanText = (s, max) => String(s == null || typeof s === 'object' ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
+// a member's X, Telegram and Discord: the username only, never a link (a pasted x.com/…, twitter.com/… or t.me/… link gives its name);
+// cleanSocial gives the name, '' (none: clears it) or null (not a username there)
+const SOCIALS = { x: [/^[A-Za-z0-9_]{1,15}$/, 'An X username is 1–15 letters, numbers or underscores.', /^(?:https?:\/\/)?(?:(?:www|mobile)\.)?(?:x|twitter)\.com\//i],
+  telegram: [/^[A-Za-z0-9_]{5,32}$/, 'A Telegram username is 5–32 letters, numbers or underscores.', /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\//i],
+  discord: [/^[a-z0-9_.]{2,32}$/, 'A Discord username is 2–32 letters, numbers, dots or underscores.', null] };
+const cleanSocial = (k, v) => { let s = cleanText(v, 200); const h = SOCIALS[k][2] && s.match(SOCIALS[k][2]);
+  if (h) s = s.slice(h[0].length).split(/[/?#]/)[0]; s = s.replace(/^@/, ''); if (k === 'discord') s = s.toLowerCase();
+  return !s || SOCIALS[k][0].test(s) ? s : null; };
 const utcDayKey = ms => new Date(ms).toISOString().slice(0, 10);
 const addDaysKey = (k, n) => utcDayKey(Date.parse(k + 'T00:00:00Z') + n * 86400000);
 // ISO week ('GGGG-Www') of a 'YYYY-MM-DD' key — same math as the client's isoWeekOfKey.
@@ -2121,6 +2129,7 @@ function createSocial(opts) {
       inbox: (m.inbox || []).filter(x => x.at > (m.inboxRead || 0)).length,
       partners: pairsOf(m).filter(p => p.status === 'active').length });
     if (!m.share.profile && !out.isMe) return Object.assign(out, { private: true });
+    if (m.socials) out.socials = Object.assign({}, m.socials); // a private profile keeps them to itself
     const ver = m.share.verify && Array.isArray(m.vdays);
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
     Object.assign(out, { duels: Object.assign({ w: 0, l: 0, d: 0 }, m.duelRec), rating: S.config.duels.ladder && m.ladder && m.ladder.n ? m.ladder.r : null,
@@ -4020,6 +4029,10 @@ function createSocial(opts) {
       const newAddr = body.address !== undefined && !me.claimed ? (typeof body.address === 'string' && ADDR_RE.test(body.address) ? body.address.toLowerCase() : null) : undefined;
       if (newAddr && claimedBy(newAddr, me.id)) return json(res, 409, { error: 'That wallet is claimed by another profile. Only a signature from it can move it.', walletTaken: true });
       if (newAddr && mappedTo(newAddr, me.id)) return json(res, 409, { error: 'That wallet belongs to another profile here. Claim it by signing with it, or ask the owner.', walletTaken: true });
+      // X, Telegram, Discord: each one sent is set ('' takes it off); null takes them all off
+      const socials = body.socials === undefined ? undefined : body.socials && typeof body.socials === 'object' ? Object.assign({}, me.socials) : {};
+      if (socials) for (const k of Object.keys(SOCIALS)) if (body.socials && body.socials[k] !== undefined) { const v = cleanSocial(k, body.socials[k]);
+        if (v == null) return json(res, 400, { error: SOCIALS[k][1] }); if (v) socials[k] = v; else delete socials[k]; }
       if (body.handle != null) { const h = cleanText(body.handle, 20).replace(/^@/, '');
         if (!HANDLE_RE.test(h)) return json(res, 400, { error: 'Pick a name of 3–20 letters, numbers or underscores.' });
         const other = byHandle(h); if (other && other.id !== me.id) return json(res, 409, { error: 'That name is taken.' }); me.handle = h; reindex(); }
@@ -4033,6 +4046,7 @@ function createSocial(opts) {
       // letting mentors out closes every thread at once: picks are dropped and held XP comes back
       if (!me.share.mentor && picksOf(me).length) for (const id of picksOf(me)) dropPick(me, S.members[id]);
       if (body.bio !== undefined) me.bio = cleanText(body.bio, 160);
+      if (socials) { if (Object.keys(socials).length) me.socials = socials; else delete me.socials; }
       // a new picture replaces the old one (whose file goes); null takes it off
       if (body.avatar !== undefined) {
         if (!r || r.id !== me.avatar) { dropMedia(q('SELECT id FROM media WHERE member = ? AND kind = ? AND id != ?').all(me.id, 'avatar', r ? r.id : ''));

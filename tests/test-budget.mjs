@@ -87,8 +87,11 @@ try {
     // Merged, with the server's sync fixes (store id, merge on a replaced store, Open existing on a backup) in
     // app/core.js too: 2090 / 1746 raw, 709 / 588 gzipped. With main's accounting audit (closedTrades /
     // realizedMoney, measured rows) merged over it: 2100 / 1755 raw, 713 / 592 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2113, 717],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1768, 596],
+    // X, Telegram and Discord on profiles (the row, the three fields, the copy button): about 1.5 KB raw on both.
+    // Social's redesign (four tabs, the week strip, the Compete hub, the feed's activity rail, the tabbed profile):
+    // about 13 KB raw and 4 KB gzipped on both.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2130, 723],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1785, 602],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
