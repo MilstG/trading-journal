@@ -210,6 +210,9 @@ function sanitizeStats(b, opts) {
     for (const k of Object.keys(b.xpLog).filter(inRange).sort().slice(-100)) { const r = b.xpLog[k]; if (!r || typeof r !== 'object') continue;
       const o = {}, s = clampNum(r.s, 0, 100), bo = clampNum(r.b, 0, P.bonus), e = clampNum(r.e, 0, P.extra), m = clampNum(r.m, 0, P.extra);
       if (s) o.s = Math.round(s * 100) / 100; if (bo) o.b = Math.round(bo); if (e) o.e = Math.round(e); if (m) o.m = Math.round(m);
+      // the day's focus-habit XP (inside e) when the habit is one the server can check from fills: plugging a slip, a trade cap
+      const f = r.f; if (o.e && f && typeof f === 'object' && ((f.k === 'slip' && SLIP_KEYS.includes(f.x)) || (f.k === 'cap' && Number.isInteger(f.x) && f.x >= 1 && f.x <= 100))) {
+        const p = clampNum(f.p, 0, o.e); if (p) o.f = { k: f.k, x: f.x, p: Math.round(p) }; }
       if (Object.keys(o).length) xpLog[k] = o; } }
   return {
     xp: 0, level: 1, xpLog, // xp and level: the server's (xpSync)
@@ -1078,14 +1081,19 @@ function createSocial(opts) {
     if (!L.d || typeof L.d !== 'object') L.d = {}; return L; };
   const xplMult = m => { const H = m.multHist || {}; return k => { const v = +H[isoWeekOfKey(k)]; return v > 1 ? v : 1; }; };
   // a day's XP: [by day (before the multiplier, no mentoring), toward the total]
-  const xplDay = (r, w, mult) => { const s = r.v != null ? +r.v : +r.s || 0, base = Math.round(s * w) + (+r.b || 0), e = +r.e || 0;
+  // vd: the day as the server read it from the member's wallet ({n, f}), when it did. A focus habit the fills can
+  // check (r.f: plugging a slip, or a trade cap) is paid only when they agree it was kept: the app's claim isn't enough.
+  const focusHeld = (f, vd) => f.k === 'slip' ? !(Array.isArray(vd.f) && vd.f.includes(f.x)) : (+vd.n || 0) <= f.x;
+  const xplDay = (r, w, mult, vd) => { const s = r.v != null ? +r.v : +r.s || 0, base = Math.round(s * w) + (+r.b || 0);
+    let e = +r.e || 0; if (r.f && vd && !focusHeld(r.f, vd)) e = Math.max(0, e - (+r.f.p || 0));
     return [base + e, Math.round(base * mult) + e + (+r.m || 0)]; };
+  const vdayMap = m => new Map((Array.isArray(m && m.vdays) ? m.vdays : []).map(d => [d.k, d]));
   const xpDerive = (m, tz) => {
-    const L = xplOf(m), since = L.since || '', w = S.config.xp.discipline, mult = xplMult(m), days = {};
+    const L = xplOf(m), since = L.since || '', w = S.config.xp.discipline, mult = xplMult(m), days = {}, V = vdayMap(m);
     let total = (+L.seed || 0) + (+L.old || 0);
     for (const [k, r] of Object.entries(L.d)) { if (!r) continue;
       if (k < since) { if (r.l) days[k] = r.l; continue; }
-      const [x, t] = xplDay(r, w, mult(k)); if (x) days[k] = x; total += t; }
+      const [x, t] = xplDay(r, w, mult(k), V.get(k)); if (x) days[k] = x; total += t; }
     // what the server paid: grants (a coach purchase comes off the total only), reward badges, mentoring (the total only)
     const add = (at, x) => { const k = zoneKey(tz, at); if (k >= since) days[k] = (days[k] || 0) + x; };
     for (const g of m.grants || []) { const x = +g.xp || 0; total += x; if (!g.coach) add(g.at, x); }
@@ -1161,7 +1169,7 @@ function createSocial(opts) {
   // a week is shared out once its days can't change any more (an app can rewrite a day for STATS_FREEZE days),
   // so a week is paid the week after it ends; weeks before activation are paid on activation
   const refWeekBase = (m, wk, fromKey) => { const L = xplOf(m), since = L.since || '', w = S.config.xp.discipline;
-    let x = 0; for (const [k, r] of Object.entries(L.d)) if (r && k >= since && k >= fromKey && isoWeekOfKey(k) === wk) x += xplDay(r, w, 1)[0];
+    const V = vdayMap(m); let x = 0; for (const [k, r] of Object.entries(L.d)) if (r && k >= since && k >= fromKey && isoWeekOfKey(k) === wk) x += xplDay(r, w, 1, V.get(k))[0];
     return Math.max(0, x); };
   const refShare = m => {
     const r = m && m.ref; if (!r || r.st !== 'active' || r.capped || !(r.t.pct > 0) || !(r.t.wk > 0)) return 0;
@@ -1188,13 +1196,13 @@ function createSocial(opts) {
       shared: Object.values(r.paid || {}).reduce((a, x) => a + x, 0), weeksPaid: Object.keys(r.paid || {}).length, by: by ? by.handle : null }; };
   // older days fold into one sum, at what they were worth when they left
   const xplFold = m => { const L = xplOf(m), ks = Object.keys(L.d).sort(), n = ks.length - XPL_KEEP; if (n <= 0) return;
-    const w = S.config.xp.discipline, mult = xplMult(m);
-    for (const k of ks.slice(0, n)) { if (k >= (L.since || '')) L.old = (+L.old || 0) + xplDay(L.d[k], w, mult(k))[1]; delete L.d[k]; } };
+    const w = S.config.xp.discipline, mult = xplMult(m), V = vdayMap(m);
+    for (const k of ks.slice(0, n)) { if (k >= (L.since || '')) L.old = (+L.old || 0) + xplDay(L.d[k], w, mult(k), V.get(k))[1]; delete L.d[k]; } };
   // the app's report: its parts for each day it sent. A day more than a week old keeps what was first reported for
   // it, so the past can't be rewritten (a season in its grace day, a duel already played); a day never reported
   // before still comes in (back from a break). A recent day the app no longer reports loses its parts (a wallet
   // removed, a day re-scored to nothing). The server's own score for a day (v) stays whatever the app says.
-  const XPL_PARTS = ['s', 'b', 'e', 'm'];
+  const XPL_PARTS = ['s', 'b', 'e', 'm', 'f'];
   const xplWrite = (m, log, tz) => {
     const L = xplOf(m), since = L.since || '', freeze = addDaysKey(zoneKey(tz, now()), -STATS_FREEZE);
     const has = r => !!r && XPL_PARTS.some(p => r[p] != null);

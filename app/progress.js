@@ -344,7 +344,9 @@ function gameContext(){
     const e=journal[k], wk=k.slice(5);
     for(const sp of [...(Array.isArray(e.focusPast)?e.focusPast:[]),e.focus?{id:e.focus,from:e.focusFrom||'',to:'9'}:null]){
       const h=sp&&habitById(sp.id); if(!h)continue;
-      for(const r of (resOf.get(h.id)||habitProgress(h,ctx).res)) if(r.kept&&isoWeekOfKey(r.key)===wk&&r.key>=(sp.from||'')&&r.key<(sp.to||'9'))bonuses.push({key:r.key,xp:X.focus,why:'focus habit'}); } }
+      // chk: a habit the server can check from the wallet's fills (plugging a slip, a trade cap) says so, so a verified day pays it only when the fills agree
+      const chk=h.kind==='slip'&&h.slip?{k:'slip',x:h.slip}:h.kind==='cap'?{k:'cap',x:h.cap||3}:null;
+      for(const r of (resOf.get(h.id)||habitProgress(h,ctx).res)) if(r.kept&&isoWeekOfKey(r.key)===wk&&r.key>=(sp.from||'')&&r.key<(sp.to||'9'))bonuses.push(Object.assign({key:r.key,xp:X.focus,why:'focus habit'},chk?{chk}:{})); } }
   // from the league: XP the owner granted, and their reward badges that carry XP
   const me=typeof SOC!=='undefined'&&SOC.me;
   if(me){ for(const gr of (me.grants||[]))bonuses.push({key:dayKey(gr.at),xp:gr.xp,why:gr.why||'league bonus',src:gr.coach?'coach':'grant'});

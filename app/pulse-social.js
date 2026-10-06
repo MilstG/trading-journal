@@ -91,7 +91,8 @@ function socRefCardHtml(){
 // Pure given g.
 function pzXpLog(g){ const L={}, at=k=>L[k]||(L[k]={});
   for(const d of g.days){ const o=at(d.key); o.s=d.score; if(d.bonus&&d.bonus.total>0)o.b=d.bonus.total; }
-  for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp; }
+  for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp;
+    if(b.chk)o.f={k:b.chk.k,x:b.chk.x,p:((o.f&&o.f.p)||0)+b.xp}; } // a focus habit the server checks from fills (see social.js xplDay)
   return Object.fromEntries(Object.keys(L).sort().slice(-100).map(k=>[k,L[k]])); }
 // The numbers a member shares, from the shared game context. Pure given its inputs.
 // Badges whose tiers are dollar amounts (In the black, Big day: the id, title and tier all give the
