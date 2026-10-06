@@ -1383,6 +1383,19 @@ body.ts9 .pz-wl-bar{border-radius:6px}
 .pz-note:empty{display:none}
 .pz-spin{display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:50%!important;border:2px solid var(--pz-good);border-right-color:transparent;animation:pzspin .8s linear infinite;vertical-align:-1px}
 @keyframes pzspin{to{transform:rotate(360deg)}}
+/* a moment to celebrate (app/features/celebrate.js): one card over the screen, a short burst of confetti */
+.pz-cele-bg{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.pz-cele-fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+.pz-cele{position:relative;width:100%;max-width:400px;background:var(--pz-card);border:1px solid var(--pz-line2);border-radius:24px!important;padding:26px 22px 20px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;animation:pzcele .38s cubic-bezier(.2,1.4,.4,1)}
+.pz-cele-ico{display:grid;place-items:center;width:76px;height:76px;border-radius:50%!important;background:var(--pz-track);color:var(--pz-xp);margin-bottom:4px}
+.pz-cele b{font-size:22px;line-height:1.2}
+.pz-cele p{margin:0;font-size:14px;line-height:1.45;color:var(--pz-soft)}
+.pz-cele p:empty{display:none}
+.pz-cele .pz-cele-more{font-size:12px;color:var(--pz-muted)}
+.pz-cele-btns{display:flex;gap:8px;width:100%;margin-top:10px}
+.pz-cele-btns>*{flex:1;min-height:44px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+@keyframes pzcele{from{transform:scale(.86);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){ .pz-cele{animation:none} }
 .pz-sheet-bg{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center}
 .pz-sheet{width:100%;max-width:520px;max-height:88vh;overflow:auto;background:#101318;border:1px solid var(--pz-line);border-radius:24px 24px 0 0!important;padding:18px 18px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:14px}
 .pz-wl{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:48px;border-bottom:1px solid var(--pz-line)}
@@ -2025,6 +2038,11 @@ a.pz-chipbtn{display:inline-flex;align-items:center;gap:6px;text-decoration:none
 <script src="app/features/trader-age.js"></script>
 <script src="app/features/playbooks.js" data-only="keel"></script>
 <script src="app/features/referrals.js" data-only="keel"></script>
+<script src="app/features/celebrate.js" data-only="keel"></script>
+<script src="app/features/offday.js" data-only="keel"></script>
+<script src="app/features/finding.js" data-only="keel"></script>
+<script src="app/features/recap.js" data-only="keel"></script>
+<script src="app/features/first-look.js" data-only="keel"></script>
 <script src="app/boot.js"></script>
 </body>
 </html>
