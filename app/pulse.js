@@ -1438,20 +1438,32 @@ function pzAgoTxt(at){ const m=Math.round((Date.now()-at)/60000); return m<1?'ju
 // (computeStatsMemo, diagScanMemo, behaviorSignalsMemo: hits need equal trades and inputs, so the
 // context then takes exactly what it would have computed). pzBeforeDraw's work runs just before the draw.
 var _pzStage=0, _pzStaged=false, _pzPre=[]; // var: pzRender may run before this line has (a load-time caller)
-function pzStage(){ if(_pzStage)return; _pzStage=1; const W={};
+function pzStage(){ if(_pzStage)return; _pzStage=1; const W={}, idle=typeof requestIdleCallback==='function'?requestIdleCallback:f=>setTimeout(f,1); // (Safari has no idle callback: the Coach tab stages there too)
   const steps=[()=>{ const {trades,money}=_coachKey(true), closed=trades.filter(t=>!t.isOpen&&t.closeTime); if(closed.length>=5){ W.closed=closed; W.money=money; W.s=computeStatsMemo(closed,money); } },
     ()=>{ if(W.s)diagScanMemo(W.closed); }, ()=>{ if(W.s)behaviorSignalsMemo(W.closed,W.s,W.money); },
     ()=>coachContext(true), ()=>gameContext()];
-  const next=()=>requestIdleCallback(()=>{ const f=steps.shift();
+  const next=()=>idle(()=>{ const f=steps.shift();
     if(!f){ _pzStage=0; for(const g of _pzPre.splice(0))try{ g(); }catch(e){ console.warn(e); } _pzStaged=true; pzRender(); return; }
     try{ f(); }catch(e){ console.warn(e); } next(); },{timeout:1000});
   next(); }
 function pzStaging(){ return allTrades.length>=5000&&typeof requestIdleCallback==='function'&&(!!_pzStage||!gameWarm()); }
 // f, before the next draw: now, or (a big account's game being rebuilt in steps) once the build is in
 function pzBeforeDraw(f){ if(pzStaging()){ _pzPre.push(f); pzStage(); } else f(); }
+// The Coach tab opens on the chat at once, without waiting for the game: while the trades load (the first
+// draw, before the cache is read) or the game is cold, it draws without D and the game is built in idle
+// steps behind it (pzStage, any account size); the draw after that is the usual one. Sending a message
+// waits for the build (pzCoachData), with the chat saying so.
+var _pzBooting=true; // var: set false by boot once the first load has started
+function pzCoachEarly(){
+  if(pzTab()!=='coach')return false;
+  if(!allTrades.length)return !!(settings&&settings.wallets&&settings.wallets.length&&(_loading||_pzBooting));
+  return !!_pzStage||!gameWarm();
+}
 function pzRender(){
   if(!PZ)return; const view=$('pzView'); if(!view)return;
+  let early=false;
   if(_pzStaged)_pzStaged=false;
+  else if(pzCoachEarly()){ early=true; if(allTrades.length)pzStage(); }
   else if(pzStaging()){ pzStage(); return; }
   try{ socVisitPing(); }catch(e){}
   // keep what's typed across re-renders (a background sync or auto-refresh can land mid-edit)
@@ -1461,7 +1473,10 @@ function pzRender(){
   // re-renders the screen doesn't drop keyboard focus to the page
   const actSel=act&&!actId&&root.contains(act)&&act.attributes?([...act.attributes].filter(a=>a.name.startsWith('data-')).map(a=>`[${a.name}="${CSS.escape(a.value)}"]`).join('')||null):null;
   let html;
-  if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
+  // offline: say what's on screen is the last load (the refresh failing otherwise only shows as a passing note)
+  const off=typeof navigator!=='undefined'&&navigator.onLine===false?`<p class="pz-offline" role="status">Offline · showing your last load${typeof _viewAt!=='undefined'&&_viewAt?', '+pzAgoTxt(_viewAt):''}</p>`:'';
+  if(early){ socBoot(); html=`${pzNav('coach')}<main class="pz-main" id="pzMain">${off}${pzCoachHtml(null)}</main>`; }
+  else if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
     try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Daruma hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     socBoot(); pzWearSync(); pzPushCheck();
@@ -1472,8 +1487,6 @@ function pzRender(){
       :tab==='review'?pzReviewHtml(D):tab==='coach'?pzCoachHtml(D):tab==='leagues'?socFindHtml(D):tab==='lginfo'?socLeagueInfoHtml(D,pzHashArg()):tab==='checkin'?pzCheckinHtml(D):tab==='progress'?pzProgressHtml(D)
       :tab==='discipline'?pzDisciplineHtml(D):tab==='journal'?pzJournalHtml(D):tab==='social'?socSocialHtml(D):tab==='duels'?socDuelsHtml(D):tab==='people'?socPeopleHtml(D):tab==='duelnew'?socDuelNewHtml(D,pzHashArg()):tab==='podnew'?socPodNewHtml(D):tab==='sharing'?socSharingHtml(D):tab==='account'?socAccountHtml(D)
       :tab==='lessons'?(()=>{ try{ return pzLessonsHtml(D); }catch(e){ console.warn('lessons',e); return `<a class="pz-back" href="#progress">${pzI('back',20)}Progress</a><p class="pz-sub pz-err">Your lessons couldn’t be read (${esc(e.message)}).</p>`; } })():tab==='mentor'?socMentorHtml(D):tab==='mentee'?socMenteeHtml(D,pzHashArg()):tab==='profile'?socProfileHtml(D,pzHashArg()):tab==='post'?socPostHtml(D,pzHashArg()):tab==='compose'?socComposeHtml(D):tab==='reviews'?mrListHtml(D):tab==='mentors'?socMentorsHtml(D):tab==='mentorp'?socMentorPageHtml(D,pzHashArg()):tab==='askmentor'?mrAskHtml(D):tab==='tr'?mrThreadHtml(D,pzHashArg(),/\/mod$/.test(location.hash)):tab==='plan'?planPzHtml(D):tab==='comp'?socCompHtml(D,pzHashArg()):pzTodayHtml(D);
-    // offline: say what's on screen is the last load (the refresh failing otherwise only shows as a passing note)
-    const off=typeof navigator!=='undefined'&&navigator.onLine===false?`<p class="pz-offline" role="status">Offline · showing your last load${typeof _viewAt!=='undefined'&&_viewAt?', '+pzAgoTxt(_viewAt):''}</p>`:'';
     html=`${pzNav(tab,lv)}<main class="pz-main" id="pzMain">${off}${body}</main>`;
     socSync(D.g);
     // the week's challenge, once a week on the first draw: picked after this screen is built, as the journal's
@@ -1481,14 +1494,14 @@ function pzRender(){
     ensureWeekChallenge(D.ctx).then(made=>{ if(made)pzRender(); }).catch(()=>{}); }
   view.innerHTML=html;
   for(const el of view.querySelectorAll('.pz-chiprow:not(.pz-wrapr)'))el.classList.toggle('pz-scrolls',el.scrollWidth>el.clientWidth+4);
-  pzQuietMount(allTrades.length?_pzLastD:null);
+  pzQuietMount(allTrades.length&&!early?_pzLastD:null);
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   view.inert=!!(sh&&(pzS.sheet||pzS.custom)); // with a sheet open, Tab stays inside it
   pzRoving(root);
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
   // (by data-* only when they name a single control: several identical Save buttons stay unfocused rather than jumping to the first)
   const f=(actId&&$(actId))||(actSel&&(()=>{ const all=root.querySelectorAll(actSel+':not([disabled])'); return all.length===1?all[0]:null; })()); if(f&&f.focus)f.focus({preventScroll:true});
-  for(const ft of PZ_FEATS)if(ft.drawn){ try{ ft.drawn(allTrades.length?_pzLastD:null,pzTab()); }catch(e){ console.warn(ft.id,e); } }
+  for(const ft of PZ_FEATS)if(ft.drawn){ try{ ft.drawn(allTrades.length&&!early?_pzLastD:null,pzTab()); }catch(e){ console.warn(ft.id,e); } }
 }
 async function pzConnect(inputId){
   const el=$(inputId); const a=(el&&el.value||'').trim();
