@@ -95,8 +95,9 @@ try {
     // Oct 2026: coming back for the right reasons — five Daruma-only features (app/features/celebrate.js, offday.js,
     // finding.js, recap.js, first-look.js: ~32 KB raw / ~13 KB gzipped, compressed one file each, a third of it
     // comments), their CSS in the page (~2 KB raw on both) and the reminder switches: 2134 / 1821 raw, 723 / 616 gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2136, 724],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1824, 618],
+    // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2148, 728],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1835, 621],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
