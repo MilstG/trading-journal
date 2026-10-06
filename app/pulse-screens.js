@@ -458,13 +458,39 @@ function pzCoachStatus(force){
   fetch('/api/coach/chat',{headers:pzCoachHeaders(true)}).then(r=>r.ok?r.json():Promise.reject(r.status)).then(d=>{ COACH.status=d; if(PZ)pzRender(); })
     .catch(()=>{ COACH.tried=false; }); // a key /me then turns down, or the network: asked again on the next draw
 }
-// the screen's data for a message: the trades may still be loading, or the game being built behind the chat
-async function pzCoachData(){
+const pzCoachDetailOn=()=>!!(SOC.me&&SOC.me.coachDetail||(SRV.token&&!SRV.badAuth&&settings.pzCoachDetail));
+// The summary a message carries, kept on this device (per profile, beside the chat): a message sent while the
+// trades load or the game is first built this visit goes out with today's copy at once, instead of waiting.
+// It's refreshed behind the screens (pzCoachSnapSoon) and with every message. Not in sample mode; only
+// for the same wallets and the same day, and with the trades and notes only when they were taken too.
+const pzCoachSnapKey=()=>pzCoachStoreKey()+':snap';
+function pzCoachSnapSave(day,facts,detail){ if(pzS.demo)return;
+  try{ localStorage.setItem(pzCoachSnapKey(),JSON.stringify({v:1,day,w:walletsSig(),at:Date.now(),facts,detail:detail||null})); }catch(e){} }
+function pzCoachSnapGet(wantDetail){ if(pzS.demo)return null;
+  try{ const x=JSON.parse(localStorage.getItem(pzCoachSnapKey())||'null');
+    return x&&x.v===1&&x.facts&&x.day===dayKey(Date.now())&&x.w===walletsSig()&&(!wantDetail||x.detail)?x:null; }catch(e){ return null; } }
+// the summary and (when shared) the trades for a message: today's kept copy while this visit's first build
+// is still coming, else from the data, waiting for the trades or the game being built behind the chat
+async function pzCoachData(wantDetail){
   const waiting=()=>!allTrades.length&&(_loading||_pzBooting)||!!_pzStage;
+  if(waiting()&&!_pzBuilt){ const x=pzCoachSnapGet(wantDetail); if(x)return {facts:x.facts,detail:wantDetail?x.detail:null}; }
   if(waiting()){ COACH.busy='prep'; pzRender(); for(let i=0;i<600&&waiting();i++)await sleep(200); COACH.busy=true; pzRender(); }
   if(!allTrades.length){ const e=new Error('Your trades haven’t loaded yet. Try again in a moment.'); e.shown=true; throw e; }
   await sleep(50); // "Thinking…" is on screen before the build, if any, runs (a timer: an animation frame waits for a hidden tab)
-  return _pzLastD=pzData();
+  const D=_pzLastD=pzData(), facts=pzCoachFacts(D), detail=wantDetail?pzCoachDetail(D):null;
+  pzCoachSnapSave(D.todayK,facts,detail); _pzSnapSig=pzCoachSnapSig(D); _pzSnapAt=Date.now(); return {facts,detail};
+}
+// behind the screens: after a draw, once things are quiet (3 s), when what the summary reads changed or the copy is
+// 15 minutes old. Only where there's a coach to ask, and once the member is known (the copy is kept under them).
+var _pzSnapSig=null, _pzSnapAt=0, _pzSnapT=0;
+const pzCoachSnapSig=D=>_gameKey()+'|'+D.todayK+'|'+walletsSig()+'|'+pzCoachDetailOn()+'|'+(SOC.me?SOC.me.id:'');
+function pzCoachSnapSoon(){
+  if(pzS.demo||!pzCoachAvailable()||(SOC.key&&!SOC.me))return;
+  const key=pzCoachSnapKey(); // (a sign-out meanwhile: nothing is kept under whoever comes next)
+  clearTimeout(_pzSnapT); _pzSnapT=setTimeout(()=>{ const idle=typeof requestIdleCallback==='function'?requestIdleCallback:f=>setTimeout(f,1);
+    idle(()=>{ if(pzS.demo||COACH.busy||!allTrades.length||_pzStage||!gameWarm()||pzCoachSnapKey()!==key||!pzCoachAvailable())return;
+      try{ const D=_pzLastD=pzData(), sig=pzCoachSnapSig(D); if(sig===_pzSnapSig&&Date.now()-_pzSnapAt<900000)return;
+        pzCoachSnapSave(D.todayK,pzCoachFacts(D),pzCoachDetailOn()?pzCoachDetail(D):null); _pzSnapSig=sig; _pzSnapAt=Date.now(); }catch(e){ console.warn('coach summary',e); } },{timeout:5000}); },3000);
 }
 function pzCoachFacts(D){
   const g=D.g, ctx=g.ctx, now=Date.now(), from30=pzRangeStart(30,now), k30=dayKey(from30), e=D.dayE||{}, day=D.day;
@@ -526,9 +552,9 @@ async function pzCoachSend(text){
   // a long answer: say it's still coming (redrawn once, if still waiting)
   const since=COACH.since; setTimeout(()=>{ if(COACH.busy&&COACH.since===since)pzRender(); },12000);
   try{
-    const D=await pzCoachData();
-    const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:pzCoachFacts(D)};
-    if(SOC.me&&SOC.me.coachDetail||(SRV.token&&!SRV.badAuth&&settings.pzCoachDetail))body.detail=pzCoachDetail(D);
+    const want=pzCoachDetailOn(), x=await pzCoachData(want);
+    const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:x.facts};
+    if(want)body.detail=x.detail;
     const r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
     if(!r.ok){ COACH.err=d.packs?null:d.error||('HTTP '+r.status); COACH.draft=text; if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error,packs:d.packs||null}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
