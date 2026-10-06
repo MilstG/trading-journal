@@ -156,7 +156,7 @@ function slipCosts(records, o) {
 function slipSentence(x) {
   const cost = x.R.v < 0 ? 'did ' + Math.abs(x.R.v).toFixed(2) + ' of a typical trade worse' : 'did ' + x.R.v.toFixed(2) + ' of a typical trade better';
   return x.label + ' (' + x.rate + '% of chances): the same trader ' + cost + ' than on ' + x.vs + ' (' + fmtCI(x.R) + ', ' + x.wallets + ' wallets'
-    + (sure(x.R) ? '' : '; not distinguishable from zero') + ')' + (SLIP_MECH[x.key] ? ' Part of this gap is built in: those trades were already losing when the slip happened.' : '.');
+    + (sure(x.R) ? '' : '; not distinguishable from zero') + ').' + (SLIP_MECH[x.key] ? ' Part of this gap is built in: those trades were already losing when the slip happened.' : '');
 }
 const fmtCI = b => b.lo == null ? 'too few to bound' : '95% ' + b.lo + ' to ' + b.hi;
 
