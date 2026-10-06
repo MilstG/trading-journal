@@ -98,8 +98,10 @@ try {
     // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
     // Oct 2026: the Coach tab opens on the chat before the trades and the game are in, and a message waits for
     // them with the chat saying so: about 2 KB raw on both screens, under 1 KB gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2150, 728],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1837, 622],
+    // Oct 2026: the coach's summary kept on the device (pzCoachSnap*), so a message sent while the app is still
+    // loading goes out at once: about 2 KB raw on both screens, under 1 KB gzipped (+1 on each).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2153, 729],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1840, 623],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

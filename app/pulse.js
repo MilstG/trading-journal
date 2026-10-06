@@ -1453,7 +1453,7 @@ function pzBeforeDraw(f){ if(pzStaging()){ _pzPre.push(f); pzStage(); } else f()
 // draw, before the cache is read) or the game is cold, it draws without D and the game is built in idle
 // steps behind it (pzStage, any account size); the draw after that is the usual one. Sending a message
 // waits for the build (pzCoachData), with the chat saying so.
-var _pzBooting=true; // var: set false by boot once the first load has started
+var _pzBooting=true, _pzBuilt=false; // var: boot sets the first false once the first load has started; the second, the first full draw
 function pzCoachEarly(){
   if(pzTab()!=='coach')return false;
   if(!allTrades.length)return !!(settings&&settings.wallets&&settings.wallets.length&&(_loading||_pzBooting));
@@ -1478,7 +1478,7 @@ function pzRender(){
   if(early){ socBoot(); html=`${pzNav('coach')}<main class="pz-main" id="pzMain">${off}${pzCoachHtml(null)}</main>`; }
   else if(!allTrades.length){ socBoot(); html=_loading&&settings.wallets.length?pzLoadingHtml():pzConnectHtml(); }
   else { const tab=pzTab(); let D;
-    try{ D=_pzLastD=pzData(); }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Daruma hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
+    try{ D=_pzLastD=pzData(); _pzBuilt=true; }catch(e){ console.error(e); view.inert=false; view.innerHTML=`<div class="pz-connect"><p class="pz-sub pz-err">Daruma hit an error reading your data (${esc(e.message)}).</p><a class="pz-ghost" href="${esc(pzFullHref())}">Open the full journal</a></div>`; return; }
     socBoot(); pzWearSync(); pzPushCheck();
     const lv=D.g.level.level;
     const feat=pzFeatTab(tab);
@@ -1495,6 +1495,7 @@ function pzRender(){
   view.innerHTML=html;
   for(const el of view.querySelectorAll('.pz-chiprow:not(.pz-wrapr)'))el.classList.toggle('pz-scrolls',el.scrollWidth>el.clientWidth+4);
   pzQuietMount(allTrades.length&&!early?_pzLastD:null);
+  if(allTrades.length&&!early&&typeof pzCoachSnapSoon==='function')pzCoachSnapSoon(); // the coach's kept summary, refreshed behind the screens
   const sh=$('pzSheet'); if(sh)sh.innerHTML=pzS.sheet?pzSheetHtml():pzS.custom?pzCustomizeHtml(pzS.custom):'';
   view.inert=!!(sh&&(pzS.sheet||pzS.custom)); // with a sheet open, Tab stays inside it
   pzRoving(root);
