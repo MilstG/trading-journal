@@ -1536,6 +1536,42 @@ function createSocial(opts) {
     finally { behaviorBusy.delete(m.id); }
   };
   const refreshAll = m => { refreshMoney(m); refreshBehavior(m); };
+  // ---- background refresh: members' on-chain numbers kept current without anyone asking ----
+  // Requests (boards, profiles, comps) still refresh what's on show; this catches everyone else from the
+  // minute tick, most overdue first. How stale a member may get follows how much it matters: in a running
+  // comp, duel or group duel, or seen in the last 7 days, 4 hours; seen in the last 30 days, 12 hours; in
+  // the last 180, 2 days; away longer, not swept (a board that shows them still reads them).
+  // Each tick starts at most two portfolio reads (one cheap request each) and one fills read (heavier:
+  // topped up from the cached six months), and only into free slots, so one of each stays for the reads
+  // people are waiting on. That's at most ~2,900 + 1,400 reads a day (a few hundred active members inside
+  // their 4 hours), far under Hyperliquid's per-IP weight limit. A failed read counts as a read here (the
+  // sweep comes back after a full interval), so a wallet that keeps failing never hogs the queue.
+  const SWEEP_TIERS = [[7, 4], [30, 12], [180, 48]]; // [seen within this many days, read every this many hours]
+  const SWEEP_MONEY = 2, SWEEP_BEHAVIOR = 1; // slots the sweep may fill (of the 3 and 2 the reads allow)
+  const sweepEvery = (m, live) => {
+    if (live.has(m.id)) return SWEEP_TIERS[0][1] * 3600000;
+    const away = now() - (m.lastSeen || m.createdAt || 0);
+    for (const [d, h] of SWEEP_TIERS) if (away < d * 86400000) return h * 3600000;
+    return 0; };
+  // members whose numbers decide something running: an unsettled comp, an active duel or group duel
+  const contestIds = () => { const s = new Set();
+    for (const c of Object.values(S.comps)) if (!c.final) for (const id of Object.keys(c.entrants || {})) s.add(id);
+    for (const d of Object.values(S.duels)) if (d.status === 'active') { s.add(d.a); s.add(d.b); }
+    for (const p of Object.values(S.pods)) if (p.status === 'active') for (const [id, x] of Object.entries(p.mem || {})) if (x && x.st === 'in') s.add(id);
+    return s; };
+  const statsSweep = () => {
+    const out = { money: 0, behavior: 0 };
+    if (closing || opts.statsSweep === false) return out;
+    const t = now(), live = contestIds();
+    // how far past its interval each wanted member is (never read: furthest), most overdue first
+    const due = (want, lastOf, busy, n) => n <= 0 ? [] : members().filter(m => !m.banned && m.share && !busy.has(m.id) && want(m) && walletFor(m))
+      .map(m => { const every = sweepEvery(m, live); return [m, every ? t - lastOf(m) - every : -1]; })
+      .filter(x => x[1] >= 0).sort((a, b) => b[1] - a[1]).slice(0, n).map(x => x[0]);
+    for (const m of due(m => m.share.ret || m.share.usd, m => Math.max(m.money ? m.money.at || 0 : 0, m.moneyFailAt || 0), moneyBusy, SWEEP_MONEY - moneyBusy.size)) {
+      refreshMoney(m).catch(() => {}); out.money++; }
+    if (canVerify) for (const m of due(m => m.share.verify, m => Math.max(m.vAt || 0, m.vFailAt || 0), behaviorBusy, SWEEP_BEHAVIOR - behaviorBusy.size)) {
+      refreshBehavior(m).catch(() => {}); out.behavior++; }
+    return out; };
   // Trader Age, verified: the app's own traderAge (app/features/trader-age.js, borrowed by the server's
   // engine) over the days scored from the member's wallet, with the prep, journal and loss-limit parts
   // their app reported for those days. Only a member whose wallet the server reads (and who shares
@@ -2377,6 +2413,7 @@ function createSocial(opts) {
     try { cheerFlush(); } catch (e) { console.warn('[ledger] kudos notes: ' + (e && e.message)); }
     try { stakesPass(now()); } catch (e) { console.warn('[ledger] league stakes: ' + (e && e.message)); }
     try { if (S.config.bench.on) benchNow(); } catch (e) {} // a daily build keeps the weekly history going without anyone asking
+    try { statsSweep(); } catch (e) { console.warn('[ledger] stats sweep: ' + (e && e.message)); } // members' on-chain numbers, in the background
     if (!push || ticking) return 0; ticking = true; const t = now(), jobs = [];
     try {
       for (const m of members()) {
@@ -4442,7 +4479,7 @@ function createSocial(opts) {
   seedSchedule(); // seed wallets still waiting from before a restart
   // the private beta's door, for server.js: is it on, may this request open the app, are the docs open too
   const gate = { active: betaOn, allows: req => !!accessOf(req), docsPublic: () => !betaOn() || S.config.beta.publicDocs };
-  return { handle, coach, tick, gate, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, walletsOf: m => walletsOf(m), state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
+  return { handle, coach, tick, statsSweep, gate, memberOf: req => { const m = byKey(req); return m && !m.banned ? m : null; }, walletsOf: m => walletsOf(m), state: () => S, store, close: () => { closing = true; clearTimeout(seedTimer); store.close(); } };
 }
 
 module.exports = { createSocial, sanitizeBetaCfg, sanitizeTrade, sanitizeReviewTrade, sanitizePostCfg, sanitizeStats, sanitizeShare, sanitizeComp, sanitizeVaultBlob, siweMessage, eventsFromStats, shownBadges, portfolioStats, leagueRollover, leagueRolloverBy, isoWeekMonday,

@@ -2674,7 +2674,9 @@ function createApp(opts) {
   const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
     behaviorFor: opts.behaviorFor || behaviorFor, traderAge: engine.ok ? E.traderAge : null,
     taMult: engine.ok ? { weeks: E.taWeeks, step: E.taMultStep, of: E.taMultOf, tier: E.taMultTier, weekOf: E.isoWeekOfKey } : null,
-    taStanding: engine.ok ? { of: E.taStanding, years: E.taYears } : null, tiltFor: opts.tiltFor || tiltFor, peerSummaryFor: opts.peerSummaryFor || peerSummaryFor, seedDelay: opts.seedDelay, tradeCheck: opts.tradeCheck || tradeCheck, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled, twofa,
+    taStanding: engine.ok ? { of: E.taStanding, years: E.taYears } : null, tiltFor: opts.tiltFor || tiltFor, peerSummaryFor: opts.peerSummaryFor || peerSummaryFor, seedDelay: opts.seedDelay,
+    // members' on-chain numbers refreshed in the background (STATS_SWEEP=off turns it off)
+    statsSweep: opts.statsSweep !== undefined ? opts.statsSweep : !/^(0|off|false|no)$/i.test(String(process.env.STATS_SWEEP || '').trim()), tradeCheck: opts.tradeCheck || tradeCheck, verifyAvailable: engine.ok, forgetAddress, publicOrigins, hostVetted, clientIp, coachAvailable: coachCfg.enabled, twofa,
     // the private beta signs the owner's page-access cookie with this: a new AUTH_TOKEN ends it
     ownerTag: auth ? crypto.createHash('sha256').update('daruma-access|' + auth).digest('hex') : '' });
   // readiness from WHOOP, Oura or Apple Health: the owner (AUTH_TOKEN) or a member (Pulse key)

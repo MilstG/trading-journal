@@ -959,6 +959,17 @@ them from Hyperliquid's public `portfolio` endpoint for the member's wallet, and
 when they opted in. Naming an address proves nothing; *claiming* it does (below).
 Addresses stay hidden by default and the owner can remove anyone.
 
+**Keeping members' numbers current.** Returns and verified Discipline are read again when
+something shows them (a board, a profile, a comp's standings), at most every 30 minutes a
+member, and in the background from the server's minute tick, so a member nobody's looking
+at doesn't go stale. The background pass reads, most overdue first: members in a running
+comp, duel or group duel, or seen in the last 7 days, every **4 hours**; seen in the last
+30 days, every **12 hours**; in the last 180, every **2 days**; anyone away longer only
+when a board shows them. Each minute it starts at most two `portfolio` reads and one fills
+read, and only into free slots, so the reads people are waiting on always have one; a
+wallet whose read failed waits its full interval before the next try. `STATS_SWEEP=off`
+turns the background pass off.
+
 **Claiming a wallet.** Under Social → What you share → Account, **Claim with my wallet**
 asks the browser wallet (MetaMask, Rabby, or a wallet app's built-in browser) to sign
 a Sign-In with Ethereum message (EIP-4361). It's a signature, not a transaction: no
