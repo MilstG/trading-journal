@@ -27,7 +27,7 @@ function pzXpSources(g, fromKey){
   return o;
 }
 // features whose screen lives under a tab (pzFeature tab.nav) show their card on that tab too, linking to it
-function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
+function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today&&!pzRolledOff(f.id)).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
 // a challenge as a rule for the week ("No SOL trades this week"), else the habit sentence
 function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); if(!m)return habitSentence(spec);
   // "largest 25% trades" and "the “breakout” setup" don't follow "No" as they stand

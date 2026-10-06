@@ -40,6 +40,7 @@ const Insights = require('./insights.js');
 const Research = require('./research.js');
 const Findings = require('./findings.js'); // what members see of the research report, and what the product takes from it
 const Evals = require('./evals.js'); // the evaluation: a prop-firm-style test read from the member's account
+const Rollouts = require('./rollouts.js'); // staged rollouts: a feature for a random share of members, measured against the rest
 const Push = require('./push.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
 let ethSig = null; try { ethSig = require('./vendor/eth-sig.js'); } catch (e) { /* claims and wallet sign-in answer 501 */ }
@@ -659,7 +660,7 @@ function createSocial(opts) {
   }
   // every section kept as a kv row: one missing here is never loaded or saved (wallet decisions and
   // the admin log would vanish on the next restart)
-  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts', 'refLinks', 'refWallets', 'beta'];
+  const KV_KEYS = ['config', 'follows', 'comps', 'league', 'leagues', 'badges', 'ownerCoach', 'partners', 'comments', 'leagueSeq', 'wallets', 'adminLog', 'coachUse', 'migrations', 'bench', 'benchSeeds', 'duels', 'benchHist', 'pods', 'ladder', 'visits', 'walletsSeen', 'pairFlow', 'pool', 'debts', 'refLinks', 'refWallets', 'beta', 'rollouts'];
   let S = { v: 1, members: {} };
   const loadedRaw = new Map(); // what each row held, so the first save writes only what loading changed
   for (const r of q('SELECT k, v FROM kv').all()) if (KV_KEYS.includes(r.k)) try { S[r.k] = JSON.parse(r.v); loadedRaw.set(r.k, r.v); } catch (e) {}
@@ -709,6 +710,8 @@ function createSocial(opts) {
   // referral ({address: {at}}): one wallet activates one referral, ever, so deleting and rejoining pays nothing
   for (const k of ['refLinks', 'refWallets']) if (!S[k] || typeof S[k] !== 'object' || Array.isArray(S[k])) S[k] = {};
   if (!S.badges || typeof S.badges !== 'object') S.badges = {};
+  // staged rollouts by id (rollouts.js): {id, feature, share, weeks, start, end, at, by, endedAt}
+  if (!S.rollouts || typeof S.rollouts !== 'object' || Array.isArray(S.rollouts)) S.rollouts = {};
   // the owner's wallet decisions, by address (so a new profile can't launder a rejected wallet):
   // { '0x…': { s: 'approved' | 'rejected', at, by: 'owner' | 'existing', note } }
   if (!S.wallets || typeof S.wallets !== 'object') S.wallets = {};
@@ -2225,6 +2228,7 @@ function createSocial(opts) {
     // the rules others adopted from them (a private profile keeps those too), and your own looks to pick from
     out.rules = Object.values(m.adopted || {}).map(r => ({ text: r.text, n: r.by.length })).sort((a, b) => b.n - a.n).slice(0, 20); out.adoptN = adoptCount(m);
     if (out.isMe) out.looks = looksOut(m);
+    if (out.isMe) out.rollouts = Rollouts.forMember(S.rollouts, m.id, todayKey()); // the features a staged rollout leaves out for them (false)
     const ver = m.share.verify && Array.isArray(m.vdays);
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
     Object.assign(out, { duels: Object.assign({ w: 0, l: 0, d: 0 }, m.duelRec), rating: S.config.duels.ladder && m.ladder && m.ladder.n ? m.ladder.r : null,
@@ -3073,6 +3077,27 @@ function createSocial(opts) {
       if (M !== 'GET') { S.adminLog.push({ at: now(), by: who.by, what: (M + ' ' + parts.slice(1).join('/') + (body && typeof body.action === 'string' ? ' · ' + body.action.slice(0, 20) : '')).slice(0, 120) });
         if (S.adminLog.length > 500) S.adminLog = S.adminLog.slice(-400); touch('adminLog'); }
       // ---- insights: each member's numbers, and the whole base / any segment of it ----
+      // ---- staged rollouts: a feature for a random share of members, and what it did against the rest ----
+      if (sub === 'rollouts' && !parts[2] && M === 'GET') {
+        const rows = members().filter(m => !m.banned).map(m => ({ id: m.id, at: m.createdAt, vdays: m.share.verify ? m.vdays : null, days: m.stats && m.stats.days }));
+        return json(res, 200, { features: Rollouts.FEATURES, rollouts: Object.values(S.rollouts).sort((a, b) => b.at - a.at)
+          .map(r => Object.assign({}, r, { live: Rollouts.live(r, todayKey()), label: Rollouts.FEATURES[r.feature] || r.feature, effect: Rollouts.effect(r, rows, { now: now() }) })) });
+      }
+      if (sub === 'rollouts' && !parts[2] && M === 'POST') {
+        const r = Rollouts.sanitizeRollout(body); if (r.error) return json(res, 400, { error: r.error });
+        if (Object.values(S.rollouts).some(x => x.feature === r.feature && Rollouts.live(x, todayKey()))) return json(res, 409, { error: 'That feature is already being tested.' });
+        const id = crypto.randomBytes(5).toString('hex'), start = todayKey();
+        S.rollouts[id] = Object.assign(r, { id, start, end: addDaysKey(start, r.weeks * 7 - 1), at: now(), by: who.by });
+        S.adminLog.push({ at: now(), by: who.by, what: 'started a rollout of ' + Rollouts.FEATURES[r.feature] + ' to ' + r.share + '% for ' + r.weeks + ' weeks' }); save('rollouts', 'adminLog');
+        return json(res, 200, { rollout: S.rollouts[id] });
+      }
+      if (sub === 'rollouts' && parts[2] && M === 'POST') {
+        const r = own(S.rollouts, parts[2]) ? S.rollouts[parts[2]] : null; if (!r) return json(res, 404, { error: 'No such rollout.' });
+        if (body.action === 'end') { if (!r.endedAt) r.endedAt = now(); }
+        else if (body.action === 'delete') delete S.rollouts[r.id];
+        else return json(res, 400, { error: 'Unknown action.' });
+        save('rollouts'); return json(res, 200, { ok: true });
+      }
       // ---- what gets used in Daruma: screens and Today cards, totals across members ----
       if (sub === 'usage' && M === 'GET') return json(res, 200, Insights.usageTable(members().filter(m => !m.banned), { days: [7, 30].includes(+query.days) ? +query.days : 30, now: now() }));
       if (sub === 'insights' && M === 'GET') {

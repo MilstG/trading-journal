@@ -33,6 +33,26 @@
       ${Object.values(R.effects).map(x=>`<tr><td>${esc(x.label)}</td><td>${fmt(x.exposed)}</td><td>${fmt(x.measured)}</td><td${col(x.did)}>${ci(x.did)}</td><td${colSlip(x.didSlip)}>${ci(x.didSlip)}</td><td>${x.raw==null?'—':(x.raw>0?'+':'')+x.raw}</td><td>${x.before==null?'—':x.before}</td></tr>`).join('')}
       </tbody></table></div><p class="hint">${fmt(R.members)} members with trading days (${fmt(R.verified)} verified from fills${R.onlyVerified?'':', '+fmt(R.app)+' from the app'}).</p></section>`;
   }
+  // staged rollouts (GET/POST /admin/rollouts): a feature for a random share of members, measured against the rest
+  async function loadRo(){ try{ D.ro=await api('/rollouts'); }catch(e){ D.ro={err:e.message}; } }
+  function roCard(){
+    const R=D.ro; if(!R){ D.ro={loading:true}; loadRo().then(render); }
+    const top='<section class="card"><h2>Staged rollouts</h2>';
+    if(!R||R.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(R.err)return top+`<p class="warn">${esc(R.err)}</p></section>`;
+    const F=R.features||{}, ci=d=>d&&d.v!=null?`${d.v>0?'+':''}${d.v}${d.lo!=null?` <span class="muted small">[${d.lo>0?'+':''}${d.lo}, ${d.hi>0?'+':''}${d.hi}]</span>`:''}`:'—';
+    const rows=(R.rollouts||[]).map(r=>{ const E=r.effect||{}, g=E.groups||{on:{},off:{}};
+      return `<tr><td>${esc(r.label)}<div class="muted small">${esc(r.start)} → ${esc(r.end)}${r.endedAt?' · ended':r.live?' · running':''}</div></td><td>${r.share}%</td>
+        <td>${fmt(g.on.n)} / ${fmt(g.off.n)}<div class="muted small">measured ${fmt(g.on.measured)} / ${fmt(g.off.measured)}</div></td>
+        <td${E.sure?(E.diff.v>0?' style="color:var(--good)"':' style="color:var(--low)"'):''}>${ci(E.diff)}<div class="muted small">got it ${E.on==null?'—':(E.on>0?'+':'')+E.on} · didn’t ${E.off==null?'—':(E.off>0?'+':'')+E.off}</div></td>
+        <td>${r.live?`<button class="sm fit" data-ro="end" data-id="${esc(r.id)}">End</button>`:`<button class="sm fit" data-ro="delete" data-id="${esc(r.id)}">Delete</button>`}</td></tr>`; }).join('');
+    return top+`<p class="muted small" style="margin-top:0">Switch a Daruma feature on for a random share of members (fixed by a hash: nobody picks their group) and compare their Discipline over the test with their own before it, against the members who didn’t get it. Everyone counts in the group they were dealt, used or not, so the difference is what the feature did, not who chose it.</p>
+      ${rows?`<div class="scroll"><table><thead><tr><th>Feature</th><th>Share</th><th>Got it / didn’t</th><th title="Discipline points: change over the test against as many days before, got it minus didn’t">Discipline, got it vs not</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:''}
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">${sel('roF',Object.entries(F),'',' aria-label="Feature"')}
+        <label>Share who get it (%)<br><input type="number" id="roS" min="5" max="95" value="50" style="width:90px"></label><label>Weeks<br><input type="number" id="roW" min="1" max="12" value="4" style="width:80px"></label>
+        <button class="primary fit" id="roGo">Start the test</button></div>
+      <p class="hint">The members who don’t get it don’t see its card, screen or switch until the test ends. Run one test per feature at a time, for long enough that both groups trade.</p></section>`;
+  }
   // what gets used in Daruma (GET /admin/usage): screens and Today cards, totals across members, never per person
   async function loadUse(){ try{ D.use=await api('/usage?days='+UI.use.days); }catch(e){ D.use={err:e.message}; } }
   function useCard(){
@@ -105,6 +125,9 @@
   document.addEventListener('click', async ev => {
     const b0 = ev.target.closest('button');
     if (b0 && b0.id === 'rsUseNeed') { const i = $('rsMinT'); if (i) i.value = b0.dataset.n; return; }
+    if (b0 && b0.id === 'roGo' && !busy) return run(async () => { await api('/rollouts', { body: { feature: $('roF').value, share: +$('roS').value, weeks: +$('roW').value } }); D.ro = null; }, 'The test has started.');
+    if (b0 && b0.dataset.ro && !busy) { if (b0.dataset.ro === 'delete' && !confirm('Delete this test and its result?')) return;
+      return run(async () => { await api('/rollouts/' + encodeURIComponent(b0.dataset.id), { body: { action: b0.dataset.ro } }); D.ro = null; }, b0.dataset.ro === 'end' ? 'Ended. Everyone sees it now.' : 'Deleted.'); }
     if (b0 && b0.id === 'rsSave' && !busy) return run(async () => {
       await api('/config', { method: 'PUT', body: { research: { share: $('rsShare').checked, crowd: $('rsCrowd').checked, weights: $('rsWeights').checked, minWallets: +$('rsMinW').value, minTrades: +$('rsMinT').value } } });
       D.rs = null; }, 'Saved.');
@@ -122,8 +145,8 @@
     if (t.id === 'resWin' || t.id === 'resVer') { if (t.id === 'resWin') UI.res.win = +t.value; else UI.res.ver = t.value === '1'; loadRes().then(render); } });
   window.ARES = {
     view: () => { const h = vResearch(); setTimeout(pollRs, 0); return h; },
-    card: () => resCard() + useCard(),
+    card: () => resCard() + roCard() + useCard(),
     // fresh numbers each time a tab is opened
-    enter: t => { if (t === 'insights') { D.res = null; D.use = null; } if (t === 'research') D.rs = null; },
+    enter: t => { if (t === 'insights') { D.res = null; D.use = null; D.ro = null; } if (t === 'research') D.rs = null; },
   };
 })();

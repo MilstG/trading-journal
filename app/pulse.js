@@ -267,7 +267,9 @@ function pzFeature(f){
 }
 // A feature can also take its screen's clicks (click(el) -> true when handled), typing (input(el) -> true),
 // and an argument after its screen's name (tab.arg: a RegExp for what follows '#name/'; pzHashArg() reads it).
-const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab)||null;
+// a staged rollout (rollouts.js) that left this feature out for this member: its card, screen and switch aren't shown
+const pzRolledOff=id=>typeof SOC!=='undefined'&&!!(SOC.me&&SOC.me.rollouts&&SOC.me.rollouts[id]===false);
+const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab&&!pzRolledOff(f.id))||null;
 function pzOrdered(screen){ const all=(PZ_FLOW[screen]||[]).flat(), o=((settings.pzLayout||{})[screen]||{})._order;
   if(!Array.isArray(o))return null;
   return [...o.filter(id=>all.includes(id)),...all.filter(id=>!o.includes(id))]; }
@@ -284,7 +286,7 @@ function pzShow(screen,id){ const L=(settings.pzLayout||{})[screen]; if(L&&Objec
 const pzLayoutCss=screen=>{ const hid=(PZ_SECTIONS[screen]||[]).filter(x=>!pzShow(screen,x[0])).map(x=>`[data-sec="${screen}:${x[0]}"]`); return hid.length?`<style>${hid.join(',')}{display:none!important}</style>`:''; };
 const pzCustomizeLink=screen=>`<p class="pz-span pz-custom"><button type="button" class="pz-link" data-pz-customize="${screen}">${pzI('gear',14)} Customize this screen</button></p>`;
 function pzCustomizeHtml(screen){
-  const list=PZ_SECTIONS[screen]||[], name={today:'Today',stats:'Stats',progress:'Progress'}[screen]||screen;
+  const list=(PZ_SECTIONS[screen]||[]).filter(x=>!pzRolledOff(x[0])), name={today:'Today',stats:'Stats',progress:'Progress'}[screen]||screen;
   return `<div class="pz-sheet-bg" data-pz-close><div class="pz-sheet" role="dialog" aria-modal="true" aria-labelledby="pzCustT">
     <div style="display:flex;justify-content:space-between;align-items:center"><b id="pzCustT" style="font-size:18px">Customize ${esc(name)}</b><button type="button" class="pz-chip icon" data-pz-close aria-label="Close">${pzI('x',20)}</button></div>
     <p class="pz-sub" style="font-size:13px">Show only what you use${PZ_FLOW[screen]?', in the order you want':''}. Hidden sections keep working in the background.</p>
@@ -737,7 +739,7 @@ function pzTodayHtml(D){
       ${(()=>{ const card={tilt:()=>sec('tilt',()=>pzTiltHtml(D)),insight:()=>on('insight')?coach:'',session:()=>more('session',pzSessionHtml),positions:()=>more('positions',pzPositionsHtml),
           next:()=>sec('next',()=>pzNextHtml(D)),now:()=>more('now',pzNowHtml),good:()=>sec('good',()=>pzGoodHtml(D)),inbox:()=>sec('inbox',()=>socInboxHtml()),duels:()=>sec('duels',()=>socDuelsTodayHtml(D.g)),partners:()=>sec('partners',()=>socMentorFocusHtml()+socPartnerStripHtml()),
           lesson:()=>sec('lesson',()=>pzLessonDueHtml(D)),xp:()=>on('xp')?bonus:'',week:()=>sec('week',()=>pzWeekSparkHtml(D)),yesterday:()=>sec('yesterday',()=>pzYesterdayHtml(D))};
-        for(const f of PZ_FEATS)if(f.today)card[f.id]=()=>sec(f.id,()=>f.today.html(D));
+        for(const f of PZ_FEATS)if(f.today&&!pzRolledOff(f.id))card[f.id]=()=>sec(f.id,()=>f.today.html(D));
         // your own order (or the default one) reads top to bottom, then on into the second column on a
         // wide screen, the two balanced so neither runs far below the other
         const ord=pzOrdered('today')||PZ_FLOW.today[0].concat(PZ_FLOW.today[1]), lead=pzLinkCardHtml()+pzNudgesHtml(D)+safe(()=>planTodayHtml(D));

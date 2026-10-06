@@ -11,7 +11,7 @@
    This screen only shows what the server works out.
    ============================================================================ */
 const EVS={pick:'standard',draft:{},confirm:null};
-function evOn(){ return typeof socAvailable==='function'&&socAvailable()&&!!SOC.me&&!!(SOC.cfg&&SOC.cfg.evals&&SOC.cfg.evals.on); }
+function evOn(){ return typeof socAvailable==='function'&&socAvailable()&&!!SOC.me&&!!(SOC.cfg&&SOC.cfg.evals&&SOC.cfg.evals.on)&&!pzRolledOff('eval'); }
 const evData=()=>evOn()?socGet('evals','/evals',30000):null;
 const evPct=v=>v==null?'—':(v>=0?'+':'')+(Math.round(v*100)/100)+'%';
 const evDate=ms=>new Date(ms).toLocaleDateString('en-US',{month:'short',day:'numeric'});
