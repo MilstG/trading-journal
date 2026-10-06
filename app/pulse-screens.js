@@ -445,16 +445,52 @@ async function pzWkAction(a){
 // ---- the AI coach (#coach): a chat about your own trading, within a daily allowance ----
 // The app builds the summary below from your journal and sends it with each message; your trades
 // and notes go along only if you switch that on. The server adds nothing and stores nothing.
-var COACH={status:null,tried:false,msgs:null,busy:false,err:null,buy:false,draft:''};
+var COACH={status:null,tried:false,msgs:null,busy:false,since:0,err:null,buy:false,draft:''};
 function pzCoachAvailable(){ return !!(COACH.status&&COACH.status.enabled); }
 function pzCoachStoreKey(){ return 'pz_coach:'+(SOC.me?SOC.me.id:'owner'); }
 function pzCoachLoad(){ if(COACH.msgs)return COACH.msgs; try{ COACH.msgs=JSON.parse(localStorage.getItem(pzCoachStoreKey())||'[]'); }catch(e){ COACH.msgs=[]; } if(!Array.isArray(COACH.msgs))COACH.msgs=[]; return COACH.msgs; }
 function pzCoachSave(){ try{ localStorage.setItem(pzCoachStoreKey(),JSON.stringify((COACH.msgs||[]).slice(-40))); }catch(e){} }
-function pzCoachHeaders(){ const h={'Content-Type':'application/json'}; if(SOC.key&&SOC.me)h['X-Pulse-Key']=SOC.key; else if(SRV.token)h['Authorization']='Bearer '+SRV.token; return h; }
+function pzCoachHeaders(early){ const h={'Content-Type':'application/json'}; if(SOC.key&&(SOC.me||early))h['X-Pulse-Key']=SOC.key; else if(SRV.token)h['Authorization']='Bearer '+SRV.token; return h; }
+// asked as soon as there's a key: a member's status goes out beside /me rather than after it
 function pzCoachStatus(force){
-  if(!socAvailable()||(COACH.tried&&!force))return; COACH.tried=true;
-  if(!(SOC.key&&SOC.me)&&!(SRV.token&&!SRV.badAuth))return;
-  fetch('/api/coach/chat',{headers:pzCoachHeaders()}).then(r=>r.json()).then(d=>{ COACH.status=d; if(PZ)pzRender(); }).catch(()=>{});
+  if(!socAvailable()||(COACH.tried&&!force))return;
+  if(!SOC.key&&!(SRV.token&&!SRV.badAuth))return; COACH.tried=true;
+  fetch('/api/coach/chat',{headers:pzCoachHeaders(true)}).then(r=>r.ok?r.json():Promise.reject(r.status)).then(d=>{ COACH.status=d; if(PZ)pzRender(); })
+    .catch(()=>{ COACH.tried=false; }); // a key /me then turns down, or the network: asked again on the next draw
+}
+const pzCoachDetailOn=()=>!!(SOC.me&&SOC.me.coachDetail||(SRV.token&&!SRV.badAuth&&settings.pzCoachDetail));
+// The summary a message carries, kept on this device (per profile, beside the chat): a message sent while the
+// trades load or the game is first built this visit goes out with today's copy at once, instead of waiting.
+// It's refreshed behind the screens (pzCoachSnapSoon) and with every message. Not in sample mode; only
+// for the same wallets and the same day, and with the trades and notes only when they were taken too.
+const pzCoachSnapKey=()=>pzCoachStoreKey()+':snap';
+function pzCoachSnapSave(day,facts,detail){ if(pzS.demo)return;
+  try{ localStorage.setItem(pzCoachSnapKey(),JSON.stringify({v:1,day,w:walletsSig(),at:Date.now(),facts,detail:detail||null})); }catch(e){} }
+function pzCoachSnapGet(wantDetail){ if(pzS.demo)return null;
+  try{ const x=JSON.parse(localStorage.getItem(pzCoachSnapKey())||'null');
+    return x&&x.v===1&&x.facts&&x.day===dayKey(Date.now())&&x.w===walletsSig()&&(!wantDetail||x.detail)?x:null; }catch(e){ return null; } }
+// the summary and (when shared) the trades for a message: today's kept copy while this visit's first build
+// is still coming, else from the data, waiting for the trades or the game being built behind the chat
+async function pzCoachData(wantDetail){
+  const waiting=()=>!allTrades.length&&(_loading||_pzBooting)||!!_pzStage;
+  if(waiting()&&!_pzBuilt){ const x=pzCoachSnapGet(wantDetail); if(x)return {facts:x.facts,detail:wantDetail?x.detail:null}; }
+  if(waiting()){ COACH.busy='prep'; pzRender(); for(let i=0;i<600&&waiting();i++)await sleep(200); COACH.busy=true; pzRender(); }
+  if(!allTrades.length){ const e=new Error('Your trades haven’t loaded yet. Try again in a moment.'); e.shown=true; throw e; }
+  await sleep(50); // "Thinking…" is on screen before the build, if any, runs (a timer: an animation frame waits for a hidden tab)
+  const D=_pzLastD=pzData(), facts=pzCoachFacts(D), detail=wantDetail?pzCoachDetail(D):null;
+  pzCoachSnapSave(D.todayK,facts,detail); _pzSnapSig=pzCoachSnapSig(D); _pzSnapAt=Date.now(); return {facts,detail};
+}
+// behind the screens: after a draw, once things are quiet (3 s), when what the summary reads changed or the copy is
+// 15 minutes old. Only where there's a coach to ask, and once the member is known (the copy is kept under them).
+var _pzSnapSig=null, _pzSnapAt=0, _pzSnapT=0;
+const pzCoachSnapSig=D=>_gameKey()+'|'+D.todayK+'|'+walletsSig()+'|'+pzCoachDetailOn()+'|'+(SOC.me?SOC.me.id:'');
+function pzCoachSnapSoon(){
+  if(pzS.demo||!pzCoachAvailable()||(SOC.key&&!SOC.me))return;
+  const key=pzCoachSnapKey(); // (a sign-out meanwhile: nothing is kept under whoever comes next)
+  clearTimeout(_pzSnapT); _pzSnapT=setTimeout(()=>{ const idle=typeof requestIdleCallback==='function'?requestIdleCallback:f=>setTimeout(f,1);
+    idle(()=>{ if(pzS.demo||COACH.busy||!allTrades.length||_pzStage||!gameWarm()||pzCoachSnapKey()!==key||!pzCoachAvailable())return;
+      try{ const D=_pzLastD=pzData(), sig=pzCoachSnapSig(D); if(sig===_pzSnapSig&&Date.now()-_pzSnapAt<900000)return;
+        pzCoachSnapSave(D.todayK,pzCoachFacts(D),pzCoachDetailOn()?pzCoachDetail(D):null); _pzSnapSig=sig; _pzSnapAt=Date.now(); }catch(e){ console.warn('coach summary',e); } },{timeout:5000}); },3000);
 }
 function pzCoachFacts(D){
   const g=D.g, ctx=g.ctx, now=Date.now(), from30=pzRangeStart(30,now), k30=dayKey(from30), e=D.dayE||{}, day=D.day;
@@ -509,18 +545,22 @@ function pzCoachDetail(D){
 }
 async function pzCoachSend(text){
   text=String(text||'').trim(); if(!text||COACH.busy)return;
-  const D=pzData(), msgs=pzCoachLoad();
+  const msgs=pzCoachLoad();
   // a message that doesn't go through stays in the box (COACH.draft), across a pack bought in between
-  msgs.push({role:'user',content:text.slice(0,4000),at:Date.now()}); COACH.busy=true; COACH.draft=''; COACH.err=null; pzCoachSave(); pzRender();
+  msgs.push({role:'user',content:text.slice(0,4000),at:Date.now()}); COACH.busy=true; COACH.since=Date.now(); COACH.draft=''; COACH.err=null; pzCoachSave(); pzRender();
+  { const l=$('pzChat'); if(l)l.scrollTop=l.scrollHeight; }
+  // a long answer: say it's still coming (redrawn once, if still waiting)
+  const since=COACH.since; setTimeout(()=>{ if(COACH.busy&&COACH.since===since)pzRender(); },12000);
   try{
-    const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:pzCoachFacts(D)};
-    if(SOC.me&&SOC.me.coachDetail||(SRV.token&&!SRV.badAuth&&settings.pzCoachDetail))body.detail=pzCoachDetail(D);
+    const want=pzCoachDetailOn(), x=await pzCoachData(want);
+    const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:x.facts};
+    if(want)body.detail=x.detail;
     const r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
     if(!r.ok){ COACH.err=d.packs?null:d.error||('HTTP '+r.status); COACH.draft=text; if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error,packs:d.packs||null}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
     else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.allowed!=null?d.allowed:d.remaining==null||d.remaining>0,reason:d.reason||null,packs:d.packs||null}); }
-  }catch(e){ COACH.err='Couldn’t reach the coach. Check your connection and try again.'; COACH.draft=text; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
-  finally{ COACH.busy=false; pzCoachSave(); pzRender(); const l=$('pzChat'); if(l)l.scrollTop=l.scrollHeight; }
+  }catch(e){ COACH.err=e&&e.shown?e.message:'Couldn’t reach the coach. Check your connection and try again.'; COACH.draft=text; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
+  finally{ COACH.busy=false; COACH.since=0; pzCoachSave(); pzRender(); const l=$('pzChat'); if(l)l.scrollTop=l.scrollHeight; }
 }
 // Today's messages used: more for XP, at the league's price. The server prices the pack and says why it
 // can't be bought (the daily cap, too little XP, or a level it would cost); the purchase is a grant on the profile.
@@ -556,18 +596,23 @@ function pzCoachPrompts(){
   const h=tzParts(Date.now()).h;
   return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?'];
 }
+// D is null while the trades load or the game is built (pzCoachEarly): the chat shows without them, the
+// level gate from the profile's level (the server holds members to it either way)
 function pzCoachHtml(D){
   const back=''; // a top-level tab: no back link
   pzCoachStatus();
-  const lock=pzLocked('coach',D.g.level.level); if(lock)return `${back}${pzLockedHtml('Your AI coach',lock,D.g)}`;
   const owner=!!(SRV.token&&!SRV.badAuth);
+  const loading=`${back}${pzHead('Coach','Your AI coach')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
+  if(D){ const lock=pzLocked('coach',D.g.level.level); if(lock)return `${back}${pzLockedHtml('Your AI coach',lock,D.g)}`; }
+  else if(SOC.me&&pzLocked('coach',SOC.me.level||1))return loading; // the lock card needs the game
+  if(SOC.key&&!SOC.me&&!owner&&socAvailable())return loading; // a member's chat is kept under their profile: wait for /me
   const st=COACH.status||(socAvailable()&&SOC.cfg&&SOC.cfg.coach&&SOC.cfg.coach.ai===false?{enabled:false}:null); // a visitor: the league config says whether there's a coach
   if(!(st&&!st.enabled)&&(!socAvailable()||(!SOC.me&&!owner)))return `${back}${pzHead('Coach','Your AI coach')}<section class="pz-card pz-empty">
     <span class="pz-ico" style="width:52px;height:52px;background:var(--pz-tint-good);color:var(--pz-good)">${pzI('coach',26)}</span>
     <b style="font-size:18px">A coach that knows your trades</b>
     <p class="pz-sub" style="max-width:460px">Ask why a day went wrong, what to change this week, or whether a setup is worth keeping. It reads your summaries, never your keys, and runs on the league server this page comes from.</p>
     ${socAvailable()?'<a class="pz-cta" href="#social" style="max-width:280px">Create your profile to start</a>':'<p class="pz-fine">Open Daruma from your server’s /daruma link to use it.</p>'}</section>`;
-  if(!st)return `${back}${pzHead('Coach','Your AI coach')}<p class="pz-sub"><span class="pz-spin"></span>Loading…</p>`;
+  if(!st)return loading;
   if(!st.enabled)return `${back}${pzHead('Coach','Your AI coach')}${typeof _pzLastD!=='undefined'&&_pzLastD?`<section class="pz-card pz-coach"><span class="pz-ico">${pzI('chat',18)}</span><p>${esc(pzCoachLine(_pzLastD))}</p></section>`:''}<section class="pz-card pz-kv"><p class="pz-sub">The AI coach isn’t switched on for this server yet.${owner?' Set <code>COACH_AI=1</code> and an <code>ANTHROPIC_API_KEY</code> (or <code>OPENAI_API_KEY</code>) on the server, then restart it.':' Ask the league owner.'}</p></section>`;
   const msgs=pzCoachLoad();
   const list=msgs.length?msgs.map(m=>`<div class="pz-msg ${m.role==='user'?'me':'co'}"><p>${esc(m.content).replace(/\n/g,'<br>')}</p></div>`).join('')
@@ -575,7 +620,7 @@ function pzCoachHtml(D){
   const left=st.remaining==null?'':st.remaining+' of '+st.limit+' message'+(st.limit===1?'':'s')+' left today';
   const detailOn=SOC.me?!!SOC.me.coachDetail:!!settings.pzCoachDetail;
   return `${back}${pzHead(left||'Your AI coach','Coach')}
-  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?'<div class="pz-msg co"><p><span class="pz-spin"></span>Thinking…</p></div>':''}</div>
+  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?`<div class="pz-msg co" role="status"><p><span class="pz-spin"></span>${COACH.busy==='prep'?'Reading your journal…':Date.now()-COACH.since>11000?'Still thinking — a thorough answer can take up to a minute…':'Thinking…'}</p></div>`:''}</div>
     ${COACH.err?`<p class="pz-fine pz-err" role="alert">${esc(COACH.err)}</p>`:''}
     ${st.allowed===false&&st.packs?pzCoachPackHtml(st):`<div class="pz-chiprow">${pzCoachPrompts().map(p=>`<button type="button" class="pz-chipbtn" data-pz-ask="${esc(p)}"${COACH.busy||st.allowed===false?' disabled':''}>${esc(p)}</button>`).join('')}</div>
     <div class="pz-chatin"><textarea id="pzCoachIn" rows="2" maxlength="4000" placeholder="${st.allowed===false?esc(st.reason||'No messages left today'):'Ask about your trading…'}"${st.allowed===false?' disabled':''}>${esc(COACH.draft)}</textarea><button type="button" class="pz-cta pz-sm" id="pzCoachSend"${COACH.busy||st.allowed===false?' disabled':''} aria-label="Send">${pzI('arrow',20)}</button></div>`}

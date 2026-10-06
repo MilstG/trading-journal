@@ -32,6 +32,7 @@ persists across devices and reboots.
 11. [Persistence: three modes](#persistence-three-modes)
 12. [Deploying with the companion server](#deploying-with-the-companion-server)
 13. [The analytics API](#the-analytics-api-apiv1)
+14. [Research: what the data says](#research-what-the-data-says)
 14. [Concepts and definitions](#concepts-and-definitions)
 15. [Limitations, stated honestly](#limitations-stated-honestly)
 16. [Development and testing](#development-and-testing)
@@ -1273,6 +1274,12 @@ playbooks, referrals, peer groups, beta invites) shows ten at a time, with Prev 
     drop-off), journaling, and seen in 30 / 7 days.
   - **Members:** a sortable list, including **"Slipping"** (Discipline down 10 or
     more on the 30 days before).
+  - **Does the product work?** Each member's Discipline in the 28 days after their
+    first mentor review, duel, adopted playbook, accountability pod or partner, minus
+    the 28 days before, against the same change for members who hadn't had one yet
+    over the same weeks (a difference in differences), with a 95% range and the change
+    in days with a slip. 14 or 56 days either side, and verified days only, are a switch
+    away. See [Research](#research-what-the-data-says).
 
   A segment with fewer than 5 members shows its size only.
 - **Each member's page** has a **Performance** card:
@@ -2306,6 +2313,78 @@ curl -H "Authorization: Bearer $READ_TOKEN" 'https://your.app/api/v1/breakdown?b
 curl -H "Authorization: Bearer $AUTH_TOKEN" -X POST 'https://your.app/api/v1/refresh'
 curl -H "Authorization: Bearer $READ_TOKEN" -o trades.csv 'https://your.app/api/v1/export/trades.csv?status=closed'
 ```
+
+## Research: what the data says
+
+Four questions the product leans on, answered from data rather than assumed.
+`research.js` does the arithmetic (pure functions, no I/O); `research-run.js` collects
+wallets, reads their public fills and rebuilds their trades with the app's own engine
+(the functions `server.js` extracts from `ledger.html`). The member question runs on the
+server and shows in Admin → Insights.
+
+```
+node research-run.js --sample 800                # random accounts that traded in the last month (Hyperliquid's leaderboard)
+node research-run.js --addresses wallets.txt     # every 0x address in a file
+node research-run.js --data-dir ./data           # the server's seed wallets, wallets entered in the app, members' wallets (read only)
+  --days 300   look-back           --cache DIR   where fills are kept (default ./research-cache; a run picks up where it stopped)
+  --delay 1200 ms between requests --source index  read the archive's index by wallet instead (ARCHIVE_* settings, see archive.js)
+  --fetch-only / --analyze-only / --offline (no price candles)
+```
+
+It writes `research-report.json` and a self-contained `research-report.html`, and prints a
+summary. Every interval is a 95% bootstrap over the unit that is independent (wallets,
+members, big moves or days), and each figure says how many it rests on.
+
+- **What each slip costs (1).** Every closed trade gets the six slips as Discipline
+  scores them (`pzBehaviorDays`, the same function the server uses to verify). A
+  slipped trade is compared with **the same wallet's** trades that faced the same test
+  and passed it: a revenge entry against post-loss entries that waited 15 minutes, a
+  size-up against post-loss entries at the usual size, an add to a loser against adds
+  to winners, a loser held too long against losers closed sooner. Trading on after two
+  losses and overtrading are compared with the wallet's other trades (the alternative
+  was not trading, so the slipped trades' own average is shown too). Results are in R
+  (the wallet's median absolute trade result), in bps of the trade's size and in win
+  rate, averaged over wallets. Adding to a loser and holding a loser are partly built
+  in (those trades were already losing), and the report says so.
+- **Discipline and next month (2).** Whole calendar months with 10+ trades, against the
+  next month with 5+: rank correlation across wallets, inside each wallet (a more
+  disciplined month than the trader's usual), and the same holding the month's own
+  results fixed. A losing month gives more chances to slip and results drift back
+  toward the usual, so the controlled figure is the one to read.
+- **Skill or luck (2).** Two back-to-back 90-day windows with 20+ trades in each: how
+  well each measure (profit factor, win rate, average trade in R and bps, average ÷
+  spread, dollars, Discipline) ranks wallets the same way twice, and how many of the
+  top and bottom quarters stay there. Then split-half reliability (each wallet's trades
+  alternately in two halves) by trade count, and with Spearman–Brown, how many trades a
+  ranking needs to be 0.7 reliable. That is the bar for leagues, duels and "best quarter".
+- **Traders like you who improved, rebuilt (4).** Weekly 90-day summaries from each
+  wallet's fills (`peerSummary`, the seed wallets' function, with slip rates from their
+  days), run through the server's own `Bench.buildImprovers`, so the panels are as large
+  as the sample. Then whether it lasted: improvers 12 weeks ago (bottom half to top half
+  on Discipline or profit factor), and how many are still in the top half now, beside
+  those who stayed top, faded or stayed bottom.
+- **Does the product work? (6).** Admin → Insights, or `GET /api/social/admin/research
+  [?window=14|28|56][&verified=1]` (owner and admins). The first of each: a comment from
+  someone else on a trade put up for review, a duel or group duel that started, an
+  adopted playbook, an accountability partner. Members choose these, so a difference is
+  what followed, not proof of what caused it.
+- **Market views (8).** Positions are rebuilt from fills (the position before a wallet's
+  first fill held from the window's start). Skill tiers come from each wallet's average
+  trade in the first half of the span only (shrunk toward zero by 20 trades), and are
+  read in the second half, so they are out of sample; the report shows each tier's
+  results after the midpoint as a check. Per coin (the 12 most traded in the sample):
+  weekly long and short counts and net notional by trade size and tier; flow against
+  the move around the biggest hourly moves (the top 0.5% per coin, a day apart) for the
+  24 hours before, the hour and the 24 hours after, in each group's typical hours of
+  flow; and a day's net flow per tier against the next day's move. Hourly candles come
+  from the exchange.
+
+**Limits.** The leaderboard lists accounts that traded in the last month, so accounts
+that stopped earlier, blow-ups among them, can't be sampled. The exchange serves an
+address's newest 10,000 fills, so very active wallets get a shorter window (the report
+counts them; the archive's index has no such cap). Wallets with more than 20,000 fills in
+the look-back are left out as bots or market makers. Experience in the rebuilt summaries
+counts from the first fill read, not the account's first day.
 
 ## Concepts and definitions
 

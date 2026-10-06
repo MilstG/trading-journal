@@ -318,7 +318,7 @@ details>summary{list-style-position:inside}
     return {items:list.slice(p*size,(p+1)*size), html:n>size?`<div class="pager"><button class="sm" data-pg="${esc(key)}" data-d="-1"${p?'':' disabled'} aria-label="Previous page">‹ Prev</button><span class="muted small">${p*size+1}–${Math.min(n,(p+1)*size)} of ${n}</span><button class="sm" data-pg="${esc(key)}" data-d="1"${p<pages-1?'':' disabled'} aria-label="Next page">Next ›</button></div>`:''}; };
   const mlink=m=>`#members/${esc(encodeURIComponent(m.id))}`;
   const D={perf:{},ins:null,ov:null,members:[],leagues:[],badges:[],comps:[],events:[],reports:[],playbooks:[],refs:{refs:[],links:[],earners:[]},wallets:{approveWallets:false,wallets:[],counts:{pending:0,approved:0,rejected:0}}};
-  const UI={msel:new Set(),ins:{f:{},by:'style',sort:'disc30',metric:'disc30'},tab:'overview',member:null,q:'',filter:'all',wq:'',wfilter:null,wsel:new Set(),leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
+  const UI={msel:new Set(),ins:{f:{},by:'style',sort:'disc30',metric:'disc30'},res:{win:28,ver:false},tab:'overview',member:null,q:'',filter:'all',wq:'',wfilter:null,wsel:new Set(),leagueEdit:null,badgeEdit:null,addOpen:false,code:null,levelDraft:null,custom:null,overrides:null,pages:{}};
   const linkFor=code=>location.origin+'/daruma#link='+encodeURIComponent(code);
   const adminLinkFor=code=>location.origin+'/admin#code='+encodeURIComponent(code);
   const leagueName=id=>{ const L=D.leagues.find(x=>x.id===id); return L?L.name:id; };
@@ -346,7 +346,7 @@ details>summary{list-style-position:inside}
   const ADDR=/^0x[0-9a-fA-F]{40}$/;
 
   function route(){ const h=location.hash.slice(1).split('/'), was=UI.tab; UI.tab=TABS.some(t=>t[0]===h[0])?h[0]:'overview';
-    if(UI.tab==='insights'&&was!=='insights')D.ins=null; // fresh numbers each time the tab is opened
+    if(UI.tab==='insights'&&was!=='insights'){ D.ins=null; D.res=null; } // fresh numbers each time the tab is opened
     let id=null; if(UI.tab==='members'&&h[1]){ try{ id=decodeURIComponent(h[1]); }catch(e){} } UI.member=id; }
   // Re-rendering after an action keeps what was typed elsewhere on the same screen; only the
   // card the action came from shows the server's fresh values.
@@ -471,7 +471,25 @@ details>summary{list-style-position:inside}
     return `<section class="card"><div class="ch"><h2>Filter${nf?` <span class="sub2">· ${nf} on</span>`:''}</h2>${nf?'<button class="sm fit" id="insClear">Clear filters</button>':''}</div>${filters}
       <p class="hint">A member without a “Traders like you” summary yet shows as “not known yet” in the segment filters.</p></section>
       ${X.small?`<p class="warn">Fewer than ${X.minSeg} members match these filters, so their numbers aren’t shown. Their names are below.</p>`:''}
-      ${head}<div class="two">${funnel}${weekly||slips}</div><div class="two">${dist}${weekly?slips:''}</div>${bd}<div class="two">${coh}</div>${mem}`;
+      ${head}<div class="two">${funnel}${weekly||slips}</div><div class="two">${dist}${weekly?slips:''}</div>${bd}<div class="two">${coh}</div>${resCard()}${mem}`;
+  }
+  // does the product work? each member's Discipline before and after a first mentor review, duel, playbook,
+  // pod or partner, against members who hadn't had one yet over the same weeks (GET /admin/research)
+  async function loadRes(){ try{ D.res=await api('/research?window='+UI.res.win+(UI.res.ver?'&verified=1':'')); }catch(e){ D.res={err:e.message}; } }
+  function resCard(){
+    const R=D.res; if(!R){ D.res={loading:true}; loadRes().then(render); }
+    const ctl=`<div class="row" style="gap:8px;min-width:280px">${sel('resWin',[[14,'14 days either side'],[28,'28 days either side'],[56,'56 days either side']],UI.res.win,' aria-label="Window"')}
+      ${sel('resVer',[['','All days'],['1','Verified days only']],UI.res.ver?'1':'',' aria-label="Which days"')}</div>`;
+    const top=`<section class="card"><div class="ch"><h2>Does the product work?</h2>${ctl}</div>`;
+    if(!R||R.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(R.err)return top+`<p class="warn">${esc(R.err)}</p></section>`;
+    const ci=b=>b&&b.v!=null?`${b.v>0?'+':''}${b.v}${b.lo!=null?` <span class="muted small">[${b.lo>0?'+':''}${b.lo}, ${b.hi>0?'+':''}${b.hi}]</span>`:''}`:'—';
+    const col=b=>b&&b.lo!=null?(b.lo>0?' style="color:var(--good)"':b.hi<0?' style="color:var(--low)"':''):'';
+    const colSlip=b=>b&&b.lo!=null?(b.hi<0?' style="color:var(--good)"':b.lo>0?' style="color:var(--low)"':''):'';
+    return top+`<p class="muted small">Each member’s Discipline over the ${R.window} days after their first one, minus the ${R.window} days before, against the same change for members who hadn’t had one yet (the same calendar weeks). Needs 4 trading days on each side. Coloured when the 95% range leaves out zero. ${esc(R.note)}</p>
+      <div class="scroll"><table><thead><tr><th>First…</th><th>Members</th><th>Measured</th><th title="Discipline points, after minus before, against members who hadn’t had one yet">Discipline vs not yet</th><th title="Percentage points of trading days with a slip">Slip days vs not yet</th><th>Raw change</th><th>Discipline before</th></tr></thead><tbody>
+      ${Object.values(R.effects).map(x=>`<tr><td>${esc(x.label)}</td><td>${fmt(x.exposed)}</td><td>${fmt(x.measured)}</td><td${col(x.did)}>${ci(x.did)}</td><td${colSlip(x.didSlip)}>${ci(x.didSlip)}</td><td>${x.raw==null?'—':(x.raw>0?'+':'')+x.raw}</td><td>${x.before==null?'—':x.before}</td></tr>`).join('')}
+      </tbody></table></div><p class="hint">${fmt(R.members)} members with trading days (${fmt(R.verified)} verified from fills${R.onlyVerified?'':', '+fmt(R.app)+' from the app'}).</p></section>`;
   }
   // a member's own numbers, beside the league's and their peer group's
   function perfCard(m){
@@ -1248,6 +1266,7 @@ details>summary{list-style-position:inside}
     if(t.dataset&&t.dataset.msel){ if(t.checked)UI.msel.add(t.dataset.msel); else UI.msel.delete(t.dataset.msel); $('mBulk').innerHTML=mBulkHtml(); return; }
     if(t.id==='mSelAll'){ for(const m of memberPg().items){ if(t.checked)UI.msel.add(m.id); else UI.msel.delete(m.id); } $('mRows').innerHTML=memberRows(); $('mBulk').innerHTML=mBulkHtml(); return; }
     if(t.dataset&&t.dataset.insf){ UI.ins.f[t.dataset.insf]=t.value; loadIns().then(render); return; }
+    if(t.id==='resWin'||t.id==='resVer'){ if(t.id==='resWin')UI.res.win=+t.value; else UI.res.ver=t.value==='1'; loadRes().then(render); return; }
     if(t.id==='insBy'||t.id==='insSort'||t.id==='insMetric'){ UI.ins[{insBy:'by',insSort:'sort',insMetric:'metric'}[t.id]]=t.value; loadIns().then(render); return; }
     if(t.id==='seedSt'||t.id==='seedSort'){ UI[t.id]=t.value; UI.fresh=true; return render(); }
     if(t.id==='wFilter'){ UI.wfilter=t.value; UI.pages.wallets=0; UI.wsel.clear(); UI.fresh=false; return render(); }

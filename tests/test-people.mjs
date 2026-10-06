@@ -49,6 +49,12 @@ try {
     eq((await call('/people?f=duels', { key: K.bob.key })).d.people.map(p => p.handle).sort(), ['ann_trades', 'cat_mentor']);
     eq((await call('/people?q=eth', { key: K.bob.key })).d.people.map(p => p.handle), ['ann_trades'], 'search reads bios too');
     eq((await call('/people')).status, 401, 'members only');
+    eq((await call('/people', { key: K.bob.key })).d.people.find(p => p.handle === 'ann_trades').following, false);
+    eq((await call('/follow/ann_trades', { method: 'POST', key: K.bob.key })).status, 200);
+    eq((await call('/people', { key: K.bob.key })).d.people.find(p => p.handle === 'ann_trades').following, true, 'cards say who you follow');
+    eq((await call('/people?f=following', { key: K.bob.key })).d.people.map(p => p.handle), ['ann_trades'], 'and the Following filter lists them');
+    await call('/follow/ann_trades', { method: 'DELETE', key: K.bob.key });
+    eq((await call('/people?f=following', { key: K.bob.key })).d.total, 0);
   });
   await t('partnering from the directory needs no shared league', async () => {
     eq((await call('/partners', { method: 'POST', key: K.bob.key, body: { handle: 'ann_trades' } })).status, 200);
