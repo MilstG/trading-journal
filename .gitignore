@@ -5,3 +5,6 @@ data/
 node_modules
 *.log
 .DS_Store
+
+# research-run.js keeps the wallets' fills and its reports here
+research-cache/

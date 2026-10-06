@@ -37,6 +37,7 @@ const Bench = require('./bench.js');
 const Duels = require('./duels.js');
 const Pots = require('./pots.js');
 const Insights = require('./insights.js');
+const Research = require('./research.js');
 const Push = require('./push.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
 let ethSig = null; try { ethSig = require('./vendor/eth-sig.js'); } catch (e) { /* claims and wallet sign-in answer 501 */ }
@@ -2921,6 +2922,26 @@ function createSocial(opts) {
         const out = Insights.insights(rows, all, f, { now: now(), today, by: typeof query.by === 'string' ? query.by : 'style', sort: query.sort, metric: query.metric, labels });
         return json(res, 200, Object.assign(out, { filters: f, labels, metrics: Insights.METRICS, slipsLabels: Insights.SLIPS, levelBands: Insights.LEVEL_BANDS.map(b => b[0]),
           activity: Insights.ACTIVITY, cohortsAll: [...new Set(rows.filter(r => r.joined).map(r => new Date(r.joined).toISOString().slice(0, 7)))].sort().reverse() }));
+      }
+      // ---- research: members' Discipline before and after a first mentor review, duel, playbook, pod or partner,
+      // against members who hadn't had one yet over the same weeks (research.js productEffects) ----
+      if (sub === 'research' && M === 'GET') {
+        const onlyVerified = query.verified === '1', first = {}, keyMs = k => Date.parse(k + 'T00:00:00Z');
+        const put = (k, id, at) => { if (!own(S.members, id) || !(at > 0)) return; const f = first[k] || (first[k] = {}); if (!(f[id] <= at)) f[id] = at; };
+        // a mentor review: the first comment someone else left on a trade the member put up for review
+        for (const r of q('SELECT r.member AS m, MIN(c.at) AS at FROM reviews r JOIN review_comments c ON c.review = r.id WHERE c.member != r.member GROUP BY r.member').all()) put('mentor', r.m, r.at);
+        for (const r of q('SELECT member AS m, MIN(at) AS at FROM playbook_adopts GROUP BY member').all()) put('playbook', r.m, r.at);
+        for (const d of Object.values(S.duels)) if ((d.status === 'active' || d.status === 'done') && d.start) { put('duel', d.a, keyMs(d.start)); put('duel', d.b, keyMs(d.start)); }
+        for (const p of Object.values(S.pods)) if ((p.status === 'active' || p.status === 'done') && p.start) for (const id of podIds(p, 'in')) put('pod', id, keyMs(p.start));
+        for (const p of Object.values(S.partners)) if (p.status === 'active' && p.since) { put('partner', p.a, p.since); put('partner', p.b, p.since); }
+        let verified = 0, app = 0;
+        const rows = members().filter(m => !m.banned).map(m => {
+          const v = !!(m.share && m.share.verify && Array.isArray(m.vdays) && m.vdays.length), days = v ? m.vdays : !onlyVerified && m.stats && Array.isArray(m.stats.days) ? m.stats.days : null;
+          if (!days || !days.length) return null; if (v) verified++; else app++;
+          return { id: m.id, days: days.filter(d => d && typeof d.k === 'string' && isFinite(d.s)), exposures: Object.fromEntries(Object.keys(first).filter(k => own(first[k], m.id)).map(k => [k, first[k][m.id]])) };
+        }).filter(Boolean);
+        const window = [14, 28, 56].includes(+query.window) ? +query.window : 28;
+        return json(res, 200, Object.assign(Research.productEffects(rows, { window }), { verified, app, onlyVerified, labels: Research.EXPOSURES }));
       }
       if (sub === 'members' && parts[2] && parts[3] === 'perf' && M === 'GET') {
         const m = own(S.members, parts[2]) ? S.members[parts[2]] : null; if (!m) return json(res, 404, { error: 'no such member' });
