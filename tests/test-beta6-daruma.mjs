@@ -138,6 +138,7 @@ try {
     const w = (await call('/duels/with/bravo', { key: K.alpha })).d.other; eq([w.week, w.weekVerified, w.weekN], [90, true, 7]);
     const ids = (await call('/admin/members', { owner: true })).d.members;
     await call('/admin/members/' + ids.find(m => m.handle === 'rita').id, { method: 'POST', owner: true, body: { action: 'mentor' } });
+    await call('/mentors/rita', { method: 'POST', key: K.bravo, body: { action: 'pick', letIn: true } }); await call('/mentor/bravo/accept', { method: 'POST', key: K.rita, body: {} });
     const me = (await call('/mentor', { key: K.rita })).d.mentees.find(x => x.handle === 'bravo'); eq([me.avg7, me.slips7, me.verified7], [90, 1, true]);
   });
   await t('D5: without verification, the last 7 days the app reported (their own window, not this calendar week)', async () => {

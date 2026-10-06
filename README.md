@@ -845,29 +845,48 @@ link to join *your* league. A server upgraded from an older version imports its
 - **Mentor directory** (Social → Mentors, `#mentors`, and `#mentors/<handle>`). Every
   mentor with their rate, how many mentee slots are open and a track record the server
   measured itself over 90 days: trades they marked reviewed with a comment, the median
-  time from a trade being sent to their first comment, and the share of members who
-  sent another trade within 30 days (shown only from 10 reviews; members whose first
-  trade was under 30 days ago count only once they came back). Their mentees' verified
+  time from a trade being sent to their first comment, the share of members who said a
+  review **helped** (their private yes or no on a reviewed trade, shown only from 5 answers)
+  and the share of members who sent another trade within 30 days (shown only from 10
+  reviews; members whose first trade was under 30 days ago count only once they came back). Their mentees' verified
   milestones (leaks plugged, perfect weeks, Trader Age milestones) and, if they share
   verified results, their own Trader Age and 90-day Discipline. Never mentees' P&L,
   never star ratings. Filter by trading style or **Has room**, search, and sort by
   **Room first** (the default: picked, then open slots, then fastest reply), fastest
-  reply, most come back or lowest rate.
-- **Picking mentors.** A member picks up to two. Picked mentors are the only ones who see
-  their days and the trades they send; a member who picked no one is seen by every mentor,
-  as before. Each mentor sets how many mentees they take (**Mentees at once**, 1 to 50,
-  default 5); a full mentor offers a **waitlist**, and everyone on it hears once when a slot
-  opens. Picking turns on Let mentors see my days (after a yes); switching that off drops
-  every pick. Routes: `GET /mentors?style=&open=1&sort=&q=`, `GET /mentors/<handle>`,
-  `POST /mentors/<handle>` `{action: pick | drop | wait | unwait}`.
+  reply, most helpful, most come back or lowest rate.
+- **Asking a mentor, and being taken on.** Mentoring is something both sides agree to. A
+  member **asks** a mentor (from the directory, Find people or the mentor's profile, with an
+  optional line on what they'd like help with); the mentor sees the request under **Mentees →
+  Asking for you** with the member's last 7 days at a glance (Discipline, slips, level), and
+  **takes them on** or says **not now** (the member hears either way, and can ask that mentor
+  again after a week). Only then do the member's days and trades open to that mentor. A
+  member has up to two mentors, open requests included. A mentor who switches on **Take
+  requests on at once while I have room** takes everyone on straight away. Each mentor sets
+  how many mentees they take (**Mentees at once**, 1 to 50, default 5); a full mentor offers a
+  **waitlist**, and everyone on it hears once when a slot opens. Either side can end it: the
+  member drops the mentor (or takes a request back), the mentor uses **Stop mentoring** on the
+  mentee's page (held XP goes back, the member is told). Asking turns on **Let my mentors see
+  my days** (after a yes; off for new members); switching that off ends every mentoring and
+  drops open requests, and nobody else, mentor or not, ever sees those days. The lesson a member
+  writes each night reaches the server only while a mentor who took them on can read it.
+  Servers that ran the earlier model (every mentor saw every member who let mentors in without
+  picking) carry the working relationships over once: a mentor who commented on the member's
+  trades or left a note on their days in the last 90 days, or whom they asked, becomes their
+  mentor, up to two, most recent first; everyone else is seen by no mentor until they ask one.
+  Routes: `GET /mentors?style=&open=1&sort=open|reply|helped|back|rate&q=`, `GET /mentors/<handle>`,
+  `POST /mentors/<handle>` `{action: pick (asks) | drop | wait | unwait, text, letIn}`,
+  `POST /people/<handle>/mentor` (the same request), and for the mentor `GET /mentor`
+  (`{mentees, requests, slots, auto}`) and `POST /mentor/<handle>/accept | decline | release` `{text}`.
 - **Mentor rates and XP to spend.** Each mentor sets a rate in XP per reviewed trade,
   kept inside the owner's range (Levels & XP → Mentor rates and the pool; default 0 to
   100, or rates off). A member's first trade with each paid mentor is free (given back if
   they take it back before the mentor said anything). After that the rate is **held** when
   the trade is sent and **paid** the first time the mentor marks it reviewed with a comment
   of theirs in it; it goes back if the mentor hasn't within the hold time (default 72
-  hours), if the member takes the trade back or drops the mentor, or if the mentor is
-  stood down or suspended. Payments come out of the member's **XP to spend**: their balance
+  hours), if the member takes the trade back or drops the mentor, if the mentor lets them go,
+  or if the mentor is stood down or suspended. A quarter of the hold time before it runs out
+  (54 hours of 72), the mentor hears once which trade is waiting and what it pays, and their
+  **Trades to review** list puts the paid trades whose time runs out soonest first. Payments come out of the member's **XP to spend**: their balance
   (the server's XP ledger, see Duels → *The XP balance*) less what's held and what rides on
   open duels. Their level never goes down for it. The mentor gets the payment on their mentoring ledger (it counts toward
   their level, never leagues or duels), less the **pool share** the owner sets (0% by
@@ -885,14 +904,24 @@ link to join *your* league. A server upgraded from an older version imports its
   then covers the season so far; when a season ends, the top three get a badge
   (🏆 🥈 🥉), a place in the league's **hall of fame** (on its info page) and a
   notification, and the next season starts from zero.
-- **Mentors.** The owner marks members as mentors in the admin panel. Members who
-  switch on **Let mentors see my days** (What you share → Profile) show up on the
-  mentor's **Mentees** screen with each day's score, slips and the lesson they wrote
-  that night, and the mentor can leave a note on any day. Notes arrive in the
-  member's inbox (Today → New for you) and as a push notification. Members can ask a
-  particular mentor from Find people or the mentor's profile (**Ask to mentor me**, once a
-  day per mentor): it switches on Let mentors see my days after a yes, tells that mentor,
-  and puts the member first on their Mentees screen with an "asked for you" tag.
+- **Mentors.** The owner marks members as mentors in the admin panel. The members a mentor
+  took on show up on their **Mentees** screen with each day's score, slips and the lesson they
+  wrote that night, and the mentor can leave a note on any day. A mentee's page also shows
+  **the last 28 trading days at a glance** (each slip in the latest 14 against the 14 before,
+  and Discipline the same way, verified from the wallet when the member verifies) and the
+  trades they sent that mentor. Notes arrive in the
+  member's inbox (Today → New for you) and as a push notification.
+- **Note threads.** Under each note the member answers in one tap (**Got it** or **I'll try
+  this**, which the mentor hears) or with a reply; the mentor who wrote it answers back, and
+  their Mentees list shows how many replies they haven't opened. Up to 20 replies a note, 600
+  characters each, 60 an hour. Routes: `POST /notes/<id>/reply` `{text}` or `{ack: got | try | null}`
+  (the member), `POST /mentor/<handle>/notes/<id>/reply` `{text}` (the mentor).
+- **The week's focus.** A mentor sets one thing for a mentee to work on this week, and
+  optionally a slip to follow. The member sees it on Today (with the partners card) and in the
+  evening review, and can **adopt it as a habit**. When it follows a slip, both see how many
+  trading days had that slip since the focus was set against the four weeks before. One focus
+  per mentor; it goes when the mentoring ends. Routes: `POST /mentor/<handle>/focus`
+  `{text, slip}`, `DELETE /mentor/<handle>/focus`; the member reads it in `GET /notes` (`focus`).
 - **XP for mentoring.** Mentoring is work, so mentors earn by teaching (the server pays it,
   per UTC day, so a clock that hops zones can't reach two days' caps): a trade they mark reviewed with a comment of theirs in it
   (15, once per trade: sending it again doesn't pay again), a note on a mentee's day (5, one per mentee a day, 3 paid a day), and
@@ -908,8 +937,8 @@ link to join *your* league. A server upgraded from an older version imports its
   **Made a difference** (mentee results); their XP is mentoring XP too, and so is an XP or
   level badge reached only thanks to mentoring XP. The owner sets the amounts and the cap, or switches
   it off, in Levels & XP.
-- **Trade reviews.** A member who lets mentors in can send one trade to their picked
-  mentor (or, without picks, the league's mentors): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
+- **Trade reviews.** A member who has a mentor can send them one trade (with two, they
+  choose which): **Ask mentor** on a Daruma journal card, or **Ask my mentor to review this
   trade** under an expanded trade in the full journal. What goes is the shape of a trade
   post (market, side, open and close times, entry, exit, planned stop and target, %
   and R, a size range instead of the size) plus their note and the day's plan; the
@@ -918,8 +947,10 @@ link to join *your* league. A server upgraded from an older version imports its
   holds the wallet address). Mentors see it under **Trades to review** (Social →
   Reviews, `#reviews`), comment as often as they like and mark it **Reviewed ✓**; the
   member gets each comment in their inbox, replies in the thread (Daruma `#tr/<id>`, or
-  under the trade in the journal) and sees **Reviewed by @mentor**. Only the member
-  and the server's mentors see a thread, and only while the member lets mentors in:
+  under the trade in the journal) and sees **Reviewed by @mentor**, then answers **Did this review
+  help?** (yes, not really, or nothing; only the share of yeses shows, on the mentor's track
+  record; `POST /reviews/<id>/helped` `{helped: true | false | null}`). Only the member
+  and the mentor it went to see a thread, and only while the member lets mentors in:
   switching that off, a suspension, or the owner standing a mentor down closes it at
   once. Admins read every thread for moderation, read-only (`GET
   /api/social/admin/reviews[/<id>]`, and in Daruma under Reviews). Limits: 10 new trades a
