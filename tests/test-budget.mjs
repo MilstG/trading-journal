@@ -100,8 +100,10 @@ try {
     // them with the chat saying so: about 2 KB raw on both screens, under 1 KB gzipped.
     // Oct 2026: the coach's summary kept on the device (pzCoachSnap*), so a message sent while the app is still
     // loading goes out at once: about 2 KB raw on both screens, under 1 KB gzipped (+1 on each).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2153, 729],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1840, 623],
+    // Mentoring both sides agree to: requests and answers, note threads, the week's focus, a mentee's 28 days at a
+    // glance and "did this help?": about 15 KB raw, 3 KB gzipped on both (2168 / 1855, 732 / 626).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2170, 733],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1857, 627],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

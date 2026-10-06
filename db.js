@@ -73,6 +73,10 @@ const MIGRATIONS = [
   // answer to "does it pay for you?" (pays: 1 yes, 0 no, null unanswered): members see a count, never who
   `ALTER TABLE playbooks ADD COLUMN rr REAL;
    ALTER TABLE playbook_adopts ADD COLUMN pays INTEGER;`,
+  // a held review's mentor was reminded that its time is running out (when), and the member's answer to
+  // "did this review help?" once it's reviewed (helped: 1 yes, 0 no, null unanswered): counted in the mentor's track record
+  `ALTER TABLE reviews ADD COLUMN reminded INTEGER;
+   ALTER TABLE reviews ADD COLUMN helped INTEGER;`,
 ];
 
 function open(dataDir) {

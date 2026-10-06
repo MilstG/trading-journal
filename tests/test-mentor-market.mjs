@@ -40,6 +40,8 @@ try {
   await call('/admin/config', { method: 'PUT', admin: true, body: { requireClaim: false, unlocksOn: false, standing: { on: false } } });
   MIA = await join_('mia'); KAI = await join_('kai'); LEO = await join_('leo'); NED = await join_('ned'); OLU = await join_('olu'); PAM = await join_('pam');
   for (const h of ['mia', 'kai', 'leo']) await call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action: 'mentor' } });
+  // these mentors take requests on at once while they have room (asking and answering: test-mentor-relationship)
+  for (const k of [MIA, KAI, LEO]) await call('/me', { method: 'PUT', key: k, body: { mentorAuto: true } });
   // XP to spend is the server's ledger, never the total an app reports: each starts with an owner's grant
   for (const [h, k, xp] of [['mia', MIA, 500], ['kai', KAI, 300], ['leo', LEO, 100], ['ned', NED, 120], ['olu', OLU, 30], ['pam', PAM, 400]]) {
     await stats(k, xp); await call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action: 'grant', xp, why: 'Starting balance' } }); }
@@ -62,7 +64,7 @@ try {
   await t('the directory lists every mentor with rate, slots and a track record; sorting and the room filter work', async () => {
     const d = (await call('/mentors?sort=rate', { key: NED })).d;
     eq(d.mentors.map(x => [x.handle, x.rate, x.slots.total, x.firstFree]), [['leo', 0, 5, false], ['mia', 40, 2, true], ['kai', 60, 5, true]]);
-    eq(d.mentors[0].record, { reviewed: 0, replyMs: null, back: null, mentees: 0, results: { age: 0, pw: 0, plug: 0 } });
+    eq(d.mentors[0].record, { reviewed: 0, replyMs: null, helped: null, answers: 0, back: null, mentees: 0, results: { age: 0, pw: 0, plug: 0 } });
     eq([d.me.picks, d.me.max, d.me.wallet], [[], 2, { balance: 120, held: 0, spent: 0 }]);
     eq(d.rates.poolPct, 10);
     eq((await call('/mentors/mia', { key: NED })).d.mentor.handle, 'mia');
@@ -88,8 +90,9 @@ try {
     eq((await call('/mentor/ned', { key: MIA })).status, 200);
     eq((await call('/mentor/ned', { key: LEO })).status, 404, 'leo wasn’t picked');
     ok(!(await call('/mentor', { key: LEO })).d.mentees.some(x => x.handle === 'ned'));
-    ok((await call('/mentor', { key: MIA })).d.mentees.find(x => x.handle === 'ned').picked);
-    ok((await call('/mentor', { key: LEO })).d.mentees.some(x => x.handle === 'pam'), 'pam picked no one: every mentor sees her');
+    ok((await call('/mentor', { key: MIA })).d.mentees.some(x => x.handle === 'ned'));
+    ok(!(await call('/mentor', { key: LEO })).d.mentees.some(x => x.handle === 'pam'), 'pam picked no one: no mentor sees her');
+    eq((await call('/mentor/pam', { key: MIA })).status, 404);
   });
   let first, held;
   await t('with two mentors a trade names one; the first trade with a paid mentor is free, the next holds their rate', async () => {
