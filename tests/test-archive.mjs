@@ -573,4 +573,32 @@ await t('the browser asks for old history on load: the whole of it once, then fr
   ctx.SOC = { key: null }; eq(await ctx.srvIndexFills(A, { fills: [] }), 0); eq(asked.length, 0, 'neither the owner nor a member: nothing');
 });
 
+await t('a load draws without waiting for the index: the old history merges into the fill cache behind it, then one quiet reload', async () => {
+  const { grabFn: g } = makeExtractor(readAppSource(join(here, '..', 'ledger.html')));
+  const A = '0x' + 'd'.repeat(40), B = '0x' + 'e'.repeat(40), asked = [], loads = [], store = new Map();
+  let release; const gate = new Promise(r => { release = r; });
+  const ctx = { Date, Set, JSON, Math, console, SRV: { enabled: true }, SOC: { key: null }, PZ: false, _loading: false, _ixBg: null, statuses: [],
+    settings: { wallets: [{ address: A }, { address: B }, { address: 'lighter:' + A }] },
+    reply: { through: '20261003', fills: [{ tid: 1, oid: 1, time: 5 }, { tid: 9, oid: 9, time: 1 }] } };
+  ctx.srvOwner = () => true;
+  ctx.srvFetch = async p => { asked.push(p); await gate; return { ok: true, json: async () => ctx.reply }; };
+  ctx.venueOf = w => /^lighter:/.test(w.address) ? 'lighter' : 'hyperliquid';
+  ctx.idbGet = async k => store.get(k) || null;
+  ctx.idbSet = async (k, v) => { ok(ctx._loading, 'the merge holds the load lock'); store.set(k, v); };
+  ctx.unpackFillCache = async c => c; ctx.packFillCache = async (fills, last) => ({ v: 2, fills, last });
+  ctx.sleep = ms => new Promise(r => setTimeout(r, ms)); ctx.setStatus = m => ctx.statuses.push(m);
+  ctx.loadAll = async o => { loads.push(o); };
+  vm.createContext(ctx); vm.runInContext(['srvIndexFills', 'indexInBackground'].map(g).join('\n') + '\n' + 'var cacheExtras=' + /const cacheExtras=([^\n]+);\n/.exec(readAppSource(join(here, '..', 'ledger.html')))[1], ctx);
+  store.set('flc:' + A, { v: 2, fills: [{ tid: 1, oid: 1, time: 5 }], last: 5, twapFull: true });
+  const p = ctx.indexInBackground(); eq(ctx.indexInBackground(), p, 'one pass at a time');
+  await new Promise(r => setTimeout(r, 10)); eq(asked, ['/api/v1/archive-fills/' + A], 'only the wallet with a cache is asked for (B was never loaded, Lighter has no index)');
+  ctx._loading = true; release(); await new Promise(r => setTimeout(r, 300));
+  eq(store.get('flc:' + A).fills.length, 1, 'a load in progress: the merge waits for it');
+  ctx._loading = false; await p;
+  const c = store.get('flc:' + A);
+  eq(c.fills.map(f => f.tid), [1, 9], 'the archived fill is merged in once'); eq(c.last, 5); eq(c.indexThrough, '20261003'); ok(c.indexTriedAt > 0); ok(c.twapFull, 'the cache keeps its own marks');
+  eq(loads, [{ auto: true }], 'then one quiet reload rebuilds the trades with it'); ok(/1 fill/.test(ctx.statuses.pop()));
+  eq(ctx._ixBg, null); await ctx.indexInBackground(); eq(asked.length, 1, 'not asked again within 6 hours'); eq(loads.length, 1);
+});
+
 report();
