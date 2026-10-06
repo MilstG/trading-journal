@@ -607,7 +607,6 @@ details>summary{list-style-position:inside}
       <p>Joined ${esc(new Date(m.createdAt).toISOString().slice(0,10))} · last seen ${esc(ago(m.lastSeen))} · ${m.keys} device${m.keys===1?'':'s'}${m.vault?' · sync '+size(m.vault):''}</p>${pills(m)?`<div class="tags" style="margin-top:8px">${pills(m)}</div>`:''}</div></header>
     <section class="card mhead"><div class="stat3" style="margin:0"><div><b>${m.level}</b><span>Level</span></div><div><b>${fmt(m.xp)}</b><span>XP${grantSum?' · '+(grantSum>0?'+':'')+fmt(grantSum)+' from you':''}</span></div><div><b>${m.streak}</b><span>Streak</span></div>${m.balance!=null&&m.balance!==m.xp?`<div><b>${fmt(m.balance)}</b><span>XP to stake</span></div>`:''}
         <div><b>${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</b><span>Coach today</span></div><div><b>${m.awards.length}</b><span>Reward badges</span></div></div>
-      ${UI.code&&UI.code.id===m.id?codeBox(UI.code):''}
     </section>
     ${perfCard(m)}
     <div class="two">
@@ -656,6 +655,7 @@ details>summary{list-style-position:inside}
       <section class="card"><h2>Sign-in &amp; account</h2>
         <p class="muted" style="margin-top:0">A sign-in code links a new device to this profile — for a member you added, or someone who lost theirs.</p>
         <button data-m="code">New sign-in code</button>
+        ${UI.code&&UI.code.id===m.id?codeBox(UI.code):''}
         <p class="muted small">${m.passkeys} passkey${m.passkeys===1?'':'s'} · signed in on ${m.devices} device${m.devices===1?'':'s'}</p>
         <div class="row" style="align-items:center"><button class="fit" data-m="passkeys"${m.passkeys?'':' disabled'}>Reset passkeys</button><button class="fit" data-m="signout"${m.devices?'':' disabled'}>Sign out all devices</button></div>
         <h3>Suspend or delete</h3>
@@ -683,7 +683,7 @@ details>summary{list-style-position:inside}
         for(const [lid,t] of tiers){ const cur=m.leagues.find(x=>x.id===lid); if(want.includes(lid)&&cur&&t!==cur.tier)await post({action:'tier',tier:t,league:lid}); } },'Leagues saved.'); }
     if(a==='passkeys'){ if(!confirm('Remove @'+m.handle+'’s passkeys? They stop signing in, and @'+m.handle+' adds new ones under Account once back in.'))return; return act(()=>post({action:'passkeys'}),'Passkeys removed. Make a sign-in code if they can’t get back in.'); }
     if(a==='signout'){ if(!confirm('Sign @'+m.handle+' out on every device? They need a passkey, their wallet or a sign-in code to get back in.'))return; return act(()=>post({action:'signout'}),'Signed out everywhere.'); }
-    if(a==='code'){ const r=await act(()=>post({action:'code'})); if(r&&r.code){ UI.code={id:m.id,handle:m.handle,code:r.code,admin:!!m.admin}; render(); } return; }
+    if(a==='code'){ const r=await act(()=>post({action:'code'})); if(r&&r.code){ UI.code={id:m.id,handle:m.handle,code:r.code,admin:!!m.admin}; render(); const d=$('codeDone'); if(d)d.scrollIntoView({block:'nearest',behavior:'smooth'}); } return; }
     if(a==='remove'){ if(!confirm('Delete @'+m.handle+'? Their profile, posts and competition entries are removed. This can’t be undone.'))return;
       if(await act(()=>post({action:'remove'}),'Deleted.'))location.hash='#members'; return; }
     if(a==='ban'&&!confirm('Suspend @'+m.handle+'? They disappear from boards and the feed and can’t post until you restore them.'))return;
