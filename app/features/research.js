@@ -120,7 +120,8 @@ function rfScreenHtml(D){
       ${F.weights&&F.weights.on?'<p class="pz-fine" style="margin:0">Your league weighs each slip in the Discipline score by what it costs: the costliest counts in full, the others less.</p>':''}</section>`:''}
     ${rfLuckHtml(D,F)}
     ${typeof crowdSectionHtml==='function'?crowdSectionHtml(D):''}
-    ${typeof luckSectionHtml==='function'?luckSectionHtml(D):''}</div>`;
+    ${typeof luckSectionHtml==='function'?luckSectionHtml(D):''}
+    ${typeof rrSectionHtml==='function'?rrSectionHtml(D):''}</div>`;
 }
 // ---- on Today: the slip that costs you most, priced ----
 function rfCardHtml(D){
