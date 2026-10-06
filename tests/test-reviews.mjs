@@ -1,5 +1,5 @@
-// Mentor trade reviews: a member sends one trade to the league's mentors, the mentors comment and
-// mark it reviewed, the member replies. Who can see a thread (the member, the mentors while the
+// Mentor trade reviews: a member sends one trade to the mentor who took them on, the mentor comments and
+// marks it reviewed, the member replies. Who can see a thread (the member, their mentor while the
 // member lets mentors in, admins read-only), the limits, and what goes when a thread or a member
 // does — over real HTTP.
 import { mkdtempSync } from 'node:fs';
@@ -66,30 +66,39 @@ const join_ = async h => (await call('/join', { method: 'POST', body: { handle: 
 const idOf = async h => (await call('/admin/members', { admin: true })).d.members.find(m => m.handle === h).id;
 const act = async (h, action) => call('/admin/members/' + await idOf(h), { method: 'POST', admin: true, body: { action } });
 const inbox = async k => (await call('/inbox', { key: k })).d.items;
+const ask = (k, h) => call('/mentors/' + h, { method: 'POST', key: k, body: { action: 'pick', letIn: true } });
+const accept = (k, h) => call('/mentor/' + h + '/accept', { method: 'POST', key: k, body: {} });
 const share = (k, key, extra) => call('/reviews', { method: 'POST', key: k, body: Object.assign({ key, trade: TR }, extra || {}) });
 let A, C, M2, D, E, rid;
 try {
   A = await join_('alice'); C = await join_('carol'); M2 = await join_('mona'); D = await join_('dave'); E = await join_('erin');
-  await t('sending needs mentors let in, and a mentor on the server', async () => {
+  await t('sending needs mentors let in, and a mentor who took the member on', async () => {
     eq((await share(A, 'tradeaaa1')).status, 403);
     await call('/me', { method: 'PUT', key: A, body: { share: { mentor: true } } });
     eq((await share(A, 'tradeaaa1')).status, 409, 'no mentors appointed yet');
     await act('carol', 'mentor'); await act('mona', 'mentor');
+    eq((await share(A, 'tradeaaa1')).d.noMentor, true, 'mentors on the server, but none took alice on');
+    eq((await ask(A, 'carol')).status, 200);
+    const r0 = await share(A, 'tradeaaa1'); eq([r0.status, /hasn’t taken you on yet/.test(r0.d.error)], [409, true], 'asked, not answered');
+    eq((await accept(C, 'alice')).status, 200);
     eq((await share(A, 'BAD KEY!')).status, 400); eq((await call('/reviews', { method: 'POST', key: A, body: { key: 'tradeaaa1', trade: { coin: 'BTC' } } })).status, 400);
   });
-  await t('a member sends a trade: the mentors get it in their inbox and in “Trades to review”', async () => {
+  await t('a member sends a trade: their mentor gets it in their inbox and in “Trades to review”', async () => {
     const r = await share(A, 'tradeaaa1', { text: 'Did I size this right?' });
     eq(r.status, 200); rid = r.d.review.id; ok(/^[a-f0-9]{12}$/.test(rid));
     eq([r.d.role, r.d.review.key, r.d.review.handle, r.d.review.trade.usd, r.d.review.waiting, r.d.review.reviewed], ['mentee', 'tradeaaa1', 'alice', undefined, true, null]);
     eq(r.d.comments.map(c => [c.handle, c.text, c.mentor, c.mine]), [['alice', 'Did I size this right?', false, true]]);
-    for (const k of [C, M2]) { const it = (await inbox(k))[0]; eq([it.kind, it.text, it.url], ['mentor', '@alice sent a trade for review: BTC long', '/daruma#tr/' + rid]); }
+    const it = (await inbox(C))[0]; eq([it.kind, it.text, it.url], ['mentor', '@alice sent a trade for review: BTC long', '/daruma#tr/' + rid]);
+    ok(!(await inbox(M2)).some(x => /sent a trade/.test(x.text)), 'mona isn’t alice’s mentor');
+    eq((await call('/reviews', { key: M2 })).d.toReview, []);
     const L = (await call('/reviews', { key: C })).d;
     eq([L.toReview.length, L.toReview[0].id, L.toReview[0].key, L.toReview[0].trade.size, L.mine], [1, rid, null, 2, []]);
     eq((await call('/reviews', { key: D })).d.toReview, null, 'not a mentor: no list');
     eq((await call('/reviews', { key: A })).d.mine.map(x => x.id), [rid]);
   });
-  await t('only the member and the mentors see the thread', async () => {
+  await t('only the member and their mentor see the thread', async () => {
     eq((await call('/reviews/' + rid, { key: D })).status, 404);
+    eq((await call('/reviews/' + rid, { key: M2 })).status, 404, 'another mentor');
     eq((await call('/reviews/' + rid + '/comments', { method: 'POST', key: D, body: { text: 'hi' } })).status, 404);
     eq((await call('/reviews/' + rid, { key: C })).d.role, 'mentor');
     eq((await call('/reviews/nothexatall', { key: A })).status, 404);
@@ -125,7 +134,7 @@ try {
     await call('/me', { method: 'PUT', key: A, body: { share: { usd: false } } });
     eq((await call('/reviews/' + rid, { key: C })).d.review.trade.usd, undefined, 'hidden again at once');
   });
-  await t('opting out of mentors closes every thread to them at once (the member keeps it); opting back in reopens it', async () => {
+  await t('opting out of mentors closes every thread to them at once (the member keeps it) and ends the mentoring; asked again and taken on, it reopens', async () => {
     await call('/me', { method: 'PUT', key: A, body: { share: { mentor: false } } });
     eq((await call('/reviews/' + rid, { key: C })).status, 404);
     eq((await call('/reviews/' + rid + '/comments', { method: 'POST', key: C, body: { text: 'still here?' } })).status, 404);
@@ -133,6 +142,8 @@ try {
     eq((await call('/reviews/' + rid, { key: A })).d.comments.length, 4);
     eq((await share(A, 'tradebbb2')).status, 403, 'and no new ones go out');
     await call('/me', { method: 'PUT', key: A, body: { share: { mentor: true } } });
+    eq((await call('/reviews/' + rid, { key: C })).status, 404, 'carol isn’t alice’s mentor any more');
+    await ask(A, 'carol'); await accept(C, 'alice');
     eq((await call('/reviews/' + rid, { key: C })).status, 200);
   });
   await t('a mentor the owner stands down loses access; a suspended member’s threads are closed to mentors', async () => {

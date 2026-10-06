@@ -813,26 +813,77 @@ function socInboxHtml(){
     ${L.slice(0,4).map(x=>`<div class="pz-nowrow"><span style="color:${x.kind==='mentor'||x.kind==='social'?PZ_COL.xp:x.kind==='season'||x.kind==='role'||x.kind==='league'?'#F4C04E':PZ_COL.risk}">${pzI(ico[x.kind]||'bolt',16)}</span><span><b style="font-size:13px;font-weight:600">${esc(x.text)}</b>${x.kind==='claim'&&SOC.me.needsClaim?' <a class="pz-link" href="#account" style="min-height:0;font-size:13px">Claim my wallet ›</a>':''}<span class="pz-sub" style="display:block;font-size:11px">${x.day?'About '+esc(dayLabel(x.day))+' · ':''}${socAgo(x.at)}</span></span></div>`).join('')}</section>`;
 }
 
-// notes your mentors left, in full, newest first (the evening review is where you read them)
+// a note's thread: the member's one-tap answer, then the replies under it (side: 'mentee' or 'mentor', the one reading)
+const SOC_ACK={got:'Got it',try:'I’ll try this'};
+function socNoteThreadHtml(n, side, h){
+  const ack=n.ack?`<span class="pz-tag ${n.ack==='try'?'win':'info'}">${esc(SOC_ACK[n.ack])}</span>`:'';
+  const replies=(n.replies||[]).map(y=>`<div class="pz-sub" style="font-size:13px;margin-top:6px;padding-left:10px;border-left:2px solid var(--pz-line,rgba(127,127,127,.3))"><b>@${esc(y.by)}</b> ${esc(y.text)} <span style="font-size:11px">· ${socAgo(y.at)}</span></div>`).join('');
+  const open=pzS.nreplyFor===n.id, key=side==='mentor'?'data-h="'+esc(h)+'"':'';
+  const canReply=side==='mentee'||n.by===(SOC.me&&SOC.me.handle);
+  const box=open?`<div class="pz-field" style="margin-top:6px"><label for="socNrIn" class="pz-sr">Reply</label><textarea id="socNrIn" rows="2" maxlength="600" placeholder="${side==='mentee'?'Ask, or say how it went':'Answer'}"></textarea></div>
+    <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-nrsend="${esc(n.id)}" data-side="${side}" ${key}>Send</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-nrfor="">Cancel</button></div>`
+    :canReply?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${side==='mentee'?Object.entries(SOC_ACK).map(([k,l])=>`<button type="button" class="pz-linkbtn" data-soc-nack="${k}" data-id="${esc(n.id)}" aria-pressed="${n.ack===k}">${esc(l)}</button>`).join(''):''}<button type="button" class="pz-linkbtn" data-soc-nrfor="${esc(n.id)}">Reply</button></div>`:'';
+  return `${ack?`<div style="margin-top:4px">${ack}</div>`:''}${replies}${box}`;
+}
+// the focus a mentor set for your week, with how often its slip came up since (from the days your mentor sees)
+function socFocusProgressTxt(f){ const p=f.progress; if(!p)return '';
+  const rate=x=>x.days?Math.round(100*x.slip/x.days):null, a=rate(p.before), b=rate(p.since), name=SOC_SLIP_SHORT[f.slip]||f.slip;
+  if(!p.since.days)return 'Following “'+name+'”: no trading days since it was set.';
+  return '“'+name[0].toUpperCase()+name.slice(1)+'” on '+p.since.slip+' of '+p.since.days+' trading day'+(p.since.days===1?'':'s')+' since'+(a==null?'':', against '+a+'% of days in the four weeks before')+'.'; }
+function socFocusCardHtml(L){
+  if(!L||!L.length)return '';
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Your focus this week</b>${L.map(f=>`<div class="pz-quote">${esc(f.text)}<span class="pz-sub" style="display:block;font-size:11px;margin-top:4px">From @${esc(f.by)} · ${socAgo(f.at)}</span>${f.slip?`<span class="pz-sub" style="display:block;font-size:12px;margin-top:4px">${esc(socFocusProgressTxt(f))}</span>`:''}
+    <button type="button" class="pz-linkbtn" style="margin-top:4px" data-soc-adopt="${esc(f.text)}" data-from="${esc(f.by)}">Adopt as habit</button></div>`).join('')}</section>`;
+}
+// on Today: what your mentors asked you to work on this week
+function socMentorFocusHtml(){
+  if(!SOC.me||!SOC.share||!SOC.share.mentor||!(SOC.me.myMentors||[]).length)return '';
+  const c=socGet('notes','/notes',60000); return c&&c.d?socFocusCardHtml(c.d.focus):'';
+}
+// notes your mentors left, in full, newest first (the evening review is where you read them), each with its thread
 function socNotesHtml(){
   if(!SOC.me||!SOC.share||!SOC.share.mentor)return '';
-  const c=socGet('notes','/notes',60000), L=c&&c.d?c.d.notes:[]; if(!L.length)return '';
-  return `<section class="pz-card pz-kv"><b class="pz-kvh">Notes from your mentor</b>${L.slice(0,5).map(n=>`<div class="pz-quote">${esc(n.text)}<span class="pz-sub" style="display:block;font-size:11px;margin-top:4px">@${esc(n.by)}${n.day?' · about '+esc(dayLabel(n.day)):''} · ${socAgo(n.at)}</span></div>`).join('')}</section>`;
+  const c=socGet('notes','/notes',60000), L=c&&c.d?c.d.notes:[], F=c&&c.d?socFocusCardHtml(c.d.focus):''; if(!L.length)return F;
+  return `${F}<section class="pz-card pz-kv"><b class="pz-kvh">Notes from your mentor</b>${L.slice(0,5).map(n=>`<div class="pz-quote">${esc(n.text)}<span class="pz-sub" style="display:block;font-size:11px;margin-top:4px">@${esc(n.by)}${n.day?' · about '+esc(dayLabel(n.day)):''} · ${socAgo(n.at)}</span>${socNoteThreadHtml(n,'mentee')}</div>`).join('')}</section>`;
 }
-// ---- mentors: the members who let mentors in, their days, and notes on them ----
+// ---- mentors: requests waiting on you, the members you took on, their days, and notes on them ----
 function socMentorHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
   if(!SOC.me.mentor){ if(typeof socMeRefresh==='function'&&Date.now()-_socMeAt>3000)socMeRefresh(); // an appointment made a moment ago shows on the next render
     return `${back}${pzHead('Mentor','Mentees')}<section class="pz-card"><p class="pz-sub">Only mentors the league owner appointed see this.</p></section>`; }
-  const c=socGet('mentees','/mentor',30000), L=c&&c.d?c.d.mentees:null;
+  const c=socGet('mentees','/mentor',30000), d=c&&c.d, L=d?d.mentees:null;
   if(!L)return `${back}${pzHead('Mentor','Mentees')}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const pg=pzPage('mentees',L);
-  return `${back}${pzHead(L.length+' member'+(L.length===1?'':'s')+' let you in','Mentees')}${socMentorSetHtml()}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
-    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.picked?' <span class="pz-tag win">picked you</span>':m.asked?' <span class="pz-tag info">asked for you</span>':''}</b>
+  const pg=pzPage('mentees',L), R=d.requests||[], full=d.slots&&d.slots.used>=d.slots.total;
+  const reqs=R.length?`<section class="pz-card pz-kv" style="margin-bottom:12px"><b class="pz-kvh">Asking for you · ${R.length}</b>
+    ${R.map(m=>`<div style="display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--pz-line,rgba(127,127,127,.2))"><div class="pz-kvrow" style="justify-content:flex-start;gap:10px">${socAv(m.handle,32)}<span style="flex:1;min-width:0"><b>@${esc(m.handle)}</b><span class="pz-sub" style="display:block;font-size:12px" data-pz-tip="${esc(socDisc7Tip(m.verified7))}">Level ${m.level} · Discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'}, last 7 trading days · asked ${socAgo(m.at)}</span></span></div>
+      ${m.text?`<div class="pz-quote">${esc(m.text)}</div>`:''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" style="width:auto;padding:0 16px" data-soc-mreq="accept" data-h="${esc(m.handle)}"${full?' disabled':''}>Take on</button><button type="button" class="pz-ghost pz-sm" style="width:auto;padding:0 16px" data-soc-mreq="decline" data-h="${esc(m.handle)}">${SOC.confirm==='mdecline:'+m.handle?'Tap again to say no':'Not now'}</button></div></div>`).join('')}
+    ${full?`<p class="pz-fine" style="margin:0">You’re full (${d.slots.total} mentees). Raise Mentees at once below, or let someone go, to take more on.</p>`:'<p class="pz-fine" style="margin:0">They see your answer. Saying no lets them ask again in a week.</p>'}</section>`:'';
+  return `${back}${pzHead(L.length+' mentee'+(L.length===1?'':'s')+(d.slots?' of '+d.slots.total:''),'Mentees')}${reqs}${socMentorSetHtml()}<a class="pz-card pz-cardlink" href="#reviews" style="margin-bottom:12px"><b style="flex:1">Trades to review</b>${pzI('chev',18)}</a>
+    ${L.length?`<div class="pz-jgrid">${pg.items.map(m=>`<a class="pz-card pz-cardlink" href="#mentee/${esc(m.handle)}">${socAv(m.handle,36)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><b style="font-size:15px">@${esc(m.handle)}${m.unread?` <span class="pz-tag info">${m.unread} new repl${m.unread===1?'y':'ies'}</span>`:''}</b>
       <span class="pz-sub" style="font-size:12px" data-pz-tip="${esc(socDisc7Tip(m.verified7))}">Discipline ${m.avg7==null?'—':m.avg7} · ${m.slips7} slip${m.slips7===1?'':'s'}, last 7 trading days · ${m.streak}-day streak${m.lastDay?' · last traded '+esc(dayLabel(m.lastDay)):''}</span>
-      <span class="pz-sub" style="font-size:12px">${m.notes} note${m.notes===1?'':'s'} so far</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
-      :'<section class="pz-card"><p class="pz-sub">No one has let mentors in yet. Members switch on “Let mentors see my days” under What you share.</p></section>'}`;
+      <span class="pz-sub" style="font-size:12px">${m.focus?'Focus: '+esc(m.focus.text):m.notes+' note'+(m.notes===1?'':'s')+' so far'}</span></span>${pzI('chev',18)}</a>`).join('')}</div>${pg.html}`
+      :`<section class="pz-card"><p class="pz-sub">${R.length?'Take someone on above and their days show here.':'No mentees yet. Members ask you from the mentor directory or your profile, and you decide.'}</p></section>`}`;
+}
+// a mentee at a glance: each slip in their latest 14 trading days against the 14 before, and Discipline the same way
+function socMenteeInsightHtml(m){
+  const I=m.insight; if(!I)return '';
+  const arrow=(a,b)=>a>b?`<span style="color:${PZ_COL.low}">▲</span>`:a<b?`<span style="color:${PZ_COL.good}">▼</span>`:'';
+  const dsc=I.discipline, dTxt=dsc.recent==null?'—':dsc.recent+(dsc.before!=null?' (was '+dsc.before+')':'');
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Last ${dsc.nRecent+dsc.nBefore} trading day${dsc.nRecent+dsc.nBefore===1?'':'s'}</b>
+    <div class="pz-row-t"><span>Discipline, latest ${dsc.nRecent} against the ${dsc.nBefore} before</span><b>${dTxt}</b></div>
+    ${I.slips.length?I.slips.map(z=>`<div class="pz-row-t"><span>${esc(SOC_SLIP_SHORT[z.k]||z.k)}</span><b>${z.recent} ${arrow(z.recent,z.before)} <span class="pz-sub" style="font-size:11px;font-weight:400">was ${z.before}</span></b></div>`).join(''):'<span class="pz-sub" style="font-size:13px">No slips in this stretch.</span>'}
+    <span class="pz-sub" style="font-size:11px">Trading days with each slip, the latest ${dsc.nRecent} against the ${dsc.nBefore} before (up to 14 each)${I.verified?', scored from their wallet':''}.</span></section>`;
+}
+function socMenteeFocusHtml(m){
+  const f=m.focus, h=esc(m.handle), editing=pzS.focusFor===m.handle;
+  const form=`<div class="pz-field"><label for="socFocusIn">One thing to work on this week</label><input type="text" id="socFocusIn" maxlength="140" value="${esc(f?f.text:'')}" placeholder="e.g. No new trade within 15 minutes of a loss"></div>
+    <div class="pz-field"><label for="socFocusSlip">Follow a slip (optional)</label><select id="socFocusSlip"><option value="">None</option>${Object.entries(SOC_SLIP_SHORT).map(([k,l])=>`<option value="${k}"${f&&f.slip===k?' selected':''}>${esc(l)}</option>`).join('')}</select></div>
+    <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-focus="save" data-h="${h}">Set focus</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-focus="cancel" data-h="${h}">Cancel</button></div>`;
+  return `<section class="pz-card pz-kv"><b class="pz-kvh">Focus this week</b>${editing?form:f?`<div class="pz-quote">${esc(f.text)}<span class="pz-sub" style="display:block;font-size:11px;margin-top:4px">Set ${socAgo(f.at)}</span>${f.slip?`<span class="pz-sub" style="display:block;font-size:12px;margin-top:4px">${esc(socFocusProgressTxt(f))}</span>`:''}</div>
+    <div style="display:flex;gap:10px"><button type="button" class="pz-linkbtn" data-soc-focus="edit" data-h="${h}">Change</button><button type="button" class="pz-linkbtn" data-soc-focus="clear" data-h="${h}">Clear</button></div>`
+    :`<span class="pz-sub" style="font-size:13px">Give @${h} one thing to work on. They see it on Today and can adopt it as a habit; follow a slip to see how often it comes up.</span><button type="button" class="pz-ghost pz-sm" style="align-self:flex-start;width:auto;padding:0 14px" data-soc-focus="edit" data-h="${h}">Set a focus</button>`}</section>`;
 }
 function socMenteeHtml(D, handle){
   const back=`<a class="pz-back" href="#mentor">${pzI('back',20)}Mentees</a>`;
@@ -841,21 +892,26 @@ function socMenteeHtml(D, handle){
   if(!m)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const notesBy={}; for(const n of m.notes)(notesBy[n.day||'']=notesBy[n.day||'']||[]).push(n);
   const pg=pzPage('mentee:'+handle,m.days,10);
+  const note=n=>`<div class="pz-quote">${esc(n.text)} <span class="pz-sub" style="font-size:11px">— @${esc(n.by)}, ${socAgo(n.at)}${n.by===SOC.me.handle?` · <button type="button" class="pz-linkbtn" data-soc-ndel="${esc(n.id)}" data-h="${esc(m.handle)}">Delete</button>`:''}</span>${socNoteThreadHtml(n,'mentor',m.handle)}</div>`;
   const row=d=>`<section class="pz-card pz-kv"><div class="pz-kvrow"><b>${esc(dayLabel(d.k))}</b><b style="color:${PZ_COL[pzBand(d.s)]}">${d.s}</b></div>
     <span class="pz-sub" style="font-size:13px">${d.f.length?esc(d.f.map(k=>SOC_SLIP_SHORT[k]||k).join(' · ')):'No slips'}${d.r?' · reviewed':''}${d.j?' · journaled':''}</span>
     ${d.l?`<p style="margin:0;font-size:14px">“${esc(d.l)}”</p>`:''}
-    ${(notesBy[d.k]||[]).map(n=>`<div class="pz-quote">${esc(n.text)} <span class="pz-sub" style="font-size:11px">— @${esc(n.by)}, ${socAgo(n.at)}${n.by===SOC.me.handle?` · <button type="button" class="pz-linkbtn" data-soc-ndel="${esc(n.id)}" data-h="${esc(m.handle)}">Delete</button>`:''}</span></div>`).join('')}
+    ${(notesBy[d.k]||[]).map(note).join('')}
     ${pzS.noteFor===d.k?`<div class="pz-field"><label for="socNoteIn" class="pz-sr">Note</label><textarea id="socNoteIn" rows="2" maxlength="600" placeholder="What you see, and one thing to try"></textarea></div>
       <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-nsend="${esc(d.k)}" data-h="${esc(m.handle)}">Send note</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-notefor="">Cancel</button></div>`
       :`<button type="button" class="pz-linkbtn" style="align-self:flex-start" data-soc-notefor="${esc(d.k)}">Add a note on this day</button>`}</section>`;
+  const R=m.reviews||[];
+  const trades=`<section class="pz-card pz-kv"><b class="pz-kvh">Trades they sent you</b>${R.length?R.slice(0,6).map(r=>`<a class="pz-row-t" href="#tr/${esc(r.id)}" style="text-decoration:none;color:inherit"><span>${esc((r.trade.label||r.trade.coin)+' '+r.trade.side)} · ${socAgo(r.at)}</span><b style="font-size:12px">${r.reviewed?'Reviewed ✓'+(r.helped===true?' · helped':''):r.waiting?'Waiting for you':'You replied'}</b></a>`).join(''):'<span class="pz-sub" style="font-size:13px">None yet. They send one with Ask mentor in their journal.</span>'}</section>`;
+  const cf=SOC.confirm==='mrelease:'+m.handle;
   return `${back}${pzHead('Level '+m.level+' · '+m.streak+'-day streak','@'+m.handle)}
     <div class="pz-wide"><div class="pz-col">${m.days.length?pg.items.map(row).join('')+pg.html:'<section class="pz-card"><p class="pz-sub">No trading days shared yet.</p></section>'}</div>
-    <div class="pz-col"><section class="pz-card pz-kv"><b class="pz-kvh">At a glance</b><div class="pz-row-t" data-pz-tip="${esc(socDisc7Tip(m.verified7))}"><span>Discipline, last 7 trading days</span><b>${m.avg7==null?'—':m.avg7}</b></div><div class="pz-row-t"><span>Slips, last 7 trading days</span><b>${m.slips7}</b></div><div class="pz-row-t"><span>Best streak</span><b>${m.best}</b></div>
+    <div class="pz-col">${socMenteeFocusHtml(m)}${socMenteeInsightHtml(m)}<section class="pz-card pz-kv"><b class="pz-kvh">At a glance</b><div class="pz-row-t" data-pz-tip="${esc(socDisc7Tip(m.verified7))}"><span>Discipline, last 7 trading days</span><b>${m.avg7==null?'—':m.avg7}</b></div><div class="pz-row-t"><span>Slips, last 7 trading days</span><b>${m.slips7}</b></div><div class="pz-row-t"><span>Best streak</span><b>${m.best}</b></div>
       ${m.challenge?`<div class="pz-row-t"><span>Last challenge</span><b>${esc(m.challenge)}</b></div>`:''}${m.habits.length?`<p class="pz-sub" style="font-size:13px">Habits: ${m.habits.map(esc).join(' · ')}</p>`:''}</section>
-      ${(notesBy['']||[]).length?`<section class="pz-card pz-kv"><b class="pz-kvh">General notes</b>${notesBy[''].map(n=>`<div class="pz-quote">${esc(n.text)}</div>`).join('')}</section>`:''}
-      <p class="pz-fine">You see what @${esc(m.handle)} chose to share with mentors: scores, slips and their nightly lesson. Trades only when they send one for review (under Trades to review); never wallets.</p></div></div>`;
+      ${trades}
+      ${(notesBy['']||[]).length?`<section class="pz-card pz-kv"><b class="pz-kvh">General notes</b>${notesBy[''].map(note).join('')}</section>`:''}
+      <button type="button" class="pz-quietbtn warn" data-soc-mrelease="${esc(m.handle)}">${cf?'Tap again to stop mentoring @'+esc(m.handle)+'. Anything held for your review goes back to them.':'Stop mentoring @'+esc(m.handle)}</button>
+      <p class="pz-fine">You see what @${esc(m.handle)} chose to share with their mentors: scores, slips and their nightly lesson. Trades only when they send one for review; never wallets.</p></div></div>`;
 }
-
 // ---- reminders: web push to this device, on the member's clock ----
 function pzPushHtml(){
   if(!SOC.me||!SOC.me.push||!SOC.me.push.available)return '';

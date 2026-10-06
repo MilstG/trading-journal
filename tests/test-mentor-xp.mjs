@@ -48,7 +48,10 @@ try {
   Q = await join_('quin', { address: W('3'), share: { verify: true } }); Z = await join_('zed', { address: W('4'), share: { verify: true } });
   for (const k of [O, P, Q, Z]) await until(async () => (await me(k)).ta);
   await call('/admin/members/' + await idOf('mia'), { method: 'POST', admin: true, body: { action: 'mentor' } });
-  for (const k of [N, O, P, Q, Z]) await call('/me', { method: 'PUT', key: k, body: { share: { mentor: true } } });
+  // mia takes requests on at once; each mentee asks her (which lets mentors in)
+  await call('/me', { method: 'PUT', key: M, body: { mentorAuto: true, mentorSlots: 20 } });
+  const pickMia = k => call('/mentors/mia', { method: 'POST', key: k, body: { action: 'pick', letIn: true } });
+  for (const k of [N, O, P, Q, Z]) await pickMia(k);
   for (const k of [O, P, Q]) await traded(k);
   await traded(Z, 20); // last traded 20 days ago
 
@@ -65,7 +68,7 @@ try {
     const mx = (await me(M)).mentorXp; eq([mx.total, mx.today, mx.days[key(clock)].n], [15, 15, 3]);
   });
   await t('a mentee without a verified wallet pays nothing, whatever days their app reports', async () => {
-    const S2 = await join_('sock'); await call('/me', { method: 'PUT', key: S2, body: { share: { mentor: true } } }); await traded(S2);
+    const S2 = await join_('sock'); await pickMia(S2); await traded(S2);
     eq((await note(M, 'sock')).d.xp, 0, 'no wallet the server reads: could be the mentor’s own second profile');
   });
   await t('a trade review pays once, and only with a comment from the mentor in it', async () => {

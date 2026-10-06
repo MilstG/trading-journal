@@ -10,7 +10,7 @@
 // their mentors for review (reviews.js). Returns are read on the server from the
 // chain, never sent from here. Sample data is never posted.
 const SOC_KEY_STORE='pz_social_key';
-const SOC_DEFAULT_SHARE={profile:true,boards:true,global:true,page:true,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false,mentor:true,bench:true,duels:true,seek:false};
+const SOC_DEFAULT_SHARE={profile:true,boards:true,global:true,page:true,feed:true,habits:true,verify:true,ret:false,usd:false,addr:false,mentor:false,bench:true,duels:true,seek:false};
 const SOC_SHARE_ROWS=[
   ['profile','Public profile','Your profile page: streak, discipline, badges. Name, level and league show wherever you appear'],
   ['boards','Process leaderboards','Weekly XP, discipline and streak boards in your leagues'],
@@ -22,7 +22,7 @@ const SOC_SHARE_ROWS=[
   ['ret','Show % return','30-day return and drawdown, read from your first wallet on chain'],
   ['usd','Show dollar P&L','Reveals your account size to everyone, and your In the black and Big day badges',true],
   ['addr','Show wallet address','Anyone could look up every trade and balance',true],
-  ['mentor','Let mentors see my days','Mentors the owner appointed see your scores, slips and the lesson you write each night, and can leave you notes. They see a trade only when you send it for review; never your wallet'],
+  ['mentor','Let my mentors see my days','The mentors who took you on (you ask one under Mentors) see your scores, slips and the lesson you write each night, and can leave you notes. They see a trade only when you send it for review; never your wallet. Off: every mentoring ends'],
   ['seek','Looking for an accountability partner','Shows you under “Looking for a partner” in Find people, so someone who wants one can ask you'],
   ['duels','Accept duel challenges','Other members can challenge you to a week or a month, 1 on 1, on Discipline, clean days, journaling or XP. Nothing starts until you accept; switch off to stop receiving challenges'],
   ['bench','Count me in “Traders like you”','An anonymous summary of your last 90 days (win rate, discipline, how much you journal; trade size only as a range) goes into peer groups of 25 or more, and is kept weekly for about 6 months to see what changed for traders who improved. Other members only ever see the groups, never you; the league’s owner and admins can see your own summary. No trades, coins, amounts or wallet. Switch off to be left out (your history is deleted, and it’s kept from the owner too)']];
@@ -254,7 +254,7 @@ try{ window.addEventListener('hashchange',()=>{ SOC.nav++; if(typeof socMeRefres
 function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;
-  let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor),!!(SOC.share&&SOC.share.usd)),
+  let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor&&SOC.me&&(SOC.me.myMentors||[]).length),!!(SOC.share&&SOC.share.usd)),
     {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())})); }catch(e){ return; }
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
@@ -1137,22 +1137,22 @@ function socPeopleHtml(D){
 }
 // after asking, accepting or challenging: the People cards, profiles and duel forms show the new state at once
 const socPeopleDrop=()=>{ for(const k of Object.keys(SOC.cache))if(/^(people|u|dw):/.test(k))delete SOC.cache[k]; };
-// ---- Mentors (#mentors, #mentors/<handle>): pick up to two, each with their rate, room and track record ----
-// Picked mentors are the only ones who see your days and the trades you send. A review costs the mentor's
+// ---- Mentors (#mentors, #mentors/<handle>): ask up to two, each with their rate, room and track record ----
+// A mentor sees your days and the trades you send only once they took you on; nobody else does. A review costs the mentor's
 // rate in XP to spend (the first trade with each is free): held when you send, paid when they mark it
 // reviewed, back after the owner's hold time. Your level never goes down for it.
-const SOC_MSORT=[['open','Room first'],['reply','Fastest reply'],['back','Most come back'],['rate','Lowest rate']];
+const SOC_MSORT=[['open','Room first'],['reply','Fastest reply'],['helped','Most helpful'],['back','Most come back'],['rate','Lowest rate']];
 const socMDrop=()=>{ for(const k of Object.keys(SOC.cache))if(k.startsWith('mentors:')||k.startsWith('mentor:')||k==='reviews')delete SOC.cache[k]; };
 function socReplyTxt(ms){ if(ms==null)return '—'; const m=ms/60000; return m<60?'~'+Math.max(1,Math.round(m))+'m':m<2880?'~'+Math.round(m/60)+'h':'~'+Math.round(m/1440)+'d'; }
 function socRateHtml(c){ return c.rate&&!c.sameOwner?`<span class="pz-mrate">${c.rate} XP<small>PER TRADE</small></span>`:`<span class="pz-mrate free">Free<small>EVERY TRADE</small></span>`; }
 function socMWalletHtml(w){ return `<span class="pz-sub" style="font-size:12px"><b style="color:var(--pz-xp)">${w.balance.toLocaleString()} XP</b> to spend${w.held?' · '+w.held+' held for reviews':''}${w.spent?' · '+w.spent+' paid so far':''}. Paying a mentor never lowers your level.</span>`; }
 function socMCardHtml(c){
-  const r=c.record, tags=[c.picked?'<span class="pz-tag win">Your mentor</span>':'',c.me?'<span class="pz-tag info">You</span>':'',
+  const r=c.record, tags=[c.picked?'<span class="pz-tag win">Your mentor</span>':'',c.requested?'<span class="pz-tag info">Asked · waiting</span>':'',c.me?'<span class="pz-tag info">You</span>':'',
     c.slots.open?`<span class="pz-tag">${c.slots.open} of ${c.slots.total} open</span>`:`<span class="pz-tag caution">Full${c.waiting?' · you’re waiting':''}</span>`,
     r.reviewed<10?'<span class="pz-tag info">New mentor</span>':'',c.firstFree?'<span class="pz-tag">1st trade free</span>':'',c.style?`<span class="pz-tag">${esc(SOC_STYLE[c.style]||c.style)}</span>`:''].filter(Boolean).join('');
   return `<a class="pz-card pz-person" href="#mentors/${esc(c.handle)}" style="text-decoration:none;color:var(--pz-text)">
     <span class="pz-person-h">${socAv(c.handle,40)}<span class="pz-person-i"><b>@${esc(c.handle)}</b><span class="pz-sub" style="display:block;font-size:12px">Level ${c.level} · ${esc(c.title)}${c.own.traderAge!=null?' · trading '+c.own.traderAge+' yr'+(c.own.traderAge===1?'':'s'):''}${c.active?'':' · not seen this week'}</span></span>${socRateHtml(c)}</span>
-    <div class="pz-mstat"><div><b>${r.reviewed}</b><span>reviewed, 90 days</span></div><div><b>${socReplyTxt(r.replyMs)}</b><span>typical reply</span></div><div><b>${r.back==null?'—':r.back+'%'}</b><span>${r.back==null?'too few to say':'came back'}</span></div></div>
+    <div class="pz-mstat"><div><b>${r.reviewed}</b><span>reviewed, 90 days</span></div><div><b>${socReplyTxt(r.replyMs)}</b><span>typical reply</span></div>${r.helped!=null?`<div><b>${r.helped}%</b><span>said it helped</span></div>`:`<div><b>${r.back==null?'—':r.back+'%'}</b><span>${r.back==null?'too few to say':'came back'}</span></div>`}</div>
     ${tags?`<div class="pz-tags">${tags}</div>`:''}</a>`; }
 function socMRatesTxt(R){ return !R.on?'Reviews are free on this server.':'Each mentor sets a rate between '+R.min+' and '+R.max+' XP a trade. Your first trade with each is free; after that the XP is held when you send a trade, paid when they mark it reviewed, and back to you if they haven’t within '+R.holdHours+' hours.'; }
 function socMentorsHtml(D){
@@ -1164,7 +1164,7 @@ function socMentorsHtml(D){
   const ctl=`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap"><button type="button" class="pz-chipbtn" data-soc-mopen="1" aria-pressed="${open}">Has room</button>
     <label class="pz-sub" style="font-size:12px;display:flex;gap:6px;align-items:center" for="socMsort">Sort <select id="socMsort">${SOC_MSORT.map(([k,l])=>`<option value="${k}"${k===sort?' selected':''}>${l}</option>`).join('')}</select></label></div>`;
   const mine=d?`<section class="pz-card pz-kv"><b class="pz-kvh">Your mentors · ${d.me.picks.length} of ${d.me.max}</b>
-    ${d.me.picks.length?`<div class="pz-tags">${d.me.picks.map(h=>`<a class="pz-tag win" href="#mentors/${esc(h)}" style="text-decoration:none">@${esc(h)}</a>`).join('')}</div>`:'<span class="pz-sub" style="font-size:13px">None yet: every mentor on this server sees your days until you pick.</span>'}
+    ${d.me.picks.length||d.me.requests.length?`<div class="pz-tags">${d.me.picks.map(h=>`<a class="pz-tag win" href="#mentors/${esc(h)}" style="text-decoration:none">@${esc(h)}</a>`).join('')}${d.me.requests.map(h=>`<a class="pz-tag info" href="#mentors/${esc(h)}" style="text-decoration:none">@${esc(h)} · asked</a>`).join('')}</div>`:'<span class="pz-sub" style="font-size:13px">None yet. No mentor sees your days until one takes you on.</span>'}
     ${socMWalletHtml(d.me.wallet)}</section>`:'';
   return `${back}${pzHead(d?d.total+' mentor'+(d.total===1?'':'s'):'Mentors','Mentors')}
     <div class="pz-wide"><div class="pz-col">${mine}
@@ -1174,8 +1174,8 @@ function socMentorsHtml(D){
       :d.mentors.length?d.mentors.map(socMCardHtml).join('')
       :`<section class="pz-card pz-empty"><b>No mentors here</b><p class="pz-sub">${q||st||open?'Nobody matches. Try another style or switch off “Has room”.':'This server has no mentors yet. The owner appoints them.'}</p></section>`}
     </div><div class="pz-col">
-    <p class="pz-fine">Pick up to two. Your mentors see your daily scores, slips and the lesson you write each night, and the trades you send them. Nobody else does, and never your wallet. ${d?esc(socMRatesTxt(d.rates)):''}</p>
-    <p class="pz-fine">Track records count only what this server measured over 90 days: trades marked reviewed with a comment, the median time to a first reply, and how many members sent another trade within 30 days. Mentees’ profits are never shown.</p></div></div>`;
+    <p class="pz-fine">Ask up to two. Once a mentor takes you on, they see your daily scores, slips and the lesson you write each night, and the trades you send them. Nobody else does, and never your wallet. ${d?esc(socMRatesTxt(d.rates)):''}</p>
+    <p class="pz-fine">Track records count only what this server measured over 90 days: trades marked reviewed with a comment, the median time to a first reply, how many members said a review helped (from 5 answers) and how many sent another trade within 30 days. Mentees’ profits are never shown.</p></div></div>`;
 }
 function socMentorPageHtml(D, handle){
   const back=`<a class="pz-back" href="#mentors">${pzI('back',20)}Mentors</a>`;
@@ -1189,17 +1189,23 @@ function socMentorPageHtml(D, handle){
   if(m.me)act=`<a class="pz-ghost" href="#mentor">Set your rate and room under Mentees</a>`;
   else if(m.picked)act=`<p class="pz-sub" style="font-size:13px;margin:0">Send @${h} a trade with <b>Ask mentor</b> on it in your journal.</p>
     <button type="button" class="pz-quietbtn warn" data-soc-mact="drop" data-h="${h}">${cf==='mdrop:'+m.handle?'Tap again to stop working with @'+h+'. XP held for them comes back.':'Stop working with @'+h}</button>`;
-  else if(me.picks.length>=me.max)act=`<p class="pz-sub" style="font-size:13px;margin:0">You have ${me.max} mentors (${me.picks.map(x=>'@'+esc(x)).join(' and ')}). Drop one to pick @${h}.</p>`;
+  else if(m.requested)act=`<p class="pz-sub" style="font-size:13px;margin:0">You asked @${h}. They see your request with your last 7 days at a glance, and your days open to them once they take you on.</p>
+    <button type="button" class="pz-ghost" data-soc-mact="drop" data-h="${h}">Take the request back</button>`;
+  else if(m.declinedUntil)act=`<p class="pz-sub" style="font-size:13px;margin:0">@${h} couldn’t take you on this time. You can ask again ${esc(dayLabel(new Date(m.declinedUntil).toISOString().slice(0,10)))}.</p>`;
+  else if(me.picks.length+me.requests.length>=me.max)act=`<p class="pz-sub" style="font-size:13px;margin:0">You have ${me.max} mentors or requests (${[...me.picks,...me.requests].map(x=>'@'+esc(x)).join(' and ')}). Drop one to ask @${h}.</p>`;
   else if(!m.slots.open)act=m.waiting?`<p class="pz-sub" style="font-size:13px;margin:0">You’re on the waitlist. You’ll hear when a slot opens.</p><button type="button" class="pz-ghost" data-soc-mact="unwait" data-h="${h}">Leave the waitlist</button>`
     :`<button type="button" class="pz-ghost" data-soc-mact="wait" data-h="${h}">Join the waitlist</button><p class="pz-fine" style="text-align:center">@${h} is full right now.</p>`;
-  else act=`${cf==='mpick:'+m.handle?`<p class="pz-sub" style="font-size:13px;margin:0">Picking a mentor lets your mentors see your days: scores, slips and the lesson you write each night. Never your wallet, and a trade only when you send one. You can switch it off any time in Profile &amp; privacy.</p>`:''}
-    <button type="button" class="pz-cta" data-soc-mact="pick" data-h="${h}">${cf==='mpick:'+m.handle?'Let mentors in and pick @'+h:'Pick @'+h+' as my mentor'}</button>`;
+  else act=`${cf==='mpick:'+m.handle?`<p class="pz-sub" style="font-size:13px;margin:0">Asking a mentor switches on Let my mentors see my days. Once @${h} takes you on, they see your scores, slips and the lesson you write each night. Never your wallet, and a trade only when you send one. You can switch it off any time in Profile &amp; privacy.</p>`:''}
+    <div class="pz-field"><label for="socMask">What would you like help with? <span class="pz-sub">(optional)</span></label><textarea id="socMask" rows="2" maxlength="300" placeholder="e.g. I keep revenge trading after a stop-out"></textarea></div>
+    <button type="button" class="pz-cta" data-soc-mact="pick" data-h="${h}">${cf==='mpick:'+m.handle?'Let mentors in and ask @'+h:m.auto?'Pick @'+h+' as my mentor':'Ask @'+h+' to mentor me'}</button>
+    ${m.auto?'':`<p class="pz-fine" style="text-align:center;margin:0">@${h} decides whether to take you on.</p>`}`;
   return `${back}${pzHead('Level '+m.level+' · '+(m.style?SOC_STYLE[m.style]||m.style:m.title),'@'+m.handle)}
     <div class="pz-wide"><div class="pz-col">
       <section class="pz-card pz-person"><span class="pz-person-h">${socAv(m.handle,52)}<span class="pz-person-i">${m.bio?`<span style="font-size:14px">${esc(m.bio)}</span>`:'<span class="pz-sub">No bio yet.</span>'}</span></span>
         <div style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span class="pz-sub" style="font-size:13px">${esc(rateTxt)}.</span>${socRateHtml(m)}</div></section>
       <span class="pz-lbl" style="color:var(--pz-muted)">Last 90 days</span>
-      <div class="pz-grid2">${tile(r.reviewed,'trades reviewed')}${tile(socReplyTxt(r.replyMs),'typical first reply')}${tile(r.back==null?'—':r.back+'%',r.back==null?'new mentor: too few reviews to say who came back':'sent another trade within 30 days')}${tile(m.slots.open+' of '+m.slots.total,'mentee slots open')}</div>
+      <div class="pz-grid2">${tile(r.reviewed,'trades reviewed')}${tile(socReplyTxt(r.replyMs),'typical first reply')}${tile(r.helped==null?'—':r.helped+'%',r.helped==null?'said a review helped: too few answers yet':'of '+r.answers+' members said a review helped')}${tile(m.slots.open+' of '+m.slots.total,'mentee slots open')}</div>
+      <p class="pz-sub" style="font-size:12px;margin:0">${r.back==null?'Too few reviews yet to say how many came back.':r.back+'% sent another trade within 30 days.'}</p>
       ${act}
       <p class="pz-fine" style="text-align:center">Your mentors see your days and the trades you send them. Never your wallet.</p>
     </div><div class="pz-col">
@@ -1219,6 +1225,7 @@ function socMentorSetHtml(){
     ${R.rates===false?'<p class="pz-sub" style="font-size:13px;margin:0">The owner has rates off: every review is free.</p>'
       :`<div class="pz-field"><label for="socMrate">XP per trade you mark reviewed (${R.rateMin} to ${R.rateMax})</label><input type="number" id="socMrate" inputmode="numeric" min="${R.rateMin}" max="${R.rateMax}" step="1" value="${me.mentorRate||0}"></div>`}
     <div class="pz-field"><label for="socMslots">Mentees at once</label><input type="number" id="socMslots" inputmode="numeric" min="1" max="50" step="1" value="${me.mentorSlots||5}"></div>
+    <label class="pz-sub" style="font-size:13px;display:flex;gap:8px;align-items:center"><input type="checkbox" id="socMauto"${me.mentorAuto?' checked':''}> Take requests on at once while I have room</label>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" data-soc-mset="1">Save</button><a class="pz-ghost pz-sm" href="#mentors/${esc(me.handle)}">See your card</a></div>
     ${R.rates===false?'':`<p class="pz-fine" style="margin:0">A member’s first trade with you is free. Later ones hold your rate until you mark the trade reviewed with a comment of yours in it${R.poolPct?'; '+R.poolPct+'% goes to the league’s pool':''}. You keep the rest, on top of the ${R.review} XP Daruma pays for a review. Not reviewed within ${R.holdHours} hours: it goes back to them.</p>`}</section>`;
 }
@@ -1234,9 +1241,10 @@ async function socAction(t){
     if(ds.socPpartner){ const h=ds.socPpartner, r=await socFetch('/partners',{method:'POST',body:JSON.stringify({handle:h})});
       socPeopleDrop(); delete SOC.cache.partners; done(r.partner&&r.partner.status==='active'?'You and @'+h+' are partners now.':'Asked @'+h+'. They’ll see it under Social.'); return true; }
     if(ds.socPmentor){ const h=ds.socPmentor;
-      if(!(SOC.share&&SOC.share.mentor)&&!confirm('Asking a mentor lets the league’s mentors see your days: scores, slips and the lesson you write each night. Never your wallet, and a trade only when you send it for review. You can switch it off any time in Profile & privacy.\n\nAsk @'+h+' to mentor you?'))return true;
+      if(!(SOC.share&&SOC.share.mentor)&&!confirm('Once @'+h+' takes you on, they see your days: scores, slips and the lesson you write each night. Never your wallet, and a trade only when you send it for review. You can switch it off any time in Profile & privacy.\n\nAsk @'+h+' to mentor you?'))return true;
       const r=await socFetch('/people/'+encodeURIComponent(h)+'/mentor',{method:'POST',body:JSON.stringify({letIn:true})});
-      if(r.share){ SOC.share=r.share; SOC.draft=null; } socPeopleDrop(); done('Asked @'+h+'. They’ve been told, and they can see your days now.'); return true; }
+      if(r.share){ SOC.share=r.share; SOC.draft=null; } if(SOC.me&&r.me){ SOC.me.myMentors=r.me.picks; SOC.me.mentorRequests=r.me.requests; } socPeopleDrop(); socMDrop();
+      done(r.took?'@'+h+' is your mentor now. Send them a trade with Ask mentor in your journal.':'Asked @'+h+'. They’ll see your request and decide; you’ll hear either way.'); return true; }
     // mentors: the directory's filters, picking and the waitlist, a mentor's own rate and room
     if(ds.socMstyle!==undefined){ pzS.mstyle=ds.socMstyle; pzRender(); return true; }
     if(ds.socMopen){ pzS.mopen=!pzS.mopen; pzRender(); return true; }
@@ -1244,12 +1252,29 @@ async function socAction(t){
       if(a==='pick'&&!(SOC.share&&SOC.share.mentor)&&SOC.confirm!=='mpick:'+h){ SOC.confirm='mpick:'+h; pzRender(); return true; }
       if(a==='drop'&&SOC.confirm!=='mdrop:'+h){ SOC.confirm='mdrop:'+h; pzRender(); return true; }
       SOC.confirm=null; t.disabled=true;
-      let r; try{ r=await socFetch('/mentors/'+encodeURIComponent(h),{method:'POST',body:JSON.stringify({action:a,letIn:a==='pick'})}); }finally{ t.disabled=false; }
-      if(r.share){ SOC.share=r.share; SOC.draft=null; } if(SOC.me&&r.me)SOC.me.myMentors=r.me.picks;
-      socMDrop(); socPeopleDrop(); delete SOC.cache.mentees;
-      done({pick:'@'+h+' is your mentor now. Send them a trade with Ask mentor in your journal.',drop:'You stopped working with @'+h+'.',wait:'You’re on @'+h+'’s waitlist. You’ll hear when a slot opens.',unwait:'You left @'+h+'’s waitlist.'}[a]); return true; }
+      const text=a==='pick'?(($('socMask')||{value:''}).value||'').trim():'';
+      let r; try{ r=await socFetch('/mentors/'+encodeURIComponent(h),{method:'POST',body:JSON.stringify({action:a,letIn:a==='pick',text})}); }finally{ t.disabled=false; }
+      if(r.share){ SOC.share=r.share; SOC.draft=null; } if(SOC.me&&r.me){ SOC.me.myMentors=r.me.picks; SOC.me.mentorRequests=r.me.requests; }
+      socMDrop(); socPeopleDrop(); delete SOC.cache.mentees; delete SOC.cache.notes;
+      done({pick:r.took?'@'+h+' is your mentor now. Send them a trade with Ask mentor in your journal.':'Asked @'+h+'. They’ll see your request and decide; you’ll hear either way.',drop:'Done. @'+h+' isn’t your mentor or waiting on your request any more.',wait:'You’re on @'+h+'’s waitlist. You’ll hear when a slot opens.',unwait:'You left @'+h+'’s waitlist.'}[a]); return true; }
+    // a mentor's side: take a request on or say no, let a mentee go
+    if(ds.socMreq){ const h=ds.h, a=ds.socMreq;
+      if(a==='decline'&&SOC.confirm!=='mdecline:'+h){ SOC.confirm='mdecline:'+h; pzRender(); return true; }
+      SOC.confirm=null; t.disabled=true; try{ await socFetch('/mentor/'+encodeURIComponent(h)+'/'+a,{method:'POST',body:JSON.stringify({})}); }finally{ t.disabled=false; }
+      socMDrop(); delete SOC.cache.mentees; done(a==='accept'?'@'+h+' is your mentee now. Their days are open to you.':'Told @'+h+' you can’t take them on now.'); return true; }
+    if(ds.socMrelease){ const h=ds.socMrelease;
+      if(SOC.confirm!=='mrelease:'+h){ SOC.confirm='mrelease:'+h; pzRender(); return true; }
+      SOC.confirm=null; await socFetch('/mentor/'+encodeURIComponent(h)+'/release',{method:'POST',body:JSON.stringify({})});
+      socMDrop(); delete SOC.cache.mentees; delete SOC.cache['mentee:'+h.toLowerCase()]; done('You stopped mentoring @'+h+'.'); location.hash='#mentor'; return true; }
+    // the week's focus a mentor sets for a mentee
+    if(ds.socFocus){ const h=ds.h, a=ds.socFocus, key='mentee:'+h.toLowerCase();
+      if(a==='edit'||a==='cancel'){ pzS.focusFor=a==='edit'?h:null; pzRender(); const n=$('socFocusIn'); if(n&&a==='edit')n.focus(); return true; }
+      if(a==='clear'){ await socFetch('/mentor/'+encodeURIComponent(h)+'/focus',{method:'DELETE'}); delete SOC.cache[key]; delete SOC.cache.mentees; done('Focus cleared.'); return true; }
+      const v=(($('socFocusIn')||{value:''}).value||'').trim(); if(!v)return true;
+      await socFetch('/mentor/'+encodeURIComponent(h)+'/focus',{method:'POST',body:JSON.stringify({text:v,slip:($('socFocusSlip')||{value:''}).value||null})});
+      pzS.focusFor=null; delete SOC.cache[key]; delete SOC.cache.mentees; done('Focus set. @'+h+' sees it on Today.'); return true; }
     if(ds.socMset){ const rate=$('socMrate'), slots=$('socMslots'), body={};
-      if(rate)body.mentorRate=Math.round(+rate.value||0); if(slots)body.mentorSlots=Math.round(+slots.value||0);
+      if(rate)body.mentorRate=Math.round(+rate.value||0); if(slots)body.mentorSlots=Math.round(+slots.value||0); if($('socMauto'))body.mentorAuto=$('socMauto').checked;
       const r=await socFetch('/me',{method:'PUT',body:JSON.stringify(body)}); if(r.me)SOC.me=r.me; socMDrop();
       done('Saved. '+(SOC.me.mentorRate?'You charge '+SOC.me.mentorRate+' XP a reviewed trade':'Your reviews are free')+', '+SOC.me.mentorSlots+' mentee'+(SOC.me.mentorSlots===1?'':'s')+' at once.'); return true; }
     // duels
@@ -1329,6 +1354,14 @@ async function socAction(t){
     if(ds.socNotefor!==undefined){ pzS.noteFor=ds.socNotefor||null; pzRender(); const n=$('socNoteIn'); if(n)n.focus(); return true; }
     if(ds.socNsend){ const v=($('socNoteIn')||{value:''}).value.trim(); if(!v)return true;
       const r=await socFetch('/mentor/'+encodeURIComponent(ds.h)+'/notes',{method:'POST',body:JSON.stringify({day:ds.socNsend,text:v})}); pzS.noteFor=null; delete SOC.cache['mentee:'+ds.h.toLowerCase()]; if(r&&r.xp)socMeRefresh(); done('Note sent.'+(r&&r.xp?' +'+r.xp+' XP for mentoring.':'')); return true; }
+    // a note's thread: replies from either side, and the member's one-tap answer
+    if(ds.socNrfor!==undefined){ pzS.nreplyFor=ds.socNrfor||null; pzRender(); const n=$('socNrIn'); if(n)n.focus(); return true; }
+    if(ds.socNrsend){ const v=(($('socNrIn')||{value:''}).value||'').trim(); if(!v)return true;
+      const url=ds.side==='mentor'?'/mentor/'+encodeURIComponent(ds.h)+'/notes/'+encodeURIComponent(ds.socNrsend)+'/reply':'/notes/'+encodeURIComponent(ds.socNrsend)+'/reply';
+      await socFetch(url,{method:'POST',body:JSON.stringify({text:v})}); pzS.nreplyFor=null;
+      if(ds.side==='mentor')delete SOC.cache['mentee:'+ds.h.toLowerCase()]; else delete SOC.cache.notes; done('Reply sent.'); return true; }
+    if(ds.socNack){ const cur=t.getAttribute('aria-pressed')==='true';
+      await socFetch('/notes/'+encodeURIComponent(ds.id)+'/reply',{method:'POST',body:JSON.stringify({ack:cur?null:ds.socNack})}); delete SOC.cache.notes; done(''); return true; }
     if(ds.socNdel){ if(!confirm('Delete this note?'))return true; await socFetch('/mentor/'+encodeURIComponent(ds.h)+'/notes/'+encodeURIComponent(ds.socNdel),{method:'DELETE'}); delete SOC.cache['mentee:'+ds.h.toLowerCase()]; done(''); return true; }
     if(t.id==='socInboxRead'){ await socFetch('/inbox/read',{method:'POST'}); delete SOC.cache.inbox; if(SOC.me)SOC.me.inbox=0; pzRender(); return true; }
     if(ds.socLg){ SOC.lg=ds.socLg; SOC.board='rank'; pzRender(); return true; }

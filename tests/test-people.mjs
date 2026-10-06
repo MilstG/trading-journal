@@ -56,21 +56,24 @@ try {
     eq((await call('/people?f=partner', { key: K.ann.key })).d.people.length, 0, 'bob isn’t looking for one');
     eq((await call('/people?q=bob', { key: K.ann.key })).d.people[0].partner, 'asked');
   });
-  await t('asking a mentor: lets mentors in only when told to, tells the mentor, puts you first on their list', async () => {
+  await t('asking a mentor: lets mentors in only when told to, tells the mentor, and waits for their yes', async () => {
     const no = await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: {} });
     eq([no.status, no.d.needsLetIn], [409, true], 'never opens your days without a yes');
-    const yes = await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true } });
-    eq([yes.status, yes.d.share.mentor], [200, true]);
-    eq((await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true } })).status, 429, 'once a day per mentor');
+    const yes = await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true, text: 'I overtrade on Mondays' } });
+    eq([yes.status, yes.d.share.mentor, yes.d.took, yes.d.me.requests], [200, true, false, ['cat_mentor']]);
+    const again = await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true } });
+    eq([again.status, again.d.requested], [409, true], 'asked already');
     eq((await call('/people/ann_trades/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true } })).status, 404, 'only mentors');
     const inbox = (await call('/inbox', { key: K.cat.key })).d.items;
-    ok(inbox.some(x => x.kind === 'mentor' && /bob_scalps would like you to mentor them/.test(x.text)), JSON.stringify(inbox));
+    ok(inbox.some(x => x.kind === 'mentor' && /bob_scalps would like you to mentor them\. “I overtrade on Mondays”/.test(x.text)), JSON.stringify(inbox));
     await call('/me', { method: 'PUT', key: K.ann.key, body: { share: { mentor: true } } });
-    const list = (await call('/mentor', { key: K.cat.key })).d.mentees;
-    eq(list.map(m => [m.handle, m.asked]), [['bob_scalps', true], ['ann_trades', false]]);
+    const d = (await call('/mentor', { key: K.cat.key })).d;
+    eq([d.mentees, d.requests.map(m => [m.handle, m.text])], [[], [['bob_scalps', 'I overtrade on Mondays']]], 'letting mentors in isn’t asking one: ann isn’t on cat’s list');
+    eq((await call('/mentor/bob_scalps', { key: K.cat.key })).status, 404, 'bob’s days open only once cat says yes');
     eq((await call('/people?f=mentor', { key: K.bob.key })).d.people[0].askedMentor, true);
-    clock += 86400000 + 1000;
-    eq((await call('/people/cat_mentor/mentor', { method: 'POST', key: K.bob.key, body: { letIn: true } })).status, 200, 'again the next day');
+    eq((await call('/mentor/bob_scalps/accept', { method: 'POST', key: K.cat.key, body: {} })).status, 200);
+    eq((await call('/mentor', { key: K.cat.key })).d.mentees.map(m => m.handle), ['bob_scalps']);
+    eq((await call('/people?f=mentor', { key: K.bob.key })).d.people[0].myMentor, true);
   });
   await t('profiles say who mentors and who is looking for a partner', async () => {
     const p = (await call('/profile/cat_mentor', { key: K.bob.key })).d.profile, a = (await call('/profile/ann_trades', { key: K.bob.key })).d.profile;

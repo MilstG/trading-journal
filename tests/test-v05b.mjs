@@ -151,6 +151,10 @@ try {
     eq((await call('/mentor', { key: C })).d.mentees, [], 'nobody opted in yet');
     eq((await call('/mentor/alice', { key: C })).status, 404);
     await call('/me', { method: 'PUT', key: A, body: { share: { mentor: true } } });
+    eq((await call('/mentor/alice', { key: C })).status, 404, 'letting mentors in isn’t asking one');
+    await call('/mentors/carol', { method: 'POST', key: A, body: { action: 'pick' } });
+    eq((await call('/mentor/alice', { key: C })).status, 404, 'asked: not until carol says yes');
+    eq((await call('/mentor/alice/accept', { method: 'POST', key: C, body: {} })).status, 200);
     await call('/stats', { method: 'POST', key: A, body: { xp: 10, level: 1, tz: 'UTC', days: [{ k: '2026-10-29', s: 55, f: ['afterTwo'], l: 'Stop after two losses' }] } });
     const d = (await call('/mentor/alice', { key: C })).d.mentee;
     eq([d.handle, d.days[0].l, d.days[0].f], ['alice', 'Stop after two losses', ['afterTwo']]);

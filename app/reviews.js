@@ -21,8 +21,8 @@ function mrSummary(t, j, o){ j=j||{}; o=o||{}; const p=j.plan||{}, num=v=>+v>0?+
   return {coin:t.coin,label:o.label||t.coin,side:t.dir==='Short'?'short':'long',market:t.market==='spot'?'spot':'perp',openedAt:t.openTime,closedAt:closed?t.closeTime:null,
     entry:measured(t)?t.avgEntry:null,exit:closed?t.avgExit:null,stop:num(p.stop),target:num(p.target),size:notionalOf(t)!=null?mrSizeRange(notionalOf(t)):null, // a stand-in entry is not shared as one
     pct:closed&&o.pct!=null?o.pct:null,r:closed&&o.r!=null?o.r:null,usd:closed&&o.usd?t.net:null,setup:j.setup||'',note,plan:o.plan||''}; }
-function mrCanShare(){ return !!(SOC.me&&SOC.share&&SOC.share.mentor&&!pzS.demo); }
-// to: which picked mentor it goes to (null: the server decides, or every mentor when none is picked); fee: the
+function mrCanShare(){ return !!(SOC.me&&SOC.share&&SOC.share.mentor&&(SOC.me.myMentors||[]).length&&!pzS.demo); } // a mentor took them on
+// to: which of your mentors it goes to (null: the server decides when there is one); fee: the
 // most XP this member agreed to (the server refuses if the mentor's rate has gone up since)
 async function mrShare(id, extra, to, fee){
   const t=allTrades.find(x=>x.id===id); if(!t)throw new Error('That trade isn’t loaded.');
@@ -44,7 +44,10 @@ function mrBadge(r, role){ return r.reviewed?`<span class="pz-pill pz-tagp mr-ok
 function mrRowHtml(r, mod, role){ const t=r.trade||{};
   return `<a class="pz-card pz-cardlink" href="#tr/${esc(r.id)}${mod?'/mod':''}">${socAv(r.handle,32)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
     <b style="font-size:14px">${esc((t.side==='short'?'Short ':'Long ')+(t.label||t.coin||''))} <span class="pz-sub" style="font-weight:400">· @${esc(r.handle||'?')} · ${esc(dayLabel(dayKey(t.openedAt||r.at)))}</span></b>
-    <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mrBadge(r,role)}<span class="pz-sub" style="font-size:12px">${r.comments} comment${r.comments===1?'':'s'} · ${socAgo(r.last)}${r.fee&&r.fee.xp?' · '+r.fee.xp+' XP '+(r.fee.state==='held'?'held':r.fee.state==='paid'?'paid':'returned'):''}</span></span></span>${pzI('chev',18)}</a>`; }
+    <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mrBadge(r,role)}<span class="pz-sub" style="font-size:12px">${r.comments} comment${r.comments===1?'':'s'} · ${socAgo(r.last)}${r.fee&&r.fee.xp?' · '+r.fee.xp+' XP '+(r.fee.state==='held'?'held':r.fee.state==='paid'?'paid':'returned'):''}${role==='mentor'&&!r.reviewed&&r.fee&&r.fee.state==='held'&&r.fee.until?' · <b>due '+esc(mrWhen(r.fee.until))+'</b>':''}${r.helped===true?' · helped':''}</span></span></span>${pzI('chev',18)}</a>`; }
+// a mentor's queue: what waits on them first, the paid ones whose time runs out soonest at the top, then the latest
+function mrQueueSort(L){ const due=r=>!r.reviewed&&r.fee&&r.fee.state==='held'&&r.fee.until?r.fee.until:Infinity;
+  return L.slice().sort((x,y)=>(y.waiting-x.waiting)||(due(x)-due(y))||(y.last-x.last)); }
 // #reviews: trades to review (mentors), your own trades out for review, and every thread (admins, read-only)
 function mrListHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
@@ -53,14 +56,14 @@ function mrListHtml(D){
   const sec=(h,L,mod,empty,role)=>`<section style="display:flex;flex-direction:column;gap:10px"><b class="pz-kvh">${h}</b>${L.length?L.map(r=>mrRowHtml(r,mod,role)).join(''):`<p class="pz-sub" style="font-size:13px">${empty}</p>`}</section>`;
   const a=SOC.me.admin&&pzS.mrAll?socGet('admreviews','/admin/reviews',20000):null;
   return `${back}${pzHead('Mentor','Trade reviews')}<div class="pz-wide"><div class="pz-col">
-    ${d.toReview?sec('Trades to review',d.toReview.slice().sort((x,y)=>(y.waiting-x.waiting)||(y.last-x.last)),false,'No one has sent a trade yet.','mentor'):''}
+    ${d.toReview?sec('Trades to review',mrQueueSort(d.toReview),false,'No one has sent a trade yet.','mentor'):''}
     ${d.toReview&&!d.mine.length?'':sec('Your trades with mentors',d.mine,false,d.mentorsOn?'Send one from a trade in your journal: “Ask mentor”.':'Switch on “Let mentors see my days” under What you share, then send a trade from your journal.','mentee')}</div>
     <div class="pz-col">${d.mentorsOn&&!SOC.me.mentor||(d.to&&d.to.length)?`<section class="pz-card pz-kv"><b class="pz-kvh">Your mentors</b>
       ${d.to&&d.to.length?d.to.map(x=>`<a class="pz-row-t" href="#mentors/${esc(x.handle)}" style="text-decoration:none;color:var(--pz-text)"><span>@${esc(x.handle)}</span><b>${!x.rate||x.sameOwner?'free':x.firstFree?'first trade free, then '+x.rate+' XP':x.rate+' XP a trade'}</b></a>`).join('')
-        :'<span class="pz-sub" style="font-size:13px">You haven’t picked any, so a trade goes to every mentor here, free.</span>'}
-      ${d.wallet?socMWalletHtml(d.wallet):''}<a class="pz-link" href="#mentors" style="min-height:0">${d.to&&d.to.length?'Change mentors':'Pick a mentor'} ${pzI('chev',14)}</a></section>`:''}
+        :'<span class="pz-sub" style="font-size:13px">No mentor has taken you on yet. Ask one in the mentor directory; your trades go to the mentors who take you on.</span>'}
+      ${d.wallet?socMWalletHtml(d.wallet):''}<a class="pz-link" href="#mentors" style="min-height:0">${d.to&&d.to.length?'Change mentors':'Find a mentor'} ${pzI('chev',14)}</a></section>`:''}
     ${SOC.me.admin?(a&&a.d?sec('Every thread (admin, read-only)',a.d.reviews,true,'None yet.'):`<button type="button" class="pz-ghost pz-sm" data-mr-all>${a?'<span class="pz-spin"></span>Loading…':'Show every thread (admin, read-only)'}</button>`):''}
-    <p class="pz-fine">A trade you send goes to your mentor (or every mentor, if you haven’t picked) with your note and plan, its % and R and a size range. Dollars only if you share dollar P&amp;L. Switching off “Let mentors see my days” closes your threads to them at once.</p></div></div>`;
+    <p class="pz-fine">A trade you send goes to the mentor you choose, of those who took you on, with your note and plan, its % and R and a size range. Dollars only if you share dollar P&amp;L. Switching off “Let mentors see my days” closes your threads to them at once.</p></div></div>`;
 }
 function mrThreadInner(d, mod){ const r=d.review, me=d.role, id=r.id, rep=SOC.confirm==='mrdel:'+id;
   const cs=d.comments.map(x=>`<div class="pz-com">${socAv(x.handle,30)}<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
@@ -70,7 +73,8 @@ function mrThreadInner(d, mod){ const r=d.review, me=d.role, id=r.id, rep=SOC.co
     ${mod?'<p class="pz-fine">Read-only: you see this as an admin, for moderation.</p>':`<div class="pz-field"><label for="mrText" class="pz-vh">${me==='mentor'?'Comment on this trade':'Reply'}</label><textarea id="mrText" rows="3" maxlength="1000" placeholder="${me==='mentor'?'What you see, and one thing to try':'Reply to your mentor'}"></textarea></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-mr-send="${esc(id)}">Send</button>
     ${me==='mentor'?`<button type="button" class="pz-ghost pz-sm" style="flex:1" data-mr-done="${esc(id)}" data-on="${r.reviewed?0:1}">${r.reviewed?'Reviewed ✓ · undo':'Mark reviewed ✓'}</button>`
-      :`<button type="button" class="pz-quietbtn warn" data-mr-del="${esc(id)}">${rep?'Tap again to take it back':'Take this trade back'}</button>`}</div>`}`; }
+      :`<button type="button" class="pz-quietbtn warn" data-mr-del="${esc(id)}">${rep?'Tap again to take it back':'Take this trade back'}</button>`}</div>
+    ${me==='mentee'&&r.reviewed?`<div class="pz-kvrow" style="gap:8px;flex-wrap:wrap"><span class="pz-sub" style="font-size:13px;flex:1">Did this review help? Only a share of yeses shows on @${esc(r.reviewed.by||'your mentor')}’s card.</span><button type="button" class="pz-chipbtn" data-mr-helped="1" data-id="${esc(id)}" aria-pressed="${r.helped===true}">Yes</button><button type="button" class="pz-chipbtn" data-mr-helped="0" data-id="${esc(id)}" aria-pressed="${r.helped===false}">Not really</button></div>`:''}`}`; }
 // #tr/<id>: one trade and its thread (#tr/<id>/mod: an admin's read-only view)
 function mrThreadHtml(D, id, mod){
   const back=`<a class="pz-back" href="#reviews">${pzI('back',20)}Trade reviews</a>`;
@@ -89,7 +93,7 @@ function mrAskHtml(D){
   const back=`<a class="pz-back" href="#journal">${pzI('back',20)}Journal</a>`, A=pzS.mrAsk;
   if(!socAvailable()||!SOC.me||!A)return `${back}${pzHead('Mentor','Ask a mentor')}<section class="pz-card"><p class="pz-sub">Open a trade in your journal and tap Ask mentor.</p></section>`;
   const c=socGet('reviews','/reviews',20000), d=c&&c.d; if(!d)return `${back}<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
-  const P=d.to||[]; if(!P.length)return `${back}${pzHead('Mentor','Ask a mentor')}<section class="pz-card"><p class="pz-sub">You haven’t picked a mentor. <a href="#mentors">Pick one</a>, or send the trade from your journal to every mentor here.</p></section>`;
+  const P=d.to||[]; if(!P.length)return `${back}${pzHead('Mentor','Ask a mentor')}<section class="pz-card"><p class="pz-sub">No mentor has taken you on yet. <a href="#mentors">Ask one</a>; once they do, you can send them this trade.</p></section>`;
   const x=P.find(y=>y.handle===A.to)||P[0], cost=!x.rate||x.firstFree||x.sameOwner?0:x.rate, w=d.wallet, R=d.rates, short=cost>w.balance;
   const t=typeof allTrades!=='undefined'?allTrades.find(y=>y.id===A.id):null;
   const row=(l,v)=>`<div class="pz-row-t"><span>${l}</span><b>${v}</b></div>`;
@@ -107,11 +111,14 @@ function mrAskHtml(D){
 }
 // clicks, in Pulse and in the full journal; true when handled
 async function mrAction(t){ const ds=t.dataset;
-  if(ds.mrShare===undefined&&!ds.mrSend&&!ds.mrDone&&!ds.mrDel&&ds.mrAll===undefined&&!ds.mrTo)return false;
+  if(ds.mrShare===undefined&&!ds.mrSend&&!ds.mrDone&&!ds.mrDel&&ds.mrAll===undefined&&!ds.mrTo&&ds.mrHelped===undefined)return false;
   const redraw=id=>{ if(PZ)pzRender(); else if(id)mrJournalLoad(id,true); }, note=(m,k)=>PZ?pzNote(m,k):k==='err'?setErr(m):setStatus(m);
   try{
     if(ds.mrAll!==undefined){ pzS.mrAll=true; pzRender(); return true; }
     if(ds.mrTo){ if(pzS.mrAsk)pzS.mrAsk.to=ds.mrTo; pzRender(); return true; }
+    if(ds.mrHelped!==undefined){ const id=ds.id, yes=ds.mrHelped==='1', was=t.getAttribute('aria-pressed')==='true';
+      SOC.cache['tr:'+id]={at:Date.now(),d:await socFetch('/reviews/'+id+'/helped',{method:'POST',body:JSON.stringify({helped:was?null:yes})}),err:null};
+      delete SOC.cache.reviews; if(!was)note(yes?'Thanks. It counts toward your mentor’s track record.':'Thanks. Only the share of yeses shows.'); redraw(); return true; }
     if(ds.mrShare!==undefined){ const sec=t.closest('[data-pz-trade]'), ta=sec&&sec.querySelector('textarea'), tid=ds.mrShare||sec.dataset.pzTrade;
       // a Daruma card's unsaved note, setup and rating go into the journal first (they were sent and then lost):
       // the trade leaves the backlog, and the summary reads the note from the journal entry
@@ -154,7 +161,7 @@ async function mrJournalLoad(id, fresh){
   if(!r&&P.length){ box.innerHTML=`<label>Mentor review</label><p class="mini-note">Send this trade to one of your mentors${what} You have ${L.d.wallet.balance} XP to spend${L.d.wallet.held?' ('+L.d.wallet.held+' held)':''}.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${P.map(x=>{ const cost=!x.rate||x.firstFree||x.sameOwner?0:x.rate;
       return `<button class="btn ghost" data-mr-share="${esc(id)}" data-to="${esc(x.handle)}" data-fee="${cost}"${cost>L.d.wallet.balance?' disabled title="Not enough XP to spend"':''}>Ask @${esc(x.handle)} · ${cost?cost+' XP':x.rate&&x.firstFree?'free (first trade)':'free'}</button>`; }).join('')}</div>`; return; }
-  if(!r){ box.innerHTML=`<label>Mentor review</label><p class="mini-note">${L.d.mentors?'Send this trade to the league’s mentors'+what:'There are no mentors on this server yet.'}</p>${L.d.mentors?`<button class="btn ghost" data-mr-share="${esc(id)}">Ask my mentor to review this trade</button>`:''}`; return; }
+  if(!r){ box.innerHTML=`<label>Mentor review</label><p class="mini-note">${(SOC.me.mentorRequests||[]).length?'Your mentor hasn’t taken you on yet. Once they do, you can send them this trade'+what:'To send this trade for review, ask a mentor in Daruma → Mentors first. Once they take you on, you can send it'+what}</p>`; return; }
   let d=SOC.cache['tr:'+r.id]; try{ if(fresh||!d||!d.d){ d=SOC.cache['tr:'+r.id]={at:Date.now(),d:await socFetch('/reviews/'+r.id),err:null}; } }catch(e){ box.innerHTML=''; return; }
   const T=d.d, rv=T.review;
   box.innerHTML=`<label>Mentor review ${mrFeeTxt(rv,'mentee')?`<span class="mini-note">${esc(mrFeeTxt(rv,'mentee'))}</span> `:''}${rv.reviewed?`<span class="badge ok">Reviewed${rv.reviewed.by?' by @'+esc(rv.reviewed.by):''} ✓</span>`:''}</label>
