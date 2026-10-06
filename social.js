@@ -39,6 +39,7 @@ const Pots = require('./pots.js');
 const Insights = require('./insights.js');
 const Research = require('./research.js');
 const Findings = require('./findings.js'); // what members see of the research report, and what the product takes from it
+const Evals = require('./evals.js'); // the evaluation: a prop-firm-style test read from the member's account
 const Push = require('./push.js');
 // Ethereum signature recovery for wallet claims (vendored noble libraries, no install needed)
 let ethSig = null; try { ethSig = require('./vendor/eth-sig.js'); } catch (e) { /* claims and wallet sign-in answer 501 */ }
@@ -692,6 +693,7 @@ function createSocial(opts) {
   S.config.risk = Duels.sanitizeRiskCfg(S.config.risk, null);
   S.config.pots = Pots.sanitizePotCfg(S.config.pots, null);
   S.config.research = Findings.sanitizeResearchCfg(S.config.research, null);
+  S.config.evals = Evals.sanitizeEvalCfg(S.config.evals, null);
   S.config.beta = sanitizeBetaCfg(S.config.beta, S.config.beta); // (as prev too: who switched it on, and when, are kept)
   // the private beta's invites by id ({id, h: sha256 of the code, tail, note, at, exp, by, unlocked, leagues,
   // used: member id, usedAt, revoked: when}) and the key its access cookies are signed with (made once)
@@ -1499,7 +1501,7 @@ function createSocial(opts) {
   const moneyBusy = new Set();
   const refreshMoney = async (m, force) => {
     const addr = walletFor(m);
-    if (!addr || m.banned || !(m.share.ret || m.share.usd) || moneyBusy.has(m.id)) return;
+    if (!addr || m.banned || !(m.share.ret || m.share.usd || evalLive(m)) || moneyBusy.has(m.id)) return;
     if (moneyBusy.size >= 3 && !force) return; // three wallets at a time (a forced one, after a wallet change, goes anyway)
     if (!force && m.money && now() - m.money.at < 30 * 60000) return;
     if (m.moneyFailAt && now() - m.moneyFailAt < 10 * 60000) return; // Hyperliquid erroring: don't hammer it
@@ -1520,6 +1522,7 @@ function createSocial(opts) {
         const s4 = portfolioStats(res, from >= now() - 29 * 86400000 ? 'month' : 'allTime', from, Date.parse(w.to + 'T23:59:59Z'));
         mw[k] = s4 ? { ret: s4.ret, dd: s4.dd, usd: s4.usd } : null; }
       m.moneyWin = mw;
+      evalTick(m, res); // a live evaluation reads the same answer
       let compsChanged = false;
       // a finished competition keeps the result it had when it ended
       // until a competition's result is frozen (a day or so after the end) its numbers still update
@@ -1602,6 +1605,7 @@ function createSocial(opts) {
     for (const c of Object.values(S.comps)) if (!c.final) for (const id of Object.keys(c.entrants || {})) s.add(id);
     for (const d of Object.values(S.duels)) if (d.status === 'active') { s.add(d.a); s.add(d.b); }
     for (const p of Object.values(S.pods)) if (p.status === 'active') for (const [id, x] of Object.entries(p.mem || {})) if (x && x.st === 'in') s.add(id);
+    for (const m of members()) if (evalLive(m)) s.add(m.id); // a live evaluation is read every 4 hours too
     return s; };
   const statsSweep = () => {
     const out = { money: 0, behavior: 0 };
@@ -2559,6 +2563,41 @@ function createSocial(opts) {
     return out; };
   const dropPairsOf = id => { for (const [k, p] of Object.entries(S.partners)) if (p.a === id || p.b === id) delete S.partners[k]; };
 
+  // ---- evaluations (evals.js): a prop-firm-style test, read from the member's account ----
+  // m.evals: newest last, at most 20: {id, rules, startAt, endAt, startAv, st: live|passed|failed|ended|abandoned, why, prog, doneAt}.
+  // A pass of a preset earns its badge once (the XP the owner set); a custom one earns a badge without XP, so
+  // nobody farms XP from a target of 0.1%.
+  const EVAL_BADGES = { standard: ['Funded: Standard', '🎯'], steady: ['Funded: Steady', '🧘'], sprint: ['Funded: Sprint', '⚡'], custom: ['Passed an evaluation', '✅'] };
+  const evalLive = m => Array.isArray(m.evals) && m.evals.some(e => e.st === 'live');
+  const evalTradingDays = (m, e) => tradesIn(m.vdays, Evals.utcDay(e.startAt), Evals.utcDay(Math.min(now(), e.endAt))) == null ? null
+    : (m.vdays || []).filter(d => d.k >= Evals.utcDay(e.startAt) && d.k <= Evals.utcDay(Math.min(now(), e.endAt)) && d.n > 0).length;
+  const evalTick = (m, res) => {
+    const e = Array.isArray(m.evals) ? m.evals.find(x => x.st === 'live') : null; if (!e) return;
+    if (!e.startAv) { const av = Evals.accountAt(res, e.startAt); if (av > 0) e.startAv = av; else return; }
+    const st = Evals.evalState(e, res, now()), td = evalTradingDays(m, e), v = Evals.evalStatus(e, st, td, now());
+    // the first reading after the end settles it with what the series held up to the end (a late sync is in by then)
+    e.prog = { eq: st.eq, profit: st.profit, ddUsed: st.ddUsed, dailyWorst: st.dailyWorst, bestShare: st.bestShare, days: st.days, tradingDays: td, at: now() };
+    if (v.st === 'live') { touch(m); return; }
+    e.st = v.st; e.why = v.why; e.doneAt = now(); touch(m);
+    if (v.st === 'passed') { const kind = e.rules.preset === 'custom' ? 'custom' : e.rules.preset, bid = 'eval-' + kind, [name, icon] = EVAL_BADGES[kind];
+      if (!own(S.badges, bid)) S.badges[bid] = { id: bid, name, icon, desc: kind === 'custom' ? 'Passed an evaluation on rules of their own' : 'Passed the ' + Evals.PRESETS[kind].label + ' evaluation: ' + Evals.rulesText(Evals.PRESETS[kind]), metric: null, op: 'gte', value: 0, xp: 0, system: true };
+      S.badges[bid].xp = kind === 'custom' ? 0 : S.config.evals.xp; touch('badges');
+      if (giveBadge(m, bid)) xpSync(m);
+      if (m.share.feed) pushEvent(m, { type: 'eval', text: 'passed ' + (kind === 'custom' ? 'an evaluation' : 'the ' + Evals.PRESETS[kind].label + ' evaluation') + ' ' + icon });
+      notify(m, 'eval', 'You passed your evaluation: ' + v.why + '.', { title: 'Evaluation passed ' + icon, url: '/daruma#eval' }); }
+    else notify(m, 'eval', v.st === 'failed' ? 'Your evaluation ended: ' + v.why + '. Rest, then start another when you’re ready.' : 'Your evaluation ran its time: ' + v.why + '.', { title: v.st === 'failed' ? 'Evaluation failed' : 'Evaluation over', url: '/daruma#eval' });
+  };
+  // why this member can't start one now (null: they can)
+  const WALLET_WHY = { 'no-wallet': 'Add a wallet first: the evaluation is read from your account.', claim: 'Claim your wallet first (Account): this league only counts claimed wallets.',
+    approval: 'Your wallet is waiting for the owner’s approval.', rejected: 'The league owner hasn’t accepted this wallet.' };
+  const evalCan = m => { const C = S.config.evals; if (!C.on) return 'Evaluations are switched off on this server.';
+    if (!walletFor(m)) return WALLET_WHY[walletBlock(m)] || WALLET_WHY['no-wallet'];
+    if (!m.share.verify) return 'Switch on “Verify my discipline” in What you share: trading days are counted from your fills.';
+    if (evalLive(m)) return 'You already have an evaluation running.';
+    const last = (m.evals || []).filter(e => e.st === 'failed' || e.st === 'abandoned').pop();
+    if (last && C.cooldownDays && now() - (last.doneAt || 0) < C.cooldownDays * 86400000) return 'Your last evaluation ended less than ' + (C.cooldownDays === 1 ? 'a day' : C.cooldownDays + ' days') + ' ago. Rest first: the next one starts fresh.';
+    return null; };
+  const evalOut = e => ({ id: e.id, rules: e.rules, text: Evals.rulesText(e.rules), startAt: e.startAt, endAt: e.endAt, startAv: e.startAv || null, st: e.st, why: e.why || '', prog: e.prog || null, doneAt: e.doneAt || null });
   // ---- system badges the server gives (pair streaks, adopted rules): no XP of their own ----
   const sysBadge = (bid, name, icon, desc) => { if (!own(S.badges, bid)) { S.badges[bid] = { id: bid, name, icon, desc, metric: null, op: 'gte', value: 0, xp: 0, system: true }; touch('badges'); } };
   const giveBadge = (m, bid) => { m.awards = m.awards || {}; if (own(m.awards, bid)) return false; m.awards[bid] = now(); touch(m); return true; };
@@ -3009,7 +3048,7 @@ function createSocial(opts) {
         unlocks: S.config.unlocks, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
-        bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on },
+        bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on }, evals: { on: !!S.config.evals.on, xp: S.config.evals.xp },
         coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), playbooks: { on: !!S.config.playbooks.on, who: S.config.playbooks.who },
         referrals: refCfg().on ? Object.assign({ on: true, linksMax: refCfg().linksMax }, refTermsNow()) : { on: false }, // ai: visitors (no coach status of their own) know whether to show a Coach tab
         badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),
@@ -3354,7 +3393,7 @@ function createSocial(opts) {
         for (const [k, label, fn] of [['mult', 'XP multiplier', sanitizeMult], ['standing', 'Standing', sanitizeStanding], ['mentorXp', 'Mentoring XP', sanitizeMentorXp],
           ['modules', 'Features', SC.sanitizeModules], ['unlocks', 'Features', SC.sanitizeModules], ['levels', 'Levels', SC.sanitizeLevels], ['xp', 'XP rules', SC.sanitizeXp],
           ['coach', 'Coach', SC.sanitizeCoachCfg], ['bench', 'Traders like you', Bench.sanitizeBenchCfg], ['duels', 'Duels', Duels.sanitizeDuelCfg],
-          ['risk', 'Drawdown rules', Duels.sanitizeRiskCfg], ['pots', 'Buy-ins', Pots.sanitizePotCfg], ['research', 'Research', Findings.sanitizeResearchCfg]]) {
+          ['risk', 'Drawdown rules', Duels.sanitizeRiskCfg], ['pots', 'Buy-ins', Pots.sanitizePotCfg], ['research', 'Research', Findings.sanitizeResearchCfg], ['evals', 'Evaluations', Evals.sanitizeEvalCfg]]) {
           const e = body[k] ? SC.rangeError(label, body[k], k === 'unlocks' ? c.modules : c[k], fn) : null; if (e) return json(res, 400, { error: e }); }
         { const e = SC.levelsError(body.levels) || SC.multError(body.mult); if (e) return json(res, 400, { error: e }); } // the lists rangeError skips
         if (typeof body.open === 'boolean') c.open = body.open;
@@ -3384,6 +3423,7 @@ function createSocial(opts) {
         if (body.duels) c.duels = Duels.sanitizeDuelCfg(body.duels, c.duels);
         if (body.risk) c.risk = Duels.sanitizeRiskCfg(body.risk, c.risk);
         if (body.pots) c.pots = Pots.sanitizePotCfg(body.pots, c.pots);
+        if (body.evals) c.evals = Evals.sanitizeEvalCfg(body.evals, c.evals);
         if (body.research) { const was = c.research; c.research = Findings.sanitizeResearchCfg(body.research, c.research);
           // the Discipline weights switched on or off: every verified member's days are read again with them
           if (!!was.weights !== !!c.research.weights) for (const m of members()) { m.vAt = 0; refreshBehavior(m, true); } }
@@ -3419,7 +3459,9 @@ function createSocial(opts) {
         const sb = seasonBoard(), sid = S.ladder.season;
         const ladder = { season: Object.assign({ id: sid, label: seasonLabel(sid) }, seasonBounds(sid)), top: sb.slice(0, 10).map(m => ({ handle: m.handle, gain: seasonGain(m), r: m.ladder.r, n: m.ladder.n })),
           listed: ladderBoard().length, last: (S.ladder.hall || []).filter(x => x.podium.length).slice(-1).map(x => ({ label: x.label, podium: x.podium.map(y => y.handle) }))[0] || null };
-        return json(res, 200, { config: S.config.duels, risk: S.config.risk, pots: S.config.pots, types: Duels.TYPES, ladder, pods: { open: pods.filter(podOpen).length, done30: pods.filter(p => p.status === 'done' && now() - p.result.at < 30 * 86400000).length },
+        const EV = members().flatMap(m => m.evals || []), ev30 = st => EV.filter(e => e.st === st && now() - (e.doneAt || 0) < 30 * 86400000).length;
+        return json(res, 200, { config: S.config.duels, risk: S.config.risk, pots: S.config.pots, types: Duels.TYPES, ladder,
+          evals: Object.assign({}, S.config.evals, { live: EV.filter(e => e.st === 'live').length, passed30: ev30('passed'), failed30: ev30('failed') }), pods: { open: pods.filter(podOpen).length, done30: pods.filter(p => p.status === 'done' && now() - p.result.at < 30 * 86400000).length },
           counts: { pending: all.filter(d => d.status === 'pending').length, active: all.filter(d => d.status === 'active').length, done: all.filter(d => d.status === 'done').length,
             done30: all.filter(d => d.status === 'done' && now() - d.result.at < 30 * 86400000).length, declined: all.filter(d => d.status === 'declined').length },
           open: [...all.filter(duelOpen).map(out), ...pods.filter(podOpen).map(pout)].sort((x, y) => y.at - x.at).slice(0, 100),
@@ -4013,6 +4055,34 @@ function createSocial(opts) {
       return json(res, 200, { ok: true, pod: podView(p, me) });
     }
     // ---- duels: challenge, answer, counter, cancel, forfeit ----
+    // ---------- evaluations (evals.js): yours, who passed, start one, stop one ----------
+    if (head === 'evals' && !parts[1] && M === 'GET') {
+      if (evalLive(me)) refreshAll(me); // background (the account and the trading days): the screen shows what's read, the next look the newer
+      const passed = members().filter(x => !x.banned && x.share.feed && Array.isArray(x.evals)).flatMap(x => x.evals.filter(e => e.st === 'passed')
+        .map(e => ({ handle: x.handle, av: avUrl(x), preset: e.rules.preset, text: Evals.rulesText(e.rules), at: e.doneAt, profit: x.share.ret && e.prog ? e.prog.profit : null, me: x.id === me.id })))
+        .sort((a, b) => b.at - a.at).slice(0, 30);
+      return json(res, 200, { on: !!S.config.evals.on, xp: S.config.evals.xp, minAccount: S.config.evals.minAccount, presets: Evals.PRESETS,
+        mine: (me.evals || []).slice().reverse().map(evalOut), passed, can: evalCan(me) });
+    }
+    if (head === 'evals' && !parts[1] && M === 'POST') { // {preset, rules?}
+      const why = evalCan(me); if (why) return json(res, 409, { error: why });
+      if (limited(req, 'eval', 10, 3600000)) return json(res, 429, { error: 'Too many tries. Try again in a while.' });
+      const rules = Evals.sanitizeRules(Object.assign({}, body && body.rules, { preset: body && (body.preset || (body.rules && body.rules.preset)) }));
+      // the account at the start, read now: the limits are a share of it
+      let pf; try { const r = await fetchImpl('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'portfolio', user: walletFor(me) }) });
+        if (!r.ok) throw new Error('HTTP ' + r.status); pf = await r.json(); } catch (e) { return json(res, 502, { error: 'Couldn’t read your account from the exchange just now. Try again in a minute.' }); }
+      const t = now(), av = Evals.accountAt(pf, t);
+      if (!(av >= S.config.evals.minAccount)) return json(res, 409, { error: 'An evaluation needs at least $' + S.config.evals.minAccount.toLocaleString('en-US') + ' in the account, so its limits mean something.' });
+      const e = { id: crypto.randomBytes(5).toString('hex'), rules, startAt: t, endAt: t + rules.days * 86400000, startAv: av, st: 'live', why: '', prog: null };
+      me.evals = [...(me.evals || []), e].slice(-20); save(me);
+      return json(res, 200, { eval: evalOut(e) });
+    }
+    if (head === 'evals' && parts[1] && !parts[2] && M === 'POST') { // {action: 'abandon'}
+      const e = (me.evals || []).find(x => x.id === parts[1]); if (!e) return json(res, 404, { error: 'No such evaluation.' });
+      if (!body || body.action !== 'abandon') return json(res, 400, { error: 'Unknown action.' });
+      if (e.st !== 'live') return json(res, 409, { error: 'That evaluation is over already.' });
+      e.st = 'abandoned'; e.why = 'Stopped by you'; e.doneAt = now(); save(me); return json(res, 200, { eval: evalOut(e) });
+    }
     if (head === 'duels' && M === 'GET' && !parts[1]) {
       duelSweep();
       const cfg = S.config.duels, list = Object.values(S.duels).filter(d => d.a === me.id || d.b === me.id)

@@ -109,7 +109,8 @@ try {
     ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2188, 740],
     // Your luck measured, the crowd at your entry and your rules replayed (luck.js, crowd.js, rule-replay.js, Daruma
     // only, ~13 KB raw / 6 KB gzipped compressed apart): 1886 / 639.
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1888, 640],
+    // The evaluation (evals.js, Daruma only, ~11 KB raw / 4 KB gzipped) and its Compete tile: 1898 / 644.
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1900, 645],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
