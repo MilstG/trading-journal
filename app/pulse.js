@@ -252,6 +252,8 @@ const PZ_FLOW={today:[['tilt','insight','session','positions'],['next','now','go
 // reorder like the rest) and a screen of its own:
 //   pzFeature({id, today:{label, hint, col: 0|1, after: '<card id>', html: D => '…'},
 //              tab:{name, nav: '<nav item to light up>', html: D => '…'}})
+// and run something once a screen is drawn (drawn(D, tab), D null before any trades load): a moment
+// to celebrate, say, which needs the game read first and a screen to show over.
 const PZ_FEATS=[];
 function pzFeature(f){
   if(!f||!f.id||PZ_FEATS.some(x=>x.id===f.id))return;
@@ -1486,6 +1488,7 @@ function pzRender(){
   for(const id in keep){ const el=$(id); if(el&&root.contains(el)&&keep[id]&&!el.value)el.value=keep[id]; }
   // (by data-* only when they name a single control: several identical Save buttons stay unfocused rather than jumping to the first)
   const f=(actId&&$(actId))||(actSel&&(()=>{ const all=root.querySelectorAll(actSel+':not([disabled])'); return all.length===1?all[0]:null; })()); if(f&&f.focus)f.focus({preventScroll:true});
+  for(const ft of PZ_FEATS)if(ft.drawn){ try{ ft.drawn(allTrades.length?_pzLastD:null,pzTab()); }catch(e){ console.warn(ft.id,e); } }
 }
 async function pzConnect(inputId){
   const el=$(inputId); const a=(el&&el.value||'').trim();

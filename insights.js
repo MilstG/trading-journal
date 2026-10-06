@@ -113,16 +113,18 @@ function breakdown(rows, by, now, labels) {
 }
 function funnel(rows, now) {
   return { joined: rows.length, wallet: rows.filter(r => r.wallet).length, synced: rows.filter(r => r.synced).length,
-    traded30: rows.filter(r => r.days30 > 0).length, journaling: rows.filter(r => r.journal30 > 0).length,
+    traded30: rows.filter(r => r.days30 > 0).length, journaling: rows.filter(r => r.journal30 > 0).length, reviewing: rows.filter(r => r.review30 > 0).length,
     active30: rows.filter(r => r.lastSeen && now - r.lastSeen < 30 * DAY).length, active7: rows.filter(r => r.lastSeen && now - r.lastSeen < 7 * DAY).length,
     verified: rows.filter(r => r.verified).length };
 }
-// by month joined: how many stayed
+// by month joined: how many stayed, how many came back after their first week, how many journal
 function cohorts(rows, now, months) {
   const by = new Map();
   for (const r of rows) { if (!r.joined) continue; const k = keyOf(r.joined).slice(0, 7); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
   return [...by.entries()].sort((a, b) => a[0] < b[0] ? 1 : -1).slice(0, months || 12).map(([k, rs]) => ({ month: k, joined: rs.length,
-    synced: rs.filter(r => r.synced).length, active30: rs.filter(r => r.lastSeen && now - r.lastSeen < 30 * DAY).length,
+    synced: rs.filter(r => r.synced).length, journaled: rs.filter(r => r.journal30 > 0).length,
+    // came back at least once a week or more after joining (its last visit is that late): the week-1 drop-off
+    back7: rs.filter(r => r.lastSeen && r.lastSeen - r.joined >= 7 * DAY).length, active30: rs.filter(r => r.lastSeen && now - r.lastSeen < 30 * DAY).length,
     active7: rs.filter(r => r.lastSeen && now - r.lastSeen < 7 * DAY).length }));
 }
 // Monday-to-Sunday weeks, newest last: members who traded, average Discipline, share of days journaled
