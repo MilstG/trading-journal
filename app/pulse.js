@@ -1597,6 +1597,10 @@ function wirePulse(){
     if(t.type==='file'&&await socFilePicked(t))return;
     if(t.id==='socBoardSel'){ SOC.board=t.value; pzRender(); return; }
     if(t.id==='socMsort'){ pzS.msort=t.value; pzRender(); return; }
+    // quiet hours and the daily cap for news from other members
+    if(t.id==='pzPushCap'||((t.id==='pzPushQf'||t.id==='pzPushQt')&&/^\d{2}:\d{2}$/.test(t.value))){ const pr=Object.assign({},SOC.me&&SOC.me.push&&SOC.me.push.prefs);
+      if(t.id==='pzPushCap')pr.cap=+t.value; else pr.quiet=Object.assign({on:true,from:'22:00',to:'07:00'},pr.quiet,{[t.id==='pzPushQf'?'from':'to']:t.value});
+      try{ const r=await socFetch('/push',{method:'PUT',body:JSON.stringify({prefs:pr})}); SOC.me.push.prefs=r.prefs; pzNote('Saved.'); }catch(e){ pzNote(e.message,'err'); } return; }
     if((t.id==='pzPushAm'||t.id==='pzPushPm')&&/^\d{2}:\d{2}$/.test(t.value)){ const pr=Object.assign({},SOC.me&&SOC.me.push&&SOC.me.push.prefs,t.id==='pzPushAm'?{morning:t.value}:{eod:t.value});
       try{ const r=await socFetch('/push',{method:'PUT',body:JSON.stringify({prefs:pr})}); SOC.me.push.prefs=r.prefs; pzNote('Saved.'); }catch(e){ pzNote(e.message,'err'); } return; }
     if(t.id==='socGboardSel'){ SOC.gboard=t.value; pzRender(); return; }

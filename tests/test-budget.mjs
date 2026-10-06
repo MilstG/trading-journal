@@ -92,8 +92,9 @@ try {
     // X, Telegram and Discord on profiles (the row, the three fields, the copy button): about 1.5 KB raw on both.
     // Social's redesign (four tabs, the week strip, the Compete hub, the feed's activity rail, the tabbed profile):
     // about 13 KB raw and 4 KB gzipped on both.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2132, 724],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1787, 603],
+    // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2145, 727],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1800, 606],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

@@ -2108,7 +2108,7 @@ function createSocial(opts) {
     const out = { id: m.id, handle: m.handle, ...tierOf(m), level: st.level || 1, title: levelTitle(st.level || 1),
       followers: followersOf(m.id),
       following: (S.follows[m.id] || []).length, isFollowing: !!viewer && (S.follows[viewer.id] || []).includes(m.id), isMe: !!viewer && viewer.id === m.id,
-      claimed: !!m.claimed, av: avUrl(m), bio: m.bio || '', duelsOpen: !!(m.share && m.share.duels !== false), mentor: !!m.mentor, ninja: !!m.ninja, seeking: !!(m.share && m.share.seek),
+      claimed: !!m.claimed, av: avUrl(m), bio: m.bio || '', look: lookOf(m), ring: lookOf(m).ring || null, duelsOpen: !!(m.share && m.share.duels !== false), mentor: !!m.mentor, ninja: !!m.ninja, seeking: !!(m.share && m.share.seek),
       // verified Trader Age, for anyone who shares verified Discipline
       traderAge: m.ta && !m.ta.building && m.share && m.share.verify ? m.ta.age : null };
     // where the viewer stands with them, as a People card shows it: partners (asked, sent, active) and a duel already open
@@ -2130,6 +2130,9 @@ function createSocial(opts) {
       partners: pairsOf(m).filter(p => p.status === 'active').length });
     if (!m.share.profile && !out.isMe) return Object.assign(out, { private: true });
     if (m.socials) out.socials = Object.assign({}, m.socials); // a private profile keeps them to itself
+    // the rules others adopted from them (a private profile keeps those too), and your own looks to pick from
+    out.rules = Object.values(m.adopted || {}).map(r => ({ text: r.text, n: r.by.length })).sort((a, b) => b.n - a.n).slice(0, 20); out.adoptN = adoptCount(m);
+    if (out.isMe) out.looks = looksOut(m);
     const ver = m.share.verify && Array.isArray(m.vdays);
     const d30 = disciplineOver(ver ? m.vdays : st.days, addDaysKey(todayKey(), -29), todayKey(), 3);
     Object.assign(out, { duels: Object.assign({ w: 0, l: 0, d: 0 }, m.duelRec), rating: S.config.duels.ladder && m.ladder && m.ladder.n ? m.ladder.r : null,
@@ -2149,8 +2152,9 @@ function createSocial(opts) {
     const usdB = e.type === 'badge' && !(m && m.share.usd); // a feed line from before the app held those badges back
     const o = { id: e.id, at: e.at, type: e.type, text: usdB && USD_BADGE_TXT.test(e.text || '') ? 'unlocked a results badge' : e.text,
       quote: usdB && e.quote ? e.quote.replace(/(In the black|Big day) · [A-Za-z]+( · )?/g, '').replace(/ · $/, '') : e.quote,
-      handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null, ninja: !!(m && m.ninja),
+      handle: m ? m.handle : null, av: avUrl(m), tier: m ? m.tier || 0 : null, ninja: !!(m && m.ninja), ring: m ? lookOf(m).ring || null : null, title: m ? lookOf(m).titleName || null : null,
       admin: !e.member, kudos: e.kudos || 0, liked: !!liked && liked.has(e.id), mine: !!viewer && e.member === viewer.id };
+    if ((e.type === 'habit' || e.type === 'challenge') && e.quote && m) o.adopted = adoptedN(m, e.quote);
     if (e.type === 'playbook') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {} if (d.pb && pbById(d.pb)) o.pb = d.pb; }
     if (e.type === 'post') { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
       const t = d.trade ? Object.assign({}, d.trade) : null;
@@ -2287,12 +2291,29 @@ function createSocial(opts) {
 
   // ---- inbox and web push: nudges, mentor notes, season results and the daily reminders ----
   const push = opts.push || null; // { publicKey, send(sub, message) -> status }
-  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, referral: true, on: { morning: true, eod: true } }, prev || {});
+  // social kinds (kudos, follow, race, outcome, adopt, streak) on by default; quiet hours and a daily cap hold
+  // those back (they still land in the inbox), and tiltMute holds back race and duel news while you're tilting
+  const PUSH_KINDS = ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook', 'referral', 'kudos', 'follow', 'race', 'outcome', 'adopt', 'streak', 'tiltMute'];
+  const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const sanitizePrefs = (p, prev) => { const o = Object.assign({ morning: '08:30', eod: '20:30', partner: true, mentor: true, season: true, comment: true, duel: true, tilt: true, playbook: true, referral: true,
+      kudos: true, follow: true, race: true, outcome: true, adopt: true, streak: true, tiltMute: true, cap: 5, quiet: { on: true, from: '22:00', to: '07:00' }, on: { morning: true, eod: true } }, prev || {});
     if (p && typeof p === 'object') {
-      for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(p[k])) o[k] = p[k];
-      for (const k of ['partner', 'mentor', 'season', 'comment', 'duel', 'tilt', 'playbook', 'referral']) if (typeof p[k] === 'boolean') o[k] = p[k];
+      for (const k of ['morning', 'eod']) if (typeof p[k] === 'string' && HM_RE.test(p[k])) o[k] = p[k];
+      for (const k of PUSH_KINDS) if (typeof p[k] === 'boolean') o[k] = p[k];
+      if ([3, 5, 10].includes(p.cap)) o.cap = p.cap;
+      if (p.quiet && typeof p.quiet === 'object') o.quiet = { on: p.quiet.on !== false, from: HM_RE.test(p.quiet.from) ? p.quiet.from : o.quiet.from, to: HM_RE.test(p.quiet.to) ? p.quiet.to : o.quiet.to };
       if (p.on && typeof p.on === 'object') o.on = { morning: p.on.morning !== false, eod: p.on.eod !== false }; }
     return o; };
+  const CAPPED_KINDS = new Set(['kudos', 'follow', 'race', 'outcome', 'adopt', 'comment', 'streak']), COMPETE_KINDS = new Set(['race', 'duel']);
+  const inQuiet = (q, hm) => { if (!q || !q.on) return false; const a = mins(q.from), b = mins(q.to), x = mins(hm); return a <= b ? x >= a && x < b : x >= a || x < b; };
+  // tilting, for the mute: two or more slips today, on the member's own calendar
+  const tilting = m => { const d = dayOfM(m, zoneKey((m.stats && m.stats.tz) || 'UTC', now())); return !!(d && Array.isArray(d.f) && d.f.length >= 2); };
+  const pushOk = (m, kind) => { if (!m.push || !m.push.prefs) return false; const pr = sanitizePrefs(null, m.push.prefs); if (pr[kind] === false) return false;
+    if (COMPETE_KINDS.has(kind) && pr.tiltMute !== false && tilting(m)) return false;
+    if (!CAPPED_KINDS.has(kind)) return true;
+    const tz = (m.stats && m.stats.tz) || 'UTC', t = now(); if (inQuiet(pr.quiet, localHM(tz, t))) return false;
+    const day = zoneKey(tz, t), c = m.push.cnt && m.push.cnt.day === day ? m.push.cnt : { day, n: 0 };
+    if (c.n >= (pr.cap || 5)) return false; m.push.cnt = { day, n: c.n + 1 }; return true; };
   const sendPush = async (m, msg) => {
     if (!push || !m.push || !Array.isArray(m.push.subs) || !m.push.subs.length) return 0;
     let sent = 0;
@@ -2307,7 +2328,7 @@ function createSocial(opts) {
     if (!m || m.banned) return;
     const it = Object.assign({ id: crypto.randomBytes(5).toString('hex'), at: now(), kind, text: cleanText(text, 700) }, extra || {});
     m.inbox = [...(m.inbox || []), it].slice(-INBOX_MAX); touch(m);
-    const pr = m.push && m.push.prefs; if (pr && pr[kind] !== false) sendPush(m, { title: extra && extra.title || 'Daruma', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/daruma#today' }).catch(() => {});
+    if (pushOk(m, kind)) sendPush(m, { title: extra && extra.title || 'Daruma', body: it.text, tag: 'pulse-' + kind, url: extra && extra.url || '/daruma#today' }).catch(() => {});
   };
   // morning and evening reminders on the member's own clock, once a day each; the evening one
   // only on a day they traded and haven't reviewed yet
@@ -2332,6 +2353,19 @@ function createSocial(opts) {
         const today = m.stats && Array.isArray(m.stats.days) ? m.stats.days.find(d => d.k === day) : null;
         if (pr.on.eod && sent.eod !== day && due(hm, pr.eod) && today && !today.r) { sent.eod = day; touch(m);
           jobs.push(() => sendPush(m, { title: 'Review your day', body: 'Five minutes: one lesson, one focus for tomorrow.', tag: 'pulse-eod', url: '/daruma#review' })); }
+        // the pair-streak reminder, at their evening time: to a partner who hasn't shown up while the other has
+        if (pr.streak !== false && sent.streak !== day && due(hm, pr.eod)) for (const p of pairsOf(m)) { if (p.status !== 'active') continue;
+          const o = otherIn(p, m), st = pairStreak(p); if (!o || o.banned || st.n < 1 || st.done[m.id] || !st.done[o.id]) continue;
+          sent.streak = day; touch(m); jobs.push(() => sendPush(m, { title: 'Pair streak', body: '@' + o.handle + ' showed up today. Your ' + st.n + '-day streak together ends at midnight unless you do too.', tag: 'pulse-streak', url: '/daruma#journal' })); break; }
+        // the weekly league's last day (Sunday on their clock, from 09:00): where they'd land if it ended now
+        const ML = S.leagues.main;
+        if (pr.race !== false && sent.race !== S.league.week && new Date(day + 'T00:00:00Z').getUTCDay() === 0 && due(hm, '09:00') && ML && ML.tiers && ML.period !== 'month' && own(ML.members, m.id) && !offBoards(m)) {
+          sent.race = S.league.week; touch(m);
+          const rows = leagueBoard(ML, ML.metric, m).filter(r => !r.out), r = rows.find(x => x.id === m.id), n = rows.length, k = leagueMoveCount(n), t = leagueTier(ML, m);
+          const txt = !r || !k ? '' : r.rank <= k && t < TIERS.length - 1 ? 'If the week ended now, you’d move up to ' + TIERS[t + 1] + '. It ends tonight.'
+            : r.rank > n - k && t > 0 ? 'If the week ended now, you’d drop to ' + TIERS[t - 1] + '. It ends tonight.'
+            : t < TIERS.length - 1 && r.rank - k <= 3 ? 'You’re ' + (r.rank - k) + ' place' + (r.rank - k === 1 ? '' : 's') + ' from moving up to ' + TIERS[t + 1] + '. The week ends tonight.' : '';
+          if (txt) notify(m, 'race', txt, { title: 'League race', url: '/daruma#social' }); }
       }
       if (jobs.length) save(null); // the members touched above
       // eight at a time: one slow push service doesn't hold up everyone else's reminder
@@ -2382,10 +2416,115 @@ function createSocial(opts) {
   const pairOut = (p, m) => { const o = otherIn(p, m); if (!o || o.banned) return null;
     const out = { id: p.id, handle: o.handle, av: avUrl(o), status: p.status === 'active' ? 'active' : p.from === m.id ? 'sent' : 'received', since: p.since || p.at,
       challenge: p.challenge && p.challenge.week === S.league.week ? { text: p.challenge.text, mine: p.challenge.by === m.id } : null };
-    if (p.status === 'active') out.view = partnerView(o);
+    if (p.status === 'active') { out.view = partnerView(o); const st = pairStreak(p);
+      out.streak = { n: st.n, best: st.best, me: !!st.done[m.id], them: !!st.done[o.id], days: st.days, freeze: st.freeze }; }
     const last = p.nudged && p.nudged[m.id]; out.canNudge = !last || now() - last > 6 * 3600000;
     return out; };
   const dropPairsOf = id => { for (const [k, p] of Object.entries(S.partners)) if (p.a === id || p.b === id) delete S.partners[k]; };
+
+  // ---- system badges the server gives (pair streaks, adopted rules): no XP of their own ----
+  const sysBadge = (bid, name, icon, desc) => { if (!own(S.badges, bid)) { S.badges[bid] = { id: bid, name, icon, desc, metric: null, op: 'gte', value: 0, xp: 0, system: true }; touch('badges'); } };
+  const giveBadge = (m, bid) => { m.awards = m.awards || {}; if (own(m.awards, bid)) return false; m.awards[bid] = now(); touch(m); return true; };
+  const namesOf = who => '@' + who[0] + (who.length > 1 ? ' and ' + (who.length - 1) + ' other' + (who.length > 2 ? 's' : '') : '');
+
+  // ---- pair streaks: a day counts when both partners showed up (journaled, prepped or reviewed: never a
+  // trade). The days both did are kept on the pair (p.both), so a run can outlast the 60 days the app sends.
+  // One missed day a week (its ISO week) is covered on its own, so a rest day doesn't end a run.
+  const showedUp = d => !!(d && (d.j || d.r || d.p || d.jn));
+  const PAIR_MARKS = [[7, 'pair-7', 'Good week together', '🤝', 'Showed up with your partner 7 days running'],
+    [30, 'pair-30', 'Ride or die', '🔥', 'Showed up with your partner 30 days running'], [100, 'pair-100', 'Thick and thin', '💎', 'Showed up with your partner 100 days running']];
+  const dayOfM = (o, k) => ((o.stats && o.stats.days) || []).find(d => d.k === k);
+  const pairToday = (a, b) => { const ta = zoneKey((a.stats && a.stats.tz) || 'UTC', now()), tb = zoneKey((b.stats && b.stats.tz) || 'UTC', now()); return ta < tb ? ta : tb; };
+  const pairStreak = p => { const a = S.members[p.a], b = S.members[p.b];
+    if (!a || !b || p.status !== 'active') return { n: 0, best: +p.best || 0, done: {}, days: [], freeze: true };
+    const both = new Set(p.both || []), T = pairToday(a, b), since = utcDayKey(p.since || p.at || now());
+    const done = { [a.id]: showedUp(dayOfM(a, T)), [b.id]: showedUp(dayOfM(b, T)) };
+    let k = both.has(T) ? T : addDaysKey(T, -1), n = 0, first = null; const weeks = new Set(), frz = [];
+    for (let i = 0; i < 500 && k >= since; i++, k = addDaysKey(k, -1)) {
+      if (both.has(k)) { n++; first = k; continue; }
+      const w = isoWeekOfKey(k); if (weeks.has(w)) break; weeks.add(w); frz.push(k); }
+    const froze = new Set(first ? frz.filter(x => x > first) : []), days = [];
+    for (let i = 13; i >= 0; i--) { const d = addDaysKey(T, -i); days.push(both.has(d) ? 'both' : froze.has(d) ? 'freeze' : d === T ? 'today' : 'miss'); }
+    return { n, best: Math.max(+p.best || 0, n), done, days, freeze: ![...froze].some(x => isoWeekOfKey(x) === isoWeekOfKey(T)) }; };
+  // after either partner's app reports: the days they both showed up, the best run, and the 7 / 30 / 100-day badges
+  const pairSync = p => { const a = S.members[p.a], b = S.members[p.b]; if (!a || !b || p.status !== 'active') return;
+    const db = new Map(((b.stats && b.stats.days) || []).map(d => [d.k, d])), since = utcDayKey(p.since || p.at || now()), both = new Set(p.both || []);
+    for (const d of (a.stats && a.stats.days) || []) if (d.k >= since && showedUp(d) && showedUp(db.get(d.k))) both.add(d.k);
+    p.both = [...both].sort().slice(-500);
+    const st = pairStreak(p); p.best = st.best;
+    for (const [n, bid, name, icon, desc] of PAIR_MARKS) if (st.n >= n && !(p.marks && p.marks[n])) {
+      p.marks = Object.assign({}, p.marks, { [n]: now() }); sysBadge(bid, name, icon, desc);
+      for (const [m, o] of [[a, b], [b, a]]) { giveBadge(m, bid); notify(m, 'streak', n + ' days in a row with @' + o.handle + '. You both earned “' + name + '”.', { title: 'Pair streak ' + icon, url: '/daruma#social' }); } }
+    touch('partners'); };
+
+  // ---- rules others adopt: on the author, by rule ({text, by: [{id, at}]}). +5 XP for each new adopter,
+  // 50 a week at most; badges at 5, 25 and 100 adoptions in all. Adopting your own rule doesn't count.
+  const ADOPT_XP = 5, ADOPT_CAP = 50;
+  const RULE_MARKS = [[5, 'rule-5', 'Rulemaker', '📜', 'Your rules were adopted 5 times'], [25, 'rule-25', 'Rulemaker II', '📜', 'Your rules were adopted 25 times'],
+    [100, 'rule-100', 'Rulemaker III', '📜', 'Your rules were adopted 100 times']];
+  const ruleKey = t => cleanText(t, 140).toLowerCase().replace(/\s+/g, ' ');
+  const adoptCount = m => Object.values(m.adopted || {}).reduce((a, r) => a + (r.by || []).length, 0);
+  const adoptedN = (m, text) => { const r = m && m.adopted && m.adopted[ruleKey(text)]; return r ? r.by.length : 0; };
+  // the rules a member can be adopted for: their habits, their weekly challenge, a shared challenge they set, and
+  // the habit and challenge lines they posted. Gives the rule in the author's own words, or null.
+  const ruleOf = (m, text) => { const k = ruleKey(text); if (!k) return null; const st = m.stats || {}, is = x => !!x && ruleKey(x) === k;
+    const pc = pairsOf(m).find(p => p.challenge && p.challenge.by === m.id && is(p.challenge.text));
+    const hit = (st.habits || []).find(is) || (is(st.lastChallenge) ? st.lastChallenge : null) || (pc ? pc.challenge.text : null)
+      || (q("SELECT quote FROM events WHERE member = ? AND type IN ('habit', 'challenge') AND quote IS NOT NULL ORDER BY at DESC LIMIT 200").all(m.id).find(r => is(r.quote)) || {}).quote;
+    return hit ? cleanText(hit, 140) : null; };
+  const adoptRule = (me, author, text) => {
+    const k = ruleKey(text), A = author.adopted = author.adopted || {}, r = A[k] = A[k] || { text: cleanText(text, 140), by: [] };
+    if (r.by.some(x => x.id === me.id)) return { n: r.by.length, xp: 0 };
+    r.by = [...r.by, { id: me.id, at: now() }].slice(-500);
+    const wk = S.league.week, ax = author.adoptXp && author.adoptXp.week === wk ? author.adoptXp : { week: wk, xp: 0 }, xp = Math.min(ADOPT_XP, Math.max(0, ADOPT_CAP - ax.xp));
+    ax.xp += xp; author.adoptXp = ax;
+    if (xp) addGrant(author, { id: crypto.randomBytes(5).toString('hex'), xp, why: '@' + me.handle + ' adopted your rule', at: now(), adopt: true });
+    const total = adoptCount(author);
+    for (const [n, bid, name, icon, desc] of RULE_MARKS) if (total >= n) { sysBadge(bid, name, icon, desc);
+      if (giveBadge(author, bid)) notify(author, 'adopt', 'Your rules were adopted ' + n + ' times. You earned “' + name + '”.', { title: name + ' ' + icon, url: '/daruma#u/' + author.handle }); }
+    notifyGroup(author, 'adopt', 'adopt:' + k, me.handle, who => namesOf(who) + ' adopted “' + r.text + '”.' + (xp ? ' +' + xp + ' XP.' : ''), { title: 'Your rule', url: '/daruma#u/' + author.handle });
+    touch(author); return { n: r.by.length, xp }; };
+  // the most adopted rules in the last 7 days, across members who share their feed
+  const topRules = () => { const t0 = now() - 7 * 86400000, out = [];
+    for (const m of members()) { if (m.banned || !m.share || !m.share.feed) continue;
+      for (const r of Object.values(m.adopted || {})) { const n = r.by.filter(x => x.at >= t0).length; if (n) out.push({ text: r.text, handle: m.handle, n, total: r.by.length }); } }
+    return out.sort((a, b) => b.n - a.n || b.total - a.total).slice(0, 3); };
+
+  // ---- looks: rings, profile themes and titles, each earned, never bought. A member wears one of each. ----
+  const LOOKS = [
+    ...TIERS.slice(1).map((t, i) => ({ id: 'tier-' + (i + 1), name: t + ' league', desc: 'Reached ' + t + ' in the main league', has: m => bestTier(m) >= i + 1 })),
+    { id: 'ninja', name: 'High Ninja', desc: 'Given by the league owner', has: m => !!m.ninja },
+    { id: 'pair', name: 'Ride or die', desc: 'A 30-day pair streak', has: m => !!(m.awards && m.awards['pair-30']) },
+    { id: 'duel', name: 'Duel champion', desc: 'Top 3 on the duel ladder for a season', has: m => !!(m.awards && ['duel-gold', 'duel-silver', 'duel-bronze'].some(b => m.awards[b])) },
+    { id: 'podium', name: 'Podium', desc: 'Top 3 in a league season', has: m => !!(m.awards && ['season-gold', 'season-silver', 'season-bronze'].some(b => m.awards[b])) },
+    { id: 'rule', name: 'Rulemaker', desc: 'Your rules were adopted 5 times', has: m => !!(m.awards && m.awards['rule-5']) }];
+  const bestTier = m => { const t = Math.max(+m.bestTier || 0, +m.tier || 0); if (t !== (+m.bestTier || 0)) m.bestTier = t; return t; };
+  const lookHas = (m, id) => { const L = LOOKS.find(x => x.id === id); return !!(L && !m.banned && L.has(m)); };
+  // what a member wears, as long as they still hold it (a role taken back takes its ring with it)
+  const lookOf = m => { const l = m.look || {}, o = {};
+    for (const k of ['ring', 'theme', 'title']) if (l[k] && lookHas(m, l[k])) o[k] = l[k];
+    if (o.title) o.titleName = LOOKS.find(x => x.id === o.title).name;
+    return o; };
+  const looksOut = m => LOOKS.map(L => ({ id: L.id, name: L.name, desc: L.desc, has: L.has(m) }));
+
+  // ---- the league race: who you passed in your leagues' own rankings; each one passed is told once a day ----
+  const raceLeagues = m => offBoards(m) ? [] : leaguesOf(m).slice(0, 3);
+  const raceRanks = m => { const out = {}; try { for (const L of raceLeagues(m)) out[L.id] = new Map(leagueBoard(L, L.metric, m).filter(r => !r.out).map(r => [r.id, r.rank])); } catch (e) { /* no race news this time */ } return out; };
+  const racePass = (m, before) => { try { const after = raceRanks(m), day = todayKey();
+    for (const L of raceLeagues(m)) { const b = before[L.id], a = after[L.id]; if (!b || !a || !b.has(m.id) || !a.has(m.id)) continue;
+      const r0 = b.get(m.id), r1 = a.get(m.id); if (!(r1 < r0)) continue;
+      const k = L.tiers ? leagueMoveCount(a.size) : 0; let told = 0;
+      for (const [id, x1] of a) { if (told >= 3 || id === m.id) continue; const x0 = b.get(id); if (x0 == null || !(x0 < r0) || !(x1 > r1)) continue;
+        const x = S.members[id]; if (!x || x.banned || (x.raceSent && x.raceSent.day === day)) continue;
+        x.raceSent = { day }; told++;
+        notify(x, 'race', '@' + m.handle + ' passed you in ' + L.name + '. You’re #' + x1 + (k ? x1 > k ? ', ' + (x1 - k) + ' place' + (x1 - k === 1 ? '' : 's') + ' from the promotion line' : ', still in the promotion places' : '') + '.', { title: 'League race', url: '/daruma#social' }); touch(x); } }
+  } catch (e) { /* the race is news, never a reason for a sync to fail */ } };
+
+  // ---- notifications that group: the same news within the hour (a day for follows) updates one line ----
+  const notifyGroup = (m, kind, group, who, textFor, extra, win) => { if (!m || m.banned) return;
+    const it = (m.inbox || []).slice().reverse().find(x => x.group === group && now() - x.at < (win || 3600000));
+    if (it) { it.who = [who, ...(it.who || []).filter(x => x !== who)].slice(0, 20); it.text = cleanText(textFor(it.who), 700); it.at = now(); touch(m); return; }
+    notify(m, kind, textFor([who]), Object.assign({ group, who: [who] }, extra)); };
 
   // ---- mentors: members the owner appoints; they see the days of members who opted in ----
   // A member who picked mentors (up to MENTORS_MAX) is seen by those only; one who picked no one, by every mentor.
@@ -4047,6 +4186,9 @@ function createSocial(opts) {
       if (!me.share.mentor && picksOf(me).length) for (const id of picksOf(me)) dropPick(me, S.members[id]);
       if (body.bio !== undefined) me.bio = cleanText(body.bio, 160);
       if (socials) { if (Object.keys(socials).length) me.socials = socials; else delete me.socials; }
+      if (body.look && typeof body.look === 'object') { const l = Object.assign({}, me.look);
+        for (const k of ['ring', 'theme', 'title']) if (body.look[k] !== undefined) { const v = String(body.look[k] || ''); if (v && !lookHas(me, v)) return json(res, 400, { error: 'That one isn’t yours yet.' }); if (v) l[k] = v; else delete l[k]; }
+        if (Object.keys(l).length) me.look = l; else delete me.look; }
       // a new picture replaces the old one (whose file goes); null takes it off
       if (body.avatar !== undefined) {
         if (!r || r.id !== me.avatar) { dropMedia(q('SELECT id FROM media WHERE member = ? AND kind = ? AND id != ?').all(me.id, 'avatar', r ? r.id : ''));
@@ -4130,6 +4272,7 @@ function createSocial(opts) {
       // Days are the member's own calendar days, up to their today and at most STATS_DAYS back; each part of a
       // day's XP is capped at what the league's weights can pay in a day. The XP itself is the server's: the
       // parts go into its ledger (xplWrite), and the total, level and XP by day come out of it (xpDerive).
+      const raceBefore = raceRanks(me);
       const next = sanitizeStats(body, { todayOf: tz => zoneKey(tz, now()), keepDays: STATS_DAYS, parts: SC.dayXpParts(S.config.xp) });
       capStreak(next);
       xplStart(me);
@@ -4153,6 +4296,8 @@ function createSocial(opts) {
         if (!!b !== !!me.bench) benchDirty = true; me.bench = b ? Object.assign(b, { at: now() }) : null; }
       me.weekXp = weekXpOf(me.weekXp, next);
       awardCheck(me);
+      for (const p of pairsOf(me)) if (p.status === 'active') pairSync(p);
+      racePass(me, raceBefore);
       if (logCompDays(me)) save(me, 'comps'); else save(me); refreshAll(me);
       // the XP and level the server keeps, so the app shows them
       return json(res, 200, { ok: true, tier: me.tier || 0, xp: me.stats.xp, level: me.stats.level });
@@ -4226,13 +4371,17 @@ function createSocial(opts) {
       const folSet = new Set(fol);
       const suggest = scope === 'discover' && !query.before ? topDiscipline().filter(x => own(S.members, x.id) && !S.members[x.id].banned && !folSet.has(x.id)).slice(0, 3)
         .map(({ id, d }) => { const m = S.members[id]; return { handle: m.handle, av: avUrl(m), tierName: TIERS[m.tier || 0], why: 'Level ' + ((m.stats && m.stats.level) || 1) + (d != null ? ' · discipline ' + Math.round(d) : '') }; }) : [];
-      return json(res, 200, { scope, events: eventsOut(page.rows, me), next: page.next, suggest, posts: postCfgOut() });
+      return json(res, 200, { scope, events: eventsOut(page.rows, me), next: page.next, suggest, posts: postCfgOut(), topRules: query.before ? [] : topRules() });
     }
     if (head === 'kudos' && parts[1] && M === 'POST') {
       const e = eventById(parts[1]); if (!e || !visible(e, me)) return json(res, 404, { error: 'no such post' });
       if (e.member === me.id) return json(res, 400, { error: 'That’s your own post.' });
       const liked = tx(() => { if (q('DELETE FROM kudos WHERE event = ? AND member = ?').run(e.id, me.id).changes) { q('UPDATE events SET kudos = max(0, kudos - 1) WHERE id = ?').run(e.id); return false; }
         q('INSERT INTO kudos (event, member, at) VALUES (?, ?, ?)').run(e.id, me.id, now()); q('UPDATE events SET kudos = kudos + 1 WHERE id = ?').run(e.id); return true; });
+      const author = liked && own(S.members, e.member) ? S.members[e.member] : null;
+      if (author) { let d = {}; try { d = JSON.parse(e.data || '{}') || {}; } catch (x) {}
+        const what = e.type === 'post' ? ({ trade: 'trade', plan: 'plan', note: 'note' }[d.kind] || 'post') : 'milestone', bit = cleanText(e.type === 'post' ? e.text : e.text + (e.quote ? ': ' + e.quote : ''), 60);
+        notifyGroup(author, 'kudos', 'kudos:' + e.id, me.handle, who => namesOf(who) + ' gave kudos to your ' + what + ': “' + bit + ((e.text || '').length > 60 ? '…' : '') + '”', { title: 'Kudos', url: e.type === 'post' ? '/daruma#post/' + e.id : '/daruma#social' }); save(author); }
       return json(res, 200, { kudos: q('SELECT kudos FROM events WHERE id = ?').get(e.id).kudos, liked });
     }
     if (head === 'profile' && parts[1] && M === 'GET') {
@@ -4278,7 +4427,11 @@ function createSocial(opts) {
         // the update, like the thesis, can be fixed for 15 minutes after it's first written
         if (body.outcome !== undefined) { const o = cleanPost(body.outcome, 500);
           if (o !== (d.outcome || '')) { if (d.outcome && now() - (d.outcomeFirst || d.outcomeAt || 0) > POST_EDIT_MS) return json(res, 409, { error: 'The update can only be changed in its first 15 minutes.' });
-            if (!d.outcome) d.outcomeFirst = now(); d.outcome = o; d.outcomeAt = now(); } }
+            if (!d.outcome && o) { d.outcomeFirst = now();
+              for (const r of q('SELECT member FROM kudos WHERE event = ? LIMIT 100').all(e.id)) { const x = own(S.members, r.member) ? S.members[r.member] : null;
+                if (x && x.id !== me.id) { notify(x, 'outcome', '@' + me.handle + ' posted how their ' + (d.kind === 'plan' ? 'plan' : 'trade') + ' went. You gave it kudos.', { title: 'How it went', url: '/daruma#post/' + e.id }); touch(x); } }
+              save(null); }
+            d.outcome = o; d.outcomeAt = now(); } }
         q('UPDATE events SET text = ?, data = ?, edited = ? WHERE id = ?').run(text, JSON.stringify(d), edited, e.id);
         verifyPost(e.id, me);
         return json(res, 200, { post: eventOut(eventById(e.id), me, likedBy(me, [e])) }); }
@@ -4310,11 +4463,23 @@ function createSocial(opts) {
       q('INSERT OR IGNORE INTO reports (id, event, comment, member, at, why) VALUES (?, ?, ?, ?, ?, ?)').run(crypto.randomBytes(6).toString('hex'), c ? null : e.id, c ? c.id : null, me.id, now(), cleanText(body.why, 200));
       return json(res, 200, { ok: true });
     }
+    // adopting another member's rule (a habit, a challenge lesson, a shared challenge): the app keeps the habit;
+    // this credits whose it was. Only a rule that member actually has or posted counts.
+    if (head === 'adopt' && M === 'POST') {
+      const a = byHandle(cleanText(body.from, 21).replace(/^@/, '')), text = cleanText(body.text, 140);
+      if (!a || a.banned || !text) return json(res, 404, { error: 'No one by that name.' });
+      if (a.id === me.id) return json(res, 200, { n: adoptedN(a, text), xp: 0 });
+      if (limited(req, 'adopt:' + me.id, 30, 3600000, true)) return json(res, 429, { error: 'That’s a lot of rules this hour.' });
+      const rule = ruleOf(a, text); if (!rule) return json(res, 400, { error: 'That isn’t one of @' + a.handle + '’s rules.' });
+      const r = adoptRule(me, a, rule); save(a); return json(res, 200, r);
+    }
     if (head === 'follow' && parts[1] && (M === 'POST' || M === 'DELETE')) {
       const m = byHandle(arg); if (!m || m.banned || m.id === me.id) return json(res, 404, { error: 'No one by that name.' });
-      const f = S.follows[me.id] = (S.follows[me.id] || []).filter(x => x !== m.id);
+      const was = (S.follows[me.id] || []).includes(m.id), f = S.follows[me.id] = (S.follows[me.id] || []).filter(x => x !== m.id);
       if (M === 'POST') f.push(m.id);
-      save('follows'); return json(res, 200, { following: M === 'POST' });
+      save('follows');
+      if (M === 'POST' && !was) { const n = followersOf(m.id); notifyGroup(m, 'follow', 'follow', me.handle, who => namesOf(who) + ' followed you. You have ' + n + ' follower' + (n === 1 ? '' : 's') + '.', { title: 'New follower', url: '/daruma#u/' + me.handle }, 86400000); save(m); }
+      return json(res, 200, { following: M === 'POST' });
     }
     const compVisible = c => !c.league || (own(S.leagues, c.league) && own(S.leagues[c.league].members, me.id)) || !!c.entrants[me.id];
     if (head === 'competitions' && M === 'GET' && !parts[1]) {

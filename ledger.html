@@ -1547,23 +1547,47 @@ body.light .pz-hlpill.pays{background:#E6F6EF;color:#0A9A63} body.light .pz-hlpi
 .pz-avs{display:flex;flex-shrink:0}.pz-avs>*{margin-left:-8px;border-radius:50%!important;box-shadow:0 0 0 2px var(--pz-card)}.pz-avs>*:first-child{margin-left:0}
 /* Social: four tabs, the "this week" strip and the Compete hub */
 .pz-cnt{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:4px;border-radius:9px!important;background:var(--pz-low);color:#1a0603;font-size:11px;font-weight:800}
-.pz-week{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
-.pz-wkrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
-.pz-wk{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);text-decoration:none;text-align:left;font:inherit;cursor:pointer}
-#pz a.pz-wk{color:var(--pz-text)}div.pz-wk{cursor:default}
-.pz-wk.hot{border-color:color-mix(in srgb,var(--pz-low) 45%,var(--pz-line))}
-.pz-wkl{font-size:12px;font-weight:600;color:var(--pz-muted)}.pz-wk.hot .pz-wkl{color:var(--pz-low)}
-.pz-wk b{font-size:14px;line-height:1.35}.pz-wkn{font-family:var(--pz-num);font-size:20px}.pz-wka{font-size:12px;color:var(--pz-soft)}
+.pz-tweek{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+.pz-twrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.pz-tw{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:18px!important;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);text-decoration:none;text-align:left;font:inherit;cursor:pointer}
+#pz a.pz-tw{color:var(--pz-text)}div.pz-tw{cursor:default}
+.pz-tw.hot{border-color:color-mix(in srgb,var(--pz-low) 45%,var(--pz-line))}
+.pz-twl{font-size:12px;font-weight:600;color:var(--pz-muted)}.pz-tw.hot .pz-twl{color:var(--pz-low)}
+.pz-tw b{font-size:14px;line-height:1.35}.pz-twn{font-family:var(--pz-num);font-size:20px}.pz-twa{font-size:12px;color:var(--pz-soft)}
 .pz-gridf{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .pz-stack{display:flex;flex-direction:column;gap:10px}
 .pz-past summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--pz-soft)}
 /* Social: a profile's actions (one main button, the rest under "More") */
-.pz-prof{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.pz-prof{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
 .pz-pact{display:flex;gap:8px;align-items:stretch}.pz-pact>.pz-cta,.pz-pact>.pz-ghost{flex:1;min-width:0}
 .pz-more{position:relative;flex-shrink:0}
 .pz-more>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:48px;height:100%;min-height:48px;border-radius:16px!important;border:1px solid var(--pz-line2);color:var(--pz-text);cursor:pointer}
 .pz-more>summary::-webkit-details-marker{display:none}
 .pz-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:min(300px,80vw);display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:18px!important;background:var(--pz-card);border:1px solid var(--pz-line2);box-shadow:0 12px 30px rgba(0,0,0,.45)}
+/* Social: pair streaks, adopted rules, titles, and the looks members earn */
+.pz-pstreak{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.pz-flame{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:12px!important;border:1px solid var(--pz-line2);color:var(--pz-muted);font-size:12px}
+.pz-flame.on{color:#F5A742;border-color:color-mix(in srgb,#F5A742 40%,var(--pz-line))}.pz-flame b{font-family:var(--pz-num);font-size:20px;color:inherit}
+.pz-pdays{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:4px}
+.pz-pdays i{display:block;height:8px;border-radius:4px!important;background:var(--pz-line2)}
+.pz-pdays i.both{background:#F5A742}.pz-pdays i.freeze{background:#6FB0FF}.pz-pdays i.today{background:none;outline:1px dashed var(--pz-muted);outline-offset:-1px}
+.pz-tw.warm{border-color:color-mix(in srgb,#F5A742 45%,var(--pz-line))}.pz-tw.warm .pz-twl{color:#F5A742}
+.pz-runs{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:12px!important;background:var(--pz-tint-n);font-size:13px;color:var(--pz-soft)}
+.pz-runs b{color:var(--pz-text)}.pz-runs svg{color:var(--pz-good);flex-shrink:0}
+.pz-runsn{font-family:var(--pz-num);font-size:13px;font-weight:600;color:#F4C04E;padding:0 8px;white-space:nowrap}
+.pz-rk{font-family:var(--pz-num);font-size:12px;color:var(--pz-muted);min-width:14px}
+.pz-etitle{font-size:11px;font-weight:600;color:#F4C04E;white-space:nowrap}
+.pz-theme{display:block;height:84px;border-radius:18px!important;background:linear-gradient(100deg,#0f2a12,#1d4a1f)}
+.pz-theme.th-tier-1{background:linear-gradient(100deg,#1d2126,#46505c)}.pz-theme.th-tier-2,.pz-theme.th-podium{background:linear-gradient(100deg,#2a2108,#5a4512)}
+.pz-theme.th-tier-3{background:linear-gradient(100deg,#0f2430,#1e5266)}.pz-theme.th-tier-4{background:linear-gradient(100deg,#1d1430,#3a2766)}
+.pz-theme.th-ninja{background:linear-gradient(100deg,#2a2108,#3a2766,#5a4512)}.pz-theme.th-pair{background:linear-gradient(100deg,#2a1608,#5a3412)}
+.pz-theme.th-duel{background:linear-gradient(100deg,#24102e,#4a2266)}.pz-theme.th-rule{background:linear-gradient(100deg,#26241a,#4d4630)}
+.pz-theme.th-none{background:var(--pz-line2)}
+.pz-looks{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.pz-look{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;border-radius:16px!important;border:1px solid var(--pz-line);background:var(--pz-card);color:var(--pz-text);font:inherit;text-align:center;cursor:pointer}
+.pz-look b{font-size:13px}.pz-look span:last-child{font-size:11px;color:var(--pz-muted);line-height:1.35}
+.pz-look[aria-pressed="true"]{border:2px solid var(--pz-good)}.pz-look:disabled{opacity:.55;cursor:default;border-style:dashed}
+.pz-look.th{align-items:stretch;text-align:left}.pz-look.th .pz-theme{height:40px;border-radius:10px!important}
 .pz-pbcheck{border:1px solid var(--pz-line2);border-radius:12px;padding:8px 12px 10px;margin:0;display:flex;flex-direction:column;gap:2px}
 .pz-pbcheck legend{font-size:12px;color:var(--pz-muted);padding:0 4px}
 .pz-pbr{display:flex;gap:10px;align-items:flex-start;min-height:36px;padding:6px 0;font-size:14px;line-height:1.35;cursor:pointer}
