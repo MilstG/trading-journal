@@ -71,6 +71,7 @@ try{ if(window.Chart&&Chart.defaults)Chart.defaults.animation=false; }catch(e){}
   // auto-load on boot: rebuild from the cached fills and pull anything new, so reopening the
   // app refreshes without a manual "Load all". Incremental and _loading-guarded; the 3-minute
   // interval keeps it current from here. Errors surface the same way an auto-tick would.
+  if(PZ&&pzTab()==='coach')pzRender(); // the chat draws now; the trades and the game follow behind it
   if(settings.wallets.length){ await bootFromCache(); loadAll({auto:true}); }
-  if(PZ)pzRender();
+  if(PZ){ _pzBooting=false; pzRender(); }
 })();

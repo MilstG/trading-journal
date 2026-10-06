@@ -3947,12 +3947,13 @@ function createSocial(opts) {
     // Lists members whose profile is public (and every mentor, whose role is to be found): name,
     // picture, level, bio and trading style, and what they're open to. Never trades, P&L or wallets.
     if (head === 'people' && !parts[1] && M === 'GET') {
-      const q = cleanText(query.q, 40).replace(/^@/, '').toLowerCase(), f = ['duels', 'partner', 'mentor'].includes(query.f) ? query.f : '';
+      const q = cleanText(query.q, 40).replace(/^@/, '').toLowerCase(), f = ['duels', 'partner', 'mentor', 'following'].includes(query.f) ? query.f : '';
       const duelsOn = !!S.config.duels.on, week = 7 * 86400000;
       let list = members().filter(o => o.id !== me.id && !o.banned && (o.mentor || (o.share && o.share.profile !== false)));
       if (f === 'duels') list = list.filter(o => duelsOn && o.share.duels !== false);
       if (f === 'partner') list = list.filter(o => o.share.seek);
       if (f === 'mentor') list = list.filter(o => o.mentor);
+      if (f === 'following') { const fol = new Set(S.follows[me.id] || []); list = list.filter(o => fol.has(o.id)); }
       if (q) list = list.filter(o => o.handle.toLowerCase().includes(q) || (o.share.profile !== false && (o.bio || '').toLowerCase().includes(q)));
       const total = list.length, page = Math.max(0, Math.min(200, parseInt(query.page, 10) || 0)), size = 30;
       list.sort((a, b) => (q ? (+b.handle.toLowerCase().startsWith(q)) - (+a.handle.toLowerCase().startsWith(q)) : 0) || ((b.lastSeen || 0) - (a.lastSeen || 0)));

@@ -1102,12 +1102,12 @@ function socPodPotHtml(st,P,max,n){
 }
 // ---- actions ----
 // ---- Find people: duel, partner with, or learn from anyone on this server, no shared league needed ----
-const SOC_PEOPLE_F=[['','Everyone'],['duels','Open to duels'],['partner','Looking for a partner'],['mentor','Mentors']];
+const SOC_PEOPLE_F=[['','Everyone'],['following','Following'],['duels','Open to duels'],['partner','Looking for a partner'],['mentor','Mentors']];
 const SOC_STYLE={scalper:'Scalper',day:'Day trader',swing:'Swing trader',position:'Position trader'};
 function socPeopleHtml(D){
   const back=`<a class="pz-back" href="#social">${pzI('back',20)}Social</a>`;
   if(!socAvailable()||!SOC.me)return `${back}${socSocialHtml(D)}`;
-  const f=['duels','partner','mentor'].includes(pzHashArg())?pzHashArg():'', q=SOC.pq||'';
+  const f=['following','duels','partner','mentor'].includes(pzHashArg())?pzHashArg():'', q=SOC.pq||'';
   if(SOC.pkey!==f+'|'+q){ SOC.pkey=f+'|'+q; SOC.ppage=0; } // a new filter or search starts at its first page
   const n=(SOC.ppage||0)+1;
   // pages come one at a time ("Show more") and are added to what's shown
@@ -1115,12 +1115,14 @@ function socPeopleHtml(D){
   const pages=[]; for(let i=0;i<n;i++){ const ci=i?pg(i):c; if(ci&&ci.d)pages.push(ci.d); }
   const d=c&&c.d, list=pages.flatMap(x=>x.people), duelLock=pzLocked('duels',D.g.level.level), duelsOn=socDuelsOn();
   const tabs=`<div class="pz-chiprow" role="group" aria-label="Show">${SOC_PEOPLE_F.map(([k,l])=>`<a class="pz-chipbtn" href="${k==='mentor'?'#mentors':'#people'+(k?'/'+k:'')}" aria-pressed="${k===f}">${l}</a>`).join('')}</div>`;
-  const intro={duels:'Members who accept duel challenges. Pick one and set the terms: a week or a month, on Discipline, clean days, journaling or XP.',
+  const intro={following:'The people you follow. Their posts and milestones show up in your feed.',
+    duels:'Members who accept duel challenges. Pick one and set the terms: a week or a month, on Discipline, clean days, journaling or XP.',
     partner:'Members looking for an accountability partner. Partners see each other’s streak, scores and slips, and can nudge each other. Up to three each.',
     mentor:'Mentors the league owner appointed. Ask one to look at your trading: they see your days (never your wallet) and can leave you notes and review trades you send.',
     '':'Everyone with a public profile, most recently active first. You don’t need to share a league to duel, partner or ask a mentor.'}[f];
   const card=p=>{ const tags=[p.ninja?`<span class="pz-tag ninja">${pzI('shuriken',11,2.4)} High Ninja</span>`:'',p.mentor?`<span class="pz-tag info">Mentor</span>`:'',p.seeking?`<span class="pz-tag win">Looking for a partner</span>`:'',p.duels?`<span class="pz-tag">Open to duels</span>`:'',p.style?`<span class="pz-tag">${esc(SOC_STYLE[p.style]||p.style)}</span>`:''].filter(Boolean).join('');
-    const acts=[p.duelWith?`<a class="pz-ghost pz-sm" href="#duels">${pzI('medal',14)} ${p.duelWith==='active'?'Your duel':'Challenge waiting'}</a>`:!duelLock&&duelsOn&&p.duels?`<a class="pz-ghost pz-sm" href="#duel/${esc(p.handle)}">${pzI('medal',14)} Challenge</a>`:'',
+    const acts=[`<button type="button" class="pz-ghost pz-sm pz-follow" data-soc-follow="${esc(p.handle)}" data-on="${p.following?1:0}" aria-pressed="${!!p.following}"${p.following?` aria-label="Following @${esc(p.handle)}. Unfollow"`:''}>${pzI(p.following?'check':'plus',14)} ${p.following?'Following':'Follow'}</button>`,
+      p.duelWith?`<a class="pz-ghost pz-sm" href="#duels">${pzI('medal',14)} ${p.duelWith==='active'?'Your duel':'Challenge waiting'}</a>`:!duelLock&&duelsOn&&p.duels?`<a class="pz-ghost pz-sm" href="#duel/${esc(p.handle)}">${pzI('medal',14)} Challenge</a>`:'',
       p.partner==='active'?'<span class="pz-fine">Your partner</span>':p.partner==='sent'?'<span class="pz-fine">Partner request sent</span>':p.partner==='asked'?`<button type="button" class="pz-cta pz-sm" data-soc-ppartner="${esc(p.handle)}">Accept as partner</button>`
         :(p.seeking||f==='partner')?`<button type="button" class="pz-ghost pz-sm" data-soc-ppartner="${esc(p.handle)}">Ask to partner</button>`:'',
       p.mentor?`<a class="pz-ghost pz-sm" href="#mentors/${esc(p.handle)}">${pzI('coach',14)} ${p.myMentor?'Your mentor':p.rate?'Mentor · '+p.rate+' XP a trade':'Mentor · free'}</a>`:''].filter(Boolean).join('');
@@ -1133,7 +1135,7 @@ function socPeopleHtml(D){
     ${f==='partner'&&!(SOC.share&&SOC.share.seek)?`<p class="pz-fine">Want people to find you too? Switch on “Looking for an accountability partner” in <a href="#sharing">Profile &amp; privacy</a>.</p>`:''}
     ${!d?`<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`
       :list.length?`<div class="pz-jgrid">${list.map(card).join('')}</div>${last&&last.more?`<button type="button" class="pz-ghost" data-soc-pmore="1">Show more</button>`:''}`
-      :`<section class="pz-card pz-empty"><b>No one here yet</b><p class="pz-sub">${q?'Nobody matches “'+esc(q)+'”.':f==='mentor'?'This league has no mentors yet. The owner appoints them.':f==='partner'?'Nobody has said they’re looking for a partner yet. Be the first: switch it on in Profile & privacy.':'Nobody else has a public profile yet.'}</p></section>`}`;
+      :`<section class="pz-card pz-empty"><b>No one here yet</b><p class="pz-sub">${q?'Nobody matches “'+esc(q)+'”.':f==='following'?'You don’t follow anyone with a public profile yet. Follow people from Everyone and they show up here.':f==='mentor'?'This league has no mentors yet. The owner appoints them.':f==='partner'?'Nobody has said they’re looking for a partner yet. Be the first: switch it on in Profile & privacy.':'Nobody else has a public profile yet.'}</p></section>`}`;
 }
 // after asking, accepting or challenging: the People cards, profiles and duel forms show the new state at once
 const socPeopleDrop=()=>{ for(const k of Object.keys(SOC.cache))if(/^(people|u|dw):/.test(k))delete SOC.cache[k]; };
@@ -1349,7 +1351,8 @@ async function socAction(t){
     if(ds.socRscope){ SOC.rscope=ds.socRscope; pzRender(); return true; }
     if(ds.socDraft){ SOC.draft=SOC.draft||{...(SOC.share||SOC_DEFAULT_SHARE)}; SOC.draft[ds.socDraft]=!SOC.draft[ds.socDraft]; t.setAttribute('aria-checked',String(SOC.draft[ds.socDraft])); return true; }
     if(ds.socKudos){ const r=await socFetch('/kudos/'+encodeURIComponent(ds.socKudos),{method:'POST'}); t.setAttribute('aria-pressed',String(r.liked)); t.setAttribute('aria-label','Kudos, '+r.kudos); t.lastChild.textContent=r.kudos; socStale(); return true; }
-    if(ds.socFollow){ const on=ds.on==='1'; await socFetch('/follow/'+encodeURIComponent(ds.socFollow),{method:on?'DELETE':'POST'}); done(on?'Unfollowed.':'Following @'+ds.socFollow+'. Their milestones show up in your feed.'); return true; }
+    if(ds.socFollow){ const on=ds.on==='1'; await socFetch('/follow/'+encodeURIComponent(ds.socFollow),{method:on?'DELETE':'POST'});
+      for(const k in SOC.cache)if(k.startsWith('people:')&&SOC.cache[k].d)for(const p of SOC.cache[k].d.people||[])if(p.handle===ds.socFollow)p.following=!on; done(on?'Unfollowed.':'Following @'+ds.socFollow+'. Their milestones show up in your feed.'); return true; }
     if(ds.socJoin&&ds.buyin&&!confirm('Put up '+ds.buyin+' XP to join?\n\n'+socLoseLine(+ds.buyin)+'\n\nBack out before it starts and you get it back.'))return true;
     if(ds.socJoin){ await socFetch('/competitions/'+encodeURIComponent(ds.socJoin)+'/join',{method:'POST'}); done('You’re in. Good luck — play your process.'); return true; }
     if(ds.socLeave){ if(!confirm('Leave this competition?'))return true; await socFetch('/competitions/'+encodeURIComponent(ds.socLeave)+'/join',{method:'DELETE'}); done('You left the competition.'); return true; }

@@ -96,8 +96,10 @@ try {
     // finding.js, recap.js, first-look.js: ~32 KB raw / ~13 KB gzipped, compressed one file each, a third of it
     // comments), their CSS in the page (~2 KB raw on both) and the reminder switches: 2134 / 1821 raw, 723 / 616 gzipped.
     // Pair streaks, adopted-rule credit, social notification settings and earned looks: about 12 KB raw, 3 KB gzipped.
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2148, 728],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1835, 621],
+    // Oct 2026: the Coach tab opens on the chat before the trades and the game are in, and a message waits for
+    // them with the chat saying so: about 2 KB raw on both screens, under 1 KB gzipped.
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2150, 728],
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1837, 622],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
