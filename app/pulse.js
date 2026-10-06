@@ -126,6 +126,9 @@ function pzCoachLine(D){
   if(D.form&&D.form.score!=null&&D.form.score<40)return 'Your recent trading trails your usual. Trade smaller until a few clean wins bring your form back.';
   // a clean day so far gets said so, instead of a lesson from older trades that reads like it's about today
   if(c.length&&day&&day.behavior&&!(day.behavior.slips||[]).length&&risk.net>=0&&!pzRulesBroken(D))return 'Clean so far: '+c.length+' closed, no slips'+(risk.limit>0?', inside your loss limit':'')+'. Keep the same routine for the next one — or call it a day.';
+  // the slip that costs you most against your own trades in the same spot (features/research.js), when it's sure
+  let pr=null; if(typeof rfPriced==='function')try{ pr=rfPriced(D).find(r=>r.own&&r.sure)||null; }catch(e){}
+  if(pr)return 'Your costliest slip: '+pr.label.toLowerCase()+'. '+rfPriceLine(pr)+' Plugging it is in Progress → Your leaks.';
   const fd=(D.ctx.findings||[]).find(x=>x.tone==='leak'||x.tone==='caution')||(D.ctx.findings||[])[0];
   return fd?'Across your trades: '+fd.title+'. '+pzPlain(fd.action):'Keep trading your plan — your dials fill in as your history grows.';
 }
@@ -264,7 +267,9 @@ function pzFeature(f){
 }
 // A feature can also take its screen's clicks (click(el) -> true when handled), typing (input(el) -> true),
 // and an argument after its screen's name (tab.arg: a RegExp for what follows '#name/'; pzHashArg() reads it).
-const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab)||null;
+// a staged rollout (rollouts.js) that left this feature out for this member: its card, screen and switch aren't shown
+const pzRolledOff=id=>typeof SOC!=='undefined'&&!!(SOC.me&&SOC.me.rollouts&&SOC.me.rollouts[id]===false);
+const pzFeatTab=tab=>PZ_FEATS.find(f=>f.tab&&f.tab.name===tab&&!pzRolledOff(f.id))||null;
 function pzOrdered(screen){ const all=(PZ_FLOW[screen]||[]).flat(), o=((settings.pzLayout||{})[screen]||{})._order;
   if(!Array.isArray(o))return null;
   return [...o.filter(id=>all.includes(id)),...all.filter(id=>!o.includes(id))]; }
@@ -281,7 +286,7 @@ function pzShow(screen,id){ const L=(settings.pzLayout||{})[screen]; if(L&&Objec
 const pzLayoutCss=screen=>{ const hid=(PZ_SECTIONS[screen]||[]).filter(x=>!pzShow(screen,x[0])).map(x=>`[data-sec="${screen}:${x[0]}"]`); return hid.length?`<style>${hid.join(',')}{display:none!important}</style>`:''; };
 const pzCustomizeLink=screen=>`<p class="pz-span pz-custom"><button type="button" class="pz-link" data-pz-customize="${screen}">${pzI('gear',14)} Customize this screen</button></p>`;
 function pzCustomizeHtml(screen){
-  const list=PZ_SECTIONS[screen]||[], name={today:'Today',stats:'Stats',progress:'Progress'}[screen]||screen;
+  const list=(PZ_SECTIONS[screen]||[]).filter(x=>!pzRolledOff(x[0])), name={today:'Today',stats:'Stats',progress:'Progress'}[screen]||screen;
   return `<div class="pz-sheet-bg" data-pz-close><div class="pz-sheet" role="dialog" aria-modal="true" aria-labelledby="pzCustT">
     <div style="display:flex;justify-content:space-between;align-items:center"><b id="pzCustT" style="font-size:18px">Customize ${esc(name)}</b><button type="button" class="pz-chip icon" data-pz-close aria-label="Close">${pzI('x',20)}</button></div>
     <p class="pz-sub" style="font-size:13px">Show only what you use${PZ_FLOW[screen]?', in the order you want':''}. Hidden sections keep working in the background.</p>
@@ -436,8 +441,17 @@ function pzTaBannerHtml(D){
   const col=a.k==='limit'||a.k==='limit80'?PZ_COL.mid:PZ_COL.risk;
   return `<section class="pz-card pz-kv pz-talert" role="status" aria-labelledby="pzTaT" style="border:1px solid color-mix(in srgb, ${col} 50%, var(--pz-line));background:color-mix(in srgb, ${col} 9%, var(--pz-card))">
     <div class="pz-kvrow"><span class="pz-lbl" style="color:${col}">${pzI('pause',14)} A moment to pause</span><span class="pz-sub" style="font-size:12px">${(p=>'at '+String(p.h).padStart(2,'0')+':'+String(p.min).padStart(2,'0'))(tzParts(a.at))}</span></div>
-    <b id="pzTaT" style="font-size:16px">${esc(a.title)}</b><p style="margin:0;font-size:14px;line-height:1.45">${esc(a.text)}</p>
+    <b id="pzTaT" style="font-size:16px">${esc(a.title)}</b><p style="margin:0;font-size:14px;line-height:1.45">${esc(a.text)}</p>${pzTaMoreHtml(D,a)}
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:44px" data-pz-ta="break">Taking a break</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-pz-ta="dismiss">Dismiss</button></div></section>`;
+}
+// beside an alert: what that slip has cost you (features/research.js), and your own lesson about it, if you wrote one
+const PZ_TA_SLIP={revenge:'revenge',sizeUp:'sizeUp',overtrade:'overtrade',streak3:'afterTwo'};
+function pzTaMoreHtml(D, a){
+  const slip=PZ_TA_SLIP[a.k]; if(!slip)return '';
+  let pr=null, les=null; try{ pr=typeof rfPriceOf==='function'?rfPriceOf(D,slip):null; }catch(e){}
+  try{ les=pzLessonsAll().find(l=>l.tag===slip)||null; }catch(e){}
+  return (pr&&pr.own?`<p class="pz-sub" style="margin:0;font-size:13px">${esc(rfPriceLine(pr))}</p>`:'')
+    +(les?`<p style="margin:0;font-size:14px;line-height:1.45;border-left:3px solid var(--pz-line);padding-left:10px">“${esc(les.text)}”<span class="pz-sub" style="display:block;font-size:12px">${les.key?'You wrote, '+esc(dayLabel(les.key)):'Your lesson'}</span></p>`:'');
 }
 async function pzTaAction(kind){
   const s=pzTaState(), a=s.cur;
@@ -713,7 +727,9 @@ function pzTodayHtml(D){
   const safe=f=>{ try{ return f(); }catch(err){ console.warn('today section',err); return ''; } };
   const F=safe(()=>pzTodayFacts(D))||null;
   const foldIds=new Set([...PZ_FOLD,...(day?[]:['session'])]), fold=(id,h)=>h&&foldIds.has(id)&&!pzFoldOpen(id)?pzFoldHtml(id):h;
-  const on=id=>pzShow('today',id), sec=(id,f)=>fold(id,on(id)?safe(f):''), more=(id,k)=>fold(id,F&&on(id)?safe(()=>k(D,F)):'');
+  // each card's root element carries data-use="<id>" (features/usage.js counts which cards are shown and acted on)
+  const tag=(id,h)=>h?h.replace(/^(\s*<[a-zA-Z][a-zA-Z0-9-]*)/,'$1 data-use="'+id+'"'):h;
+  const on=id=>pzShow('today',id), sec=(id,f)=>tag(id,fold(id,on(id)?safe(f):'')), more=(id,k)=>tag(id,fold(id,F&&on(id)?safe(()=>k(D,F)):''));
   return `${pzHead(dayLabel(D.todayK).replace(', ',' · '),'Today',pzChips(g,D.inbox.length))}
     ${safe(()=>pzTaBannerHtml(D))}
     ${safe(()=>typeof taStandingBannerHtml==='function'?taStandingBannerHtml():'')}
@@ -723,7 +739,7 @@ function pzTodayHtml(D){
       ${(()=>{ const card={tilt:()=>sec('tilt',()=>pzTiltHtml(D)),insight:()=>on('insight')?coach:'',session:()=>more('session',pzSessionHtml),positions:()=>more('positions',pzPositionsHtml),
           next:()=>sec('next',()=>pzNextHtml(D)),now:()=>more('now',pzNowHtml),good:()=>sec('good',()=>pzGoodHtml(D)),inbox:()=>sec('inbox',()=>socInboxHtml()),duels:()=>sec('duels',()=>socDuelsTodayHtml(D.g)),partners:()=>sec('partners',()=>socMentorFocusHtml()+socPartnerStripHtml()),
           lesson:()=>sec('lesson',()=>pzLessonDueHtml(D)),xp:()=>on('xp')?bonus:'',week:()=>sec('week',()=>pzWeekSparkHtml(D)),yesterday:()=>sec('yesterday',()=>pzYesterdayHtml(D))};
-        for(const f of PZ_FEATS)if(f.today)card[f.id]=()=>sec(f.id,()=>f.today.html(D));
+        for(const f of PZ_FEATS)if(f.today&&!pzRolledOff(f.id))card[f.id]=()=>sec(f.id,()=>f.today.html(D));
         // your own order (or the default one) reads top to bottom, then on into the second column on a
         // wide screen, the two balanced so neither runs far below the other
         const ord=pzOrdered('today')||PZ_FLOW.today[0].concat(PZ_FLOW.today[1]), lead=pzLinkCardHtml()+pzNudgesHtml(D)+safe(()=>planTodayHtml(D));
@@ -918,7 +934,7 @@ function pzTrendsHtml(D){
       <div class="pz-col pz-span" data-sec="stats:findings"><section class="pz-card" style="padding:6px 16px"><b style="display:block;font-size:15px;margin:10px 0 2px">What moves your results <span class="pz-sub" style="font-weight:400;font-size:12px">· ${R==='all'?'all time':'last '+R+' days'}${RF.n?', '+RF.n+' trades':''}</span></b>${RF.few?`<p class="pz-sub" style="font-size:13px;padding:6px 0 12px">Needs at least 10 closed trades in this range to find patterns — there ${RF.n===1?'is':'are'} ${RF.n}. Try a longer range.</p>`:''}${F.length?F.map(f=>`<div class="pz-ins"><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span><span><b>${esc(f.title)}</b><span>${esc(pzPlain(f.action||f.body||''))}</span>${f.evidence?`<details class="pz-why"><summary>Why</summary><span>${esc(f.evidence)} · ${esc(confWords(f.conf))}</span></details>`:''}</span></div>`).join(''):(RF.few?'':'<p class="pz-sub" style="padding:12px 0">Patterns show up here after about five closed trades.</p>')}</section></div>`; }
   if(!lock)deep=pzHabitLinkHtml(g,ctx,fromKey)+deep; // the plain answer first, then the detail
   deep+=pzPeersHtml(g)+pzImproversHtml(g);
-  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}${pzMkSeg()}<div class="pz-wide">${stats}${(()=>{ try{ return pzShow('stats','plans')?planPzStatsHtml(ctx.closed.filter(t=>t.closeTime>=from&&pzInMk(t)),R):''; }catch(e){ console.warn('plans card',e); return ''; } })()}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a></p>${pzCustomizeLink('stats')}</div>${pzLayoutCss('stats')}`;
+  return `${pzHead(R==='all'?'All time':'Last '+R+' days','Stats',seg)}${pzMkSeg()}<div class="pz-wide">${stats}${(()=>{ try{ return pzShow('stats','plans')?planPzStatsHtml(ctx.closed.filter(t=>t.closeTime>=from&&pzInMk(t)),R):''; }catch(e){ console.warn('plans card',e); return ''; } })()}${deep}<p class="pz-fine pz-span"><a href="#how">How are the scores worked out?</a> · <a href="#data">What the data says: your slips, priced</a></p>${pzCustomizeLink('stats')}</div>${pzLayoutCss('stats')}`;
 }
 // The Diagnostic's findings for one range (all time reuses the coach's set). Same engine, only the
 // range's trades; memoized per range so switching back and forth is instant.

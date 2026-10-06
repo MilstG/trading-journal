@@ -402,10 +402,10 @@ function marketViews(records, prices, o) {
     positioning[c] = { holders: records.filter(r => r.mk[c]).length, series };
   }
   // hourly flow per coin per group, for the shocks and the flow → price test
-  const flows = {}; // coin -> group -> Map(hour -> flow)
-  for (const c of coins) { const F = flows[c] = {};
+  const flows = {}, heads = {}; // coin -> group -> Map(hour -> flow), and Map(hour -> wallets that traded in it)
+  for (const c of coins) { const F = flows[c] = {}, N = heads[c] = {};
     records.forEach((r, i) => { const m = r.mk[c]; if (!m) return; const g = groupOf(i), keys = ['all', 'size:' + g.size].concat(g.tier ? ['tier:' + g.tier] : []);
-      for (const e of m.h) for (const k of keys) { const M = F[k] || (F[k] = new Map()); M.set(e[0], (M.get(e[0]) || 0) + e[3]); } }); }
+      for (const e of m.h) for (const k of keys) { const M = F[k] || (F[k] = new Map()), C = N[k] || (N[k] = new Map()); M.set(e[0], (M.get(e[0]) || 0) + e[3]); C.set(e[0], (C.get(e[0]) || 0) + 1); } }); }
   const GROUPS = ['all', 'size:s1', 'size:s2', 'size:s3', 'size:s4', 'tier:top', 'tier:mid', 'tier:bottom'];
   // b · big hourly moves (the top 0.5% by size per coin, a day apart): flow against the move before, in and after
   const shocks = [];
@@ -444,14 +444,43 @@ function marketViews(records, prices, o) {
     lead[g] = { points: pts.length, days: units.length, next: est(rho(p => p.next), r3), same: est(rho(p => p.same), r3), hit: nz.length ? r1(100 * nz.filter(p => Math.sign(p.x) === Math.sign(p.next)).length / nz.length) : null };
   }
   const lbl = g => g === 'all' ? 'Everyone' : g.startsWith('size:') ? 'Trades ' + SIZES[g.slice(5)].replace(/^Under/, 'under') : TIERS[g.slice(5)];
+  const crowd = crowdOf(coins, flows, heads, span, o);
   const text = [];
   if (!coins.length) text.push('No perpetual trades in these wallets to look at.');
   if (shocks.length) text.push(shocks.length + ' big hourly moves across ' + coins.length + ' coins; over the next 24 hours the move went on by ' + r2(cont.v) + '% on average (' + fmtCI(est(cont, r2)) + '; negative is a bounce).');
   for (const g of GROUPS) { const a = shockAgg[g].after; if (a.n >= 10) text.push(lbl(g) + ': in the 24 hours after a big move, flow against it ' + a.v + ' typical hours (' + fmtCI(a) + '; positive is buying drops and selling spikes).'); }
   for (const g of Object.keys(lead)) { const L = lead[g]; if (L.points >= 50) text.push(lbl(g) + ': a day’s net flow and the next day’s move, rank correlation ' + L.next.v + ' (' + fmtCI(L.next) + '), same day ' + L.same.v + '; direction right ' + L.hit + '% of the time.'); }
-  return { coins, span, mid, tiers: { rated: T.rated, check: T.check }, positioning, shocks: { n: shocks.length, continued: est(cont, r2), groups: shockAgg, labels: Object.fromEntries(GROUPS.map(g => [g, lbl(g)])), list: shocks.slice(-40).map(e => ({ coin: e.coin, t: e.t, move: e.move, after: e.after, liq: e.liq })) }, lead, text };
+  return { coins, span, mid, tiers: { rated: T.rated, check: T.check }, positioning, shocks: { n: shocks.length, continued: est(cont, r2), groups: shockAgg, labels: Object.fromEntries(GROUPS.map(g => [g, lbl(g)])), list: shocks.slice(-40).map(e => ({ coin: e.coin, t: e.t, move: e.move, after: e.after, liq: e.liq })) }, lead, crowd, text };
 }
 const mapR = m => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, Math.round(v)]));
+// d · the crowd, hour by hour, for members to set their own entries against ("the crowd at your entry"): per coin
+// and group (everyone, the top and the bottom skill quarter), each hour's net flow in five steps, one character an
+// hour: '0' selling hard, '1' selling, '2' balanced, '3' buying, '4' buying hard; '.' fewer than o.crowdMin wallets
+// of the group traded that hour (so no hour stands for one wallet). A step is the hour's net flow against the
+// group's usual hour with flow in that coin (mean absolute): under half of it balanced, from 2x hard. The last
+// o.crowdLag hours are left out, so nothing in it is live; it covers o.crowdDays days before that.
+const CROWD = ['all', 'tier:top', 'tier:bottom'];
+function crowdOf(coins, flows, heads, span, o) {
+  o = Object.assign({ crowdDays: 60, crowdMin: 3, crowdLag: 24 }, o || {});
+  const to = Math.floor((span.to - o.crowdLag * HOUR) / HOUR) * HOUR, from = Math.max(Math.ceil(span.from / HOUR) * HOUR, to - o.crowdDays * DAY);
+  const hours = to > from ? Math.round((to - from) / HOUR) : 0, out = { from, hours, groups: CROWD, min: o.crowdMin, coins: {} };
+  if (!hours) return out;
+  for (const c of coins) {
+    const row = {};
+    for (const g of CROWD) {
+      const M = flows[c] && flows[c][g], N = heads[c] && heads[c][g]; if (!M || !N) continue;
+      const act = [...M.values()].filter(v => v !== 0).map(Math.abs), u = act.length ? sum(act) / act.length : 0; if (!(u > 0)) continue;
+      let s = '', any = false;
+      for (let i = 0; i < hours; i++) { const h = from + i * HOUR;
+        if ((N.get(h) || 0) < o.crowdMin) { s += '.'; continue; }
+        const x = (M.get(h) || 0) / u, a = Math.abs(x); any = true;
+        s += a < 0.5 ? '2' : x > 0 ? (a >= 2 ? '4' : '3') : (a >= 2 ? '0' : '1'); }
+      if (any) row[g] = s;
+    }
+    if (Object.keys(row).length) out.coins[c] = row;
+  }
+  return out;
+}
 
 /* ---------------- the whole report ---------------- */
 function buildReport(records, o) {
@@ -536,4 +565,4 @@ function reportHtml(rep) {
 }
 
 module.exports = { SLIPS, SLIP_LABEL, SLIP_VS, SLIP_MECH, EXPOSURES, SIZES, TIERS, walletRecord, marketOf, slipCosts, disciplineForward, persistence, reliability, improvers, productEffects,
-  marketCoins, spanOf, skillTiers, marketViews, buildReport, reportText, reportHtml, spearman, pearson, ranks, boot, ols2 };
+  marketCoins, spanOf, skillTiers, marketViews, crowdOf, CROWD, buildReport, reportText, reportHtml, spearman, pearson, ranks, boot, ols2 };

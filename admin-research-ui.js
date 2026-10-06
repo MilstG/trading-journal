@@ -10,7 +10,7 @@
   const api = (p, o) => A().api(p, o), render = () => A().render(), note = (m, e) => A().note(m, e);
   const esc = s => A().esc(s), fmt = n => A().fmt(n), ago = ms => A().ago(ms), sel = (...a) => A().sel(...a), tiles = l => A().tiles(l);
   const tab = () => location.hash.slice(1).split('/')[0];
-  const D = {}, UI = { res: { win: 28, ver: false } };
+  const D = {}, UI = { res: { win: 28, ver: false }, use: { days: 30 } };
   let busy = false;
   async function run(fn, msg) { if (busy) return; busy = true;
     try { await fn(); if (msg) note(msg); } catch (e) { note(e.message, true); } finally { busy = false; } render(); }
@@ -32,6 +32,39 @@
       <div class="scroll"><table><thead><tr><th>First…</th><th>Members</th><th>Measured</th><th title="Discipline points, after minus before, against members who hadn’t had one yet">Discipline vs not yet</th><th title="Percentage points of trading days with a slip">Slip days vs not yet</th><th>Raw change</th><th>Discipline before</th></tr></thead><tbody>
       ${Object.values(R.effects).map(x=>`<tr><td>${esc(x.label)}</td><td>${fmt(x.exposed)}</td><td>${fmt(x.measured)}</td><td${col(x.did)}>${ci(x.did)}</td><td${colSlip(x.didSlip)}>${ci(x.didSlip)}</td><td>${x.raw==null?'—':(x.raw>0?'+':'')+x.raw}</td><td>${x.before==null?'—':x.before}</td></tr>`).join('')}
       </tbody></table></div><p class="hint">${fmt(R.members)} members with trading days (${fmt(R.verified)} verified from fills${R.onlyVerified?'':', '+fmt(R.app)+' from the app'}).</p></section>`;
+  }
+  // staged rollouts (GET/POST /admin/rollouts): a feature for a random share of members, measured against the rest
+  async function loadRo(){ try{ D.ro=await api('/rollouts'); }catch(e){ D.ro={err:e.message}; } }
+  function roCard(){
+    const R=D.ro; if(!R){ D.ro={loading:true}; loadRo().then(render); }
+    const top='<section class="card"><h2>Staged rollouts</h2>';
+    if(!R||R.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(R.err)return top+`<p class="warn">${esc(R.err)}</p></section>`;
+    const F=R.features||{}, ci=d=>d&&d.v!=null?`${d.v>0?'+':''}${d.v}${d.lo!=null?` <span class="muted small">[${d.lo>0?'+':''}${d.lo}, ${d.hi>0?'+':''}${d.hi}]</span>`:''}`:'—';
+    const rows=(R.rollouts||[]).map(r=>{ const E=r.effect||{}, g=E.groups||{on:{},off:{}};
+      return `<tr><td>${esc(r.label)}<div class="muted small">${esc(r.start)} → ${esc(r.end)}${r.endedAt?' · ended':r.live?' · running':''}</div></td><td>${r.share}%</td>
+        <td>${fmt(g.on.n)} / ${fmt(g.off.n)}<div class="muted small">measured ${fmt(g.on.measured)} / ${fmt(g.off.measured)}</div></td>
+        <td${E.sure?(E.diff.v>0?' style="color:var(--good)"':' style="color:var(--low)"'):''}>${ci(E.diff)}<div class="muted small">got it ${E.on==null?'—':(E.on>0?'+':'')+E.on} · didn’t ${E.off==null?'—':(E.off>0?'+':'')+E.off}</div></td>
+        <td>${r.live?`<button class="sm fit" data-ro="end" data-id="${esc(r.id)}">End</button>`:`<button class="sm fit" data-ro="delete" data-id="${esc(r.id)}">Delete</button>`}</td></tr>`; }).join('');
+    return top+`<p class="muted small" style="margin-top:0">Switch a Daruma feature on for a random share of members (fixed by a hash: nobody picks their group) and compare their Discipline over the test with their own before it, against the members who didn’t get it. Everyone counts in the group they were dealt, used or not, so the difference is what the feature did, not who chose it.</p>
+      ${rows?`<div class="scroll"><table><thead><tr><th>Feature</th><th>Share</th><th>Got it / didn’t</th><th title="Discipline points: change over the test against as many days before, got it minus didn’t">Discipline, got it vs not</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:''}
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">${sel('roF',Object.entries(F),'',' aria-label="Feature"')}
+        <label>Share who get it (%)<br><input type="number" id="roS" min="5" max="95" value="50" style="width:90px"></label><label>Weeks<br><input type="number" id="roW" min="1" max="12" value="4" style="width:80px"></label>
+        <button class="primary fit" id="roGo">Start the test</button></div>
+      <p class="hint">The members who don’t get it don’t see its card, screen or switch until the test ends. Run one test per feature at a time, for long enough that both groups trade.</p></section>`;
+  }
+  // what gets used in Daruma (GET /admin/usage): screens and Today cards, totals across members, never per person
+  async function loadUse(){ try{ D.use=await api('/usage?days='+UI.use.days); }catch(e){ D.use={err:e.message}; } }
+  function useCard(){
+    const U=D.use; if(!U){ D.use={loading:true}; loadUse().then(render); }
+    const top=`<section class="card"><div class="ch"><h2>What gets used</h2><div class="row" style="min-width:180px">${sel('useDays',[[7,'Last 7 days'],[30,'Last 30 days']],UI.use.days,' aria-label="Window"')}</div></div>`;
+    if(!U||U.loading)return top+'<p class="muted">Loading…</p></section>';
+    if(U.err)return top+`<p class="warn">${esc(U.err)}</p></section>`;
+    if(!U.rows.length)return top+'<p class="muted">Nothing yet: apps send this with their stats, so it fills in as members use Daruma.</p></section>';
+    const tbl=(kind,title)=>{ const R=U.rows.filter(r=>r.kind===kind); return R.length?`<h3 style="margin:12px 0 6px">${title}</h3><div class="scroll"><table><thead><tr><th>${kind==='screen'?'Screen':'Today card'}</th><th title="Members who ${kind==='screen'?'opened it':'had it on screen'}">${kind==='screen'?'Opened':'Seen'} by</th><th>Pressed something</th><th>Presses</th></tr></thead><tbody>
+      ${R.map(r=>`<tr${r.low?' style="opacity:.7"':''}><td>${esc(r.name)}${r.low?' <span class="pill">bottom third</span>':''}</td><td>${fmt(r.opened)}${r.reach!=null?` <span class="muted small">${r.reach}%</span>`:''}</td><td>${fmt(r.acted)}${r.acts!=null?` <span class="muted small">${r.acts}% of them</span>`:''}</td><td>${fmt(r.presses)}</td></tr>`).join('')}</tbody></table></div>`:''; };
+    return top+`<p class="muted small" style="margin-top:0">${fmt(U.active)} members used Daruma in the last ${U.days} days. Counted on each device and sent with their stats: which screens they opened, which Today cards were on screen, and how often they pressed something there. Totals only. The bottom third by members who pressed something is where to look for something to cut or merge.</p>
+      ${tbl('screen','Screens')}${tbl('card','Today cards')}</section>`;
   }
   // ---------------- research: the report run on the league's own wallets (GET/POST /admin/research/run) ----------------
   async function loadRs(){ try{ D.rs=await api('/research/run'); }catch(e){ D.rs={err:e.message}; return; }
@@ -67,10 +100,38 @@
     const r=P.report, sp=r.sample||{}, d=ms=>ms?new Date(ms).toISOString().slice(0,10):'—';
     const head=tiles([['Wallets',fmt(sp.wallets)],['With closed trades',fmt(sp.withTrades)],['Trades',fmt(sp.trades)],['Period',sp.span&&sp.span.to?fmt(Math.round((sp.span.to-sp.span.from)/864e5))+' days':'—',d(sp.span&&sp.span.from)+' to '+d(sp.span&&sp.span.to)]]);
     const secs=RS_SECTIONS.filter(([k])=>r[k]&&r[k].text&&r[k].text.length).map(([k,t,sub])=>`<section class="card"><h2>${esc(t)}</h2>${sub?`<p class="muted small" style="margin-top:0">${esc(sub)}</p>`:''}<ul class="small" style="padding-left:18px;margin:0">${r[k].text.map(x=>`<li style="margin:4px 0">${esc(x)}</li>`).join('')}</ul></section>`).join('');
-    return runCard+`<section class="card"><div class="ch"><h2>Results <span class="sub2">· ${esc(ago(P.at||P.status&&P.status.finishedAt))}</span></h2><button class="fit" id="rsDownload">Download the full report</button></div>${head}
+    return runCard+shareCard(S)+`<section class="card"><div class="ch"><h2>Results <span class="sub2">· ${esc(ago(P.at||P.status&&P.status.finishedAt))}</span></h2><button class="fit" id="rsDownload">Download the full report</button></div>${head}
       <p class="hint">${(r.notes||[]).map(esc).join(' ')}</p></section>${secs}`;
   }
 
+  // what members see of the report (GET /api/social/findings), and what the product takes from it (findings.js)
+  const RS_SLIPS={revenge:'Re-entry within 15 minutes of a loss',afterTwo:'Trading on after two losses',sizeUp:'Sizing up after a loss',addLoser:'Adding to a loser',overtrade:'Overtrading',heldLoser:'Holding a loser too long'};
+  function shareCard(S){
+    const c=S.research||{}, g=S.suggest; if(!g)return '';
+    const sw=(id,on,label,hint)=>`<label class="inline" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="${id}"${on?' checked':''}><span><b>${esc(label)}</b><br><span class="muted small">${esc(hint)}</span></span></label>`;
+    const W=g.weights||{};
+    return `<section class="card"><h2>What members see</h2>
+      <p class="muted small" style="margin-top:0">Members get group figures from the last run, each resting on at least the number of wallets below, never a wallet’s own numbers: what each slip costs (set beside their own trades in their app), how many trades a results ranking needs, whether Discipline says anything about next month, what improvers changed and the crowd’s hourly flow (a day behind).</p>
+      ${sw('rsShare',c.share,'Share the findings with members','Off: members see only their own numbers.')}
+      ${sw('rsCrowd',c.crowd,'Include the crowd’s hourly flow','Each hour’s net buying or selling by everyone, the top and the bottom skill quarter, in five steps; an hour with fewer than 3 wallets of a group traded says nothing.')}
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end"><label>Fewest wallets behind a figure<br><input type="number" id="rsMinW" min="5" max="1000" value="${+c.minWallets||10}" style="width:110px"></label>
+        <label>Results boards rank from (trades in the window, 0 = off)<br><input type="number" id="rsMinT" min="0" max="5000" value="${+c.minTrades||0}" style="width:110px"></label>
+        ${g.need?`<button class="fit" id="rsUseNeed" data-n="${g.need}">Use the report’s ${fmt(g.need)}</button>`:''}</div>
+      <p class="hint">${g.need?'This run says a ranking on results needs about '+fmt(g.need)+' trades a trader to be 0.7 reliable. Members see that beside results boards and duels either way; ranking from it puts members with fewer trades below the ranked ones, unranked.':'This run couldn’t say how many trades a reliable ranking needs.'}</p>
+      ${sw('rsWeights',c.weights,'Weigh slips in the Discipline score by what they cost','A slipped trade takes off its heaviest slip’s weight instead of a whole trade. Verified members’ days are read again when this changes.')}
+      <p class="muted small">Weights from this run: ${Object.keys(RS_SLIPS).map(k=>esc(RS_SLIPS[k])+' '+(W[k]!=null?W[k]:1)).join(' · ')}</p>
+      <button class="primary fit" id="rsSave">Save</button></section>`;
+  }
+  document.addEventListener('click', async ev => {
+    const b0 = ev.target.closest('button');
+    if (b0 && b0.id === 'rsUseNeed') { const i = $('rsMinT'); if (i) i.value = b0.dataset.n; return; }
+    if (b0 && b0.id === 'roGo' && !busy) return run(async () => { await api('/rollouts', { body: { feature: $('roF').value, share: +$('roS').value, weeks: +$('roW').value } }); D.ro = null; }, 'The test has started.');
+    if (b0 && b0.dataset.ro && !busy) { if (b0.dataset.ro === 'delete' && !confirm('Delete this test and its result?')) return;
+      return run(async () => { await api('/rollouts/' + encodeURIComponent(b0.dataset.id), { body: { action: b0.dataset.ro } }); D.ro = null; }, b0.dataset.ro === 'end' ? 'Ended. Everyone sees it now.' : 'Deleted.'); }
+    if (b0 && b0.id === 'rsSave' && !busy) return run(async () => {
+      await api('/config', { method: 'PUT', body: { research: { share: $('rsShare').checked, crowd: $('rsCrowd').checked, weights: $('rsWeights').checked, minWallets: +$('rsMinW').value, minTrades: +$('rsMinT').value } } });
+      D.rs = null; }, 'Saved.');
+  });
   document.addEventListener('click', async ev => {
     const b = ev.target.closest('button'); if (!b || busy) return;
     if (b.id === 'rsRun') return run(async () => { D.rs = await api('/research/run', { body: { scope: $('rsAll') && $('rsAll').checked ? 'all' : 'members' } }); }, 'Research started.');
@@ -80,11 +141,12 @@
       document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) { note(e.message, true); } }
   });
   document.addEventListener('change', ev => { const t = ev.target;
+    if (t.id === 'useDays') { UI.use.days = +t.value; loadUse().then(render); return; }
     if (t.id === 'resWin' || t.id === 'resVer') { if (t.id === 'resWin') UI.res.win = +t.value; else UI.res.ver = t.value === '1'; loadRes().then(render); } });
   window.ARES = {
     view: () => { const h = vResearch(); setTimeout(pollRs, 0); return h; },
-    card: resCard,
+    card: () => resCard() + roCard() + useCard(),
     // fresh numbers each time a tab is opened
-    enter: t => { if (t === 'insights') D.res = null; if (t === 'research') D.rs = null; },
+    enter: t => { if (t === 'insights') { D.res = null; D.use = null; D.ro = null; } if (t === 'research') D.rs = null; },
   };
 })();

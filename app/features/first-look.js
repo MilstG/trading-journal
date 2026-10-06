@@ -8,6 +8,11 @@
    "New" is decided once per device, on the first draw with trades (localStorage 'pzFirstLook'): a
    journal with nothing in it yet. Someone who already journals never sees it. It stays for two weeks
    or until "Got it", and never shows in sample mode.
+
+   On day one it also says where that Discipline stands among traders like you (the server's peer groups, when
+   you have a profile and enough recent trades) and, when the league shared a research run, what that leak
+   costs you against your own trades in the same spot (features/research.js). The history behind it is all
+   of it: the archive's index merges fills older than the exchange's 10,000 in behind the first load.
    ============================================================================ */
 const FL_KEY='pzFirstLook';
 function flLoad(){ try{ return JSON.parse(localStorage.getItem(FL_KEY)||'null'); }catch(e){ return null; } }
@@ -35,10 +40,19 @@ function flCardHtml(D){
       <div class="pz-tile"><span class="pz-n" style="color:${PZ_COL.xp}">${lv.level}</span><span class="pz-t">level · ${xp.toLocaleString('en-US')} XP already</span></div></div>
     ${s.leak?`<div class="pz-kv" style="gap:6px;padding-top:10px;border-top:1px solid var(--pz-line)"><span class="pz-lbl" style="color:${PZ_COL.low}">The habit that cost you most</span>
       <b style="font-size:15px">${esc(PZ_BEH[s.leak.slip])}</b><span class="pz-sub" style="font-size:13px">${s.leak.n} time${s.leak.n===1?'':'s'}, about ${esc(usdPlain(s.leak.cost))} on those trades.</span>
+      ${(pr=>pr&&pr.own?`<span style="font-size:13px">${esc(rfPriceLine(pr))}</span>`:'')(typeof rfPriceOf==='function'?rfPriceOf(D,s.leak.slip):null)}
       ${plugging?'<span class="pz-fine">You’re plugging it: three clean trading weeks in a row and it’s done.</span>':`<button type="button" class="pz-cta pz-sm" data-pz-plug="${esc(s.leak.slip)}" style="align-self:flex-start;width:auto;padding:0 16px;min-height:44px">Plug this leak</button>`}</div>`
       :'<p class="pz-sub" style="margin:0;font-size:13px">None of the six slips cost you money in this stretch. That’s rare: keep it going.</p>'}
+    ${flPeerHtml()}
     <a class="pz-link" href="#journal" style="min-height:0">Next: rate your latest trade, about 10 seconds${pzI('chev',14)}</a></section>`;
 }
+// where your Discipline stands among traders like you, from the server's peer groups (pulse-social.js), when there is one
+function flPeerHtml(){
+  try{ if(typeof peerMine!=='function')return ''; const mine=peerMine(); if(!mine||!mine.ok||mine.disc==null)return '';
+    const P=peerData(mine), grp=P&&P.d&&P.d.on!==false?peerGroup(P.d):null; if(!grp||!grp.q||!grp.q.disc)return '';
+    const m=PEER_M.find(x=>x.k==='disc'), b=peerBetter(m,grp.q.disc,mine.disc); if(b==null)return '';
+    return `<p class="pz-sub" style="margin:0;font-size:13px">Your Discipline over 90 days, ${esc(m.f(mine.disc))}, beats about ${b} of every 100 ${esc(peerGroupName(grp))} (${grp.n} traders). <a href="#trends">Traders like you</a></p>`;
+  }catch(e){ return ''; } }
 function flClick(t){
   if(t.dataset.fl!=='done')return false;
   const st=flLoad()||{at:Date.now(),show:false}; st.done=true; flSave(st); pzRender(); return true;

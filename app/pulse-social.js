@@ -41,6 +41,14 @@ function socMoneyNote(b,risk,span){ const base=SOC_BOARD_NOTE[b]||'';
   const cap=risk&&risk.cap?Math.round(risk.cap*100)+'%':'';
   const rule=!risk?'':risk.mode==='off'?' No drawdown cap.':risk.mode==='penalty'&&b!=='usd'?' Past a '+cap+' drawdown, the return is docked for every 1% over.':' Past a '+cap+' drawdown you’re out'+(span==='over the last 30 days'?'':' for '+span)+', listed last.';
   return base.replace(/\.$/,'')+(span?' '+span:'')+'.'+rule; }
+// beside a results board or duel: how many trades a ranking on results needs before it's more skill than luck (the
+// league's research run, findings.js), and the bar the owner ranks from. luck: the board's {need, minTrades}, else the feed's.
+function socLuckNote(luck){
+  if(!luck)return ''; // not a results board
+  const need=luck&&luck.need||(typeof rfData==='function'&&rfData()&&rfData().rel?rfData().rel.need:null), min=luck&&luck.minTrades||0;
+  if(!need&&!min)return '';
+  return (need?'Results rank reliably from about '+need.toLocaleString('en-US')+' trades a trader; before that, much of the order is luck.':'')
+    +(min?' Members with fewer than '+min.toLocaleString('en-US')+' verified trades in the window are listed after the ranked ones.':''); }
 const SOC_COMP_KIND={discipline:'Discipline',survivor:'Survivor',journal:'Journal streak',return:'Return under a drawdown cap'};
 const SOC_COMP_HOW={
   discipline:'Your daily process score, averaged over the competition days. Profit doesn’t count: a red day with a clean process scores the same as a green one.',
@@ -83,7 +91,8 @@ function socRefCardHtml(){
 // Pure given g.
 function pzXpLog(g){ const L={}, at=k=>L[k]||(L[k]={});
   for(const d of g.days){ const o=at(d.key); o.s=d.score; if(d.bonus&&d.bonus.total>0)o.b=d.bonus.total; }
-  for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp; }
+  for(const b of (g.bonuses||[])){ if(!(b.xp>0)||(b.src&&!b.badge))continue; const o=at(b.key), p=b.src==='mentor'?'m':'e'; o[p]=(o[p]||0)+b.xp;
+    if(b.chk)o.f={k:b.chk.k,x:b.chk.x,p:((o.f&&o.f.p)||0)+b.xp}; } // a focus habit the server checks from fills (see social.js xplDay)
   return Object.fromEntries(Object.keys(L).sort().slice(-100).map(k=>[k,L[k]])); }
 // The numbers a member shares, from the shared game context. Pure given its inputs.
 // Badges whose tiers are dollar amounts (In the black, Big day: the id, title and tier all give the
@@ -255,7 +264,7 @@ function socStale(){ for(const k in SOC.cache)SOC.cache[k].at=0; }
 function socSync(g){
   if(!SOC.key||!SOC.me||pzS.demo||!settings.wallets.length)return;
   let p; try{ p=JSON.stringify(Object.assign(pzSocialStats(g,habitsList().map(habitSentence),journal,!!(SOC.share&&SOC.share.mentor&&SOC.me&&(SOC.me.myMentors||[]).length),!!(SOC.share&&SOC.share.usd)),
-    {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())})); }catch(e){ return; }
+    {bench:SOC.share&&SOC.share.bench===false?null:(m=>m.ok?m:null)(peerMine())},typeof pzUseSync==='function'?{use:pzUseSync()}:{})); }catch(e){ return; }
   if(p===SOC.lastSent)return;
   clearTimeout(SOC.timer);
   SOC.timer=setTimeout(()=>{ SOC.lastSentAt=Date.now();
@@ -350,7 +359,7 @@ const PEER_WHY={few:'It needs more closed trades in the last few months.',short:
 function peerImpHabit(c){
   if(!c)return null; const k=c.metric+(c.improversDelta<0?'-':'+'), run={kind:'self',when:'a trade is working',then:'I let it reach my target instead of closing early'};
   return {'tw-':{slip:'overtrade'},'rev-':{slip:'revenge'},'jour+':{tpl:'journal-all'},'hold-':{slip:'heldLoser'},'hold+':run,'pay+':run,
-    'fees-':{kind:'self',when:'I enter a trade',then:'I use a limit order unless I must get in now'},'wr+':{kind:'self',when:'a setup isn’t clearly an A+',then:'I skip it'},
+    'fees-':{tpl:'maker-half'},'wr+':{kind:'self',when:'a setup isn’t clearly an A+',then:'I skip it'},
     'afterTwo-':{slip:'afterTwo'},'sizeUp-':{slip:'sizeUp'},'addLoser-':{slip:'addLoser'},'overtrade-':{slip:'overtrade'},'heldLoser-':{slip:'heldLoser'}}[k]||null;
 }
 function peerImpHas(h){
@@ -565,7 +574,7 @@ function socSharingHtml(D){
   SOC.draft=SOC.draft||{...SOC.share};
   const w=socWallet();
   return `${back}${pzHead('Profile & privacy','What you share')}
-  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades stay on this device. The league only gets the numbers you switch on below; the owner and admins see those by name, to run the league. <a href="help#social" target="_blank" rel="noopener">More</a></p>
+  <p class="pz-sub" style="margin-top:-6px">Your journal, notes and trades stay on this device. The league only gets the numbers you switch on below; the owner and admins see those by name, to run the league. The app also counts which screens and cards you open (never what's in them), which the owner sees only as totals across members. <a href="help#social" target="_blank" rel="noopener">More</a></p>
   <div class="pz-wide"><div class="pz-col">
     <div class="pz-field"><span style="font-size:15px;font-weight:700">Profile picture</span><div style="display:flex;align-items:center;gap:14px">${socAv(SOC.me.handle,64)}
       <label class="pz-ghost pz-sm" for="socAvFile" style="cursor:pointer">${SOC.me.av?'Change picture':'Add a picture'}</label><input type="file" id="socAvFile" accept="image/*" class="pz-vh">${SOC.me.av?'<button type="button" class="pz-linkbtn" data-soc-avdel>Remove</button>':''}</div></div>
@@ -914,6 +923,7 @@ function socDuelCardHtml(v, compact){
         <div>${socAv(o.handle,40)}<b style="color:${themCol}">${esc(duelScoreTxt(v,v.them))}</b><span class="pz-sub">@${esc(o.handle)} · ${esc((v.them&&v.them.note)||'')}</span></div></div>
       ${banner}${compact?'':duelMarks(v)}
       ${v.me&&v.me.missing?'<p class="pz-fine" style="margin:0">Your days count once “Verify my discipline” is on.</p>':''}
+      ${v.type==='ret'&&!compact&&!done&&socLuckNote({need:null})?`<p class="pz-fine" style="margin:0">${esc(socLuckNote({need:null}))} A ${v.period==='month'?'month':'week'} of results is mostly luck: play it for fun, judge it on process.</p>`:''}
       ${done?`<div class="pz-grid2"><a class="pz-ghost" href="#u/${esc(o.handle)}">Their profile</a><button type="button" class="pz-cta" data-duel-act="rematch" data-id="${v.id}" data-h="${esc(o.handle)}">Rematch</button></div>`
         :compact?`<a class="pz-link" href="#duels" style="min-height:0;align-self:flex-start">Details ›</a>`:`<button type="button" class="pz-linkbtn" data-duel-act="forfeit" data-id="${v.id}" style="align-self:flex-start">Forfeit</button>`}</section>`;
   }

@@ -102,8 +102,20 @@ try {
     // loading goes out at once: about 2 KB raw on both screens, under 1 KB gzipped (+1 on each).
     // Mentoring both sides agree to: requests and answers, note threads, the week's focus, a mentee's 28 days at a
     // glance and "did this help?": about 15 KB raw, 3 KB gzipped on both (2168 / 1855, 732 / 626).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2170, 733],
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1857, 627],
+    // Oct 2026: the research run brought to members (app/features/research.js on both screens: the feed, your slips
+    // priced, the "What the data says" screen) and its hooks in the coach, the leaks, the tilt alerts, the weekly
+    // challenge, the Discipline weights and the results boards' trade bar and luck notes: about 15 KB raw / 6 KB
+    // gzipped on each screen (2185 / 1872 raw, 739 / 633 gzipped).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2190, 741],
+    // Your luck measured, the crowd at your entry and your rules replayed (luck.js, crowd.js, rule-replay.js, Daruma
+    // only, ~13 KB raw / 6 KB gzipped compressed apart): 1886 / 639.
+    // The evaluation (evals.js, Daruma only, ~11 KB raw / 4 KB gzipped) and its Compete tile: 1898 / 644.
+    // Replay drills (drills.js, Daruma only, ~10 KB raw / 4 KB gzipped): 1908 / 648.
+    // The coach's lookups over your trades (coach-tools.js, Daruma only, ~6 KB raw / 3 KB gzipped) and the chat's round
+    // trip; the maker-share habit and lesson-beside-alert on both screens: 1914 / 651 (the journal 2187 / 740).
+    // What gets used (usage.js, Daruma only, ~3 KB raw / 1 KB gzipped, and the data-use mark on Today's cards): 1917 / 652.
+    // Staged rollouts (pzRolledOff), first look's peer line and leak price, the focus-habit check: about 2 KB raw (1920 / 653).
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1922, 654],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

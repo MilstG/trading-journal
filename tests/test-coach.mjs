@@ -145,7 +145,7 @@ t('library specs resolve, finding overrides win, and sentences read naturally', 
   eq(spec.kind, 'cap'); eq(spec.cap, 2);
   eq(ctx.habitSentence(spec), 'When I’ve taken 2 trades today, I’m done for the day.');
   eq(ctx.resolveHabitSpec({ tpl: 'nope' }), null);
-  ok(ctx.HABIT_LIBRARY.every(h => h.when && h.then && ['process', 'avoid', 'cap'].includes(h.kind)));
+  ok(ctx.HABIT_LIBRARY.every(h => h.when && h.then && ['process', 'avoid', 'cap', 'maker'].includes(h.kind)));
 });
 t('process score: "rules kept" only counts once rules exist', () => {
   const a = mk('p1', 0, 100);

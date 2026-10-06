@@ -152,10 +152,17 @@ function monthlyReport(days, month){
 // ---- weekly challenge: one concrete target a week, drawn from your biggest leak ----
 const CHALLENGE_DEFAULTS=['journal-all','plan-first','stop-live','honor-stop','cool-off'];
 // what a challenge actually tests — two specs with the same key are the same challenge
-function specKey(sp){ return !sp?'':sp.kind==='avoid'?'pid:'+sp.pid:sp.kind==='process'?'part:'+sp.part:sp.kind==='cap'?'cap:'+(sp.cap||3):'tpl:'+sp.tpl; }
-function challengeCandidates(findings){
+function specKey(sp){ return !sp?'':sp.kind==='avoid'?'pid:'+sp.pid:sp.kind==='process'?'part:'+sp.part:sp.kind==='cap'?'cap:'+(sp.cap||3):sp.kind==='slip'?'slip:'+sp.slip:'tpl:'+sp.tpl; }
+// The slips that cost you most against your own trades in the same spot (features/research.js rfPriced),
+// as challenges: the week's target is then the leak that costs most, not the one that happens most
+function pricedChallenges(){
+  if(typeof rfPriced!=='function')return [];
+  try{ return rfPriced({g:gameContext()}).filter(r=>r.own&&r.sure&&PZ_PLUG[r.slip]).map(r=>({kind:'slip',slip:r.slip,when:PZ_PLUG[r.slip].when,then:PZ_PLUG[r.slip].then})); }catch(e){ return []; }
+}
+function challengeCandidates(findings, priced){
   const out=[], seen=new Set();
   const push=spec=>{ if(!spec)return; const id=specKey(spec); if(seen.has(id))return; seen.add(id); out.push(spec); };
+  for(const sp of (priced||(typeof pricedChallenges==='function'?pricedChallenges():[])))push(sp);
   for(const f of (findings||[])) if((f.tone==='leak'||f.tone==='caution')&&f.habit)push(resolveHabitSpec(f.habit));
   for(const tpl of CHALLENGE_DEFAULTS)push(HABIT_LIBRARY.find(h=>h.tpl===tpl));
   return out;
@@ -176,7 +183,7 @@ async function setWeekChallenge(spec, idx, auto){
   if(spec.pid&&!params){ try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
     params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const e={...(journal[k]||{})};
-  e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,params:params||{},when:spec.when,then:spec.then},
+  e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,slip:spec.slip||null,pct:spec.pct||null,params:params||{},when:spec.when,then:spec.then},
     idx:idx||0, from, to:addDays(mon,7), createdAt:now}; // addDays: a DST week is 167 or 169 hours
   if(swap)e.challenge.swapAt=now;
   e.updatedAt=now; journal[k]=e;
@@ -274,7 +281,7 @@ function pzPluggedKeys(plugs){ const by=new Map();
 // ---- everything the progress panel needs, memoized with the coach context ----
 let _gameMemo={key:null,g:null};
 // what the game reads besides its coach context (whose key leads): gameContext's memo key, and gameWarm's check
-function _gameKey(){ return _coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(typeof SOC!=='undefined'&&SOC.me?SOC.me.xp:'')+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length; }
+function _gameKey(){ return _coachMemoAll.key+'|'+_jrev+'|'+PZ_CFG.rev+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mult?JSON.stringify(SOC.me.mult.hist||{}):'')+'|'+(typeof SOC!=='undefined'&&SOC.me&&SOC.me.mentorXp?SOC.me.mentorXp.total:0)+'|'+(typeof SOC!=='undefined'&&SOC.me?SOC.me.xp:'')+'|'+(Array.isArray(settings.pzGoals)?settings.pzGoals.filter(x=>x&&x.done).length:0)+'|'+(typeof pzGuestCap==='function'?pzGuestCap():0)+'|'+Object.keys(pzEarned()).length+'|'+(typeof rfWeightsKey==='function'?rfWeightsKey():''); }
 // true when a gameContext() call would be a memo hit (the every-trade coach context current, then the game)
 function gameWarm(){ return _coachMemoAll.key===_coachKey(true).key&&_gameMemo.key===_gameKey(); }
 function gameContext(){
@@ -287,7 +294,7 @@ function gameContext(){
   // check-in, plan, journal, stops, a respected loss limit — adds bonus XP on top and never
   // lowers the score. The process parts ride along for achievements and the report card.
   const pmap=new Map(ctx.days.map(d=>[d.key,d]));
-  const days=pzBehaviorDays(ctx.closed,{dayOf:dayKey,isLoss:PZ_LOSS,dayNet:ctx.dayNet}).map(b=>{ const p=pmap.get(b.key)||null;
+  const days=pzBehaviorDays(ctx.closed,{dayOf:dayKey,isLoss:PZ_LOSS,dayNet:ctx.dayNet,w:typeof rfWeights==='function'?rfWeights():null}).map(b=>{ const p=pmap.get(b.key)||null;
     const bonus=pzBonus(p,journal['day:'+b.key],X);
     return {key:b.key,score:b.score,n:b.n,net:b.net,behavior:b,parts:p?p.parts:{},breached:p?p.breached:false,process:p?p.score:null,bonus,checkin:!!(p&&p.credit&&p.credit.checkin)}; });
   _pzSlipDays=new Map(days.map(d=>[d.key,d.behavior])); // 'slip' habits (plugging a leak) read their days from here
@@ -337,7 +344,9 @@ function gameContext(){
     const e=journal[k], wk=k.slice(5);
     for(const sp of [...(Array.isArray(e.focusPast)?e.focusPast:[]),e.focus?{id:e.focus,from:e.focusFrom||'',to:'9'}:null]){
       const h=sp&&habitById(sp.id); if(!h)continue;
-      for(const r of (resOf.get(h.id)||habitProgress(h,ctx).res)) if(r.kept&&isoWeekOfKey(r.key)===wk&&r.key>=(sp.from||'')&&r.key<(sp.to||'9'))bonuses.push({key:r.key,xp:X.focus,why:'focus habit'}); } }
+      // chk: a habit the server can check from the wallet's fills (plugging a slip, a trade cap) says so, so a verified day pays it only when the fills agree
+      const chk=h.kind==='slip'&&h.slip?{k:'slip',x:h.slip}:h.kind==='cap'?{k:'cap',x:h.cap||3}:null;
+      for(const r of (resOf.get(h.id)||habitProgress(h,ctx).res)) if(r.kept&&isoWeekOfKey(r.key)===wk&&r.key>=(sp.from||'')&&r.key<(sp.to||'9'))bonuses.push(Object.assign({key:r.key,xp:X.focus,why:'focus habit'},chk?{chk}:{})); } }
   // from the league: XP the owner granted, and their reward badges that carry XP
   const me=typeof SOC!=='undefined'&&SOC.me;
   if(me){ for(const gr of (me.grants||[]))bonuses.push({key:dayKey(gr.at),xp:gr.xp,why:gr.why||'league bonus',src:gr.coach?'coach':'grant'});
@@ -578,8 +587,10 @@ const PZ_BONUS={checkin:['Morning prep',10],plan:['Plan before your first trade'
 // Per trading day (by close day): the share of trades with none of the six slips, 0–100.
 // Baselines (usual size, usual trades per day, usual winner hold) come only from trades that
 // closed before that day's first entry, so a day is never judged against itself.
+// opts.w: a weight per slip (0–1) for the day's score, when the owner applied the research's costs: a slipped
+// trade takes off its heaviest slip's weight instead of a whole trade (without it, or all 1, score = clean/n)
 function pzBehaviorDays(closed, opts){
-  const dayOf=opts.dayOf, loss=opts.isLoss, M=15*60000, H2=2*3600000;
+  const dayOf=opts.dayOf, loss=opts.isLoss, M=15*60000, H2=2*3600000, W=opts.w&&typeof opts.w==='object'?opts.w:null;
   // trades cut off at the start of the history (no opening fill seen) have no real entry to judge
   const tr=(closed||[]).filter(t=>!t.isOpen&&t.closeTime&&t.openTime&&!t.partialHistory).sort((a,b)=>a.openTime-b.openTime);
   const closes=[...tr].sort((a,b)=>a.closeTime-b.closeTime), ct=closes.map(t=>t.closeTime);
@@ -600,7 +611,7 @@ function pzBehaviorDays(closed, opts){
     // (Trader Age reads these to say what each habit earns, not only what the slips cost); tests: the ids of
     // the trades that were chances at revenge / sizeUp, so routine-vs-results can compare post-loss entries
     // that slipped with post-loss entries that didn't, instead of whole days (which carry the triggering loss)
-    const flags=zero(), chances=zero(), kept=zero(), keptClean=zero(), slips=[], tests={revenge:[],sizeUp:[]}; let clean=0, entries=0;
+    const flags=zero(), chances=zero(), kept=zero(), keptClean=zero(), slips=[], tests={revenge:[],sizeUp:[]}; let clean=0, entries=0, pen=0;
     const tested=(c,f,id)=>{ chances[c]++; if(tests[c])tests[c].push(id); if(!f.includes(c)){ kept[c]++; if(!f.length)keptClean[c]++; } };
     arr.forEach((t)=>{
       // a spot position carried on after a partial sale is not a new entry: only the holding checks apply
@@ -625,14 +636,14 @@ function pzBehaviorDays(closed, opts){
       if(addTest&&addedToLoser(t))f.push('addLoser');
       if(entry&&cap!=null&&i>=cap)f.push('overtrade');
       if(holdTest&&dur(t)>3*winHold)f.push('heldLoser');
-      for(const x of f)flags[x]++; if(!f.length)clean++; else slips.push({id:t.id,net:t.net,f});
+      for(const x of f)flags[x]++; if(!f.length)clean++; else { slips.push({id:t.id,net:t.net,f}); pen+=W?Math.max(...f.map(x=>W[x]!=null?W[x]:1)):1; }
       if(afterLoss)tested('revenge',f,t.id); if(sizeTest)tested('sizeUp',f,t.id); if(addTest)tested('addLoser',f,t.id); if(holdTest)tested('heldLoser',f,t.id);
     });
     // day-level chances: two losses in a row closed today (a chance to stop), a usual count to stay inside
     const byClose=[...arr].sort((a,b)=>a.closeTime-b.closeTime);
     if(byClose.some((t,j)=>j>0&&loss(t.net)&&loss(byClose[j-1].net))){ chances.afterTwo=1; if(!flags.afterTwo)kept.afterTwo=keptClean.afterTwo=1; }
     if(cap!=null){ chances.overtrade=1; if(!flags.overtrade)kept.overtrade=keptClean.overtrade=1; }
-    out.push({key:k,score:Math.round(100*clean/n),n,clean,flags,chances,kept,keptClean,tests,slips,net:opts.dayNet?(opts.dayNet[k]||0):arr.reduce((s,t)=>s+t.net,0)}); // the day's net is money (dayNetMap) when given
+    out.push({key:k,score:Math.round(100*(n-pen)/n),n,clean,flags,chances,kept,keptClean,tests,slips,net:opts.dayNet?(opts.dayNet[k]||0):arr.reduce((s,t)=>s+t.net,0)}); // the day's net is money (dayNetMap) when given
   });
   return out;
 }

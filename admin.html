@@ -1144,6 +1144,10 @@ details>summary{list-style-position:inside}
       <div class="stack">
       ${riskCard(X.risk)}
       ${potCard(X.pots)}
+      ${X.evals?`<section class="card"><h2>Evaluations</h2><p class="muted small" style="margin:0 0 8px">A prop-firm-style test members take on their own account: a profit target, daily loss and drawdown limits, trading days. Read from the exchange. ${fmt(X.evals.live)} running · ${fmt(X.evals.passed30)} passed and ${fmt(X.evals.failed30)} failed in 30 days.</p>
+        ${box('evOn','Evaluations are on',X.evals.on)}
+        <div class="row">${field('evXp','XP for passing a preset (once each)','<input id="evXp" type="number" min="0" max="5000" step="50" value="'+X.evals.xp+'">','Rules of their own earn the badge only.')}${field('evCool','Days to wait after a failed one','<input id="evCool" type="number" min="0" max="30" value="'+X.evals.cooldownDays+'">')}${field('evMin','Smallest account ($)','<input id="evMin" type="number" min="10" max="1000000" value="'+X.evals.minAccount+'">')}</div>
+        <div class="actions"><button class="primary" id="evSave">Save</button></div></section>`:''}
       ${LD?`<section class="card"><h2>Ladder season: ${esc(LD.season.label)}</h2><p class="muted small">${esc(LD.season.start)} → ${esc(LD.season.end)} · ${fmt(LD.listed)} on the ladder${LD.last?' · last podium ('+esc(LD.last.label)+'): '+LD.last.podium.map(h=>'@'+esc(h)).join(', '):''}</p>
         ${LD.top.length?`<div class="scroll"><table><thead><tr><th>#</th><th>Who</th><th>Points this season</th><th>Rating</th><th>Duels</th></tr></thead><tbody>${pager('ladder',LD.top).items.map((r,i)=>`<tr><td>${(UI.pages.ladder||0)*10+i+1}</td><td>@${esc(r.handle)}</td><td>${r.gain>0?'+':''}${fmt(r.gain)}</td><td>${fmt(r.r)}</td><td>${fmt(r.n)}</td></tr>`).join('')}</tbody></table></div>${pager('ladder',LD.top).html}`:'<p class="muted">No rated duels this season yet.</p>'}</section>`:''}
       <section class="card"><h2>Recent results</h2>
@@ -1314,6 +1318,7 @@ details>summary{list-style-position:inside}
       return act(()=>api('/members/'+encodeURIComponent(d.unadmin),{body:{action:'unadmin'}}),'@'+am.handle+' is no longer an admin.'); }
     if(id==='codeDone'){ UI.code=null; return render(); }
     // wallets
+    if(id==='evSave')return act(()=>api('/config',{method:'PUT',body:{evals:{on:chk('evOn'),xp:+val('evXp'),cooldownDays:+val('evCool'),minAccount:+val('evMin')}}}),'Saved.');
     if(id==='potSave')return act(()=>api('/config',{method:'PUT',body:{pots:{pods:chk('potPods'),comps:chk('potComps'),podMaxBuyIn:+val('potPodMax'),compMaxBuyIn:+val('potCompMax'),burnPct:+val('potBurn'),burnMax:+val('potBurnMax'),pairCapMonth:+val('potPair'),selfMax:+val('potSelf'),minEntrants:+val('potMinE'),oneSeat:chk('potSeat')}}}),'Saved.');
     if(id==='riskSave')return act(()=>api('/config',{method:'PUT',body:{risk:{duel:val('riskDuel'),pod:val('riskPod'),comp:val('riskComp'),league:val('riskLeague'),caps:val('riskCaps'),leagueCap:+val('riskLeagueCap'),penalty:+val('riskPen'),minDays:+val('riskMin')}}}),'Saved.');
     if(id==='dSave'){ const types={}; for(const t of Object.keys(D.duels.types))types[t]=chk('dT_'+t);

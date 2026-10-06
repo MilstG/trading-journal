@@ -958,6 +958,9 @@ const HABIT_LIBRARY=[
   {tpl:'no-chase-red',kind:'avoid',pid:'st:red',when:'I’m red on the day',then:'I don’t open new trades to win it back'},
   {tpl:'size-cap',kind:'avoid',pid:'size:hi',when:'I size a trade',then:'I keep it no bigger than my usual size'},
   {tpl:'day-cap',kind:'cap',cap:3,when:'I’ve taken 3 trades today',then:'I’m done for the day'},
+  // checked from fills: a day is kept when at least pct% of the notional traded that day (by the trades that
+  // closed then) went through as maker, a resting limit order; a day with no known maker/taker split doesn't count
+  {tpl:'maker-half',kind:'maker',pct:50,when:'I enter or exit a trade',then:'at least half of the day’s volume goes through limit orders'},
 ];
 function habitsList(){ return Array.isArray(settings.habits)?settings.habits.filter(h=>h&&!h.retired):[]; }
 function habitById(id){ return (Array.isArray(settings.habits)?settings.habits:[]).find(h=>h&&h.id===id)||null; }
@@ -974,7 +977,7 @@ async function adoptHabit(spec){
     try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
       params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const h={id:'h'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tpl:spec.tpl||null,kind:spec.kind,
-    part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,
+    part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,pct:spec.pct||null,
     when:String(spec.when||'').slice(0,160),then:String(spec.then||'').slice(0,160),createdAt:Date.now()};
   settings.habits.push(h);
   await Store.set(S_KEY,settings);
@@ -1009,6 +1012,7 @@ function habitDayResults(h, days, byDay, pred, fromKey, journalObj){
     else if(h.kind==='avoid'){ if(!pred)continue; kept=!(byDay[d.key]||[]).some(pred); }
     else if(h.kind==='slip'){ const b=_pzSlipDays.get(d.key); if(!b)continue; kept=!(b.flags&&b.flags[h.slip]); } // plugging a Discipline leak
     else if(h.kind==='cap'){ kept=(byDay[d.key]||[]).length<=(h.cap||3); }
+    else if(h.kind==='maker'){ let mk=0,tk=0; for(const t of (byDay[d.key]||[])){ mk+=+t.makerNotional||0; tk+=+t.takerNotional||0; } if(!(mk+tk>0))continue; kept=mk/(mk+tk)>=(h.pct||50)/100; }
     if(kept!=null)out.push({key:d.key,kept});
   }
   return out;
@@ -1105,7 +1109,7 @@ function buildFindings(closed, s, ext){
   if(B.costDragPct!=null&&B.costDragPct>0.25)
     add({id:'fees',tone:'leak',title:`Fees eat ${pc(B.costDragPct)} of what you make`,
       body:`You paid ${usdPlain(s.fees)} in fees against ${usdPlain(B.grossReal)} of gross profit.`,
-      action:'Use limit orders where you can, and take fewer, better trades.',
+      action:'Use limit orders where you can, and take fewer, better trades.',habit:{tpl:'maker-half'},
       evidence:`Fees ${fmtUsd(s.fees)} · gross realized ${fmtUsd(B.grossReal)}`,conf:'strong',impact:s.fees*0.5});
   if(B.ratingMono===false)
     add({id:'ratings',tone:'info',title:'Your star ratings don’t match your results',
@@ -1349,7 +1353,10 @@ function renderCoach(){
   else if(recent){ const q=tradeQuestion(recent,journal[recent.id],_excM[recent.id]);
     today={v:`Your ${esc(dispMarket(dcoin(recent)))} ${recent.dir.toLowerCase()} (<span class="${cls(recent.net)}">${signedPlain(recent.net)}</span>) closed ${fmtDur(Date.now()-recent.closeTime)} ago. ${esc(q.q)}`,act:'<button class="btn ghost coach-go" data-go="inbox">Answer →</button>'}; }
   else { const top=ctx.findings.find(f=>f.tone==='leak'||f.tone==='caution');
-    if(top){ const spec=resolveHabitSpec(top.habit);
+    // the slip that costs you most against your own trades in the same spot (features/research.js), when it's sure
+    let pr=null; if(typeof rfPriced==='function')try{ pr=rfPriced({g:gameContext()}).find(r=>r.own&&r.sure)||null; }catch(e){}
+    if(pr)today={v:`<b>Your costliest slip: ${esc(pr.label.toLowerCase())}.</b> ${esc(rfPriceLine(pr))}`,act:pzPlugs().some(p=>p.slip===pr.slip&&!p.dropped&&!p.done)?'':`<button class="btn ghost coach-plug" data-slip="${esc(pr.slip)}">Plug this leak</button>`};
+    else if(top){ const spec=resolveHabitSpec(top.habit);
       today={v:`<b>${esc(top.title)}.</b> ${esc(top.action)}`,act:spec&&!habitAdopted(spec)?'<button class="btn ghost coach-adopt">Adopt as habit</button>':''}; } }
   if(today)rows.push({k:'Today',...today});
   // first: it fills the per-day slip flags a plugged leak's habit is judged by
@@ -1377,6 +1384,7 @@ function renderCoach(){
   const lv=$('coachLvl'); if(lv)lv.onclick=()=>coachGo('progress');
   const hb=$('coachHide'); if(hb)hb.onclick=async()=>{ await setCoachMode(false);
     setStatus('Coach mode is off \u2014 turn it back on in the settings panel (\u2699) under Coach mode.'); };
+  const pl=el.querySelector('.coach-plug'); if(pl)pl.onclick=async()=>{ pl.disabled=true; await pzPlugStart(pl.dataset.slip); renderCoach(); };
   const ad=el.querySelector('.coach-adopt');
   if(ad)ad.onclick=async()=>{ const top=ctx.findings.find(f=>f.tone==='leak'||f.tone==='caution'); const spec=top&&resolveHabitSpec(top.habit); if(!spec)return;
     ad.disabled=true; await adoptHabit(spec); renderCoach(); };

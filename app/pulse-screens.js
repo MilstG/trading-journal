@@ -27,7 +27,7 @@ function pzXpSources(g, fromKey){
   return o;
 }
 // features whose screen lives under a tab (pzFeature tab.nav) show their card on that tab too, linking to it
-function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
+function pzFeatureCards(nav,D){ return PZ_FEATS.filter(f=>f.tab&&f.tab.nav===nav&&f.today&&!pzRolledOff(f.id)).map(f=>{ try{ return f.today.html(D)||''; }catch(e){ console.warn('feature '+f.id,e); return ''; } }).join(''); }
 // a challenge as a rule for the week ("No SOL trades this week"), else the habit sentence
 function pzChallengeTitle(spec){ const m=spec&&spec.kind==='avoid'&&/^I’m about to take (?:one of my )?(.+)$/.exec(spec.when||''); if(!m)return habitSentence(spec);
   // "largest 25% trades" and "the “breakout” setup" don't follow "No" as they stand
@@ -73,6 +73,7 @@ function pzProgressHtml(D){
   const leakHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your leaks · 30 days</b><span class="pz-sub" style="font-size:12px">vs the 30 before</span></div>
     ${leaks.length?leaks.map(x=>{ const tr=x.n<x.prevN?'down':x.n>x.prevN?'up':'flat', p=x.plug;
       return `<div class="pz-leak"><div class="pz-kvrow"><b style="font-size:14px">${esc(x.label)}</b><b style="color:${x.cost<0?PZ_COL.low:'var(--pz-soft)'};white-space:nowrap" title="${esc(signedPlain(x.cost))}">${x.n?esc(pzSigned(x.cost)):'—'}</b></div>
+        ${(pr=>pr&&pr.own?`<span style="font-size:13px">${esc(rfPriceLine(pr))}</span>`:'')(typeof rfPriceOf==='function'?rfPriceOf(D,x.slip):null)}
         <span class="pz-sub" style="font-size:12px">${x.n} trade${x.n===1?'':'s'} · ${tr==='down'?'<span style="color:'+PZ_COL.good+'">▼ fewer</span> than the 30 days before ('+x.prevN+')':tr==='up'?'<span style="color:'+PZ_COL.low+'">▲ more</span> than before ('+x.prevN+')':'same as before'}</span>
         ${p?(p.done?`<div class="pz-kvrow"><span class="pz-chipbtn ok">${pzI('check',14,3)} Plugged ${esc(dayLabel(p.done))}</span>${p.back?`<button type="button" class="pz-ghost pz-sm" style="width:auto" data-pz-plug="${esc(x.slip)}">It’s back — plug again</button>`:''}</div>`:`<div class="pz-plug"><span class="pz-steps">${[0,1,2].map(i=>`<i class="${i<p.cleanRun?'on':''}"></i>`).join('')}</span><span class="pz-sub" style="font-size:12px">${p.cleanRun} of 3 clean trading weeks · ${pzPlugWeekNote(p)}</span><button type="button" class="pz-kudo" data-pz-unplug="${esc(x.slip)}">Stop</button></div>`)
           :x.n?`<button type="button" class="pz-ghost pz-sm" data-pz-plug="${esc(x.slip)}">Plug this leak</button>`:''}</div>`; }).join('')
@@ -554,9 +555,17 @@ async function pzCoachSend(text){
   try{
     const want=pzCoachDetailOn(), x=await pzCoachData(want);
     const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:x.facts};
-    if(want)body.detail=x.detail;
-    const r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
+    if(want){ body.detail=x.detail; if(typeof coachRunTools==='function')body.tools=true; } // lookups over your trades, run here (features/coach-tools.js)
+    let r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
+    let d=await r.json().catch(()=>({}));
+    // the coach asked to look something up: answered from this device's trades, then the question goes on, with the
+    // same data and history (the server checks), each round appended as it happened
+    const steps=[];
+    while(r.ok&&d.tool&&steps.length<4){ COACH.busy='look'; pzRender();
+      steps.push({assistant:d.tool.assistant,results:coachRunTools(d.tool.calls)});
+      r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(Object.assign({},body,{cont:{token:d.tool.token,steps}}))});
+      d=await r.json().catch(()=>({})); }
+    if(r.ok&&!d.text){ d={error:'The coach didn’t finish its answer. Try asking again.'}; r={ok:false,status:502}; }
     if(!r.ok){ COACH.err=d.packs?null:d.error||('HTTP '+r.status); COACH.draft=text; if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error,packs:d.packs||null}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
     else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.allowed!=null?d.allowed:d.remaining==null||d.remaining>0,reason:d.reason||null,packs:d.packs||null}); }
   }catch(e){ COACH.err=e&&e.shown?e.message:'Couldn’t reach the coach. Check your connection and try again.'; COACH.draft=text; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
@@ -594,7 +603,8 @@ function pzCoachPackHtml(st){
 }
 function pzCoachPrompts(){
   const h=tzParts(Date.now()).h;
-  return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?'];
+  return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?',
+    ...(pzCoachDetailOn()?['Which hours of the day do I trade worst?']:[])];
 }
 // D is null while the trades load or the game is built (pzCoachEarly): the chat shows without them, the
 // level gate from the profile's level (the server holds members to it either way)
@@ -620,7 +630,7 @@ function pzCoachHtml(D){
   const left=st.remaining==null?'':st.remaining+' of '+st.limit+' message'+(st.limit===1?'':'s')+' left today';
   const detailOn=SOC.me?!!SOC.me.coachDetail:!!settings.pzCoachDetail;
   return `${back}${pzHead(left||'Your AI coach','Coach')}
-  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?`<div class="pz-msg co" role="status"><p><span class="pz-spin"></span>${COACH.busy==='prep'?'Reading your journal…':Date.now()-COACH.since>11000?'Still thinking — a thorough answer can take up to a minute…':'Thinking…'}</p></div>`:''}</div>
+  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?`<div class="pz-msg co" role="status"><p><span class="pz-spin"></span>${COACH.busy==='prep'?'Reading your journal…':COACH.busy==='look'?'Looking through your trades…':Date.now()-COACH.since>11000?'Still thinking — a thorough answer can take up to a minute…':'Thinking…'}</p></div>`:''}</div>
     ${COACH.err?`<p class="pz-fine pz-err" role="alert">${esc(COACH.err)}</p>`:''}
     ${st.allowed===false&&st.packs?pzCoachPackHtml(st):`<div class="pz-chiprow">${pzCoachPrompts().map(p=>`<button type="button" class="pz-chipbtn" data-pz-ask="${esc(p)}"${COACH.busy||st.allowed===false?' disabled':''}>${esc(p)}</button>`).join('')}</div>
     <div class="pz-chatin"><textarea id="pzCoachIn" rows="2" maxlength="4000" placeholder="${st.allowed===false?esc(st.reason||'No messages left today'):'Ask about your trading…'}"${st.allowed===false?' disabled':''}>${esc(COACH.draft)}</textarea><button type="button" class="pz-cta pz-sm" id="pzCoachSend"${COACH.busy||st.allowed===false?' disabled':''} aria-label="Send">${pzI('arrow',20)}</button></div>`}
@@ -664,7 +674,9 @@ function socCompeteHubHtml(g){
   const mine=all?all.filter(x=>x.joined&&x.status!=='finished'):[], open=all?all.filter(x=>!x.joined&&x.status!=='finished'):[], past=all?all.filter(x=>x.status==='finished'):[];
   const tiles=[L?tile('good',esc(L.name),me&&!me.out?'#'+me.rank:'—',me&&!me.out?'of '+ld.size+(L.tiers&&T[ld.tier]?' · '+esc(T[ld.tier]):''):me&&me.out?'out for now':'no score yet'):tile('','League','—','not in one yet','#leagues'),
     dd?tile('',lad&&lad.me.n>0?'Duel rating':'Duels',lad&&lad.me.n>0?lad.me.r:r.w+'–'+r.l+(r.d?'–'+r.d:''),lad&&lad.me.n>0?r.w+'–'+r.l+(r.d?'–'+r.d:'')+' won–lost':'won–lost','#duels'):'',
-    all?tile('','Competitions',mine.length,'you’re in',''):''].filter(Boolean).join('');
+    all?tile('','Competitions',mine.length,'you’re in',''):'',
+    // the evaluation (features/evals.js): where a running one stands, else the way in
+    typeof evOn==='function'&&evOn()?(ev=>ev?tile(ev.prog&&ev.prog.at?(ev.prog.profit>=0?'good':''):'','Evaluation',ev.prog&&ev.prog.at?evPct(ev.prog.profit):'—','running · day '+Math.min(ev.rules.days,Math.max(1,Math.ceil((Date.now()-ev.startAt)/86400000)))+' of '+ev.rules.days,'#eval'):tile('','Evaluation','Take it','trade it like it’s funded','#eval'))((((evData()||{}).d||{}).mine||[]).find(e=>e.st==='live')):''].filter(Boolean).join('');
   const P=dd?dd.pods||[]:[], inv=dd?dd.duels.filter(v=>v.status==='pending'&&v.awaiting):[], act=dd?dd.duels.filter(v=>v.status==='active'&&v.me):[],
     pinv=P.filter(v=>v.my==='invited'&&(v.status==='pending'||v.status==='active')), pact=P.filter(v=>v.status==='active'&&v.my==='in');
   const inHtml=inv.map(v=>socDuelCardHtml(v,true)).join('')+pinv.map(v=>socPodCardHtml(v,true)).join('')+act.map(v=>socDuelCardHtml(v,true)).join('')+pact.map(v=>socPodCardHtml(v,true)).join('')+mine.map(x=>socCompCard(x,lv)).join('');
@@ -710,7 +722,8 @@ function socRowsHtml(rows, board, emptyText, key){
   if(!rows.length)return `<section class="pz-card"><p class="pz-sub">${esc(emptyText)}</p></section>`;
   const pg=pzPage('rows:'+(key||board),rows), mine=rows.find(r=>r.me), mineOff=mine&&!pg.items.includes(mine);
   // past a drawdown cap: listed last, crossed out, with the reason
-  const li=r=>`<li class="pz-li${r.me?' me':''}"><span class="pz-rank${r.rank<=3&&!r.out?' top':''}">${r.out?'–':r.rank}</span>${socAv(r.handle)}
+  // under the owner's trade bar (few): listed after the ranked ones, unranked
+  const li=r=>`<li class="pz-li${r.me?' me':''}"${r.few?' style="opacity:.7"':''}><span class="pz-rank${r.rank<=3&&!r.out&&!r.few?' top':''}">${r.out||r.few?'–':r.rank}</span>${socAv(r.handle)}
     <a class="pz-who" href="#u/${esc(r.handle)}"><b${r.out?' style="text-decoration:line-through;color:var(--pz-muted)"':''}>${r.me?'You':'@'+esc(r.handle)}</b><span${r.out?' style="color:var(--pz-err-t)"':''}>${esc(r.sub||'')}</span></a><span class="pz-val">${r.out?'Out':esc(socValue(board,r.value))}</span></li>`;
   return `<ol class="pz-list" aria-label="Standings">${pg.items.map(li).join('')}</ol>${pg.html}${mineOff?`<ol class="pz-list" aria-label="Your place">${li(mine)}</ol>`:''}`;
 }
@@ -744,20 +757,22 @@ function socLeagueHtml(g){
     <a class="pz-link" href="#lg/${esc(L.id)}" style="min-height:0">Info${pzI('chev',14)}</a></section>`;
   const chipsB=socRankSel('socBoardSel',[['rank','League ranking · '+L.metricLabel],...SOC_BOARDS.filter(([k])=>k!==L.metric)],b);
   const quiet=L.members<=1?`<section class="pz-card pz-kv"><b class="pz-kvh">It’s quiet here</b><p class="pz-sub" style="font-size:13px">You’re the only trader in this league so far. ${SOC.cfg&&SOC.cfg.inviteRequired?'Joining needs the owner’s invite code: ask them to share it.':'Anyone who opens your server’s Daruma link can join.'}</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="pz-cta pz-sm" style="width:auto;padding:0 16px" data-pz-copyurl="${esc(location.origin+'/daruma')}">Copy the link</button><a class="pz-ghost pz-sm" href="#people" style="width:auto;padding:0 16px">Find people</a></div></section>`:'';
-  let list='', note='', opt='', mine='';
+  let list='', note='', opt='', mine='', luckSrc=null;
   // the note says what this league's ranking covers: its season, its month, or its week — and only promises promotion where there are tiers
   const ranks=L.season?'this season ('+L.season.label+')':L.period==='month'?'this month':'this week';
   const leagueNote=L.metric==='xp'?'XP earned '+ranks+' — process, never profit.'+(L.season?' The top three when the season ends take the podium and a badge.':L.tiers?' The top of each tier moves up '+(L.period==='month'?'when the month ends':'on Monday')+', the bottom moves down.':'')
     :L.season?(SOC_BOARD_NOTE[d.board]||'')+' Ranked over '+ranks+'; the top three take the podium.':socMoneyNote(d.board,L.risk,ranks);
-  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=socMineHtml(d.me,d.size,d.board); }
+  if(b==='rank'){ list=socRowsHtml(d.rows,d.board,'No one in this league has a score yet this period.'); note=leagueNote; mine=socMineHtml(d.me,d.size,d.board); luckSrc=d.luck; }
   else { const c2=socGet('lb:'+L.id+':'+b,'/leaderboard?board='+b+'&league='+encodeURIComponent(L.id),30000), d2=c2&&c2.d;
     list=d2?socRowsHtml(d2.rows,b,'No one on this board yet.'):`<p class="pz-sub">${c2&&c2.err?esc(c2.err):'<span class="pz-spin"></span>Loading…'}</p>`; note=socMoneyNote(b,d2&&d2.risk,ranks); opt=socOptHtml(d2)+socOffBoardsHtml(d2);
-    mine=d2?socMineHtml(d2.me,d2.total,b):''; }
-  return `${quiet}${chipsL}${banner}${chipsB}<p class="pz-sub" style="font-size:12px">${esc(note)}</p>${opt}${mine}${list}`;
+    mine=d2?socMineHtml(d2.me,d2.total,b):''; luckSrc=d2&&d2.luck; }
+  const luck=socLuckNote(luckSrc);
+  return `${quiet}${chipsL}${banner}${chipsB}<p class="pz-sub" style="font-size:12px">${esc(note)}${luck?' '+esc(luck):''}</p>${opt}${mine}${list}`;
 }
 // your place on a board, or why you're off it (past the drawdown cap: out for the period, listed last)
 function socMineHtml(me,of,board){ if(!me)return '';
   return me.out?`<p class="pz-sub" style="font-size:13px;color:var(--pz-err-t)">You’re out of this ranking for now: ${esc((me.sub||'').replace(/^Out: /,''))}.</p>`
+    :me.few?`<p class="pz-sub" style="font-size:13px">You’re listed, not ranked yet: ${esc((me.sub||'').split(' · ').pop())} in this window.</p>`
     :`<p class="pz-sub" style="font-size:13px">You’re <b>#${me.rank}</b> of ${of} with ${esc(socValue(board,me.value))}.</p>`; }
 // a lapsed standing takes you off the leaderboards (your league's own table still counts you)
 function socOffBoardsHtml(d){ return d&&d.offBoards?'<p class="pz-warn">You’re off the leaderboards while your standing is lapsed. Your league table still counts you. <a href="#age">Your standing</a></p>':''; }
@@ -770,7 +785,8 @@ function socBoardsHtml(g){
     <button type="button" role="switch" class="pz-switch" id="socGlobSw" data-soc-global="${on?'0':'1'}" aria-checked="${on}" aria-labelledby="socGlobL"><i></i></button></div></section>`;
   const list=d?socRowsHtml(d.rows,b,on?'No one on this board yet.':'No one has opted in to this board yet — be the first.'):`<p class="pz-sub">${c&&c.err?esc(c.err):'<span class="pz-spin"></span>Loading…'}</p>`;
   const mine=d?socMineHtml(d.me,d.total,b):'';
-  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(socMoneyNote(b,d&&d.risk,'over the last 30 days'))}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
+  const luck=d?socLuckNote(d.luck):'';
+  return `${chips}${join}<p class="pz-sub" style="font-size:12px">${esc(socMoneyNote(b,d&&d.risk,'over the last 30 days'))}${luck?' '+esc(luck):''}</p>${on?socOptHtml(d):''}${socOffBoardsHtml(d)}${mine}${list}`;
 }
 // find a league by name or number
 function socFindHtml(D){

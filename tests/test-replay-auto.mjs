@@ -81,7 +81,7 @@ t('replay button, container, delegate, and toggle-off present', () => {
   ok(html.includes('if(_replayFor===id&&_replayChart){'));
 });
 t('replay uses cache-aware per-trade fetch with coarser fallback', () => {
-  ok(html.includes('async function ensureTradeCandles(t)'));
+  ok(html.includes('async function ensureTradeCandles(t, pad)'));
   ok(html.includes('for(let pass=0;pass<3;pass++){'));
 });
 

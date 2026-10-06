@@ -701,6 +701,47 @@ fee in basis points, fees against your result on price and funding paid, with
 one line each when it matters — e.g. how much entering half your taker volume
 with limit orders would have kept.
 
+**What the data says** (`#data`, from Stats; `app/features/research.js`). Your own trades set
+beside the league's research run (Admin → Research), group figures only:
+- **Your slips, priced.** Each slip against your own trades that had the same chance and didn't
+  take it (a post-loss entry that waited, an add to a winner, a loser closed sooner; for trading
+  on after two losses and overtrading, your other trades), in your typical trade (median absolute
+  result) and in dollars over 180 days, with a seeded bootstrap saying whether your own figure is
+  sure yet, and the server's figure beside it. The same price reaches the coach's next step (both
+  screens), the leaks on Progress, the live tilt alerts and the weekly challenge, which now aims at
+  the slip that costs you most rather than the one that happens most. Today shows the costliest.
+- **Does Discipline pay next month?** The research's answer, in words, with the most and least
+  disciplined fifths of months against the next month.
+- **Skill or luck?** How many trades a results ranking needs to be 0.7 reliable, against yours.
+- **The crowd at your entry** (`crowd.js`). Each perp entry against the hour's net flow of
+  everyone, the top and the bottom skill quarter (research.js `crowdOf`: five steps, an hour with
+  fewer than 3 wallets of a group says nothing, a day behind), with your average result each way.
+- **Your luck, measured** (`luck.js`). The average trade's 95% range from resampling your trades
+  and the share of resamples above zero, and the window without the trade it leans on ("−$294 over
+  30 days is +$447 without your worst trade"). Today shows a week one trade made or broke.
+- **Your rules, replayed** (`rule-replay.js`). The last 90 days without the trades that broke your
+  own rules (Settings rules and the leaks you're plugging), and without any of the six slips.
+
+**Replay drills** (`#drills`, from Progress; `drills.js`). One of your trades from the last 90 days
+comes back cut off at the moment it hurt most (the candle that closed furthest against you while you
+held). Hold, cut or add? Then the rest of the chart and what each call would have made against what you
+did, gross of fees, from your own fills. Your calls are kept in your settings; Today offers one a day.
+
+**Evaluation** (`#eval`, from Social → Compete; `evals.js`). A prop-firm-style test of your own
+trading: a preset (Standard, Steady, Sprint) or your own rules for a profit target, a daily loss limit
+and a drawdown limit (fixed or trailing) as a share of the account at the start, a minimum of trading
+days and a consistency rule. The server reads the account's P&L curve from the exchange (deposits don't
+move it) every few hours and the trading days from verified fills: a limit broken at any point fails it
+at once, the target with the days in and the rule kept passes it. A preset's pass earns its badge and
+the owner's XP once; your own rules earn the badge only. Needs a wallet and "Verify my discipline".
+
+**Coach lookups.** For a member who shares their trades with the coach, the chat offers one tool,
+`query_trades`, run on the member's device (`coach-tools.js`): filters by market, side, entry hours
+and weekdays on their clock, setup, slip, result, hold and dates, grouped if asked, answered with counts,
+net, average trade, win rate, profit factor and typical hold. At most three lookups a question; the
+question counts once, its rounds continue on a token signed for that member, data and round. Notes never
+leave the device. (Anthropic models only; with OpenAI the coach answers from the summary as before.)
+
 **AI coach.** With `COACH_AI=1`, a **Coach** tab (none without it, for visitors too) lets members chat with Claude
 about their trading, within a daily allowance (10 messages by default; the owner
 sets a server-wide default, overrides it per member, and has a larger default for fully unlocked
@@ -1212,6 +1253,32 @@ new value (`2`, …) to reset again. Everything lives in `DATA_DIR/admin-2fa.jso
 `0600`): passkey public keys, authenticator-app secrets, and hashes of the recovery codes
 and sessions. If that file can't be read, the admin panel answers 503 instead of
 dropping everyone's second factor, until it's fixed or reset.
+
+**Research findings for members** (Admin → Research → What members see; `findings.js`). Members get
+the last run's group figures at `GET /api/social/findings`, each resting on at least the owner's number
+of wallets (10 by default): slip costs, the reliability bar, the Discipline answer, improvers (Traders
+like you falls back to them while the server has none of its own) and, if on, the crowd's hourly flow.
+Two settings change the product: **Results boards rank from N trades** (the report suggests its
+reliability bar; a member with fewer verified trades in the window is listed after the ranked ones,
+unranked, can't be promoted in a results league, and can't take a season podium; boards and return duels
+always say how much of the order is luck) and **Weigh slips in the Discipline score by what they cost**
+(a slipped trade takes off its heaviest slip's weight, from the costliest at 1 down to 0.25, instead of
+a whole trade; app and server use the same weights, and verified members' days are read again).
+
+**Staged rollouts** (Admin → Insights; `rollouts.js`). Switch a Daruma feature on for a random share of
+members for some weeks: each member's group is fixed by a hash of their id and the test's, `/me` tells
+their app, and the members who don't get it don't see its card, screen or switch. The card compares each
+member's Discipline over the test with their own before it, the group that got it against the rest
+(intention to treat), with a 95% interval.
+
+**What gets used** (Admin → Insights; `usage.js`). The app counts which screens a member opens, which
+Today cards were on screen (each card's root carries `data-use`) and how often they press something there,
+and sends it with their stats; the owner sees totals across members only, with the bottom third flagged.
+
+**Focus-habit XP the fills can check.** A focus habit the server can read from fills (plugging a slip,
+a trade cap) travels with its day's XP; on a day the server read from a verified wallet it pays only when
+the fills agree it was kept. The **maker-share habit** (half the day's notional through limit orders) is
+checked from fills on the device; the fees finding offers it.
 
 **Admin panel (`/admin`).** Sign in with `AUTH_TOKEN` (the owner) or as an admin. A
 browser whose journal already has the token opens signed in; a token typed here is checked

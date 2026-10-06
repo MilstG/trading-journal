@@ -17,6 +17,10 @@ server.js       companion server: persistence + read-only analytics API (/api/v1
 help.html       built-in user guide, served at /help (a Help button appears in the app)
 social.js       Daruma's leagues, competitions, feed, badges and member accounts (/api/social)
 social-config.js  the admin panel's settings and their sanitizers (levels, XP, features, coach, routines)
+leagues.js      leagues, leaderboards, seasons and competitions as pure functions (social-util.js: the helpers they share)
+findings.js     what members see of the research report, and what the product takes from it (slip prices, trade bar, weights)
+evals.js        the evaluation: a prop-firm-style test read from a member's account
+rollouts.js     staged rollouts: a feature for a random share of members, measured against the rest
 admin.html      the owner's admin panel, served at /admin
 badges.html     a member's public badge page, served at /b/<name>
 vendor/         eth-sig.js — signature recovery for wallet claims (bundled, no install)
