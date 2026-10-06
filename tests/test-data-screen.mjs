@@ -55,4 +55,13 @@ t('trades that broke your own rules come out; the rest stay; the six slips repla
   const none = rrReplay(closed, bd, { now }); eq([none.hasRules, none.rules], [false, null]);
   eq(rrReplay(closed.slice(0, 5), bd, { now }).few, true);
 });
+
+console.log('\nThe maker-share habit');
+const { habitDayResults } = await evalModule(['habitDayResults'], ['habitDayResults'], 'var _pzSlipDays=new Map();');
+t('a day is kept when half its traded notional went through as maker; a day with no split doesn’t count', () => {
+  const h = { kind: 'maker', pct: 50 }, days = ['2026-09-01', '2026-09-02', '2026-09-03'].map(key => ({ key, parts: {} }));
+  const byDay = { '2026-09-01': [{ makerNotional: 6000, takerNotional: 4000 }], '2026-09-02': [{ makerNotional: 1000, takerNotional: 1000 }, { makerNotional: 0, takerNotional: 5000 }], '2026-09-03': [{ net: 5 }] };
+  eq(habitDayResults(h, days, byDay, null, null, {}), [{ key: '2026-09-01', kept: true }, { key: '2026-09-02', kept: false }]);
+  eq(habitDayResults({ kind: 'maker', pct: 80 }, days, byDay, null, null, {})[0].kept, false, 'its own target');
+});
 report('data screen');

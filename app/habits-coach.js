@@ -958,6 +958,9 @@ const HABIT_LIBRARY=[
   {tpl:'no-chase-red',kind:'avoid',pid:'st:red',when:'I’m red on the day',then:'I don’t open new trades to win it back'},
   {tpl:'size-cap',kind:'avoid',pid:'size:hi',when:'I size a trade',then:'I keep it no bigger than my usual size'},
   {tpl:'day-cap',kind:'cap',cap:3,when:'I’ve taken 3 trades today',then:'I’m done for the day'},
+  // checked from fills: a day is kept when at least pct% of the notional traded that day (by the trades that
+  // closed then) went through as maker, a resting limit order; a day with no known maker/taker split doesn't count
+  {tpl:'maker-half',kind:'maker',pct:50,when:'I enter or exit a trade',then:'at least half of the day’s volume goes through limit orders'},
 ];
 function habitsList(){ return Array.isArray(settings.habits)?settings.habits.filter(h=>h&&!h.retired):[]; }
 function habitById(id){ return (Array.isArray(settings.habits)?settings.habits:[]).find(h=>h&&h.id===id)||null; }
@@ -974,7 +977,7 @@ async function adoptHabit(spec){
     try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
       params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const h={id:'h'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tpl:spec.tpl||null,kind:spec.kind,
-    part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,
+    part:spec.part||null,pid:spec.pid||null,params:params||{},cap:spec.cap||null,slip:spec.slip||null,pct:spec.pct||null,
     when:String(spec.when||'').slice(0,160),then:String(spec.then||'').slice(0,160),createdAt:Date.now()};
   settings.habits.push(h);
   await Store.set(S_KEY,settings);
@@ -1009,6 +1012,7 @@ function habitDayResults(h, days, byDay, pred, fromKey, journalObj){
     else if(h.kind==='avoid'){ if(!pred)continue; kept=!(byDay[d.key]||[]).some(pred); }
     else if(h.kind==='slip'){ const b=_pzSlipDays.get(d.key); if(!b)continue; kept=!(b.flags&&b.flags[h.slip]); } // plugging a Discipline leak
     else if(h.kind==='cap'){ kept=(byDay[d.key]||[]).length<=(h.cap||3); }
+    else if(h.kind==='maker'){ let mk=0,tk=0; for(const t of (byDay[d.key]||[])){ mk+=+t.makerNotional||0; tk+=+t.takerNotional||0; } if(!(mk+tk>0))continue; kept=mk/(mk+tk)>=(h.pct||50)/100; }
     if(kept!=null)out.push({key:d.key,kept});
   }
   return out;
@@ -1105,7 +1109,7 @@ function buildFindings(closed, s, ext){
   if(B.costDragPct!=null&&B.costDragPct>0.25)
     add({id:'fees',tone:'leak',title:`Fees eat ${pc(B.costDragPct)} of what you make`,
       body:`You paid ${usdPlain(s.fees)} in fees against ${usdPlain(B.grossReal)} of gross profit.`,
-      action:'Use limit orders where you can, and take fewer, better trades.',
+      action:'Use limit orders where you can, and take fewer, better trades.',habit:{tpl:'maker-half'},
       evidence:`Fees ${fmtUsd(s.fees)} · gross realized ${fmtUsd(B.grossReal)}`,conf:'strong',impact:s.fees*0.5});
   if(B.ratingMono===false)
     add({id:'ratings',tone:'info',title:'Your star ratings don’t match your results',

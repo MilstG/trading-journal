@@ -358,7 +358,7 @@ const PEER_WHY={few:'It needs more closed trades in the last few months.',short:
 function peerImpHabit(c){
   if(!c)return null; const k=c.metric+(c.improversDelta<0?'-':'+'), run={kind:'self',when:'a trade is working',then:'I let it reach my target instead of closing early'};
   return {'tw-':{slip:'overtrade'},'rev-':{slip:'revenge'},'jour+':{tpl:'journal-all'},'hold-':{slip:'heldLoser'},'hold+':run,'pay+':run,
-    'fees-':{kind:'self',when:'I enter a trade',then:'I use a limit order unless I must get in now'},'wr+':{kind:'self',when:'a setup isn’t clearly an A+',then:'I skip it'},
+    'fees-':{tpl:'maker-half'},'wr+':{kind:'self',when:'a setup isn’t clearly an A+',then:'I skip it'},
     'afterTwo-':{slip:'afterTwo'},'sizeUp-':{slip:'sizeUp'},'addLoser-':{slip:'addLoser'},'overtrade-':{slip:'overtrade'},'heldLoser-':{slip:'heldLoser'}}[k]||null;
 }
 function peerImpHas(h){

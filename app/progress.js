@@ -183,7 +183,7 @@ async function setWeekChallenge(spec, idx, auto){
   if(spec.pid&&!params){ try{ const chron=closedTrades(viewFilter).sort((a,b)=>a.closeTime-b.closeTime);
     params=minerFams(chron,tradeStates(chron)).__params||null; }catch(e){} }
   const e={...(journal[k]||{})};
-  e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,slip:spec.slip||null,params:params||{},when:spec.when,then:spec.then},
+  e.challenge={spec:{kind:spec.kind,tpl:spec.tpl||null,pid:spec.pid||null,part:spec.part||null,cap:spec.cap||null,slip:spec.slip||null,pct:spec.pct||null,params:params||{},when:spec.when,then:spec.then},
     idx:idx||0, from, to:addDays(mon,7), createdAt:now}; // addDays: a DST week is 167 or 169 hours
   if(swap)e.challenge.swapAt=now;
   e.updatedAt=now; journal[k]=e;
