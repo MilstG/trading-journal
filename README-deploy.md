@@ -159,6 +159,7 @@ tests/          test suites (`npm test`; CI runs them on every push)
 | `TRUST_PROXY`          | on when on Railway               | Read the visitor's address from `X-Forwarded-For` (the last entry) for rate limits. Only turn on behind a proxy that sets it |
 | `DATA_DIR`             | `/data` if present, else `./data`| Where the journal, caches, reports, and backups live |
 | `REFRESH_INTERVAL_MIN` | *(unset = off)*                  | Refresh server caches from Hyperliquid on a timer (first run ~30s after boot) |
+| `STATS_SWEEP`          | on                               | Members' returns and verified Discipline re-read in the background: every 4 h for members seen this week or in a running comp/duel, 12 h for this month, 2 days for the last 6 months. `off` leaves it to the boards and profiles people open |
 | `ALERT_WEBHOOK`        | *(unset)*                        | Discord/Slack/ntfy/JSON endpoint for alerts + weekly digests |
 | `ALERT_LIQ_PCT`        | `10`                             | Alert when a position is within this % of liquidation |
 | `ALERT_DAILY_LOSS`     | *(app's saved rule)*             | $ daily-loss alert threshold |
