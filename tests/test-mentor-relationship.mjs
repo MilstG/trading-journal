@@ -31,6 +31,7 @@ const ask = (k, h, extra) => call('/mentors/' + h, { method: 'POST', key: k, bod
 const answer = (k, h, a, text) => call('/mentor/' + h + '/' + a, { method: 'POST', key: k, body: text ? { text } : {} });
 let tn = 0; const TR = () => ({ coin: 'ETH', label: 'ETH', side: 'long', market: 'perp', openedAt: clock - 5 * HOUR - (++tn) * 60000, closedAt: clock - HOUR, entry: 1, exit: 2 });
 const send = (k, body) => call('/reviews', { method: 'POST', key: k, body: Object.assign({ key: 'trade' + String(++tn).padStart(4, '0'), trade: TR() }, body) });
+const keys = {}, idKey = async h => keys[h];
 const days = (n, f) => Array.from({ length: n }, (_, i) => ({ k: key(clock - (n - 1 - i) * DAY), s: 70, ...(f(i) ? { f: f(i) } : {}), l: 'lesson ' + i }));
 
 let MIA, KAI, NED, OLU, PAM;
@@ -121,6 +122,8 @@ try {
     eq(back.d.note.replies.map(y => [y.by, y.mentor, y.text]), [['ned', false, 'Does the timer count on a winning day?'], ['mia', true, 'Every stop, every day.']]);
     ok((await inbox(NED)).some(x => x.title === 'Your mentor answered'));
     eq((await call('/notes/' + nid + '/reply', { method: 'POST', key: NED, body: { ack: null } })).d.note.ack, null, 'the tap can be taken back');
+    for (const a of ['got', 'try', 'got']) await call('/notes/' + nid + '/reply', { method: 'POST', key: NED, body: { ack: a } });
+    eq((await inbox(MIA)).filter(x => x.title === 'Your note landed').length, 1, 'tapping back and forth tells the mentor once');
   });
   await t('the week’s focus: the member sees it, and how often its slip has come up since against the four weeks before', async () => {
     // ned's last 28 days: revenge on every other day; after the focus is set, on one of five
@@ -173,6 +176,9 @@ try {
     await call('/reviews/' + ids[3] + '/helped', { method: 'POST', key: NED, body: { helped: null } });
     eq((await call('/mentors/mia', { key: OLU })).d.mentor.record.answers, 4, 'an answer can be taken back');
     eq((await call('/mentors?sort=helped', { key: OLU })).status, 200);
+    eq((await call('/reviews/' + ids[3], { key: NED })).d.review.helped, null);
+    eq([(await call('/reviews/' + ids[0], { key: NED })).d.review.helped, (await call('/reviews/' + ids[0], { key: MIA })).d.review.helped], [true, null], 'each answer stays the member’s');
+    ok((await call('/reviews', { key: MIA })).d.toReview.every(r => r.helped === null));
   });
   await t('the mentor lets a mentee go: held XP goes back, the focus goes, the slot opens', async () => {
     await call('/mentor/ned/focus', { method: 'POST', key: MIA, body: { text: 'Keep the timer' } });
@@ -184,6 +190,29 @@ try {
     ok(before >= 30, before); const after = await me(NED); eq([after.me.myMentors, after.me.wallet.held], [[], 0], 'everything held for mia comes back');
     eq((await call('/mentor/ned', { key: MIA })).status, 404);
     eq((await call('/notes', { key: NED })).d.focus, []);
+  });
+  await t('a note’s thread stays between the member and the mentor who wrote it', async () => {
+    eq((await ask(PAM, 'mia')).status, 200); eq((await answer(MIA, 'pam', 'accept')).status, 200); // pam has kai too
+    const n = (await call('/mentor/pam/notes', { method: 'POST', key: KAI, body: { day: key(clock), text: 'Kai’s note' } })).d.note.id;
+    await call('/notes/' + n + '/reply', { method: 'POST', key: PAM, body: { text: 'Just for kai' } });
+    const seen = (await call('/mentor/pam', { key: MIA })).d.mentee.notes.find(x => x.id === n);
+    eq([seen.text, seen.replies, seen.ack], ['Kai’s note', [], null]);
+    eq((await call('/mentor/pam', { key: KAI })).d.mentee.notes.find(x => x.id === n).replies.length, 1);
+  });
+  await t('asking, taking it back and asking again: the mentor hears it once a day', async () => {
+    const R = await join_('rae'); keys.rae = R; const told = async () => (await inbox(KAI)).filter(x => /@rae would like you to mentor them/.test(x.text)).length;
+    await call('/me', { method: 'PUT', key: KAI, body: { mentorAuto: false } });
+    for (let i = 0; i < 3; i++) { eq((await ask(R, 'kai')).status, 200); if (i < 2) await call('/mentors/kai', { method: 'POST', key: R, body: { action: 'drop' } }); }
+    eq(await told(), 1);
+    clock += DAY + 1000; await call('/mentors/kai', { method: 'POST', key: R, body: { action: 'drop' } }); await ask(R, 'kai'); eq(await told(), 2, 'the next day, again');
+  });
+  await t('switching on “take requests on at once” takes on who’s already asking, while there’s room', async () => {
+    const T = await join_('tao'); await ask(T, 'kai');
+    eq((await call('/mentor', { key: KAI })).d.requests.map(x => x.handle).sort(), ['rae', 'tao']);
+    await call('/me', { method: 'PUT', key: KAI, body: { mentorAuto: true, mentorSlots: 2 } }); // pam has one slot: one more
+    const d = (await call('/mentor', { key: KAI })).d; eq([d.mentees.length, d.requests.length], [2, 1]);
+    eq([d.mentees.map(x => x.handle).sort(), d.requests.map(x => x.handle)], [['pam', 'rae'], ['tao']], 'oldest request first');
+    ok((await inbox(await idKey('rae'))).some(x => x.title === 'You have a mentor'));
   });
   await t('in the app: the request, note thread, focus and helped screens are there', async () => {
     const src = (await import('../app-source.js')).readAppSource(htmlPath);

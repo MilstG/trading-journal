@@ -1190,7 +1190,7 @@ function socMentorPageHtml(D, handle){
   else if(m.picked)act=`<p class="pz-sub" style="font-size:13px;margin:0">Send @${h} a trade with <b>Ask mentor</b> on it in your journal.</p>
     <button type="button" class="pz-quietbtn warn" data-soc-mact="drop" data-h="${h}">${cf==='mdrop:'+m.handle?'Tap again to stop working with @'+h+'. XP held for them comes back.':'Stop working with @'+h}</button>`;
   else if(m.requested)act=`<p class="pz-sub" style="font-size:13px;margin:0">You asked @${h}. They see your request with your last 7 days at a glance, and your days open to them once they take you on.</p>
-    <button type="button" class="pz-ghost" data-soc-mact="drop" data-h="${h}">Take the request back</button>`;
+    <button type="button" class="pz-ghost" data-soc-mact="drop" data-h="${h}" data-now="1">Take the request back</button>`;
   else if(m.declinedUntil)act=`<p class="pz-sub" style="font-size:13px;margin:0">@${h} couldn’t take you on this time. You can ask again ${esc(dayLabel(new Date(m.declinedUntil).toISOString().slice(0,10)))}.</p>`;
   else if(me.picks.length+me.requests.length>=me.max)act=`<p class="pz-sub" style="font-size:13px;margin:0">You have ${me.max} mentors or requests (${[...me.picks,...me.requests].map(x=>'@'+esc(x)).join(' and ')}). Drop one to ask @${h}.</p>`;
   else if(!m.slots.open)act=m.waiting?`<p class="pz-sub" style="font-size:13px;margin:0">You’re on the waitlist. You’ll hear when a slot opens.</p><button type="button" class="pz-ghost" data-soc-mact="unwait" data-h="${h}">Leave the waitlist</button>`
@@ -1250,7 +1250,7 @@ async function socAction(t){
     if(ds.socMopen){ pzS.mopen=!pzS.mopen; pzRender(); return true; }
     if(ds.socMact){ const h=ds.h, a=ds.socMact;
       if(a==='pick'&&!(SOC.share&&SOC.share.mentor)&&SOC.confirm!=='mpick:'+h){ SOC.confirm='mpick:'+h; pzRender(); return true; }
-      if(a==='drop'&&SOC.confirm!=='mdrop:'+h){ SOC.confirm='mdrop:'+h; pzRender(); return true; }
+      if(a==='drop'&&!ds.now&&SOC.confirm!=='mdrop:'+h){ SOC.confirm='mdrop:'+h; pzRender(); return true; } // a request goes back in one tap
       SOC.confirm=null; t.disabled=true;
       const text=a==='pick'?(($('socMask')||{value:''}).value||'').trim():'';
       let r; try{ r=await socFetch('/mentors/'+encodeURIComponent(h),{method:'POST',body:JSON.stringify({action:a,letIn:a==='pick',text})}); }finally{ t.disabled=false; }

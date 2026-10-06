@@ -2691,7 +2691,7 @@ function createSocial(opts) {
     const to = r.mentor && own(S.members, r.mentor) ? S.members[r.mentor] : null;
     return { id: r.id, key: viewer && viewer.id === r.member ? r.trade : null, at: r.at, last: r.last, handle: o ? o.handle : null, av: avUrl(o), trade: reviewTrade(r),
       comments: r.comments, reviewed: r.reviewed ? { at: r.reviewed, by: by ? by.handle : null } : null, waiting: !r.reviewed && (!lastBy || lastBy === r.member),
-      to: to ? to.handle : null, helped: r.helped == null ? null : !!r.helped, fee: r.fee_state ? { xp: r.fee || 0, state: r.fee_state, until: r.fee_state === 'held' ? r.at + S.config.mentorXp.holdHours * 3600000 : null } : null }; };
+      to: to ? to.handle : null, helped: viewer && viewer.id === r.member && r.helped != null ? !!r.helped : null, fee: r.fee_state ? { xp: r.fee || 0, state: r.fee_state, until: r.fee_state === 'held' ? r.at + S.config.mentorXp.holdHours * 3600000 : null } : null }; };
   const threadOut = (r, viewer, role) => ({ role, review: reviewOut(r, viewer),
     comments: q('SELECT * FROM review_comments WHERE review = ? ORDER BY at, rowid').all(r.id).filter(c => own(S.members, c.member) && !S.members[c.member].banned)
       .map(c => ({ id: c.id, at: c.at, text: c.text, handle: S.members[c.member].handle, av: avUrl(S.members[c.member]), mentor: c.member !== r.member, mine: !!viewer && c.member === viewer.id })) });
@@ -2808,6 +2808,9 @@ function createSocial(opts) {
       return true; }
     me.mentorReqs = Object.assign({}, me.mentorReqs, { [x.id]: { at: now(), text } });
     if (me.mentorWait) { me.mentorWait = Object.assign({}, me.mentorWait); delete me.mentorWait[x.id]; }
+    // asking, taking it back and asking again: the request stands, but the mentor hears it once a day
+    const last = me.mentorAsks && me.mentorAsks[x.id]; if (last && now() - last < 86400000) return false;
+    me.mentorAsks = Object.assign({}, me.mentorAsks, { [x.id]: now() });
     notify(x, 'mentor', '@' + me.handle + ' would like you to mentor them.' + (text ? ' “' + text + '”' : '') + ' Take them on or say no under Mentees.', { title: 'A mentoring request', url: '/daruma#mentor' });
     return false; };
 
@@ -4241,7 +4244,7 @@ function createSocial(opts) {
       const x = own(S.members, c.by) ? S.members[c.by] : null;
       if (body.ack !== undefined) { if (body.ack !== null && !NOTE_ACKS.includes(body.ack)) return json(res, 400, { error: 'ack is got, try or null' });
         const was = c.ack; if (body.ack) c.ack = body.ack; else delete c.ack; c.read = true;
-        if (body.ack && body.ack !== was && x && mentorSees(x, me)) notify(x, 'mentor', '@' + me.handle + (body.ack === 'try' ? ' will try what you said: “' : ' got your note: “') + cleanText(c.text, 80) + '”', { title: 'Your note landed', url: '/daruma#mentee/' + me.handle });
+        if (body.ack && !c.ackTold && x && mentorSees(x, me)) { c.ackTold = true; notify(x, 'mentor', '@' + me.handle + (body.ack === 'try' ? ' will try what you said: “' : ' got your note: “') + cleanText(c.text, 80) + '”', { title: 'Your note landed', url: '/daruma#mentee/' + me.handle }); }
         save('comments', ...(x ? [x] : [])); return json(res, 200, { note: commentOut(c) }); }
       const text = cleanText(body.text, 600); if (!text) return json(res, 400, { error: 'Write the reply first.' });
       if (!x || !mentorSees(x, me)) return json(res, 409, { error: 'That mentor doesn’t work with you any more, so the note can’t be answered.' });
@@ -4281,7 +4284,8 @@ function createSocial(opts) {
         if (seen) save('comments');
         return json(res, 200, { mentee: Object.assign(summary, { best: st.best || 0, habits: o.share.habits ? st.habits || [] : [], challenge: st.lastChallenge || '',
           days: (st.days || []).slice(-30).reverse().map(d => ({ k: d.k, s: d.s, f: d.f || [], l: d.l || '', r: !!d.r, j: !!d.j })),
-          notes: commentsFor(o.id).slice().reverse().map(commentOut), insight: menteeInsight(o), focus: focusOut(o, me),
+          // a thread under a note is between the member and the mentor who wrote it: another mentor sees the note, not the thread
+          notes: commentsFor(o.id).slice().reverse().map(c => c.by === me.id ? commentOut(c) : Object.assign(commentOut(c), { ack: null, replies: [] })), insight: menteeInsight(o), focus: focusOut(o, me),
           // the trades they sent you (or, from before they picked, any of their mentors), newest first
           reviews: q('SELECT * FROM reviews WHERE member = ? AND (mentor IS NULL OR mentor = ?) ORDER BY last DESC LIMIT 20').all(o.id, me.id).map(r => reviewOut(r, me)) }) }); }
       // the mentor answers in a note's thread (their own notes only)
@@ -4300,7 +4304,7 @@ function createSocial(opts) {
         if (limited(req, 'mfocus:' + me.id, 30, 86400000, true)) return json(res, 429, { error: 'Too many changes today.' });
         o.mentorFocus = Object.assign({}, o.mentorFocus, { [me.id]: { text, slip, at: now(), from: zoneKey((o.stats && o.stats.tz) || 'UTC', now()) } });
         notify(o, 'mentor', '@' + me.handle + ' set your focus for the week: ' + text, { title: 'Your focus this week', url: '/daruma#today' });
-        mentorWorked(me, o); save(o); return json(res, 200, { focus: focusOut(o, me) }); }
+        mentorWorked(me, o); save(o, me); return json(res, 200, { focus: focusOut(o, me) }); }
       if (parts[2] === 'focus' && M === 'DELETE') { if (o.mentorFocus && own(o.mentorFocus, me.id)) { o.mentorFocus = Object.assign({}, o.mentorFocus); delete o.mentorFocus[me.id]; save(o); }
         return json(res, 200, { focus: null }); }
       if (parts[2] === 'notes' && M === 'POST') {
@@ -4420,8 +4424,12 @@ function createSocial(opts) {
       if (typeof body.coachDetail === 'boolean') me.coachDetail = body.coachDetail;
       // a mentor's own rate (kept inside the owner's range when it's read) and how many mentees they take
       if (me.mentor && body.mentorRate !== undefined) { const v = clampNum(body.mentorRate, 0, 1000); if (v == null) return json(res, 400, { error: 'A rate is a number of XP.' }); me.mentorRate = Math.round(v); recCache.delete(me.id); }
-      if (me.mentor && typeof body.mentorAuto === 'boolean') me.mentorAuto = body.mentorAuto;
       if (me.mentor && body.mentorSlots !== undefined) { const v = clampNum(body.mentorSlots, 1, SLOTS_MAX); if (v == null) return json(res, 400, { error: 'Slots are 1 to ' + SLOTS_MAX + '.' }); me.mentorSlots = Math.round(v); slotOpened(me); }
+      if (me.mentor && typeof body.mentorAuto === 'boolean') { const on = body.mentorAuto && !me.mentorAuto; me.mentorAuto = body.mentorAuto;
+        // switched on: the requests already waiting are taken on too, oldest first, while there's room
+        if (on) for (const o of requestersOf(me).sort((a, b) => (a.mentorReqs[me.id].at || 0) - (b.mentorReqs[me.id].at || 0))) {
+          if (pickersOf(me).length >= slotsOf(me)) break; if (picksOf(o).length >= MENTORS_MAX) continue;
+          takeOn(me, o); notify(o, 'mentor', '@' + me.handle + ' took you on as a mentee. Send them a trade with Ask mentor in your journal.', { title: 'You have a mentor', url: '/daruma#mentors/' + me.handle }); save(o); } }
       // letting mentors out closes every thread at once: picks are dropped and held XP comes back
       if (!me.share.mentor && picksOf(me).length) for (const id of picksOf(me)) dropPick(me, S.members[id]);
       if (!me.share.mentor && me.mentorReqs) me.mentorReqs = {}; // and requests nobody answered yet go

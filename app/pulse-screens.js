@@ -819,7 +819,8 @@ function socNoteThreadHtml(n, side, h){
   const ack=n.ack?`<span class="pz-tag ${n.ack==='try'?'win':'info'}">${esc(SOC_ACK[n.ack])}</span>`:'';
   const replies=(n.replies||[]).map(y=>`<div class="pz-sub" style="font-size:13px;margin-top:6px;padding-left:10px;border-left:2px solid var(--pz-line,rgba(127,127,127,.3))"><b>@${esc(y.by)}</b> ${esc(y.text)} <span style="font-size:11px">· ${socAgo(y.at)}</span></div>`).join('');
   const open=pzS.nreplyFor===n.id, key=side==='mentor'?'data-h="'+esc(h)+'"':'';
-  const canReply=side==='mentee'||n.by===(SOC.me&&SOC.me.handle);
+  // the member answers only a mentor who still works with them; a mentor, only their own notes
+  const canReply=side==='mentee'?((SOC.me&&SOC.me.myMentors)||[]).includes(n.by):n.by===(SOC.me&&SOC.me.handle);
   const box=open?`<div class="pz-field" style="margin-top:6px"><label for="socNrIn" class="pz-sr">Reply</label><textarea id="socNrIn" rows="2" maxlength="600" placeholder="${side==='mentee'?'Ask, or say how it went':'Answer'}"></textarea></div>
     <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-nrsend="${esc(n.id)}" data-side="${side}" ${key}>Send</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-nrfor="">Cancel</button></div>`
     :canReply?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${side==='mentee'?Object.entries(SOC_ACK).map(([k,l])=>`<button type="button" class="pz-linkbtn" data-soc-nack="${k}" data-id="${esc(n.id)}" aria-pressed="${n.ack===k}">${esc(l)}</button>`).join(''):''}<button type="button" class="pz-linkbtn" data-soc-nrfor="${esc(n.id)}">Reply</button></div>`:'';
@@ -901,7 +902,7 @@ function socMenteeHtml(D, handle){
       <div style="display:flex;gap:8px"><button type="button" class="pz-cta pz-sm" style="flex:1;min-height:40px" data-soc-nsend="${esc(d.k)}" data-h="${esc(m.handle)}">Send note</button><button type="button" class="pz-ghost pz-sm" style="flex:1" data-soc-notefor="">Cancel</button></div>`
       :`<button type="button" class="pz-linkbtn" style="align-self:flex-start" data-soc-notefor="${esc(d.k)}">Add a note on this day</button>`}</section>`;
   const R=m.reviews||[];
-  const trades=`<section class="pz-card pz-kv"><b class="pz-kvh">Trades they sent you</b>${R.length?R.slice(0,6).map(r=>`<a class="pz-row-t" href="#tr/${esc(r.id)}" style="text-decoration:none;color:inherit"><span>${esc((r.trade.label||r.trade.coin)+' '+r.trade.side)} · ${socAgo(r.at)}</span><b style="font-size:12px">${r.reviewed?'Reviewed ✓'+(r.helped===true?' · helped':''):r.waiting?'Waiting for you':'You replied'}</b></a>`).join(''):'<span class="pz-sub" style="font-size:13px">None yet. They send one with Ask mentor in their journal.</span>'}</section>`;
+  const trades=`<section class="pz-card pz-kv"><b class="pz-kvh">Trades they sent you</b>${R.length?R.slice(0,6).map(r=>`<a class="pz-row-t" href="#tr/${esc(r.id)}" style="text-decoration:none;color:inherit"><span>${esc((r.trade.label||r.trade.coin)+' '+r.trade.side)} · ${socAgo(r.at)}</span><b style="font-size:12px">${r.reviewed?'Reviewed ✓':r.waiting?'Waiting for you':'You replied'}</b></a>`).join(''):'<span class="pz-sub" style="font-size:13px">None yet. They send one with Ask mentor in their journal.</span>'}</section>`;
   const cf=SOC.confirm==='mrelease:'+m.handle;
   return `${back}${pzHead('Level '+m.level+' · '+m.streak+'-day streak','@'+m.handle)}
     <div class="pz-wide"><div class="pz-col">${m.days.length?pg.items.map(row).join('')+pg.html:'<section class="pz-card"><p class="pz-sub">No trading days shared yet.</p></section>'}</div>
