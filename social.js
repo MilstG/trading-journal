@@ -2925,8 +2925,8 @@ function createSocial(opts) {
       }
       // ---- research: members' Discipline before and after a first mentor review, duel, playbook, pod or partner,
       // against members who hadn't had one yet over the same weeks (research.js productEffects) ----
-      if (sub === 'research' && M === 'GET') {
-        const onlyVerified = query.verified === '1', first = {}, keyMs = k => Date.parse(k + 'T00:00:00Z');
+      const effectRows = onlyVerified => {
+        const first = {}, keyMs = k => Date.parse(k + 'T00:00:00Z');
         const put = (k, id, at) => { if (!own(S.members, id) || !(at > 0)) return; const f = first[k] || (first[k] = {}); if (!(f[id] <= at)) f[id] = at; };
         // a mentor review: the first comment someone else left on a trade the member put up for review
         for (const r of q('SELECT r.member AS m, MIN(c.at) AS at FROM reviews r JOIN review_comments c ON c.review = r.id WHERE c.member != r.member GROUP BY r.member').all()) put('mentor', r.m, r.at);
@@ -2940,8 +2940,38 @@ function createSocial(opts) {
           if (!days || !days.length) return null; if (v) verified++; else app++;
           return { id: m.id, days: days.filter(d => d && typeof d.k === 'string' && isFinite(d.s)), exposures: Object.fromEntries(Object.keys(first).filter(k => own(first[k], m.id)).map(k => [k, first[k][m.id]])) };
         }).filter(Boolean);
+        return { rows, verified, app };
+      };
+      // the wallets a research run reads: members' own (any they use, but not one marked unverified), and with
+      // scope 'all' the seed wallets and the wallets entered in the app too
+      const researchWallets = scope => {
+        const set = new Set();
+        for (const m of members()) if (!m.banned) for (const a of [...walletsOf(m), m.claimed]) if (a && walletStatus(String(a).toLowerCase()) !== 'rejected') set.add(String(a).toLowerCase());
+        const mine = set.size;
+        if (scope === 'all') for (const a of [...Object.keys(S.benchSeeds), ...Object.keys(S.walletsSeen)]) if (walletStatus(a) !== 'rejected') set.add(a.toLowerCase());
+        return { list: [...set], members: mine };
+      };
+      if (sub === 'research' && !parts[2] && M === 'GET') {
+        const onlyVerified = query.verified === '1', E = effectRows(onlyVerified);
         const window = [14, 28, 56].includes(+query.window) ? +query.window : 28;
-        return json(res, 200, Object.assign(Research.productEffects(rows, { window }), { verified, app, onlyVerified, labels: Research.EXPOSURES }));
+        return json(res, 200, Object.assign(Research.productEffects(E.rows, { window }), { verified: E.verified, app: E.app, onlyVerified, labels: Research.EXPOSURES }));
+      }
+      // ---- research on the server's own wallets: start or stop a run, its progress, its report ----
+      if (sub === 'research' && parts[2] === 'run') {
+        const job = opts.research;
+        if (!job) return json(res, 503, { error: 'The trade engine isn’t available on this server, so research can’t run.' });
+        if (M === 'GET') { const W = researchWallets('all'); return json(res, 200, Object.assign(job.status(), { available: { members: W.members, all: W.list.length } })); }
+        if (M === 'POST') {
+          if (body && body.action === 'stop') { job.stop(); return json(res, 200, job.status()); }
+          const scope = body && body.scope === 'all' ? 'all' : 'members', W = researchWallets(scope);
+          try { return json(res, 200, job.start({ addresses: W.list, scope, by: who.by, members: effectRows(false).rows })); }
+          catch (e) { return json(res, e.code || 400, { error: e.message }); }
+        }
+      }
+      if (sub === 'research' && parts[2] === 'report' && M === 'GET') {
+        const job = opts.research, r = job && job.report();
+        if (!r) return json(res, 404, { error: 'No research run has finished yet.' });
+        return json(res, 200, query.html === '1' ? { html: job.html() } : r);
       }
       if (sub === 'members' && parts[2] && parts[3] === 'perf' && M === 'GET') {
         const m = own(S.members, parts[2]) ? S.members[parts[2]] : null; if (!m) return json(res, 404, { error: 'no such member' });

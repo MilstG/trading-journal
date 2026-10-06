@@ -118,7 +118,7 @@ html{scroll-behavior:smooth}
     <tr><td>app-source.js</td><td>Returns ledger.html with every app/ part inlined in load order: what the server's analytics engine and the tests extract functions from.</td></tr>
     <tr><td>server.js</td><td>Companion server: persistence, /api/v1 analytics, scheduled refresh, alerts, digests, Telegram bot, backups, metrics, and the routes for everything below.</td></tr>
     <tr><td>social.js · social-config.js · db.js</td><td>Daruma's leagues, competitions, feed, badges and member accounts (/api/social); the admin panel's settings and their sanitizers; the SQLite storage (DATA_DIR/pulse.db).</td></tr>
-    <tr><td>bench.js · duels.js · pots.js · insights.js · research.js</td><td>Pure rules for “traders like you”, duels and the ladder, XP pots, the admin's insights, and the owner's research (research-run.js reads the wallets).</td></tr>
+    <tr><td>bench.js · duels.js · pots.js · insights.js · research.js</td><td>Pure rules for “traders like you”, duels and the ladder, XP pots, the admin's insights, and the owner's research (research-job.js runs it from Admin → Research; research-run.js from the command line).</td></tr>
     <tr><td>admin.html · admin2fa.js · admin2fa-ui.js</td><td>The owner's panel at /admin, its two-factor checks on the server, and its two-factor screens.</td></tr>
     <tr><td>badges.html · webauthn.js · push.js · wear.js</td><td>A member's public badge page (/b/&lt;name&gt;), passkey checks, web push, wearables.</td></tr>
     <tr><td>offsite.js · cex-relay.js · vendor/</td><td>Encrypted off-site backups and their restore CLI; the Bybit/Binance relay; eth-sig.js for wallet claims.</td></tr>

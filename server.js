@@ -82,6 +82,7 @@ const Offsite = require('./offsite.js');
 const CexRelay = require('./cex-relay.js');
 const Archive = require('./archive.js'); // Hyperliquid's node-data archive on S3: fills the public API no longer serves
 const Admin2fa = require('./admin2fa.js');
+const ResearchJob = require('./research-job.js'); // Admin → Research: the research report on the server's own wallets
 const { readAppSource, appScripts } = require('./app-source.js');
 
 const MAX_BODY = 25 * 1024 * 1024; // journal snapshots are small; this is generous headroom
@@ -2671,7 +2672,10 @@ function createApp(opts) {
   // also count toward this address's lockout above
   const twofa = Admin2fa.create({ dataDir, json, now: opts.now, lockedOut, noteBadToken, lockLeftMs, lockMs, sessionMs: opts.admin2faSessionMs,
     mode: opts.admin2fa !== undefined ? opts.admin2fa : process.env.ADMIN_2FA, reset: opts.admin2faReset !== undefined ? opts.admin2faReset : process.env.ADMIN_2FA_RESET });
-  const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id),
+  // one research run at a time: fills read a request every RESEARCH_DELAY ms (1.5 s), the analysis in a worker thread
+  const research = engine.ok ? ResearchJob.createResearchJob({ dataDir, post: body => E.hlPost(body), htmlPath, now: opts.now,
+    delay: opts.researchDelay != null ? opts.researchDelay : +process.env.RESEARCH_DELAY || 1500, iters: opts.researchIters }) : null;
+  const social = createSocial({ dataDir, json, authOk, adminConfigured: !!auth, fetchImpl: opts.fetchImpl, now: opts.now, push: pushCfg, onDrop: id => wearRef.forget && wearRef.forget('m:' + id), research,
     behaviorFor: opts.behaviorFor || behaviorFor, traderAge: engine.ok ? E.traderAge : null,
     taMult: engine.ok ? { weeks: E.taWeeks, step: E.taMultStep, of: E.taMultOf, tier: E.taMultTier, weekOf: E.isoWeekOfKey } : null,
     taStanding: engine.ok ? { of: E.taStanding, years: E.taYears } : null, tiltFor: opts.tiltFor || tiltFor, peerSummaryFor: opts.peerSummaryFor || peerSummaryFor, seedDelay: opts.seedDelay,
@@ -2925,8 +2929,8 @@ function createApp(opts) {
       });
       return;
     }
-    // the admin panel's two-factor and beta screens (kept out of admin.html, which has a size budget)
-    if (req.method === 'GET' && (url === '/admin2fa-ui.js' || url === '/admin-beta-ui.js')) {
+    // the admin panel's two-factor, beta and research screens (kept out of admin.html, which has a size budget)
+    if (req.method === 'GET' && (url === '/admin2fa-ui.js' || url === '/admin-beta-ui.js' || url === '/admin-research-ui.js')) {
       const file = url.slice(1);
       fs.readFile(path.join(__dirname, file), (err, buf) => {
         if (err) return json(res, 404, { error: file + ' not deployed alongside server.js' });
@@ -3267,7 +3271,7 @@ function createApp(opts) {
   server._offsite = offsite; // exposed for tests
   server._social = social; // tests reach the coach allowance through this
   server.pushTick = () => social.tick(); // the reminder pass, for tests and one-off runs
-  server.on('close', () => social.close());
+  server.on('close', () => { social.close(); if (research) research.stop(); });
   return server;
 }
 

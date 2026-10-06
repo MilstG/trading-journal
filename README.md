@@ -1228,6 +1228,11 @@ playbooks, referrals, peer groups, beta invites) shows ten at a time, with Prev 
   the ladder (on/off, K, duels to be listed) and group duels (on/off, most
   people), the ladder season's top 10, every duel and group duel running or
   waiting (with cancel) and recent results.
+- **Research** — **Run on members' wallets**: the research report (what each slip
+  costs, whether Discipline predicts next month, skill or luck, traders who improved, members
+  before and after a mentor review or duel, market views) on the league's own wallets, with
+  its progress while it runs and the full report to download. See
+  [Research](#research-what-the-data-says).
 - **Insights** — the whole league at once, or any segment of it. Filter by style,
   trade size, experience and activity (the "Traders like you" ranges), league,
   level, month joined, verified, and when last seen. For whatever is in view:
@@ -2290,6 +2295,19 @@ Four questions the product leans on, answered from data rather than assumed.
 wallets, reads their public fills and rebuilds their trades with the app's own engine
 (the functions `server.js` extracts from `ledger.html`). The member question runs on the
 server and shows in Admin → Insights.
+
+**From the admin panel.** Admin → **Research** → **Run on members' wallets** runs the whole
+report on the league's own wallets (each member's wallets, but not one marked unverified;
+tick the box to add the seed wallets and the wallets entered in the app). The server reads
+each wallet's last 300 days of fills one request every 1.5 seconds (`RESEARCH_DELAY` in ms
+changes it), keeps them for a day in `DATA_DIR/research/fills`, reads hourly candles, and
+works the report out in a worker thread (`research-job.js`), so it keeps answering meanwhile. The page shows
+the progress (with **Stop**), then the findings section by section, and **Download the full
+report** saves the same page `research-run.js` writes. One run at a time; the last report
+is kept in `DATA_DIR/research` and survives a restart. Only group figures appear, never a
+wallet. `GET /api/social/admin/research/run` (status, and how many wallets each choice
+covers), `POST` the same with `{scope: 'members' | 'all'}` to start or `{action: 'stop'}`,
+and `GET /api/social/admin/research/report[?html=1]` (owner and admins).
 
 ```
 node research-run.js --sample 800                # random accounts that traded in the last month (Hyperliquid's leaderboard)

@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const R = require(path.join(__dirname, 'research.js'));
+const Job = require(path.join(__dirname, 'research-job.js')); // the readers the server's own runs use
 
 const DAY = 86400000, API = 'https://api.hyperliquid.xyz/info', ADDR_RE = /0x[0-9a-fA-F]{40}/g;
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -104,23 +105,7 @@ async function addressesFor(o) {
 }
 
 /* ---------------- fills ---------------- */
-// a wallet's fills over the look-back, oldest first. The API serves the newest 10,000 fills of an address at
-// most: a wallet that hits that has its window cut short (`from` says where its history really starts).
-async function fillsFromApi(a, o) {
-  const t = Date.now(), fills = [], seen = new Set(); let start = t - o.days * DAY, pages = 0;
-  for (;;) {
-    if (fills.length > o.maxFills) return { bot: true, n: fills.length };
-    const batch = await info({ type: 'userFillsByTime', user: a, startTime: start, aggregateByTime: true }, o.delay); pages++;
-    if (!Array.isArray(batch) || !batch.length) break;
-    for (const f of batch) { const id = f.tid + '-' + f.oid + '-' + f.time; if (!seen.has(id)) { seen.add(id); fills.push(f); } }
-    if (batch.length < 2000) break;
-    const mx = Math.max(...batch.map(f => f.time)); start = mx > start ? mx : mx + 1;
-    if (pages > 30) break;
-  }
-  fills.sort((x, y) => x.time - y.time);
-  const cut = fills.length >= 9900; // the API's cap: older fills exist that it no longer serves
-  return { fills, from: cut && fills.length ? fills[0].time : t - o.days * DAY, to: t, cut };
-}
+const fillsFromApi = (a, o) => Job.fillsFor(body => info(body, o.delay), a, { days: o.days, maxFills: o.maxFills });
 let archive = null;
 async function fillsFromIndex(a, o) {
   if (!archive) { const A = require(path.join(__dirname, 'archive.js')); archive = A.createArchive({ env: process.env, fetchImpl: (...x) => globalThis.fetch(...x), now: Date.now, engine: {} }); }
@@ -151,12 +136,8 @@ async function candles(o, coins, from, to) {
   for (const c of coins) {
     const file = path.join(dir, encodeURIComponent(c) + '.json.gz'), have = gzRead(file);
     if (have && have.from <= from && have.to >= to - 2 * 3600000) { out[c] = have.rows; continue; }
-    const rows = []; let s = from;
-    while (s < to) { const e = Math.min(to, s + 4000 * 3600000);
-      const b = await info({ type: 'candleSnapshot', req: { coin: c, interval: '1h', startTime: s, endTime: e } }, o.delay).catch(() => []);
-      for (const k of Array.isArray(b) ? b : []) rows.push([k.t, +k.c]); s = e; }
-    const uniq = [...new Map(rows.map(r => [r[0], r])).values()].sort((x, y) => x[0] - y[0]);
-    gzWrite(file, { from, to, rows: uniq }); out[c] = uniq;
+    const rows = await Job.candlesFor(body => info(body, o.delay), c, from, to);
+    gzWrite(file, { from, to, rows }); out[c] = rows;
   }
   return out;
 }
@@ -168,11 +149,6 @@ function engine() {
   if (!e.ok) throw new Error('the engine could not be built: ' + e.missing.join(', '));
   return e.ctx;
 }
-function tradesOf(E, rec) {
-  const built = [...E.attributeFunding(E.reconstructTrades(rec.fills, rec.addr, 'perp'), []), ...E.attributeFunding(E.reconstructTrades(rec.fills, rec.addr, 'spot'), [])];
-  return built.filter(t => E.tradeRow(t) && !t.movedOut && !t.isOpen && t.closeTime);
-}
-
 async function main() {
   const o = args(process.argv);
   if (o.help || (!o.sample && !o.addresses && !o.dataDir && !o.analyzeOnly)) { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 25).map(l => l.replace(/^\/\/ ?/, '')).join('\n')); return; }
@@ -190,8 +166,7 @@ async function main() {
   for (const a of W.list) {
     const rec = gzRead(path.join(o.cache, 'fills', a + '.json.gz')); if (!rec) continue;
     if (rec.bot) { bots++; continue; } if (!rec.fills || !rec.fills.length) { empty++; continue; }
-    let trades; try { trades = tradesOf(E, rec); } catch (e) { log(a + ': trades failed: ' + e.message); continue; }
-    const r = R.walletRecord(trades, { addr: a, from: rec.from, to: rec.to, cut: rec.cut, fills: rec.fills, pzBehaviorDays: E.pzBehaviorDays, peerSummary: E.peerSummary, notionalOf: E.notionalOf, hasAdd: E.hasAdd });
+    let r; try { r = Job.recordOf(R, E, Object.assign({ addr: a }, rec)); } catch (e) { log(a + ': trades failed: ' + e.message); continue; }
     if (r) records.push(r);
   }
   log(records.length + ' wallets with trades (' + bots + ' bots left out, ' + empty + ' with no fills)');
@@ -204,4 +179,4 @@ async function main() {
   log('wrote ' + json + ' and ' + html);
 }
 if (require.main === module) main().catch(e => { console.error(e.stack || e.message); process.exit(1); });
-module.exports = { args, sampleLeaderboard, fromDataDir, tradesOf };
+module.exports = { args, sampleLeaderboard, fromDataDir };

@@ -255,6 +255,7 @@ function persistence(records, o) {
   out.text = Object.values(metrics).filter(m => m.n >= 20).map(m => m.label + ': quarter-to-quarter rank correlation ' + m.rho.v + ' (' + fmtCI(m.rho) + ', ' + m.n + ' wallets); '
     + m.topStays + '% of the top quarter stayed there (25% by chance).')
     .concat(Object.values(rel).filter(x => x.need).map(x => x.label + ': a ranking as reliable as 0.7 needs about ' + x.need + ' trades a trader.'));
+  if (!out.text.length) out.text = ['Too few wallets to say: ' + units.length + ' had ' + o.minTrades + '+ trades in each of two back-to-back ' + o.days + '-day windows (20 needed), and too few had enough trades to split in half.'];
   return out;
 }
 // split-half reliability: each wallet's trades alternately in two halves; how well one half ranks wallets like
@@ -346,6 +347,7 @@ function productEffects(members, o) {
   }
   const text = Object.values(out).filter(x => x.measured).map(x => x.label + ': Discipline ' + (x.did.v >= 0 ? '+' : '') + x.did.v + ' points over the next ' + o.window
     + ' days against members who hadn’t had one yet (' + fmtCI(x.did) + ', ' + x.measured + ' members' + (sure(x.did) ? '' : '; not distinguishable from zero') + ').');
+  if (!text.length) text.push('Nothing to measure yet: no member has both a first mentor review, duel, playbook, pod or partner and ' + o.minDays + '+ trading days on each side of it, with ' + o.minControls + '+ members who hadn’t had one to compare.');
   return { window: o.window, members: M.length, effects: out, text, note: 'Members choose these themselves, so a difference is what followed, not proof of what caused it.' };
 }
 
@@ -441,8 +443,9 @@ function marketViews(records, prices, o) {
     const nz = pts.filter(p => p.x !== 0 && p.next !== 0);
     lead[g] = { points: pts.length, days: units.length, next: est(rho(p => p.next), r3), same: est(rho(p => p.same), r3), hit: nz.length ? r1(100 * nz.filter(p => Math.sign(p.x) === Math.sign(p.next)).length / nz.length) : null };
   }
-  const lbl = g => g === 'all' ? 'Everyone' : g.startsWith('size:') ? 'Trades ' + SIZES[g.slice(5)] : TIERS[g.slice(5)];
+  const lbl = g => g === 'all' ? 'Everyone' : g.startsWith('size:') ? 'Trades ' + SIZES[g.slice(5)].replace(/^Under/, 'under') : TIERS[g.slice(5)];
   const text = [];
+  if (!coins.length) text.push('No perpetual trades in these wallets to look at.');
   if (shocks.length) text.push(shocks.length + ' big hourly moves across ' + coins.length + ' coins; over the next 24 hours the move went on by ' + r2(cont.v) + '% on average (' + fmtCI(est(cont, r2)) + '; negative is a bounce).');
   for (const g of GROUPS) { const a = shockAgg[g].after; if (a.n >= 10) text.push(lbl(g) + ': in the 24 hours after a big move, flow against it ' + a.v + ' typical hours (' + fmtCI(a) + '; positive is buying drops and selling spikes).'); }
   for (const g of Object.keys(lead)) { const L = lead[g]; if (L.points >= 50) text.push(lbl(g) + ': a day’s net flow and the next day’s move, rank correlation ' + L.next.v + ' (' + fmtCI(L.next) + '), same day ' + L.same.v + '; direction right ' + L.hit + '% of the time.'); }
@@ -462,8 +465,12 @@ function buildReport(records, o) {
   rep.improvers = improvers(withTrades, o);
   rep.market = marketViews(records, o.prices || {}, o);
   if (o.members) rep.effects = productEffects(o.members, o);
+  const fr = o.frame && o.frame.kind;
   rep.notes = [
-    'Wallets are drawn at random from Hyperliquid’s leaderboard of accounts that traded in the last month (or the list given); accounts that stopped before that are missing, so blow-ups are under-counted.',
+    fr === 'leaderboard' ? 'Wallets are drawn at random from Hyperliquid’s leaderboard of accounts that traded in the last month; accounts that stopped before that are missing, so blow-ups are under-counted.'
+      : fr === 'members' ? 'Wallets are the league members’ own, so this describes your members, not traders at large; a small league gives wide ranges.'
+      : fr === 'all' ? 'Wallets are the members’ own, the seed wallets and the wallets entered in the app: chosen by people, not at random, so they lean toward traders someone found interesting.'
+      : 'Wallets are the ones given, not a random sample.',
     'The exchange serves an address’s newest 10,000 fills; a wallet that hit that has a shorter window (' + rep.sample.cut + ' did). Wallets with more than 20,000 fills are left out as bots or market makers.',
     'R is a wallet’s typical trade: its median absolute trade result. bps are of the trade’s size. Intervals are 95%, resampling wallets (or shocks, or days).',
     'Everything here is correlation in public data. Slip costs compare a trader with themselves in the same situation, which is the closest this gets to cause.',

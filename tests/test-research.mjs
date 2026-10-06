@@ -209,4 +209,70 @@ try {
   });
 } finally { await new Promise(r => app.close(r)); }
 
+console.log('\nRun on members’ wallets (Admin → Research)');
+// a stubbed exchange: W1 trades every day (a loss, a revenge re-entry, a patient winner), W2 never has
+const CLOCK = Date.parse('2026-10-20T12:00:00Z'), W1 = '0x' + '1'.repeat(40), W2 = '0x' + '2'.repeat(40);
+const W1F = []; tid = 0;
+for (let d = 1; d <= 40; d++) { const b = CLOCK - d * DAY - 12 * HOUR;
+  W1F.push(fill('B', 10, 100, 0, 0, b + 10 * HOUR), fill('A', 10, 99, 10, -10, b + 10.5 * HOUR), fill('B', 10, 100, 0, 0, b + 10.5 * HOUR + 5 * MIN), fill('A', 10, 99, 10, -10, b + 11 * HOUR),
+    fill('B', 10, 100, 0, 0, b + 12.5 * HOUR), fill('A', 10, 102, 10, 20, b + 13 * HOUR)); }
+const asked = [];
+const exch = async (url, o) => { const b = JSON.parse(o.body || '{}'); asked.push(b.type);
+  const out = b.type === 'userFillsByTime' ? (String(b.user).toLowerCase() === W1 ? W1F.filter(f => f.time >= b.startTime) : [])
+    : b.type === 'candleSnapshot' ? Array.from({ length: 48 }, (_, i) => ({ t: CLOCK - (48 - i) * HOUR, c: String(100 + i % 3) })) : [];
+  return { ok: true, status: 200, headers: { get: () => null }, json: async () => out }; };
+const mkRun = (dir, delay) => server.createApp({ dataDir: dir, auth: 'owner-token', htmlPath, now: () => CLOCK, push: false, pushTick: false, trustProxy: true, offsiteTimer: false, statsSweep: false,
+  fetchImpl: exch, researchDelay: delay, researchIters: 50, seedDelay: 60000 });
+const runDir = mkdtempSync(join(tmpdir(), 'ledger-research-run-'));
+let app2 = mkRun(runDir, 0);
+const listen2 = a => new Promise(res => a.listen(0, () => res('http://127.0.0.1:' + a.address().port)));
+let B2 = await listen2(app2);
+const call2 = async (p, o = {}) => { const r = await fetch(B2 + '/api/social' + p, { method: o.method || 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '10.6.0.' + (++ipN), ...(o.key ? { 'X-Pulse-Key': o.key } : {}), ...(o.owner ? { Authorization: 'Bearer owner-token' } : {}) },
+    body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
+  return { status: r.status, d: await r.json().catch(() => ({})) }; };
+const until = async (f, ms = 60000) => { const end = Date.now() + ms; for (;;) { const v = await f(); if (v) return v; if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 100)); } };
+try {
+  await t('a run reads members’ wallets, works the report out in a worker, and keeps it', async () => {
+    const ann = (await call2('/join', { method: 'POST', body: { handle: 'ann', address: W1 } })).d;
+    await call2('/join', { method: 'POST', body: { handle: 'bob', address: W2 } }); await call2('/join', { method: 'POST', body: { handle: 'cat' } });
+    const st0 = (await call2('/admin/research/run', { owner: true })).d;
+    eq([st0.state, st0.hasReport, st0.available.members], ['idle', false, 2]);
+    eq((await call2('/admin/research/run', { method: 'POST', key: ann.key, body: { scope: 'members' } })).status, 401, 'members can’t start one');
+    eq((await call2('/admin/research/report', { owner: true })).status, 404, 'no report yet');
+    const st = (await call2('/admin/research/run', { method: 'POST', owner: true, body: { scope: 'members' } })).d;
+    eq([st.state, st.total, st.scope, st.by], ['running', 2, 'members', 'owner']);
+    eq((await call2('/admin/research/run', { method: 'POST', owner: true, body: {} })).status, 409, 'one run at a time');
+    const done = await until(async () => { const x = (await call2('/admin/research/run', { owner: true })).d; return x.state !== 'running' && x; });
+    eq([done.state, done.done, done.bots, done.failed, done.hasReport], ['done', 2, 0, 0, true], JSON.stringify(done));
+    ok(asked.includes('candleSnapshot'), 'prices were read for the market views');
+    const r = (await call2('/admin/research/report', { owner: true })).d;
+    eq([r.report.sample.wallets, r.report.sample.withTrades, r.report.sample.trades], [1, 1, 120]);
+    eq(r.report.slips.slips.revenge.slipped, 40); ok(r.report.effects && r.report.effects.members >= 0, 'members’ product effects ride along');
+    ok(!JSON.stringify(r).includes(W1), 'no wallet address in the report');
+    const h = (await call2('/admin/research/report?html=1', { owner: true })).d;
+    ok(h.html.startsWith('<!doctype html>'), 'the full page to download');
+  });
+  await t('the panel’s research screen is served beside admin.html, and both parse', async () => {
+    const r = await fetch(B2 + '/admin-research-ui.js'); eq([r.status, /javascript/.test(r.headers.get('content-type'))], [200, true]);
+    const vm = await import('node:vm'), { readFileSync } = await import('node:fs');
+    new vm.Script(await r.text(), { filename: 'admin-research-ui.js' });
+    const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8'); ok(html.includes('<script src="/admin-research-ui.js"></script>'));
+    for (const m of html.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)) new vm.Script(m[1], { filename: 'admin.html' });
+  });
+  await t('the report survives a restart', async () => {
+    await new Promise(r => app2.close(r)); app2 = mkRun(runDir, 0); B2 = await listen2(app2);
+    const st = (await call2('/admin/research/run', { owner: true })).d; eq([st.state, st.hasReport], ['done', true]);
+    eq((await call2('/admin/research/report', { owner: true })).status, 200);
+  });
+  await t('a run can be stopped', async () => {
+    await new Promise(r => app2.close(r)); app2 = mkRun(mkdtempSync(join(tmpdir(), 'ledger-research-stop-')), 1500); B2 = await listen2(app2);
+    for (const [h, a] of [['dan', W1], ['eve', W2]]) await call2('/join', { method: 'POST', body: { handle: h, address: a } });
+    eq((await call2('/admin/research/run', { method: 'POST', owner: true, body: { scope: 'members' } })).d.state, 'running');
+    await call2('/admin/research/run', { method: 'POST', owner: true, body: { action: 'stop' } });
+    const st = await until(async () => { const x = (await call2('/admin/research/run', { owner: true })).d; return x.state !== 'running' && x; }, 10000);
+    eq([st.state, st.hasReport], ['stopped', false]);
+  });
+} finally { await new Promise(r => app2.close(r)); }
+
 report('research');
