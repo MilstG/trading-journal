@@ -572,19 +572,24 @@ details>summary{list-style-position:inside}
       <button class="sm fit danger" id="mbDelete"${dis}>Delete</button>${n?'<button class="sm fit" id="mbClear">Clear selection</button>':''}`; }
   function memberPg(){
     const q=UI.q.toLowerCase(), f=UI.filter;
-    const pg=pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q)||(m.wallets||[]).some(a=>String(a).toLowerCase().includes(q)))
+    const pg=pager('members',D.members.filter(m=>(!q||m.handle.toLowerCase().includes(q)||(m.address||'').includes(q)||(m.wallets||[]).concat((m.appWallets||[]).map(w=>w.address)).some(a=>String(a).toLowerCase().includes(q)))
       &&(f==='all'||(f==='suspended'&&m.banned)||(f==='unlocked'&&m.unlocked)||(f==='ninja'&&m.ninja)||(f==='added'&&m.adminMade)||(f==='coach'&&m.coachUsed>0)||(f==='unverified'&&m.walletStatus==='rejected')
       ||(f==='waiting'&&m.address&&D.wallets.approveWallets&&m.walletStatus==='pending')||(f==='nowallet'&&!m.address))));
     // the empty state sits under the table (with the pager), not in a row: a 9-column row is wider than a phone and cut it off
     if(!pg.items.length)pg.html=`<p class="muted" id="mEmpty" style="margin:10px 0 0">${D.members.length?'Nobody matches.':'No members yet. Add one above, or share your /daruma link and people join from the Social tab.'}</p>`+pg.html;
     return pg;
   }
+  // wallets the member entered in the app that aren't on their profile: without a main wallet, one click makes it theirs
+  const appWalletsCell=m=>{ const ws=m.appWallets||[]; if(!ws.length)return '';
+    if(m.address)return `<div class="muted small" style="margin-top:4px" title="${esc(ws.map(w=>w.address).join('\n'))}">+${ws.length} more entered in the app</div>`;
+    return ws.slice(0,3).map(w=>`<div class="row" style="gap:6px;align-items:center;flex-wrap:nowrap;margin-top:4px"><code class="small fit" title="${esc(w.address)}">${esc(w.address.slice(0,6)+'…'+w.address.slice(-4))}</code>${w.status==='rejected'?'<span class="pill ban fit">rejected</span>':''}<button class="sm fit" data-mapp="${esc(m.id)}" data-addr="${esc(w.address)}" title="Entered in the app by @${esc(m.handle)}. Makes it their main wallet${D.wallets.approveWallets?', and approves it':''}">Use as wallet</button></div>`).join('')
+      +`<div class="muted small">entered in the app${ws.length>3?' · +'+(ws.length-3)+' more under Wallets':''}</div>`; };
   function memberRows(){
     const list=memberPg().items;
     return `${list.map(m=>`<tr>
         <td><input type="checkbox" data-msel="${esc(m.id)}" aria-label="Select @${esc(m.handle)}"${UI.msel.has(m.id)?' checked':''}></td>
         <td><a href="${mlink(m)}"><b>@${esc(m.handle)}</b></a>${pills(m)?`<div class="tags">${pills(m)}</div>`:''}</td>
-        <td>${m.address?`<div class="row" style="gap:6px;align-items:center;flex-wrap:nowrap">${wverPill(m.walletStatus,D.wallets.approveWallets)}${wverBtn(m.address,m.walletStatus)}</div>`:'<span class="muted">—</span>'}</td>
+        <td>${m.address?`<div class="row" style="gap:6px;align-items:center;flex-wrap:nowrap">${wverPill(m.walletStatus,D.wallets.approveWallets)}${wverBtn(m.address,m.walletStatus)}</div>`:(m.appWallets||[]).length?'':'<span class="muted">—</span>'}${appWalletsCell(m)}</td>
         <td class="nw">Lv ${m.level} <span class="muted small">· ${fmt(m.xp)} XP</span></td><td class="hide-sm n">${m.streak}</td>
         <td class="hide-sm">${m.leagues.map(l=>`<span class="pill">${esc(leagueName(l.id))}</span>`).join(' ')||'<span class="muted">—</span>'}</td>
         <td class="hide-sm n nw">${m.coachUsed}${m.coachLimit!=null?' / '+m.coachLimit:''}</td>
@@ -616,6 +621,8 @@ details>summary{list-style-position:inside}
           return all.length?`<div class="stack" style="gap:8px">${all.map(a=>`<div class="row" style="align-items:center;gap:6px"><code class="small fit" title="${esc(a)}">${esc(a.slice(0,8)+'…'+a.slice(-6))}</code>
             ${a===m.address?`<span class="pill ok fit">main</span>${m.claimed===a?'<span class="pill ok fit">claimed ✓</span>':''}`:`<button class="sm fit" data-wmain="${esc(a)}"${m.claimed&&m.claimed===m.address?' disabled title="Their main wallet is claimed by signature"':''}>Make main</button><button class="sm fit danger" data-wunmap="${esc(a)}">Unmap</button>`}</div>`).join('')}</div>`
             :'<p class="muted" style="margin:0">No wallet yet.</p>'; })()}
+        ${(m.appWallets||[]).length?`<h3>Entered in the app</h3><p class="hint" style="margin-top:0">Wallets @${esc(m.handle)} typed into the app on a signed-in device that aren’t mapped to them yet.</p>
+          <div class="stack" style="gap:8px">${m.appWallets.map(w=>`<div class="row" style="align-items:center;gap:6px"><code class="small fit" title="${esc(w.address)}">${esc(w.address.slice(0,8)+'…'+w.address.slice(-6))}</code><button class="sm fit" data-copy="${esc(w.address)}" aria-label="Copy address">Copy</button>${walletStatusPill(w.status)}<button class="sm fit" data-mapp="${esc(m.id)}" data-addr="${esc(w.address)}">${m.address?'Map to them':'Use as wallet'}</button></div>`).join('')}</div>`:''}
         <div class="row" style="align-items:flex-end;margin-top:10px">${field('mMap','Map a wallet to @'+m.handle,'<input id="mMap" maxlength="42" placeholder="0x…" autocomplete="off">')}<button class="fit" data-m="mapwallet">Map</button></div>
         <p class="hint">The main wallet is the one their returns and verified Discipline are read from. Every wallet mapped here is theirs alone: no other profile can map it, and their coach allowance is shared across all of them. Mapping a wallet approves it.</p>
       </section>
@@ -1004,9 +1011,13 @@ details>summary{list-style-position:inside}
   const benchPill=s=>SEEN_BENCH[s]?`<span class="pill ${SEEN_BENCH[s][1]}"${SEEN_BENCH[s][2]?` title="${SEEN_BENCH[s][2]}"`:''}>${SEEN_BENCH[s][0]}</span>`:'';
   function walletPg(){
     const q=UI.wq.toLowerCase(), f=wf();
-    return pager('wallets',D.wallets.wallets.filter(w=>(f==='all'||(f==='app'?w.seen&&!w.members.length:w.status===f))&&(f!=='pending'||w.members.length)
-      &&(!q||w.address.includes(q)||w.members.some(m=>m.handle.toLowerCase().includes(q)))),20);
+    return pager('wallets',D.wallets.wallets.filter(w=>(f==='all'||(f==='app'?w.seen&&!w.members.length:w.status===f))&&(f!=='pending'||w.members.length||w.seen&&w.seen.by.length)
+      &&(!q||w.address.includes(q)||w.members.concat(w.seen?w.seen.by:[]).some(m=>m.handle.toLowerCase().includes(q)))),20);
   }
+  // who entered a wallet in the app that no profile uses as its own (signed in on that device when they did)
+  // (or, on a profile's wallet, someone else did too)
+  const seenBy=(w,also)=>{ const by=w.seen&&w.seen.by?w.seen.by.filter(m=>!w.members.some(x=>x.id===m.id)):[];
+    return by.length?`<div style="margin-top:6px"${also?' class="small"':''}>${also?'also entered in the app by':'entered by'} ${by.map(m=>`<a href="${mlink(m)}">@${esc(m.handle)}</a>${m.banned?' <span class="pill ban">suspended</span>':''}`).join(', ')}</div>`:''; };
   function walletRows(){
     const list=walletPg().items;
     if(!list.length)return `<tr><td colspan="3" class="muted">${wf()==='pending'?'Nothing waiting.':'No wallets here.'}</td></tr>`;
@@ -1014,8 +1025,8 @@ details>summary{list-style-position:inside}
     return list.map(w=>`<tr>
       <td style="vertical-align:top"><input type="checkbox" data-wsel="${esc(w.address)}" aria-label="Select ${esc(w.address)}"${UI.wsel.has(w.address)?' checked':''}></td>
       <td style="vertical-align:top"><div class="row" style="align-items:center;flex-wrap:nowrap;gap:6px"><code class="small fit" title="${esc(w.address)}">${esc(short(w.address))}</code><button class="sm fit" data-copy="${esc(w.address)}" aria-label="Copy address">Copy</button></div>
-        ${w.members.length?w.members.map(m=>`<div style="margin-top:6px"><a href="${mlink(m)}">@${esc(m.handle)}</a> ${m.claimed?'<span class="pill ok">claimed ✓</span>':''}${m.linked?'<span class="pill">mapped by hand</span>':''}${m.banned?' <span class="pill ban">suspended</span>':''}<div class="muted small">${m.joinedWith?'joined '+esc(JOINED[m.joinedWith]||''):'joined'}${m.createdAt?' · '+esc(ago(m.createdAt)):''}</div></div>`).join(''):`<div class="muted small" style="margin-top:6px">${w.seen?'entered in the app · no profile yet · first '+esc(ago(w.seen.first))+(w.seen.last&&w.seen.last!==w.seen.first?' · last '+esc(ago(w.seen.last)):''):'no profile uses it now'}</div>
-          <div class="row" style="align-items:center;gap:6px;margin-top:6px"><input id="wmap_${esc(w.address)}" list="memberHandles" placeholder="@member" aria-label="Member to map ${esc(w.address)} to" style="flex:1 1 90px;min-width:0;max-width:180px;width:auto"><button class="sm fit" data-wmap="${esc(w.address)}">Map to member</button></div>`}
+        ${w.members.length?w.members.map(m=>`<div style="margin-top:6px"><a href="${mlink(m)}">@${esc(m.handle)}</a> ${m.claimed?'<span class="pill ok">claimed ✓</span>':''}${m.linked?'<span class="pill">mapped by hand</span>':''}${m.banned?' <span class="pill ban">suspended</span>':''}<div class="muted small">${m.joinedWith?'joined '+esc(JOINED[m.joinedWith]||''):'joined'}${m.createdAt?' · '+esc(ago(m.createdAt)):''}</div></div>`).join('')+seenBy(w,true):`${seenBy(w)}<div class="muted small" style="margin-top:6px">${w.seen?(w.seen.by.length?'entered in the app · not their profile’s wallet':'entered in the app · no profile yet')+' · first '+esc(ago(w.seen.first))+(w.seen.last&&w.seen.last!==w.seen.first?' · last '+esc(ago(w.seen.last)):''):'no profile uses it now'}</div>
+          <div class="row" style="align-items:center;gap:6px;margin-top:6px"><input id="wmap_${esc(w.address)}" list="memberHandles" placeholder="@member"${w.seen&&w.seen.by&&w.seen.by.length?` value="@${esc(w.seen.by[w.seen.by.length-1].handle)}"`:''} aria-label="Member to map ${esc(w.address)} to" style="flex:1 1 90px;min-width:0;max-width:180px;width:auto"><button class="sm fit" data-wmap="${esc(w.address)}">Map to member</button></div>`}
         ${w.bench?`<div style="margin-top:6px">${benchPill(w.bench)}</div>`:''}
         ${w.note?`<div class="muted small" style="margin-top:4px">Note: ${esc(w.note)}</div>`:''}</td>
       <td style="vertical-align:top">${walletStatusPill(w.status)}${w.reviewedAt?`<div class="muted small">${w.by==='existing'?'already in use when approval went on':'by '+(w.by&&w.by!=='owner'?esc(w.by):ME.owner?'you':'the owner')+' · '+esc(ago(w.reviewedAt))}</div>`:''}
@@ -1164,12 +1175,12 @@ details>summary{list-style-position:inside}
   function vWallets(){
     const W=D.wallets, c=W.counts;
     return `<datalist id="memberHandles">${D.members.map(m=>`<option value="@${esc(m.handle)}">`).join('')}</datalist>
-    ${tiles([['Waiting for you',fmt(c.pending),W.approveWallets?'don’t count until approved':'approval is off: they count'],['Approved',fmt(c.approved)],['Rejected',fmt(c.rejected),'never count'],['Entered in the app',fmt(c.app||0),'no profile yet']])}
+    ${tiles([['Waiting for you',fmt(c.pending),W.approveWallets?'don’t count until approved':'approval is off: they count'],['Approved',fmt(c.approved)],['Rejected',fmt(c.rejected),'never count'],['Entered in the app',fmt(c.app||0),'not on a profile yet']])}
     <section class="card">
       <div class="ch"><h2>Wallets</h2></div>
       <div class="toolbar">
         <input id="wq" placeholder="Search by address or name" aria-label="Search wallets" value="${esc(UI.wq)}">
-        <div>${sel('wFilter',[['pending','Waiting'],['approved','Approved'],['rejected','Rejected'],['app','Entered in the app, no profile'],['all','All']],wf(),' aria-label="Filter"')}</div>
+        <div>${sel('wFilter',[['pending','Waiting'],['approved','Approved'],['rejected','Rejected'],['app','Entered in the app, not on a profile'],['all','All']],wf(),' aria-label="Filter"')}</div>
       </div>
       <div class="bulk${UI.wsel.size?' on':''}">
         <button class="sm fit" id="wBulkApprove"${UI.wsel.size?'':' disabled'}>Approve selected (${UI.wsel.size})</button>
@@ -1281,6 +1292,9 @@ details>summary{list-style-position:inside}
       return act(()=>api('/members/'+encodeURIComponent(cm.id),{body:{action:'coachreset'}}),'@'+cm.handle+' can ask the coach again today.'); }
     if(m&&d.wmain) return act(()=>api('/members/'+encodeURIComponent(m.id),{body:{action:'primary',address:d.wmain}}),'That’s @'+m.handle+'’s main wallet now.');
     if(m&&d.wunmap){ if(!confirm('Unmap this wallet from @'+m.handle+'?'))return; return act(()=>api('/members/'+encodeURIComponent(m.id),{body:{action:'unlink',address:d.wunmap}}),'Unmapped.'); }
+    if(d.mapp){ const tm=D.members.find(x=>x.id===d.mapp); if(!tm)return;
+      if(!confirm((tm.address?'Map '+d.addr+' to @'+tm.handle:'Make '+d.addr+' @'+tm.handle+'’s main wallet')+(D.wallets.approveWallets?' and approve it':'')+'?'))return;
+      return act(()=>api('/members/'+encodeURIComponent(tm.id),{body:{action:'link',address:d.addr}}),(tm.address?'Mapped to @':'It’s the main wallet of @')+tm.handle+' now.'); }
     if(d.wmap){ const inp=document.getElementById('wmap_'+d.wmap), h=(inp&&inp.value||'').trim().replace(/^@/,''), tm=D.members.find(x=>x.handle.toLowerCase()===h.toLowerCase());
       if(!tm)return note('Pick a member by name.',true);
       return act(()=>api('/members/'+encodeURIComponent(tm.id),{body:{action:'link',address:d.wmap}}),'Mapped to @'+tm.handle+'.'); }
@@ -1326,7 +1340,7 @@ details>summary{list-style-position:inside}
     if(id==='wBulkApprove'||id==='wBulkReject'){ const list=[...UI.wsel]; if(!list.length)return;
       if(id==='wBulkReject'&&!confirm('Reject '+list.length+' wallet'+(list.length===1?'':'s')+'?'))return;
       return walletDecide(id==='wBulkApprove'?'approve':'reject',list); }
-    if(id==='wAllPending'){ const list=D.wallets.wallets.filter(w=>w.status==='pending'&&w.members.length).map(w=>w.address);
+    if(id==='wAllPending'){ const list=D.wallets.wallets.filter(w=>w.status==='pending'&&(w.members.length||w.seen&&w.seen.by.length)).map(w=>w.address);
       if(!confirm('Approve all '+list.length+' waiting wallets?'))return; return walletDecide('approve',list); }
     if(d.copy){ try{ await navigator.clipboard.writeText(d.copy); note('Copied.'); }catch(e){ note('Couldn’t copy — select it by hand.',true); } return; }
     if(id==='nmCreate'){ const handle=val('nmHandle').trim().replace(/^@/,''); if(!handle)return note('Give them a name.',true);

@@ -67,6 +67,26 @@ try {
     eq([row.members.map(m => m.handle), !!row.seen], [['carol'], true]);
     eq((await wallets()).counts.app, 2);
   });
+  await t('a wallet a member enters in the app names them, though it isn’t their profile’s wallet', async () => {
+    const r = await call('/join', { method: 'POST', ip: '10.0.2.2', body: { handle: 'dave', address: W('6') } });
+    eq(r.status, 200);
+    eq((await call('/seen', { method: 'POST', key: r.d.key, body: { addresses: [W('6'), W('7')] } })).status, 200);
+    const by = Object.fromEntries((await wallets()).wallets.map(x => [x.address, x]));
+    eq([by[W('7')].members, by[W('7')].seen.by.map(m => m.handle)], [[], ['dave']], 'the extra wallet names who entered it');
+    eq(by[W('6')].seen.by.map(m => m.handle), ['dave'], 'their own wallet too');
+    eq(by[W('1')].seen.by, [], 'an anonymous entry names nobody');
+    await call('/admin/config', { method: 'PUT', owner: true, body: { approveWallets: true, grandfather: false } });
+    eq((await wallets()).counts.pending, 3, 'with approval on, carol’s and dave’s main wallets wait, and the one dave entered; anonymous entries don’t');
+    await call('/admin/config', { method: 'PUT', owner: true, body: { approveWallets: false } });
+    eq((await seen([W('7')])).status, 200);
+    eq((await wallets()).wallets.find(x => x.address === W('7')).seen.by.map(m => m.handle), ['dave'], 'an anonymous repeat keeps the name');
+    const dave = (await call('/admin/members', { owner: true })).d.members.find(m => m.handle === 'dave');
+    eq(dave.appWallets.map(w => [w.address, w.status]), [[W('7'), 'pending']], 'their member row lists it; their own wallet isn’t repeated');
+    eq((await call('/admin/members/' + dave.id, { method: 'POST', owner: true, body: { action: 'link', address: W('7') } })).status, 200);
+    eq((await call('/admin/members', { owner: true })).d.members.find(m => m.handle === 'dave').appWallets, [], 'once mapped it’s theirs, not “entered”');
+    eq((await call('/me', { method: 'DELETE', key: r.d.key })).status, 200);
+    eq((await wallets()).wallets.find(x => x.address === W('7')).seen.by, [], 'a deleted profile drops out');
+  });
   await t('a rejected wallet is listed but never queued for the benchmarks', async () => {
     await call('/admin/wallets', { method: 'POST', owner: true, body: { action: 'reject', addresses: [W('4')] } });
     await seen([W('4')]);

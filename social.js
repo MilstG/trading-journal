@@ -71,6 +71,7 @@ const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const MAX_MEMBERS = 5000;
 const WALLETS_SEEN_MAX = 20000; // wallets entered in the app that the owner's Wallets list keeps
+const SEEN_BY_MAX = 5; // profiles a wallet entered in the app remembers as having entered it (the latest)
 const SEEN_ALL_MAX = 300;       // POST /seen from everyone together per 10 minutes (each IP has its own 30): many IPs can't flood it
 const STREAK_MARKS = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
 const COMP_TYPES = ['discipline', 'survivor', 'journal', 'return'];
@@ -834,6 +835,8 @@ function createSocial(opts) {
   // owner requires claims, only a wallet they proved is theirs by signing
   // … and, when the owner approves wallets, only an address the owner approved
   const walletReview = addr => addr && Object.prototype.hasOwnProperty.call(S.wallets, addr) ? S.wallets[addr] : null;
+  // the profiles (still here) that entered a wallet in the app, signed in on that device
+  const enteredBy = a => (own(S.walletsSeen, a) && Array.isArray(S.walletsSeen[a].by) ? S.walletsSeen[a].by : []).filter(id => own(S.members, id));
   const walletStatus = addr => !addr ? null : (walletReview(addr) || {}).s || 'pending';
   // an unverified (rejected) wallet never counts, approval switched on or off; with approval on,
   // only a verified (approved) one does
@@ -2622,11 +2625,14 @@ function createSocial(opts) {
         .filter(a => typeof a === 'string' && ADDR_RE.test(a)).map(a => a.toLowerCase()))];
       if (!list.length) return json(res, 400, { error: 'no wallet addresses' });
       const t = now(), day = utcDayKey(t); let seen = false, seeded = false, appN = 0, appDay = 0;
+      // the profile that entered it, when the device has one: the owner sees who to ask about it
+      const acc = accessOf(req), mid = acc && acc.member ? acc.member.id : null;
       for (const x of Object.values(S.benchSeeds)) if (x.by === 'app') { appN++; if (utcDayKey(x.added || 0) === day) appDay++; }
       for (const a of list) {
-        const w = own(S.walletsSeen, a) ? S.walletsSeen[a] : null;
-        if (!w) { S.walletsSeen[a] = { first: t, last: t }; seen = true; }
+        let w = own(S.walletsSeen, a) ? S.walletsSeen[a] : null;
+        if (!w) { w = S.walletsSeen[a] = { first: t, last: t }; seen = true; }
         else if (utcDayKey(w.last || 0) !== day) { w.last = t; seen = true; }
+        if (mid && !(Array.isArray(w.by) && w.by.includes(mid))) { w.by = [...(Array.isArray(w.by) ? w.by : []), mid].slice(-SEEN_BY_MAX); seen = true; }
         // a wallet the owner rejected stays out; the owner can still add it by hand under Benchmarks
         // past the app's share or today's allowance it's still listed, just not read for the benchmarks
         if (!own(S.benchSeeds, a) && walletStatus(a) !== 'rejected' && appN < SEED_APP_MAX && appDay < SEED_APP_DAY && Object.keys(S.benchSeeds).length < SEED_MAX) {
@@ -2698,7 +2704,8 @@ function createSocial(opts) {
           events: q('SELECT count(*) AS n FROM events').get().n, posts: q("SELECT count(*) AS n FROM events WHERE type = 'post'").get().n,
           reports: q('SELECT count(*) AS n FROM reports WHERE open = 1').get().n, playbooks: q('SELECT count(*) AS n FROM playbooks').get().n,
           referrals: members().filter(m => m.ref).reduce((a, m) => { a[m.ref.st] = (a[m.ref.st] || 0) + 1; return a; }, {}), mediaBytes: q('SELECT sum(size) AS n FROM media').get().n || 0, comps: Object.keys(S.comps).length, week: wk, config: S.config,
-          walletsPending: S.config.approveWallets ? new Set(members().filter(m => m.address && walletStatus(m.address) === 'pending').map(m => m.address)).size : 0,
+          walletsPending: S.config.approveWallets ? new Set([...members().filter(m => m.address && walletStatus(m.address) === 'pending').map(m => m.address),
+            ...Object.keys(S.walletsSeen).filter(a => enteredBy(a).length && walletStatus(a) === 'pending')]).size : 0,
           claimed: members().filter(m => m.claimed).length, unclaimed: members().filter(m => !m.banned && m.address && m.claimed !== m.address).length,
           visitors: visitStats(), vaults: members().filter(m => m.vault).length, vaultBytes: vaultTotal(), claims: !!sig,
           originPinned: origins.length > 0 || !!opts.hostVetted,
@@ -2709,7 +2716,10 @@ function createSocial(opts) {
           meta: { modules: SC.MODULES, leagueMetrics: SC.LEAGUE_METRICS, badgeMetrics: SC.BADGE_METRICS, profiles: SC.PROFILES },
           tiers: TIERS.map((t, i) => ({ tier: t, n: S.leagues.main ? members().filter(m => !m.banned && own(S.leagues.main.members, m.id) && leagueTier(S.leagues.main, m) === i).length : 0 })) });
       }
-      if (sub === 'members' && M === 'GET' && !parts[2])
+      if (sub === 'members' && M === 'GET' && !parts[2]) {
+        // wallets each member entered in the app (signed in on that device) that aren't theirs here yet
+        const entered = new Map();
+        for (const [a, w] of Object.entries(S.walletsSeen)) for (const id of Array.isArray(w.by) ? w.by : []) entered.set(id, [...(entered.get(id) || []), a]);
         return json(res, 200, { members: members().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(m => ({ id: m.id, handle: m.handle,
           tier: m.tier || 0, level: (m.stats && m.stats.level) || 1, xp: (m.stats && m.stats.xp) || 0, balance: balanceOf(m), streak: (m.stats && m.stats.streak) || 0,
           passkeys: (m.passkeys || []).length,
@@ -2717,9 +2727,10 @@ function createSocial(opts) {
           vault: m.vault ? m.vault.size : 0, share: m.share, banned: !!m.banned, unlocked: unlockedOf(m), unlockedOwn: !!m.unlocked, ninja: !!m.ninja, coachDaily: m.coachDaily != null ? m.coachDaily : null,
           coachUsed: coachUsed(m), coachLimit: coachLimitToday(m), coachPacks: coachExtra(m).p, grants: m.grants || [], awards: Object.keys(m.awards || {}).filter(id => own(S.badges, id)),
           wallets: linkedOf(m).filter(a => a !== m.address),
+          appWallets: (entered.get(m.id) || []).filter(a => a !== m.address && !linkedOf(m).includes(a)).map(a => ({ address: a, status: walletStatus(a) })),
           leagues: leaguesOf(m).map(L => ({ id: L.id, tier: leagueTier(L, m) })), adminMade: !!m.adminMade, mentor: !!m.mentor, admin: !!m.admin, keys: (m.keyHash ? 1 : 0) + (Array.isArray(m.keyHashes) ? m.keyHashes.length : 0), verified: !!(m.share.verify && Array.isArray(m.vdays)), standing: standingOn() ? standingOf(m).state : null, mentorXp: m.mentorXp ? (mentorXpOut(m) || {}).total || 0 : 0, createdAt: m.createdAt, lastSeen: m.lastSeen || null,
           av: avUrl(m), bio: m.bio || '',
-          money: m.money && m.money.ret != null ? { ret: m.money.ret, dd: m.money.dd } : null })) });
+          money: m.money && m.money.ret != null ? { ret: m.money.ret, dd: m.money.dd } : null })) }); }
       // ---- private beta: the mode, and the single-use invites (a code is shown once, when it's made: only its hash is kept) ----
       if (sub === 'beta' && !parts[2] && M === 'GET') {
         const inv = Object.values(S.beta.invites).sort((a, b) => b.at - a.at).map(x => { const st = inviteState(x), u = x.used && own(S.members, x.used) ? S.members[x.used] : null;
@@ -2902,10 +2913,12 @@ function createSocial(opts) {
         const wallets = [...rows.values()].map(r => { const rv = walletReview(r.address), sn = own(S.walletsSeen, r.address) ? S.walletsSeen[r.address] : null,
             sd = own(S.benchSeeds, r.address) ? S.benchSeeds[r.address] : null;
           return Object.assign(r, { status: walletStatus(r.address), reviewedAt: rv ? rv.at : null, by: rv ? rv.by : null, note: rv ? rv.note || '' : '',
-            seen: sn ? { first: sn.first || null, last: sn.last || null } : null, bench: sd ? sd.st : null }); })
+            seen: sn ? { first: sn.first || null, last: sn.last || null,
+              by: enteredBy(r.address).map(id => ({ id, handle: S.members[id].handle, banned: !!S.members[id].banned })) } : null,
+            bench: sd ? sd.st : null }); })
           .sort((a, b) => rank[a.status] - rank[b.status] || recent(b) - recent(a));
         return json(res, 200, { approveWallets: !!S.config.approveWallets, wallets,
-          counts: { pending: wallets.filter(w => w.status === 'pending' && w.members.length).length, approved: wallets.filter(w => w.status === 'approved').length, rejected: wallets.filter(w => w.status === 'rejected').length,
+          counts: { pending: wallets.filter(w => w.status === 'pending' && (w.members.length || (w.seen && w.seen.by.length))).length, approved: wallets.filter(w => w.status === 'approved').length, rejected: wallets.filter(w => w.status === 'rejected').length,
             app: wallets.filter(w => w.seen && !w.members.length).length } });
       }
       if (sub === 'wallets' && M === 'POST') { // {action: approve|reject|clear, addresses: [...] , note?} — or one address in the path
