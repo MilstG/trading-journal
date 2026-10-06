@@ -555,9 +555,17 @@ async function pzCoachSend(text){
   try{
     const want=pzCoachDetailOn(), x=await pzCoachData(want);
     const body={messages:msgs.slice(-16).map(m=>({role:m.role,content:m.content})),facts:x.facts};
-    if(want)body.detail=x.detail;
-    const r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
+    if(want){ body.detail=x.detail; if(typeof coachRunTools==='function')body.tools=true; } // lookups over your trades, run here (features/coach-tools.js)
+    let r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(body)});
+    let d=await r.json().catch(()=>({}));
+    // the coach asked to look something up: answered from this device's trades, then the question goes on, with the
+    // same data and history (the server checks), each round appended as it happened
+    const steps=[];
+    while(r.ok&&d.tool&&steps.length<4){ COACH.busy='look'; pzRender();
+      steps.push({assistant:d.tool.assistant,results:coachRunTools(d.tool.calls)});
+      r=await fetch('/api/coach/chat',{method:'POST',headers:pzCoachHeaders(),body:JSON.stringify(Object.assign({},body,{cont:{token:d.tool.token,steps}}))});
+      d=await r.json().catch(()=>({})); }
+    if(r.ok&&!d.text){ d={error:'The coach didn’t finish its answer. Try asking again.'}; r={ok:false,status:502}; }
     if(!r.ok){ COACH.err=d.packs?null:d.error||('HTTP '+r.status); COACH.draft=text; if(d.remaining!=null&&COACH.status)Object.assign(COACH.status,{remaining:d.remaining,allowed:false,reason:d.error,packs:d.packs||null}); msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
     else { msgs.push({role:'assistant',content:d.text,at:Date.now()}); if(COACH.status)Object.assign(COACH.status,{remaining:d.remaining,used:d.used,limit:d.limit,allowed:d.allowed!=null?d.allowed:d.remaining==null||d.remaining>0,reason:d.reason||null,packs:d.packs||null}); }
   }catch(e){ COACH.err=e&&e.shown?e.message:'Couldn’t reach the coach. Check your connection and try again.'; COACH.draft=text; msgs.pop(); const el=$('pzCoachIn'); if(el&&!el.value)el.value=text; }
@@ -595,7 +603,8 @@ function pzCoachPackHtml(st){
 }
 function pzCoachPrompts(){
   const h=tzParts(Date.now()).h;
-  return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?'];
+  return [h<12?'Plan my day with me':h>=17?'Review my day':'Am I tilting right now?','What’s my biggest leak right now?','Why was my Discipline low?','What should I work on this week?','What am I doing well?',
+    ...(pzCoachDetailOn()?['Which hours of the day do I trade worst?']:[])];
 }
 // D is null while the trades load or the game is built (pzCoachEarly): the chat shows without them, the
 // level gate from the profile's level (the server holds members to it either way)
@@ -621,7 +630,7 @@ function pzCoachHtml(D){
   const left=st.remaining==null?'':st.remaining+' of '+st.limit+' message'+(st.limit===1?'':'s')+' left today';
   const detailOn=SOC.me?!!SOC.me.coachDetail:!!settings.pzCoachDetail;
   return `${back}${pzHead(left||'Your AI coach','Coach')}
-  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?`<div class="pz-msg co" role="status"><p><span class="pz-spin"></span>${COACH.busy==='prep'?'Reading your journal…':Date.now()-COACH.since>11000?'Still thinking — a thorough answer can take up to a minute…':'Thinking…'}</p></div>`:''}</div>
+  <div class="pz-coach-wrap"><div class="pz-chat" id="pzChat" aria-live="polite">${list}${COACH.busy?`<div class="pz-msg co" role="status"><p><span class="pz-spin"></span>${COACH.busy==='prep'?'Reading your journal…':COACH.busy==='look'?'Looking through your trades…':Date.now()-COACH.since>11000?'Still thinking — a thorough answer can take up to a minute…':'Thinking…'}</p></div>`:''}</div>
     ${COACH.err?`<p class="pz-fine pz-err" role="alert">${esc(COACH.err)}</p>`:''}
     ${st.allowed===false&&st.packs?pzCoachPackHtml(st):`<div class="pz-chiprow">${pzCoachPrompts().map(p=>`<button type="button" class="pz-chipbtn" data-pz-ask="${esc(p)}"${COACH.busy||st.allowed===false?' disabled':''}>${esc(p)}</button>`).join('')}</div>
     <div class="pz-chatin"><textarea id="pzCoachIn" rows="2" maxlength="4000" placeholder="${st.allowed===false?esc(st.reason||'No messages left today'):'Ask about your trading…'}"${st.allowed===false?' disabled':''}>${esc(COACH.draft)}</textarea><button type="button" class="pz-cta pz-sm" id="pzCoachSend"${COACH.busy||st.allowed===false?' disabled':''} aria-label="Send">${pzI('arrow',20)}</button></div>`}

@@ -106,12 +106,14 @@ try {
     // priced, the "What the data says" screen) and its hooks in the coach, the leaks, the tilt alerts, the weekly
     // challenge, the Discipline weights and the results boards' trade bar and luck notes: about 15 KB raw / 6 KB
     // gzipped on each screen (2185 / 1872 raw, 739 / 633 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2188, 740],
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2190, 741],
     // Your luck measured, the crowd at your entry and your rules replayed (luck.js, crowd.js, rule-replay.js, Daruma
     // only, ~13 KB raw / 6 KB gzipped compressed apart): 1886 / 639.
     // The evaluation (evals.js, Daruma only, ~11 KB raw / 4 KB gzipped) and its Compete tile: 1898 / 644.
     // Replay drills (drills.js, Daruma only, ~10 KB raw / 4 KB gzipped): 1908 / 648.
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1910, 649],
+    // The coach's lookups over your trades (coach-tools.js, Daruma only, ~6 KB raw / 3 KB gzipped) and the chat's round
+    // trip; the maker-share habit and lesson-beside-alert on both screens: 1914 / 651 (the journal 2187 / 740).
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1916, 652],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
