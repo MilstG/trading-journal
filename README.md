@@ -112,7 +112,7 @@ account's own copy back.
 | Venue | What you give it | How it's read | History |
 |---|---|---|---|
 | **Hyperliquid** | a 0x wallet address | its public API, from the browser | the latest 10,000 fills, then everything Ledger keeps |
-| **Lighter** | the same kind of 0x address | its public API, from the browser | about the latest 3,000 trades, then everything Ledger keeps |
+| **Lighter** | the same kind of 0x address | its public API and its explorer, from the browser | everything since late August 2025 (the API's latest ~3,000 trades at once, the explorer's older ones behind them), then everything Ledger keeps |
 | **Arcus** (perps) | the same kind of 0x address | its public API, from the browser | everything (paged back to the first fill) |
 | **Bybit** | a **read-only** API key | signed in your browser, relayed by your server | 2 years |
 | **Binance** (USD-M futures) | a **read-only** API key | signed in your browser, relayed by your server | 3 months, then everything Ledger keeps |
@@ -124,6 +124,13 @@ account's sub-accounts are each their own position stream. Lighter reports each 
 prior position and entry cost, so its P&L is exact;
 funding comes from Lighter's public hourly rates times the position you held (its
 per-payment history needs a login), which matches Lighter's own funding totals.
+Lighter's public API only serves about an account's newest 3,000 trades, so the rest
+comes from its explorer, which keeps every trade since late August 2025: after a load
+has drawn, Ledger reads it in the background a pass at a time (about 4,500 trades a
+minute, the explorer's limit) and redraws as the older history lands. The explorer
+doesn't record positions or P&L; walked from its trades in the order it lists them, they
+come out the same as Lighter's own (checked against the API, trade by trade). Trades
+before late August 2025 aren't in it.
 Arcus reports each fill's realized P&L and every funding payment as booked, so both
 are exact; its sub-accounts (up to ten per wallet) are their own position streams too.
 Arcus's spot Stock Tokens settle on-chain and aren't in its API, so only perps load.

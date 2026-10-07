@@ -23,10 +23,10 @@ const Relay = require('../cex-relay.js');
 const server = require('../server.js');
 
 const ENGINE = ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'deriveFillPositions', 'initialPositions',
-  'ltNormTrade', 'ltFundingEstimate', 'arNormFill', 'cexCoin', 'cexSymbol', 'bybitNormExec', 'binanceNormTrade', 'gzipBytes', 'gunzipStr',
+  'ltNormTrade', 'ltFundingEstimate', 'ltxNormLog', 'ltDeriveMixed', 'ltBackfillInitial', 'arNormFill', 'cexCoin', 'cexSymbol', 'bybitNormExec', 'binanceNormTrade', 'gzipBytes', 'gunzipStr',
   'packFillCache', 'unpackFillCache', 'validFillCache'].map(grabFn).join('\n');
 const SHIMS = `
-const sleep=()=>Promise.resolve();
+const _slept=[]; const sleep=ms=>{ _slept.push(ms); return Promise.resolve(); };
 const _idb=new Map();
 async function idbGet(k){ const v=_idb.get(k); return v===undefined?undefined:v; }
 async function idbSet(k,v){ _idb.set(k,v); }
@@ -75,17 +75,30 @@ const LT_TRADES = [ // oldest first here; served newest first
 ];
 let ltCalls = [];
 let HL_ROLE = {}; // Hyperliquid's userRole answers, by address (absent = "missing")
+// the explorer's record of a trade (explorer.elliot.ai /accounts/{index}/logs, fields from live samples)
+const ltxLog = (hash, ms, o) => ({ tx_type: 'InternalClaimOrder', hash, time: new Date(ms).toISOString(), status: 'executed', pubdata_type: o.type || 'Trade',
+  pubdata: { trade_pubdata: { trade_type: o.tradeType || 0, market_index: o.market == null ? 1 : o.market, is_taker_ask: o.takerAsk ? 1 : 0, maker_fee: o.makerFee == null ? 20 : o.makerFee,
+    taker_fee: o.takerFee == null ? 200 : o.takerFee, taker_account_index: String(o.taker), maker_account_index: String(o.maker), fee_account_index: '0', price: String(o.px), size: String(o.sz) } } });
+// the explorer's copy of an API trade: same hash, sides, price, size and fee rates
+const ltxOf = tr => ltxLog(tr.tx_hash, tr.timestamp, { market: tr.market_id, takerAsk: !tr.is_maker_ask, taker: tr.is_maker_ask ? tr.bid_account_id : tr.ask_account_id,
+  maker: tr.is_maker_ask ? tr.ask_account_id : tr.bid_account_id, px: tr.price, sz: tr.size, makerFee: tr.maker_fee, takerFee: tr.taker_fee });
+let ltxCalls = [];
 function lighterMock(opts = {}) {
   const trades = opts.trades || LT_TRADES;
   return async (url, o) => {
     const u = new URL(url);
     if (u.host === 'api.hyperliquid.xyz') { const b = JSON.parse(o.body); eq(b.type, 'userRole'); return jsonRes({ role: HL_ROLE[b.user] || 'missing' }); }
+    if (u.host === 'explorer.elliot.ai') { ltxCalls.push(u.pathname + u.search); // newest first, by offset
+      // listed newest first (opts.explorerList: as given, the order the explorer really lists them in)
+      const q = Object.fromEntries(u.searchParams), logs = opts.explorerList || (typeof opts.explorer === 'function' ? opts.explorer() : opts.explorer || []).slice().sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
+      ok(/LiquidationTrade/.test(q.pub_data_type || ''), 'asks for the trade records only');
+      return jsonRes(u.pathname === '/api/accounts/' + IDX + '/logs' ? logs.slice(+q.offset, +q.offset + +q.limit) : []); }
     ltCalls.push(u.pathname + u.search);
     const q = Object.fromEntries(u.searchParams);
     if (u.pathname === '/api/v1/accountsByL1Address')
       return q.l1_address.toLowerCase() === L1.toLowerCase() ? jsonRes({ code: 200, l1_address: L1, sub_accounts: [{ index: IDX }] }) : jsonRes({ code: 21100, message: 'account not found' }, 400);
     if (u.pathname === '/api/v1/orderBooks')
-      return jsonRes({ code: 200, order_books: [{ symbol: 'BTC', market_id: 1, market_type: 'perp' }, { symbol: 'ETH/USDC', market_id: 2048, market_type: 'spot' }] });
+      return jsonRes({ code: 200, order_books: [{ symbol: 'BTC', market_id: 1, market_type: 'perp' }, { symbol: 'SOL', market_id: 3, market_type: 'perp' }, { symbol: 'ETH/USDC', market_id: 2048, market_type: 'spot' }] });
     if (u.pathname === '/api/v1/trades') {
       const desc = trades.slice().sort((a, b) => b.timestamp - a.timestamp || b.trade_id - a.trade_id);
       const start = q.cursor ? +q.cursor : 0, lim = +q.limit;
@@ -129,7 +142,7 @@ await t('a very long history stops at 40k trades and the next load carries on fu
   const r1 = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
   eq(r1.nFills, 40000); ok(r1.truncNote, 'the gap is noted');
   const r2 = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
-  eq(r2.nFills, 40050, 'the older 50 arrive on the next load'); eq(r2.truncNote, null, 'and the note goes');
+  eq(r2.nFills, 40050, 'the older 50 arrive on the next load'); ok(!/very long history/.test(r2.truncNote || ''), 'and the note goes: ' + r2.truncNote);
 });
 await t('the next load fetches one page and adds only what is new', async () => {
   ltCalls = [];
@@ -186,6 +199,143 @@ await t('Hyperliquid is never dropped on doubt, and a dead venue never holds the
     : new Promise((_, rej) => o.signal.addEventListener('abort', () => rej(new Error('aborted')))));
   const t0 = Date.now(); eq(await S.run(`walletIdsFor('${L1}')`), [L1]); const ms = Date.now() - t0;
   ok(ms >= 4900 && ms < 6000, 'gave up after ~5 s: ' + ms);
+});
+await t('Lighter is asked a little over once a second (60 a minute without a key), its explorer once every 1.4 s', async () => {
+  const S = sandbox(lighterMock());
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const slept = S.run('_slept.slice()'); ok(slept.length > 3 && slept.every(ms => ms >= 1050), 'every Lighter call waits its turn: ' + [...new Set(slept)]);
+  S.run('_slept.length=0'); await S.run(`ltxGet('/accounts/1/logs?limit=1&offset=0&pub_data_type='+LTX_TYPES)`); ok(S.run('_slept[0]') >= 1334, 'explorer: ' + S.run('_slept[0]'));
+});
+await t('explorer records → fills: sides from maker/taker, fees in millionths, liquidations only on the taker, deleverages at quote/size', () => {
+  const S = sandbox(), sym = `id=>({1:'BTC',3:'SOL',2048:'ETH/USDC'})[id]`;
+  const n = log => S.run(`ltxNormLog(${JSON.stringify(log)},${IDX},${sym})`);
+  const mk = n(ltxLog('a1', T0, { taker: 9, maker: IDX, takerAsk: true, px: 100, sz: 2 })); // the taker sold to us
+  eq([mk.side, mk.crossed, mk.px, mk.sz, mk.fee, mk.time, mk.tid, mk.hash, mk.src, mk.acct, mk.coin], ['B', false, '100', '2', '0.004', T0, 'a1', 'a1', 'x', IDX, 'BTC']);
+  const tk = n(ltxLog('a2', T0, { taker: IDX, maker: 9, takerAsk: true, px: 100, sz: 2, market: 2048 }));
+  eq([tk.side, tk.crossed, tk.fee, tk.coin], ['A', true, '0.04', 'ETH/USDC']);
+  const liq = n(ltxLog('a3', T0, { taker: IDX, maker: 9, takerAsk: true, px: 18, sz: 5, tradeType: 1, takerFee: 10000, type: 'LiquidationTrade', market: 3 }));
+  eq([liq.liquidation, liq.fee], [{ method: 'liquidation' }, '0.9']);
+  eq(n(ltxLog('a4', T0, { taker: 9, maker: IDX, takerAsk: true, px: 18, sz: 5, tradeType: 1, type: 'LiquidationTrade' })).liquidation, undefined, 'the maker took the other side, it wasn’t liquidated');
+  const del = n({ hash: 'a5', time: new Date(T0).toISOString(), pubdata_type: 'DeleverageWithFunding', pubdata: { deleverage_pubdata_with_funding: { bankrupt_account_index: String(IDX), deleverager_account_index: '281474976710654', market_index: 1, size: '0.9', quote: '100958557736', is_taker_ask: 1, funding_rate_prefix_sum: 1 } } });
+  eq([del.side, del.fee, del.liquidation.method], ['A', '0', 'deleverage']); near(+del.px, 100958.557736 / 0.9, 1e-6);
+  eq(n(ltxLog('a6', T0, { taker: 8, maker: 9, px: 1, sz: 1 })), null, 'another account’s trade');
+  eq(n({ hash: 'a7', time: new Date(T0).toISOString(), pubdata_type: 'L2Transfer', pubdata: { l2_transfer_pubdata: {} } }), null);
+});
+// older trades only the explorer has, then LT_TRADES (which it has too, same hashes)
+const LTX_OLD = [
+  ltxLog('x1', T0 - 10 * H, { taker: IDX, maker: 1, takerAsk: false, px: 90, sz: 2 }),           // buy 2 BTC @90 (taker)
+  ltxLog('x2', T0 - 8 * H, { taker: 1, maker: IDX, takerAsk: false, px: 100, sz: 2 }),           // sell 2 @100 as the maker: +20, flat
+  ltxLog('x3', T0 - 6 * H, { taker: IDX, maker: 1, takerAsk: false, px: 20, sz: 5, market: 3 }), // SOL: buy 5 @20
+  ltxLog('x4', T0 - 5 * H, { taker: IDX, maker: 1, takerAsk: true, px: 18, sz: 5, market: 3, tradeType: 1, takerFee: 10000, type: 'LiquidationTrade' }), // liquidated @18: −10
+];
+const seedScan = (S, st) => S.run(`idbSet('ltx:lighter:${L1}',${JSON.stringify(st || { [IDX]: { scans: [{ off: 0, floor: 0 }] } })})`);
+await t('older Lighter history from the explorer: merged behind the load, never twice, P&L walked into the API’s', async () => {
+  const S = sandbox(lighterMock({ explorer: LTX_OLD.concat(LT_TRADES.map(ltxOf)) }));
+  seedScan(S); // as a first load of a long history leaves it (the API's newest ~3,000 don't reach the start)
+  const r1 = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  ok(/older history loading in the background/.test(r1.truncNote), r1.truncNote);
+  ltxCalls = [];
+  const pass = await S.run(`ltBackfillPass({address:'lighter:${L1}'},120)`);
+  eq(pass.fills.length, 9, 'four older records and the five the API has'); eq(pass.xs[IDX].scans, [], 'a short page: the explorer’s first record reached');
+  const fresh = await S.run(`ltMergeBackfill({address:'lighter:${L1}'},${JSON.stringify(pass.fills)},${JSON.stringify(pass.xs)})`);
+  eq(fresh.map(f => f.hash), ['x1', 'x2', 'x3', 'x4'], 'what the API has is skipped (same hashes), the rest goes in oldest first');
+  const r = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  eq(r.nFills, 9); eq(r.truncNote, null, 'nothing left to read');
+  const perp = r.trades.filter(x => x.market === 'perp').sort((a, b) => a.openTime - b.openTime);
+  eq(perp.map(x => [x.coin, x.dir, +x.pnl.toFixed(6), x.liquidated ? 1 : 0]), [['BTC', 'Long', 20, 0], ['SOL', 'Long', -10, 1], ['BTC', 'Long', 30, 0]]);
+  near(perp[1].fees, 20 * 5 * 200 / 1e6 + 18 * 5 * 0.01, 1e-9, 'the liquidation fee is the taker’s 1%');
+  S.ctx.fetch = async () => { throw new Error('offline'); };
+  const boot = await S.run(`venueBootTrades({address:'lighter:${L1}'})`);
+  eq(boot.map(x => [x.id, +x.pnl.toFixed(6)]).sort(), r.trades.map(x => [x.id, +x.pnl.toFixed(6)]).sort(), 'and the same from storage alone');
+});
+await t('the explorer’s list order is the order trades executed: its times are noisy and run late, the API’s anchor them', async () => {
+  // as on the live explorer: e1 then e2 executed just before the API's first trade (T0), but the explorer
+  // stamps them 60-90 s late, and out of order with each other; its copies of the API's trades run late too
+  const late = (log, ms) => ({ ...log, time: new Date(ms).toISOString() });
+  const list = LT_TRADES.slice().reverse().map(tr => late(ltxOf(tr), tr.timestamp + 90e3))
+    .concat([late(ltxLog('e2', 0, { taker: 1, maker: IDX, takerAsk: false, px: 100, sz: 2 }), T0 + 60e3),  // sell 2 @100 (as the maker)
+      late(ltxLog('e1', 0, { taker: IDX, maker: 1, takerAsk: false, px: 90, sz: 2 }), T0 + 70e3)]);    // buy 2 @90, listed after (older), stamped later
+  const S = sandbox(lighterMock({ explorerList: list }));
+  seedScan(S);
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const pass = await S.run(`ltBackfillPass({address:'lighter:${L1}'},120)`);
+  await S.run(`ltMergeBackfill({address:'lighter:${L1}'},${JSON.stringify(pass.fills)},${JSON.stringify(pass.xs)})`);
+  const r = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const perp = r.trades.filter(x => x.market === 'perp').sort((a, b) => a.openTime - b.openTime || a.closeTime - b.closeTime);
+  eq(perp.map(x => [x.dir, +x.pnl.toFixed(6), x.isOpen ? 1 : 0]), [['Long', 20, 0], ['Long', 30, 0]], 'bought 2 @90, sold @100, flat before the API’s first trade');
+  const fills = (await S.run(`venueCache('flc:lighter:${L1}')`)).fills.sort((a, b) => a.time - b.time || (+a.tid || 0) - (+b.tid || 0));
+  eq(fills.filter(f => f.coin === 'BTC').map(f => f.tid).slice(0, 3), ['e1', 'e2', '1'], 'in the order they executed');
+});
+await t('a coin only the explorer has starts from today’s position minus its fills, and an API fill replaces the explorer’s copy', async () => {
+  // SOL bought 5 before the explorer's first record and 5 more in it: today Lighter holds 10. The explorer
+  // pass also catches a BTC trade made after the load (y2), which the API serves on the next load.
+  const old = [ltxLog('y1', T0 - 6 * H, { taker: IDX, maker: 1, takerAsk: false, px: 20, sz: 5, market: 3 }),
+    ltxLog('y2', T0 + 9 * H, { taker: IDX, maker: 1, takerAsk: false, px: 130, sz: 1 })];
+  const sol = [{ market_id: 3, symbol: 'SOL', sign: 1, position: '10', avg_entry_price: '20', position_value: '200', unrealized_pnl: '0', liquidation_price: '0', initial_margin_fraction: '20' }];
+  const S = sandbox(lighterMock({ explorer: old, positions: sol }));
+  seedScan(S);
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const pass = await S.run(`ltBackfillPass({address:'lighter:${L1}'},120)`);
+  await S.run(`ltMergeBackfill({address:'lighter:${L1}'},${JSON.stringify(pass.fills)},${JSON.stringify(pass.xs)})`);
+  const r = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const solT = r.trades.find(x => x.coin === 'SOL'); ok(solT && solT.isOpen && !solT.orphan, 'one open SOL trade, still held');
+  near(+r.trades.find(x => x.coin === 'SOL').avgEntry, 20, 1e-9);
+  const sf = (await S.run(`venueBootTrades({address:'lighter:${L1}'})`)).find(x => x.coin === 'SOL'); ok(sf && sf.isOpen, 'offline too');
+  // the API now serves y2 itself (same hash): its exact copy takes the explorer's place
+  const apiCopy = ltTrade(50, T0 + 9 * H, 'B', 1, 130, { tx_hash: 'y2', taker_position_size_before: '0', taker_entry_quote_before: '0', maker_position_size_before: '0', maker_entry_quote_before: '0' });
+  S.ctx.fetch = lighterMock({ trades: LT_TRADES.concat([apiCopy]), explorer: old, positions: sol });
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const after = (await S.run(`venueCache('flc:lighter:${L1}')`)).fills.filter(f => f.hash === 'y2');
+  eq(after.map(f => [f.tid, f.src || 'api', f.startPosition]), [['50', 'api', '0']]);
+});
+await t('a long explorer history is read a pass at a time; new trades pushing offsets never skip or double one', async () => {
+  const older = Array.from({ length: 250 }, (_, i) => ltxLog('z' + i, T0 - (300 - i) * 60e3, { taker: 1, maker: IDX, takerAsk: i % 2 === 0, px: 100, sz: 1 }));
+  let newer = [];
+  const S = sandbox(lighterMock({ explorer: () => older.concat(newer), trades: [] }));
+  seedScan(S);
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`).catch(() => null); // no API trades at all: fine
+  let merged = 0;
+  for (let k = 0; k < 6; k++) {
+    // between passes, 30 newer trades arrive at the top of the explorer's list
+    newer = newer.concat(Array.from({ length: 30 }, (_, i) => ltxLog('n' + k + '-' + i, T0 + (k * 30 + i) * 1000, { taker: 1, maker: IDX, takerAsk: true, px: 100, sz: 1 })));
+    const pass = await S.run(`ltBackfillPass({address:'lighter:${L1}'},1)`); if (!pass) break;
+    merged += (await S.run(`ltMergeBackfill({address:'lighter:${L1}'},${JSON.stringify(pass.fills)},${JSON.stringify(pass.xs)})`)).length;
+  }
+  const fills = (await S.run(`venueCache('flc:lighter:${L1}')`)).fills;
+  const z = fills.filter(f => /^z/.test(f.hash));
+  eq(z.length, 250, 'every older record once'); eq(new Set(fills.map(f => f.hash)).size, fills.length, 'none twice');
+  eq(await S.run(`ltBackfillPass({address:'lighter:${L1}'},1)`), null, 'and the scan is done');
+});
+await t('passes meet in the right order where the bound makes times equal', async () => {
+  // 150 sells/buys alternating, all stamped later than the API's first trade (T0): every one is held to T0,
+  // so only their order tells the position. Read one page a pass: the second pass's records are older.
+  const list = LT_TRADES.slice().reverse().map(ltxOf).concat(Array.from({ length: 150 }, (_, i) =>
+    ({ ...ltxLog('q' + i, 0, { taker: IDX, maker: 1, takerAsk: i % 2 === 0, px: 100 + (i % 2 ? 0 : 1), sz: 1 }), time: new Date(T0 + 5000).toISOString() })));
+  // listed newest first: q0 sells (closing the long q1 opened), q1 buys … q149 buys first, from flat
+  const S = sandbox(lighterMock({ explorerList: list }));
+  seedScan(S);
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  for (let k = 0; k < 4; k++) { const p = await S.run(`ltBackfillPass({address:'lighter:${L1}'},1)`); if (!p) break;
+    await S.run(`ltMergeBackfill({address:'lighter:${L1}'},${JSON.stringify(p.fills)},${JSON.stringify(p.xs)})`); }
+  const r = await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  const old = r.trades.filter(x => x.market === 'perp' && x.avgEntry === 100); // the API's trade opens at 100 and 110 (105)
+  eq(old.length, 75, 'buy 1 then sell 1, seventy-five times: 75 round trips'); ok(old.every(x => !x.isOpen && Math.abs(x.pnl - 1) < 1e-9), 'each bought at 100, sold at 101');
+});
+await t('a full refetch rebuilds the cache from the API, so the explorer is read again from the top', async () => {
+  const many = Array.from({ length: 3000 }, (_, i) => ltTrade(i + 1, T0 + i * 1000, i % 2 ? 'A' : 'B', 1, 100, { market_id: 2048, market_kind: 'spot' }));
+  const S = sandbox(lighterMock({ trades: many }));
+  seedScan(S, { [IDX]: { scans: [] } }); // an earlier backfill finished
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},true)`);
+  eq(await S.run(`idbGet('ltx:lighter:${L1}')`), { [IDX]: { scans: [{ off: 0, floor: 0 }] } });
+});
+await t('a first load the API serves whole needs no explorer; one that fills its ~3,000 starts a scan', async () => {
+  let S = sandbox(lighterMock());
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  eq(await S.run(`idbGet('ltx:lighter:${L1}')`), { [IDX]: { scans: [] } });
+  const many = Array.from({ length: 3000 }, (_, i) => ltTrade(i + 1, T0 + i * 1000, i % 2 ? 'A' : 'B', 1, 100, { market_id: 2048, market_kind: 'spot' }));
+  S = sandbox(lighterMock({ trades: many }));
+  await S.run(`loadLighterWallet({address:'lighter:${L1}'},false)`);
+  eq(await S.run(`idbGet('ltx:lighter:${L1}')`), { [IDX]: { scans: [{ off: 0, floor: 0 }] } });
 });
 await t('candles come from Lighter for Lighter trades', async () => {
   const S = sandbox(lighterMock());
