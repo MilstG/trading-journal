@@ -230,11 +230,13 @@ function arcusMock(opts = {}) {
     if (q.address && q.address !== AR) return jsonRes({ error: 'address not on access whitelist' }, 403);
     const idx = +(q.accountIndex || 0);
     if (u.pathname === '/v1/account') return accounts[idx] ? jsonRes({ accountIndex: idx, address: AR, netQuoteBalance: '0', ...accounts[idx] }) : jsonRes({ error: 'this account has no activity yet' }, 404);
-    // newest first, from/to inclusive (µs), at most `limit`; from is required to be ≥ 1e14
-    const page = (rows, tOf) => { ok(+q.from >= 1e14, 'from is in microseconds'); const lim = Math.min(1000, +q.limit || 1000);
-      return rows.filter(r => tOf(r) >= +q.from && (q.to == null || tOf(r) <= +q.to)).sort((a, b) => tOf(b) - tOf(a)).slice(0, lim); };
+    // newest first, from/to inclusive (µs), at most `limit`; from and to must be ≥ 1e14 when sent. As live:
+    // a row with no time (0) comes last, and only when no `from` is sent; funding without `from` is 30 days.
+    const page = (rows, tOf) => { if (q.from != null) ok(+q.from >= 1e14, 'from is in microseconds'); if (q.to != null) ok(+q.to >= 1e14, 'to is in microseconds: ' + q.to);
+      const lim = Math.min(1000, +q.limit || 1000), to = q.to != null ? +q.to : Infinity, from = q.from != null ? +q.from : -Infinity;
+      return rows.filter(r => tOf(r) >= from && tOf(r) <= to).sort((a, b) => tOf(b) - tOf(a)).slice(0, lim); };
     if (u.pathname === '/v1/fills') { const f = page(fills[idx] || [], r => r.createdAt); return jsonRes({ fills: f, total: f.length }); }
-    if (u.pathname === '/v1/funding') { const f = page(fund[idx] || [], r => r.time); return jsonRes({ fundingPayments: f, total: f.length }); }
+    if (u.pathname === '/v1/funding') { ok(q.from != null, 'funding is always asked with from'); const f = page(fund[idx] || [], r => r.time); return jsonRes({ fundingPayments: f, total: f.length }); }
     if (u.pathname === '/v1/candles') return jsonRes({ candles: [ // newest first, as the live API answers
       { marketDisplayName: 'BTC-USD', timeframe: '1h', openTime: (T0 + H) * US, open: '104', high: '112', low: '103', close: '110' },
       { marketDisplayName: 'BTC-USD', timeframe: '1h', openTime: T0 * US, open: '100', high: '105', low: '99', close: '104' }] });
@@ -282,6 +284,28 @@ await t('a very long history stops at 60 pages and the next load carries on furt
   ok(r1.nFills >= 59000 && r1.nFills < N, 'stopped at the page cap: ' + r1.nFills); ok(r1.truncNote, 'the gap is noted');
   const r2 = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
   eq(r2.nFills, N, 'the older ones arrive on the next load'); eq(r2.truncNote, null, 'and the note goes');
+});
+await t('fills with no time (createdAt 0) are read and placed by trade id, never sent as a page bound', async () => {
+  // 999 timed fills and one untimed: the oldest page is full, with the untimed row last (as Arcus serves it)
+  const id = i => i < 499 ? i + 1 : i + 2; // ids 1…499 and 501…1000 timed; 500 untimed
+  const many = Array.from({ length: 999 }, (_, i) => arFill(id(i), T0 + i * 1000, i % 2 ? 'SELL' : 'BUY', 1, 100, 0, 0, { createdAt: (T0 + i * 1000) * US }));
+  const untimed = arFill(500, 0, 'BUY', 1, 100, 0, 0, { createdAt: 0 });
+  const S = sandbox(arcusMock({ fills: { 0: many.concat([untimed]) }, accounts: { 0: { equity: '1', positions: {} } } }));
+  arCalls = [];
+  const r = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  eq(r.nFills, 1000, 'the untimed fill is in');
+  const fills = (await S.run(`venueCache('flc:arcus:${AR}')`)).fills, f500 = fills.find(f => f.tid === '500');
+  eq(f500.time, T0 + 498 * 1000, 'it takes the time of the fill before it by id');
+  ok(arCalls.filter(c => c.startsWith('/v1/fills')).every(c => !/[?&]from=/.test(c)), 'the history read to its start without from: ' + arCalls[10]);
+});
+await t('a full page is charged its rows too (20 + 1,000/20 = 70), and the bucket waits it out', async () => {
+  const many = Array.from({ length: 1000 }, (_, i) => arFill(i + 1, T0 + i * 1000, 'BUY', 1, 100, 0, 0, { createdAt: (T0 + i * 1000) * US }));
+  const S = sandbox(arcusMock({ fills: { 0: many } }));
+  S.run('_arTok=1200; _arAt=Date.now();');
+  await S.run(`arGet('/v1/fills?address=${AR}&accountIndex=0&limit=1000',20,20)`);
+  near(S.run('_arTok'), 1130, 2);
+  await S.run(`arGet('/v1/account?address=${AR}&accountIndex=0',2,0)`);
+  near(S.run('_arTok'), 1128, 2, 'an account read costs its base only');
 });
 await t('the next load asks only for what is newer, and adds only what is new', async () => {
   const S = sandbox(arcusMock());

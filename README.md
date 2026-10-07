@@ -112,7 +112,7 @@ account's own copy back.
 | Venue | What you give it | How it's read | History |
 |---|---|---|---|
 | **Hyperliquid** | a 0x wallet address | its public API, from the browser | the latest 10,000 fills, then everything Ledger keeps |
-| **Lighter** | the same kind of 0x address | its public API, from the browser | everything (paged back to the first trade) |
+| **Lighter** | the same kind of 0x address | its public API, from the browser | about the latest 3,000 trades, then everything Ledger keeps |
 | **Arcus** (perps) | the same kind of 0x address | its public API, from the browser | everything (paged back to the first fill) |
 | **Bybit** | a **read-only** API key | signed in your browser, relayed by your server | 2 years |
 | **Binance** (USD-M futures) | a **read-only** API key | signed in your browser, relayed by your server | 3 months, then everything Ledger keeps |
