@@ -394,7 +394,7 @@ async function loadAll(opts){ opts=opts||{}; const fresh=!!opts.fresh, auto=!!op
     if(PZ){ const m=orphanNoteOnce(allTrades.filter(t=>t.orphan)); if(m)pzNote(m); }
     // new fills for today: check them for a tilt pattern before drawing (the banner shows on this render)
     if(PZ){ pzBeforeDraw(()=>{ try{ pzTiltAlertCheck(); }catch(e){ console.warn('tilt alerts',e); } }); pzRender(); } }
-  if(allTrades.length&&!_sample)indexInBackground(); // the archive's older history, behind what's drawn
+  if(allTrades.length&&!_sample){ indexInBackground(); ltBackfillInBackground(); } // the archive's and Lighter's explorer's older history, behind what's drawn
   // measuring excursions fetches candles: wait until the browser is idle so it never competes with the first paint
   if(typeof requestIdleCallback==='function')requestIdleCallback(()=>autoRatchet(),{timeout:8000}); else setTimeout(autoRatchet,3000);
 }

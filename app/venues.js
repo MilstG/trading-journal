@@ -45,8 +45,9 @@ function markOrphans(perp, positions){ const live=new Set(positions.map(p=>p.coi
 /* ---------------- Lighter: public by wallet address ---------------- */
 const LT_API='https://mainnet.zklighter.elliot.ai';
 let _ltGate=Promise.resolve();
-// Lighter rate-limits bursts: every call goes through one queue, ~3 a second
-function ltGet(path){ const p=_ltGate.then(()=>sleep(320)).then(async()=>{
+// Lighter allows 60 requests a minute from an address without an account key: every call goes
+// through one queue, a little over a second apart
+function ltGet(path){ const p=_ltGate.then(()=>sleep(1050)).then(async()=>{
     for(let i=0;i<5;i++){ let r;
       try{ r=await fetch(LT_API+path); }catch(e){ if(i===4)throw new Error('Network error reaching Lighter'); await sleep(900*(i+1)); continue; }
       if(r.status===429||r.status>=500){ await sleep(1600*(i+1)); continue; }
@@ -70,14 +71,17 @@ async function ltMarkets(){
 // newest first, page by page, until the cache's watermark — so a returning user fetches one page.
 // A very long history stops after 40k trades and hands back where it stopped (cursor), so the
 // next load carries on from there, further back, instead of starting from the top again.
+// (Lighter's public API serves only about an account's newest 3,000 trades: the explorer has the
+// rest, read behind the load by ltBackfillInBackground.) `reached`: the pages got down to `since`.
 async function ltFetchTrades(idx, since, from){
-  const out=[]; let cursor=from||'', pages=0, truncated=false;
+  const out=[]; let cursor=from||'', pages=0, truncated=false, reached=false;
   for(;;){ const j=await ltGet('/api/v1/trades?account_index='+idx+'&sort_by=timestamp&sort_dir=desc&limit=100'+(cursor?'&cursor='+encodeURIComponent(cursor):''));
     const T=j.trades||[]; out.push(...T); pages++;
-    if(!T.length||!j.next_cursor||T.length<100||T[T.length-1].timestamp<since)break;
+    if(T.length&&T[T.length-1].timestamp<since){ reached=true; break; }
+    if(!T.length||!j.next_cursor||T.length<100)break;
     cursor=j.next_cursor;
     if(pages>=400){ truncated=true; break; } }
-  return {trades:out.filter(t=>t.timestamp>=since),truncated,cursor:truncated?cursor:null}; }
+  return {trades:out.filter(t=>t.timestamp>=since),truncated,reached,n:out.length,cursor:truncated?cursor:null}; }
 // hourly funding rates for one market, cached and topped up per market (shared by every wallet)
 async function ltFundingRates(marketId, fromMs, cachedOnly){
   const key='lt:fund:'+marketId; let c=null; try{ c=await idbGet(key); }catch(e){}
@@ -93,8 +97,12 @@ async function ltFundingRates(marketId, fromMs, cachedOnly){
     c.first=Math.min(c.first,want); c.last=c.rows.length?c.rows[c.rows.length-1].timestamp*1000:now; try{ await idbSet(key,c); }catch(e){} }
   return c.rows.filter(r=>r.timestamp*1000>=fromMs);
 }
-// Lighter gives every perp fill's position before it; spot positions are walked from the history
+// Lighter gives every perp fill's position before it; spot positions are walked from the history,
+// and so are the perp fills that came from the explorer (seeded per account: ltBackfillInitial)
 function ltDeriveSpot(fills, idxs){ for(const idx of idxs)deriveFillPositions(fills.filter(f=>+f.acct===idx&&f.coin.includes('/'))); }
+function ltDerivePerps(fills, idxs, seed){
+  for(const idx of idxs){ const F=fills.filter(f=>+f.acct===idx&&!f.coin.includes('/')); if(!F.some(f=>f.src==='x'))continue;
+    ltDeriveMixed(F,ltBackfillInitial(F,(seed||{})[idx])); } }
 const ltGroups=(fills,idxs)=>idxs.length>1?idxs.map(i=>[String(i),fills.filter(f=>+f.acct===i)]):[['',fills]];
 // funding: hourly rate × the position held, per sub-account — matches Lighter's own totals
 async function ltFundingRows(fills, idxs, M, cachedOnly){
@@ -113,9 +121,15 @@ async function loadLighterWallet(w, fresh){
   // where a long history stopped last time, per sub-account: {cursor, since}
   const more=Object.assign({},(cache&&cache.more)||{}), moreWas=JSON.stringify(more);
   const norm=(T,idx)=>T.map(t=>{ const f=ltNormTrade(t,idx,id=>(M.byId[id]||{}).symbol); if(f)f.acct=idx; return f; }).filter(Boolean);
+  // what the explorer still has to read behind the load, per sub-account (ltBackfillInBackground)
+  // (a full refetch rebuilds the cache from the API alone, so the explorer is read again too)
+  const xkey='ltx:'+w.address; let xs=null; if(!fresh){ try{ xs=await idbGet(xkey); }catch(e){} } xs=xs&&typeof xs==='object'?xs:{}; const xsWas=fresh?'':JSON.stringify(xs);
   for(const idx of idxs){
-    const since=cache?Math.max(0,...cache.fills.filter(f=>+f.acct===idx).map(f=>f.time),0):0;
+    const since=cache?arLatest(cache.fills,f=>+f.acct===idx&&f.src!=='x'):0;
     const r=await ltFetchTrades(idx,since);
+    if(!since&&!r.truncated&&r.n<2500&&!xs[idx])xs[idx]={scans:[]}; // the API served it all: nothing older to find
+    else if(!xs[idx])xs[idx]={scans:[{off:0,floor:0}]}; // read the explorer down to its first record
+    else if(since&&!r.reached&&!r.truncated&&r.n>=2500)xs[idx].scans.unshift({off:0,floor:since}); // the newest ~3,000 no longer reach what we had: the explorer fills the gap
     let m=mergeFills(fills,norm(r.trades,idx),f=>f.acct+'|'+f.tid); fills=m.fills; added+=m.added;
     const left=more[idx]; if(r.truncated)more[idx]={cursor:r.cursor,since}; // (40k new trades since the last load: that gap is the one to fill now)
     else if(left){ // carry on below where the last load stopped
@@ -124,21 +138,113 @@ async function loadLighterWallet(w, fresh){
         if(o.truncated)more[idx]={cursor:o.cursor,since:left.since||0}; else delete more[idx]; }
       catch(e){ delete more[idx]; trunc=true; } } // the cursor expired: the gap stays noted, the trades we have stay
     if(more[idx])trunc=true; }
-  if(!cache||added||JSON.stringify(more)!==moreWas)await venueSave(key,fills,Object.keys(more).length?{more}:null,null);
-  ltDeriveSpot(fills,idxs);
-  const frows=await ltFundingRows(fills,idxs,M,false);
+  // an explorer fill the API now serves too is replaced by the API's (exact) one
+  { const apiHash=new Set(); for(const f of fills)if(f.src!=='x'&&f.hash)apiHash.add(f.acct+'|'+f.hash);
+    if(fills.some(f=>f.src==='x'&&apiHash.has(f.acct+'|'+f.hash))){ fills=fills.filter(f=>!(f.src==='x'&&apiHash.has(f.acct+'|'+f.hash))); added++; } }
+  if(JSON.stringify(xs)!==xsWas){ try{ await idbSet(xkey,xs); }catch(e){} }
   // positions and equity, live
-  const positions=[]; let accountValue=0, anyAcct=false;
+  const positions=[], nowPos={}; let accountValue=0, anyAcct=false;
   for(const idx of idxs){ try{ const j=await ltGet('/api/v1/account?by=index&value='+idx), a=(j.accounts||[])[0]; if(!a)continue; anyAcct=true;
       let upl=0; for(const p of a.positions||[]){ const sz=parseFloat(p.position)*(+p.sign||1); if(!sz)continue; upl+=parseFloat(p.unrealized_pnl)||0;
+        (nowPos[idx]=nowPos[idx]||{})[p.symbol]=(nowPos[idx][p.symbol]||0)+sz;
         const imf=parseFloat(p.initial_margin_fraction);
         positions.push({coin:p.symbol,dex:'',szi:sz,entryPx:parseFloat(p.avg_entry_price),uPnl:parseFloat(p.unrealized_pnl)||0,roe:null,
           liq:parseFloat(p.liquidation_price)>0?parseFloat(p.liquidation_price):null,lev:imf>0?Math.round(100/imf):null,value:parseFloat(p.position_value)||0,wallet:{address:w.address,label:w.label},venue:'lighter'}); }
       accountValue+=(parseFloat(a.collateral)||0)+upl; }catch(e){} }
+  // today's positions seed the explorer's fills for a coin the API has no fill of (cached, for opening offline)
+  const seed=anyAcct?nowPos:(cache&&cache.seed)||{};
+  const extras=Object.keys(more).length||Object.keys(seed).length?{...(Object.keys(more).length?{more}:{}),seed}:null;
+  if(!cache||added||JSON.stringify(more)!==moreWas||JSON.stringify(seed)!==JSON.stringify(cache.seed||{}))await venueSave(key,fills,extras,null);
+  ltDeriveSpot(fills,idxs); ltDerivePerps(fills,idxs,seed);
+  const frows=await ltFundingRows(fills,idxs,M,false);
   const {perp,spot}=await reconstructStreams(ltGroups(fills,idxs),frows,w,'lighter');
   if(anyAcct)markOrphans(perp,positions);
-  return venueResult({added,cached:!!cache,truncNote:trunc?labelFor(w)+' (very long history — the next load continues)':null,nFills:fills.length,
+  const behind=Object.values(xs).some(st=>st&&Array.isArray(st.scans)&&st.scans.length);
+  return venueResult({added,cached:!!cache,truncNote:trunc?labelFor(w)+' (very long history — the next load continues)':behind?labelFor(w)+' (older history loading in the background from Lighter’s explorer)':null,nFills:fills.length,
     trades:perp.concat(spot),positions,accountValue:anyAcct?accountValue:null}); }
+/* ---------------- Lighter's older history, from its explorer, behind the load ---------------- */
+// The public API stops at about an account's newest 3,000 trades. Lighter's explorer keeps every trade
+// since late August 2025 (checked against the API: same hashes, prices, sizes, sides and fees), newest
+// first by offset, 100 a page, and allows cross-origin calls. After a load has drawn, each Lighter
+// sub-account's logs are read down to the explorer's first record, a pass at a time, merged into the
+// fill cache by hash (what the API already has is skipped), and one quiet reload rebuilds the trades.
+// Progress lives in ltx:<wallet>: per sub-account, the scans still to read ({off, floor}: an offset
+// and, for a gap, the time it runs down to). New logs only push older ones to higher offsets, so a
+// stored offset never skips a record; the few it reads twice are dropped by hash.
+const LTX_API='https://explorer.elliot.ai/api', LTX_TYPES='Trade,TradeWithFunding,LiquidationTrade,LiquidationTradeWithFunding,Deleverage,DeleverageWithFunding';
+let _ltxGate=Promise.resolve();
+// the explorer allows 90 weight a minute per address, an account read weighing 2: one call every 1.4 s
+function ltxGet(path){ const p=_ltxGate.then(()=>sleep(1400)).then(async()=>{
+    for(let i=0;i<5;i++){ let r;
+      try{ r=await fetch(LTX_API+path); }catch(e){ if(i===4)throw new Error('Network error reaching Lighter’s explorer'); await sleep(2000*(i+1)); continue; }
+      if(r.status===429||r.status>=500){ await sleep(5000*(i+1)); continue; }
+      let j=null; try{ j=await r.json(); }catch(e){}
+      if(Array.isArray(j))return j;
+      await sleep(3000*(i+1)); } // a deep offset sometimes answers "request timed out": asking again works
+    throw new Error('Lighter’s explorer isn’t answering — the next load tries again'); });
+  _ltxGate=p.catch(()=>{}); return p; }
+// up to `budget` pages of one sub-account's scans; mutates st, returns the logs read. The explorer
+// lists records in the order they executed, but its times are a few seconds noisy (checked against
+// the API's positions: walked in list order every one matches, sorted by time they don't), so each
+// record's time (_t) is held to at most the one listed before it — a sort by time keeps list order.
+// Its times also run late (up to a minute and a half behind the API's), so where it lists a trade the
+// API has (`known`: hash → the API's time), the bound drops to that time: everything older sorts
+// before it. sc.t carries the bound from page to page.
+async function ltxScan(idx, st, budget, known){
+  const out=[];
+  while(budget>0&&st.scans.length){ const sc=st.scans[0];
+    const R=await ltxGet('/accounts/'+idx+'/logs?limit=100&offset='+sc.off+'&pub_data_type='+LTX_TYPES); budget--;
+    sc.off+=R.length; let min=Infinity;
+    for(const x of R){ let t=Date.parse(x.time); if(!isFinite(t))continue; if(sc.t!=null&&t>sc.t)t=sc.t;
+      const k=known&&known.get(idx+'|'+x.hash); if(k!=null&&k<t)t=k;
+      sc.t=t; if(t<min)min=t; out.push({...x,_t:t}); }
+    if(R.length<100||(sc.floor&&min<sc.floor))st.scans.shift(); }
+  return out; }
+// one pass for a wallet: {fills, xs} (the fills normalized, the progress to store with them), or null
+async function ltBackfillPass(w, budget){
+  let xs=null; try{ xs=await idbGet('ltx:'+w.address); }catch(e){}
+  const idxs=Object.keys(xs||{}).filter(k=>xs[k]&&Array.isArray(xs[k].scans)&&xs[k].scans.length).map(Number); if(!idxs.length)return null;
+  const M=await ltMarkets(), fills=[], per=Math.max(1,Math.floor(budget/idxs.length));
+  const cache=await venueCache('flc:'+w.address), known=new Map();
+  if(cache)for(const f of cache.fills)if(f.src!=='x'&&f.hash)known.set(f.acct+'|'+f.hash,f.time);
+  for(const idx of idxs){ const logs=await ltxScan(idx,xs[idx],per,known);
+    for(const x of logs){ const f=ltxNormLog(x,idx,id=>(M.byId[id]||{}).symbol); if(f){ f.time=x._t; fills.push(f); } } }
+  return {fills,xs}; }
+// into the fill cache: what it doesn't have yet (by hash), oldest first and ahead of what's there, so
+// fills whose times the bound made equal keep the explorer's order (each pass reads older records than
+// the last). Returns the fills added. The progress is stored with them, never ahead of them.
+async function ltMergeBackfill(w, add, xs){
+  const key='flc:'+w.address, cache=await venueCache(key); if(!cache)return [];
+  const known=new Set(cache.fills.map(f=>f.acct+'|'+(f.hash||f.tid))), fresh=[];
+  for(let i=add.length-1;i>=0;i--){ const f=add[i], k=f.acct+'|'+f.hash; if(known.has(k))continue; known.add(k); fresh.push(f); }
+  if(fresh.length){ const fills=fresh.concat(cache.fills).sort(fillOrder);
+    await venueSave(key,fills,cache.more||cache.seed?{...(cache.more?{more:cache.more}:{}),...(cache.seed?{seed:cache.seed}:{})}:null,null); }
+  try{ await idbSet('ltx:'+w.address,xs); }catch(e){}
+  return fresh; }
+// After a load has drawn: passes of up to 120 pages (12,000 trades, about three minutes) for every Lighter
+// wallet, each merged under the load lock, the hourly funding rates of the coins it reaches fetched ahead
+// (so the reload doesn't wait on them), then one quiet reload; again until nothing is left. One at a time.
+let _ltxBg=null;
+function ltBackfillInBackground(){
+  if(_ltxBg)return _ltxBg;
+  _ltxBg=(async()=>{ let total=0;
+    for(let round=0;round<500;round++){ let any=false, n=0;
+      for(const w of settings.wallets.filter(x=>venueOf(x)==='lighter')){
+        const r=await ltBackfillPass(w,120); if(!r)continue; any=true;
+        for(let i=0;_loading&&i<2400;i++)await sleep(250); if(_loading)continue;
+        if(!settings.wallets.some(x=>x.address===w.address))continue; // removed meanwhile
+        let fresh=[]; _loading=true;
+        try{ fresh=await ltMergeBackfill(w,r.fills,r.xs); }catch(e){ console.warn('lighter backfill merge',e); }
+        finally{ _loading=false; }
+        n+=fresh.length;
+        try{ const M=await ltMarkets(), first={}; for(const f of fresh)if(!f.coin.includes('/')&&!(first[f.coin]<=f.time))first[f.coin]=f.time;
+          for(const c in first)if(M.bySym[c]!=null)await ltFundingRates(M.bySym[c],first[c]); }catch(e){} }
+      if(!any)break;
+      if(n){ total+=n; await loadAll({auto:true});
+        setStatus('Older Lighter history added from its explorer: '+total.toLocaleString('en-US')+' trade'+(total===1?'':'s')+' so far…'); if(PZ)pzNote('Older Lighter history added'); } }
+    if(total)setStatus('Older Lighter history added from its explorer: '+total.toLocaleString('en-US')+' trade'+(total===1?'':'s')+'.');
+  })().catch(e=>console.warn('lighter backfill',e)).finally(()=>{ _ltxBg=null; });
+  return _ltxBg; }
 async function ltCandles(coin, itvName, a, b){
   const M=await ltMarkets(), id=M.bySym[coin]; if(id==null)throw new Error('not a Lighter market');
   const ms={'1m':60e3,'5m':300e3,'15m':900e3,'1h':3600e3,'4h':14400e3,'1d':86400e3}[itvName]||3600e3, rows=[];
@@ -463,7 +569,7 @@ function loadVenueWallet(w, fresh){ const v=venueOf(w);
 async function venueBootTrades(w){
   const v=venueOf(w), c=await venueCache('flc:'+w.address); if(!c||!c.fills.length)return null;
   const fills=c.fills.sort(fillOrder);
-  if(v==='lighter'){ const idxs=[...new Set(fills.map(f=>+f.acct))].sort((a,b)=>a-b); ltDeriveSpot(fills,idxs);
+  if(v==='lighter'){ const idxs=[...new Set(fills.map(f=>+f.acct))].sort((a,b)=>a-b); ltDeriveSpot(fills,idxs); ltDerivePerps(fills,idxs,c.seed);
     let M=_ltMarkets; if(!M){ try{ M=await idbGet('lt:markets'); }catch(e){} }
     const frows=M&&M.bySym?await ltFundingRows(fills,idxs,M,true):[];
     const r=await reconstructStreams(ltGroups(fills,idxs),frows,w,'lighter'); return r.perp.concat(r.spot); }

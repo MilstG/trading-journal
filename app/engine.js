@@ -876,11 +876,12 @@ function initialPositions(fills, nowPos){
 function ltNormTrade(tr, idx, symbolOf){
   const isBid=+tr.bid_account_id===+idx, isAsk=+tr.ask_account_id===+idx; if(!isBid&&!isAsk)return null;
   const maker=isBid?!tr.is_maker_ask:!!tr.is_maker_ask, coin=symbolOf(tr.market_id); if(!coin)return null;
-  const px=parseFloat(tr.price), sz=parseFloat(tr.size); if(!(px>0)||!(sz>0))return null;
+  // a deleverage reads price 0.0: it closed at its usd_amount over its size
+  const sz=parseFloat(tr.size), px=parseFloat(tr.price)>0?parseFloat(tr.price):/deleverage/i.test(tr.type||'')&&sz>0?parseFloat(tr.usd_amount)/sz:NaN; if(!(px>0)||!(sz>0))return null;
   const before=parseFloat(maker?tr.maker_position_size_before:tr.taker_position_size_before);
   const entryQ=parseFloat(maker?tr.maker_entry_quote_before:tr.taker_entry_quote_before);
   const rate=+(maker?tr.maker_fee:tr.taker_fee)||0, notional=parseFloat(tr.usd_amount)||px*sz;
-  const f={coin,side:isBid?'B':'A',px:String(px),sz:String(sz),time:+tr.timestamp,fee:String(+(notional*rate/1e6).toFixed(8)),feeToken:'USDC',
+  const f={coin,side:isBid?'B':'A',px:String(+px.toFixed(10)),sz:String(sz),time:+tr.timestamp,fee:String(+(notional*rate/1e6).toFixed(8)),feeToken:'USDC',
     crossed:!maker,tid:String(tr.trade_id_str||tr.trade_id),oid:String(isBid?(tr.bid_id_str||tr.bid_id):(tr.ask_id_str||tr.ask_id)),hash:tr.tx_hash||''};
   if(!coin.includes('/')&&isFinite(before)){
     f.startPosition=String(before);
@@ -891,9 +892,60 @@ function ltNormTrade(tr, idx, symbolOf){
       f.closedPnl=String(+((px-entry)*q*(before>0?1:-1)).toFixed(8)); }
     else f.closedPnl='0';
   }
-  if(tr.type&&/liquidat|deleverage/i.test(tr.type))f.liquidation={method:tr.type};
+  // force-closed: a liquidation's taker is the account liquidated (its maker only took the other side);
+  // in a deleverage both sides are closed by the engine
+  if(tr.type&&(/deleverage/i.test(tr.type)||/liquidat/i.test(tr.type)&&!maker))f.liquidation={method:tr.type};
   return f;
 }
+// Lighter explorer log (explorer.elliot.ai /accounts/{index}/logs) → fill for account `idx`, or null.
+// The explorer keeps every trade since late August 2025, as the public /trades API (newest ~3,000
+// per account only) records it: same transaction hash, market, price, size, sides and fee rates. It
+// has no trade id or position before, so the tid is the hash (src 'x') and the loader walks
+// startPosition and closedPnl from the history (ltDeriveMixed). Liquidations are trade records with
+// trade_type 1 whose taker is the account liquidated; a deleverage closes the bankrupt account (the
+// taker) against the deleverager at quote / size (quote in micro-USDC), no fee.
+function ltxNormLog(x, idx, symbolOf){
+  const pd=x&&x.pubdata||{}, t=pd.trade_pubdata||pd.trade_pubdata_with_funding, d=pd.deleverage_pubdata||pd.deleverage_pubdata_with_funding;
+  const p=t||d; if(!p)return null;
+  const taker=+(t?p.taker_account_index:p.bankrupt_account_index), maker=+(t?p.maker_account_index:p.deleverager_account_index);
+  const me=+idx; if(taker!==me&&maker!==me)return null;
+  const coin=symbolOf(+p.market_index); if(!coin)return null;
+  const sz=parseFloat(p.size), px=t?parseFloat(p.price):(parseFloat(p.quote)/1e6)/sz, time=Date.parse(x.time);
+  if(!(px>0)||!(sz>0)||!isFinite(time))return null;
+  const isTaker=taker===me, ask=isTaker?+p.is_taker_ask===1:+p.is_taker_ask!==1;
+  const rate=t?(+(isTaker?p.taker_fee:p.maker_fee)||0):0;
+  const f={coin,side:ask?'A':'B',px:String(+px.toFixed(10)),sz:String(sz),time,fee:String(+(px*sz*rate/1e6).toFixed(8)),feeToken:'USDC',
+    crossed:isTaker,tid:String(x.hash),oid:'',hash:String(x.hash),acct:me,src:'x'};
+  if(d)f.liquidation={method:'deleverage'};
+  else if(+p.trade_type===1&&isTaker)f.liquidation={method:'liquidation'};
+  return f;
+}
+// Positions and P&L through a Lighter account's perp fills when some came from the explorer (src 'x',
+// no position before): the walk resyncs to each API fill's exact startPosition and keeps its exact
+// closedPnl, and gives each explorer fill the running position and an average-cost closedPnl. The
+// average cost runs through every fill, so a close just after an API fill is priced from the same
+// entries the exchange used. `initial` is each coin's position before its first fill here. Fills: one
+// account's perp fills, sorted by time. Mutates and returns.
+function ltDeriveMixed(fills, initial){
+  const pos=Object.assign({},initial||{}), avg={};
+  for(const f of fills){ const c=f.coin, q=parseFloat(f.sz), px=parseFloat(f.px); if(!(q>0))continue;
+    const exact=f.src!=='x'&&f.startPosition!=null, p=exact?parseFloat(f.startPosition):(pos[c]||0), signed=f.side==='B'?q:-q;
+    const sameDir=p===0||(p>0)===(signed>0);
+    if(!exact){ f.startPosition=String(+p.toFixed(10));
+      f.closedPnl=sameDir?'0':String(+(((px-(avg[c]||px))*Math.min(Math.abs(p),q)*(p>0?1:-1))).toFixed(8)); }
+    if(sameDir){ const tot=Math.abs(p)+q; avg[c]=tot>0?((Math.abs(p)*(avg[c]||px)+q*px)/tot):px; }
+    else if(q>Math.abs(p))avg[c]=px;
+    pos[c]=p+signed; if(Math.abs(pos[c])<1e-9){ pos[c]=0; avg[c]=0; } }
+  return fills; }
+// Each coin's position before an account's first perp fill here: walked back from the first API fill
+// (its exact startPosition), or, for a coin only the explorer has, from today's position (nowPos).
+function ltBackfillInitial(fills, nowPos){
+  const net={}, anchor={}, out={};
+  for(const f of fills){ const c=f.coin;
+    if(f.src!=='x'&&f.startPosition!=null){ if(!(c in anchor))anchor[c]=parseFloat(f.startPosition)-(net[c]||0); continue; }
+    if(!(c in anchor)){ const q=parseFloat(f.sz); net[c]=(net[c]||0)+(f.side==='B'?q:-q); } }
+  for(const c in net){ const v=c in anchor?anchor[c]:((nowPos||{})[c]||0)-net[c]; if(Math.abs(v)>1e-9)out[c]=+v.toFixed(10); }
+  return out; }
 // Estimated funding for Lighter (its per-payment history needs a login): the hourly public rate
 // times the position held at that hour. fundings: {coin: [{timestamp (s), value (USD per unit),
 // direction:'long'|'short' = the side that pays}]}; fills: this account's sorted perp fills.
