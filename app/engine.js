@@ -912,7 +912,8 @@ function ltFundingEstimate(fills, fundings){
 }
 // Arcus market ("BTC-USD", "NVDA-USD") → coin ("BTC", "NVDA"): every Arcus market is a USD perp
 const arCoin=name=>{ const s=String(name||'').toUpperCase(); return s.endsWith('-USD')&&s.length>4?s.slice(0,-4):s; };
-// Arcus fill (as /v1/fills returns it) → fill. Times are epoch microseconds. Arcus's closedPnl is
+// Arcus fill (as /v1/fills returns it) → fill. Times are epoch microseconds; the few rows that
+// carry none (createdAt 0) read time 0 and the loader places them (arPlaceUntimed). Arcus's closedPnl is
 // net of the fill's fee (an opening leg reads −fee), so the fee goes back in: closedPnl here is
 // gross, as Hyperliquid's is. On the liquidated leg of a forced close the fee is the liquidation
 // penalty and closedPnl is already net of the trading fee without it, so it's kept as it is — and
@@ -921,7 +922,7 @@ const arCoin=name=>{ const s=String(name||'').toUpperCase(); return s.endsWith('
 function arNormFill(x, idx){
   const px=parseFloat(x.price), sz=parseFloat(x.size), coin=arCoin(x.marketDisplayName); if(!(px>0)||!(sz>0)||!coin)return null;
   const fee=parseFloat(x.fee)||0, cp=parseFloat(x.closedPnl), liq=x.liquidation&&x.liquidation.method;
-  const f={coin,side:x.side==='BUY'?'B':'A',px:String(px),sz:String(sz),time:Math.floor(+x.createdAt/1000),fee:String(fee),feeToken:'USDC',
+  const f={coin,side:x.side==='BUY'?'B':'A',px:String(px),sz:String(sz),time:+x.createdAt>=1e14?Math.floor(+x.createdAt/1000):0,fee:String(fee),feeToken:'USDC',
     crossed:x.role==='TAKER',tid:String(x.tradeId),oid:String(x.orderId||''),acct:+idx||0};
   if(liq)f.liquidation={method:liq};
   if(isFinite(cp))f.closedPnl=liq==='LIQUIDATION'?(cp!==0?String(cp):null):String(+(cp+fee).toFixed(9));

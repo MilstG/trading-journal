@@ -151,18 +151,20 @@ async function ltCandles(coin, itvName, a, b){
 // equity with no key, and allows cross-origin calls. Each wallet has up to ten sub-accounts
 // (accountIndex 0-9), each its own position stream. Times are epoch microseconds throughout.
 const AR_API='https://api.arcus.xyz', AR_PAGE=1000;
-// Arcus weighs each request against a per-IP budget of 1,500 a minute, refilled at 25 a second
-// (fills and funding pages cost 20, account reads 2): a local bucket paces calls under it, and a
-// 429 waits it out. One queue, so two wallets loading side by side share the budget.
+// Arcus weighs each request against a per-IP budget of 1,500 a minute, refilled at 25 a second:
+// a base weight (20 for a list, 2 for an account read) and, once it has answered, one more per
+// `per` rows returned (20 for fills and funding, 60 for candles: a full page of fills costs 70).
+// A local bucket paces calls under it, and a 429 waits it out. One queue, so two wallets loading
+// side by side share the budget.
 let _arGate=Promise.resolve(), _arTok=1200, _arAt=0;
-function arGet(path, weight){ const w=weight||20, p=_arGate.then(async()=>{
+function arGet(path, weight, per){ const w=weight||20, p=_arGate.then(async()=>{
     const now=Date.now(); _arTok=Math.min(1200,_arTok+(_arAt?(now-_arAt)*0.025:0)); _arAt=now;
     if(_arTok>=w)_arTok-=w; else { await sleep(Math.ceil((w-_arTok)/0.025)); _arTok=0; _arAt=Date.now(); } // the wait refilled exactly this request's weight
     for(let i=0;i<5;i++){ let r;
       try{ r=await fetch(AR_API+path); }catch(e){ if(i===4)throw new Error('Network error reaching Arcus'); await sleep(900*(i+1)); continue; }
       if(r.status===429||r.status>=500){ _arTok=0; await sleep(2500*(i+1)); continue; }
       let j=null; try{ j=await r.json(); }catch(e){}
-      if(r.ok&&j)return j;
+      if(r.ok&&j){ const rows=per&&Object.values(j).find(Array.isArray); if(rows)_arTok-=Math.floor(rows.length/per); return j; } // the bucket may go below 0: the next call waits it out
       const e=new Error((j&&j.error)||('Arcus HTTP '+r.status)); e.status=r.status; throw e; }
     throw new Error('Arcus is busy — try again in a minute'); });
   _arGate=p.catch(()=>{}); return p; }
@@ -170,27 +172,41 @@ function arGet(path, weight){ const w=weight||20, p=_arGate.then(async()=>{
 // 403 for an address Arcus has never let in. Each answer carries the positions and equity too.
 async function arAccounts(addr){
   const out=[];
-  for(let i=0;i<10;i++){ try{ out.push({idx:i,a:await arGet('/v1/account?address='+encodeURIComponent(addr)+'&accountIndex='+i,2)}); }
+  for(let i=0;i<10;i++){ try{ out.push({idx:i,a:await arGet('/v1/account?address='+encodeURIComponent(addr)+'&accountIndex='+i,2,0)}); }
     catch(e){ if(e.status!==404&&e.status!==403)throw e; if(e.status===403)break; } }
   return out; }
 // One kind of history (fills or funding) for one sub-account, newest first, page by page: each gap
 // {since, to} (µs, to null = now) is read from `to` down to `since`, the next page ending at the
 // oldest row of the last (pages overlap: rows are deduplicated by the caller). `budget` pages per
 // load; whatever is left is handed back as gaps, so the next load carries on where this one stopped.
-async function arPull(path, field, addr, idx, gaps, budget, timeOf){
+// `bottomless`: a gap that runs to the start of the history is asked without `from` (fills only:
+// funding without one means the last 30 days), because `from` also drops the few rows that carry
+// no time — they come last, on the oldest page.
+async function arPull(path, field, addr, idx, gaps, budget, timeOf, bottomless){
   const rows=[], left=[];
   for(const g of gaps){ let to=g.to;
     for(;;){ if(budget<=0){ left.push({since:g.since,to}); break; }
-      const j=await arGet(path+'?address='+encodeURIComponent(addr)+'&accountIndex='+idx+'&limit='+AR_PAGE+'&from='+Math.max(1e14,g.since||0)+(to!=null?'&to='+to:''));
+      const j=await arGet(path+'?address='+encodeURIComponent(addr)+'&accountIndex='+idx+'&limit='+AR_PAGE+(bottomless&&!g.since?'':'&from='+Math.max(1e14,g.since||0))+(to!=null?'&to='+to:''),20,20);
       budget--; const R=(j&&j[field])||[]; rows.push(...R);
       if(R.length<AR_PAGE)break;
-      let oldest=Infinity; for(const x of R){ const t=+timeOf(x); if(t<oldest)oldest=t; }
+      let oldest=Infinity; for(const x of R){ const t=+timeOf(x); if(t>=1e14&&t<oldest)oldest=t; } // a few rows carry no time (0): they never bound a page
       if(!isFinite(oldest))break;
       to=to!=null&&oldest>=to?to-1:oldest; // a whole page inside one microsecond: step past it
       if(g.since&&to<g.since)break; } }
   return {rows,gaps:left}; }
 // the newest time among the rows that pass (a loop: a spread of a big history overflows the stack)
 const arLatest=(rows,pass)=>{ let t=0; for(const x of rows)if(x.time>t&&pass(x))t=x.time; return t; };
+// A few Arcus fills carry no time (createdAt 0). Trade ids rise with time, so each takes the time of
+// the sub-account's fill just before it by id (or just after, when it's the first): left at 0 it
+// would sort to 1970 and start every position from the wrong place. One with neither is dropped.
+function arPlaceUntimed(add, known){
+  const untimed=add.filter(f=>!f.time); if(!untimed.length)return add;
+  const pool=known.concat(add).filter(f=>f.time>0);
+  for(const f of untimed){ let before=null, after=null; const id=+f.tid;
+    for(const g of pool){ if(g.acct!==f.acct)continue; const gi=+g.tid;
+      if(gi<id&&(!before||gi>+before.tid))before=g; else if(gi>id&&(!after||gi<+after.tid))after=g; }
+    f.time=(before||after||{time:0}).time; }
+  return add.filter(f=>f.time>0); }
 const AR_FILL_PAGES=60, AR_FUND_PAGES=40; // per sub-account per load: 60,000 fills, 40,000 funding rows
 // the main account (0) is the plain wallet id and the others are "#<index>" streams, so a trade's id
 // (and the notes kept on it) never changes when a second sub-account starts trading
@@ -209,8 +225,8 @@ async function loadArcusWallet(w, fresh){
   const more=JSON.parse(JSON.stringify((cache&&cache.more)||{})), moreWas=JSON.stringify(more);
   for(const idx of idxs){
     const since=cache?arLatest(cache.fills,f=>+f.acct===idx)*1000:0;
-    const r=await arPull('/v1/fills','fills',addr,idx,[{since,to:null},...(more[idx]||[])],AR_FILL_PAGES,x=>x.createdAt);
-    const m=mergeFills(fills,r.rows.map(x=>arNormFill(x,idx)).filter(Boolean),f=>f.acct+'|'+f.tid); fills=m.fills; added+=m.added;
+    const r=await arPull('/v1/fills','fills',addr,idx,[{since,to:null},...(more[idx]||[])],AR_FILL_PAGES,x=>x.createdAt,true);
+    const m=mergeFills(fills,arPlaceUntimed(r.rows.map(x=>arNormFill(x,idx)).filter(Boolean),fills),f=>f.acct+'|'+f.tid); fills=m.fills; added+=m.added;
     if(r.gaps.length)more[idx]=r.gaps; else delete more[idx]; }
   // funding payments, as Arcus booked them (+ received, − paid), cached and topped up the same way
   const fkey='fnd:'+w.address; let fc=null; try{ fc=fresh?null:await idbGet(fkey); }catch(e){}
@@ -220,7 +236,7 @@ async function loadArcusWallet(w, fresh){
       const since=arLatest(frowsAll,r=>r.acct===idx)*1000;
       const r=await arPull('/v1/funding','fundingPayments',addr,idx,[{since,to:null},...(fmore[idx]||[])],AR_FUND_PAGES,x=>x.time);
       const seen=new Set(frowsAll.map(x=>x.id));
-      for(const x of r.rows){ const v=parseFloat(x.payment); if(!v)continue; const id=idx+'|'+x.marketId+'|'+x.time; if(seen.has(id))continue; seen.add(id);
+      for(const x of r.rows){ const v=parseFloat(x.payment); if(!v||!(+x.time>=1e14))continue; const id=idx+'|'+x.marketId+'|'+x.time; if(seen.has(id))continue; seen.add(id);
         frowsAll.push({time:Math.floor(+x.time/1000),coin:arCoin(x.marketDisplayName),usdc:v,id,acct:idx}); }
       if(r.gaps.length)fmore[idx]=r.gaps; else delete fmore[idx]; }
     frowsAll.sort((a,b)=>a.time-b.time); try{ await idbSet(fkey,{v:1,rows:frowsAll,more:fmore}); }catch(e){} }
@@ -241,10 +257,10 @@ async function loadArcusWallet(w, fresh){
   const {perp,spot}=await reconstructStreams(arGroups(fills,idxs),arFrows(frowsAll),w,'arcus');
   if(accts.length)markOrphans(perp,positions);
   return venueResult({added,cached:!!cache,nFills:fills.length,trades:perp.concat(spot),positions,accountValue:accts.length?accountValue:null,
-    truncNote:Object.keys(more).length?labelFor(w)+' (very long history — the next load continues)':null}); }
+    truncNote:Object.keys(more).length?labelFor(w)+' (very long history — the next load continues)':Object.keys(fmore).length?labelFor(w)+' (funding still loading — the next load continues)':null}); }
 async function arCandles(coin, itvName, a, b){
   const ms={'1m':60e3,'5m':300e3,'15m':900e3,'1h':3600e3,'4h':14400e3,'1d':86400e3}[itvName]||3600e3, tf={'1m':'1m','5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d'}[itvName]||'1h', rows=[];
-  for(let s=a;s<b;s+=ms*1000){ const j=await arGet('/v1/candles?market='+encodeURIComponent(coin+'-USD')+'&timeframe='+tf+'&from='+Math.floor(s*1000)+'&to='+Math.floor(Math.min(b,s+ms*1000)*1000));
+  for(let s=a;s<b;s+=ms*1000){ const j=await arGet('/v1/candles?market='+encodeURIComponent(coin+'-USD')+'&timeframe='+tf+'&from='+Math.floor(s*1000)+'&to='+Math.floor(Math.min(b,s+ms*1000)*1000),20,60);
     for(const k of j.candles||[])rows.push([Math.floor(+k.openTime/1000),+k.high,+k.low,+k.close,+k.open]); }
   return {rows:rows.sort((x,y)=>x[0]-y[0]),coveredTo:b}; }
 
