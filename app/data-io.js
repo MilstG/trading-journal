@@ -9,17 +9,17 @@ function renderWallets(){
     `<span class="wchip">${w.label?`<span class="lbl">${esc(w.label)}</span>`:''}<span class="ad">${esc(walletShort(w.address))}</span>${isCexVenue(venueOf(w))?`<button class="rm" data-cexkey="${i}" title="Enter this account’s API key on this device" aria-label="API key for ${esc(labelFor(w))}">key</button>`:''}<button class="rm" data-rm="${i}" title="Remove" aria-label="Remove wallet ${esc(w.label||walletShort(w.address))}">×</button></span>`
   ).join('');
 }
-// One address, every venue it trades on: Hyperliquid and Lighter are both checked and each one
-// with an account is added (venues.js: walletIdsFor). "lighter:0x…" adds the Lighter one only.
+// One address, every venue it trades on: Hyperliquid, Lighter and Arcus are all checked and each one
+// with an account is added (venues.js: walletIdsFor). "lighter:0x…" or "arcus:0x…" adds that one only.
 async function addWalletFromInput(){
   const raw=$('walletAddr').value.trim(), label=$('walletLabel').value.trim();
-  const forced=/^lighter:/i.test(raw), address=raw.replace(/^lighter:/i,'');
+  const pm=/^(lighter|arcus):/i.exec(raw), forced=pm?pm[1].toLowerCase():null, address=raw.replace(/^(lighter|arcus):/i,'');
   if(!/^0x[0-9a-fA-F]{40}$/.test(address)){ setErr('That doesn\u2019t look like a 0x wallet address (42 chars). For Bybit or Binance, use \u201cConnect exchange\u201d.'); return false; }
   // trade ids (and so your notes) include the address as written: a wallet added again in other
   // letter case takes the spelling its notes already use; a new one is stored in lower case
   const lc=address.toLowerCase(), known=Object.keys(_sample?_sample.journal:journal).map(k=>k.split(':')[0]).find(a=>a.toLowerCase()===lc);
-  setStatus('Looking for '+walletShort(address)+' on Hyperliquid and Lighter\u2026',true);
-  const ids=(await walletIdsFor(address,forced?['lighter']:null)).map(id=>venueOfAddr(id)==='lighter'?'lighter:'+lc:(known||lc));
+  setStatus('Looking for '+walletShort(address)+' on Hyperliquid, Lighter and Arcus\u2026',true);
+  const ids=(await walletIdsFor(address,forced?[forced]:null)).map(id=>venueOfAddr(id)==='hyperliquid'?(known||lc):venueOfAddr(id)+':'+lc);
   const have=new Set(settings.wallets.map(w=>String(w.address).toLowerCase()));
   const add=ids.filter(id=>!have.has(id.toLowerCase()));
   if(!add.length){ setErr('That wallet is already in the list.'); return false; }
@@ -27,7 +27,7 @@ async function addWalletFromInput(){
   await Store.set(S_KEY,settings);
   $('walletAddr').value=''; $('walletLabel').value=''; renderWallets();
   const names=add.map(id=>VENUE_NAMES[venueOfAddr(id)]);
-  setStatus('Added on '+names.join(' and ')+' · '+settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' in the list · hit Load all.');
+  setStatus('Added on '+(names.length>2?names.slice(0,-1).join(', ')+' and '+names[names.length-1]:names.join(' and '))+' · '+settings.wallets.length+' wallet'+(settings.wallets.length===1?'':'s')+' in the list · hit Load all.');
   return true;
 }
 async function removeWallet(i){
@@ -211,7 +211,7 @@ function truncNoteOf(label, tr){
 var _recMemo={};
 const recSig=(fills,lastF,frows,lastR)=>fills.length+'|'+lastF+'|'+frows.length+'|'+lastR+'|'+(settings.tz||'')+'|'+(settings.tzZone||''); // the clock too: spot day rows end at its midnight
 async function loadWallet(w,fresh,spotP){
-  if(venueOf(w)!=='hyperliquid')return loadVenueWallet(w,fresh); // Lighter, Bybit, Binance: venues.js
+  if(venueOf(w)!=='hyperliquid')return loadVenueWallet(w,fresh); // Lighter, Arcus, Bybit, Binance: venues.js
   const a=w.address, fcKey='flc:'+a, fdKey='fnd:'+a, lgKey='lgu:'+a;
   // A full refetch (fresh) reads every fill the exchange serves from zero but merges it into the fill cache,
   // as the server's does: replacing the cache lost every fill past the exchange's 10,000-fill window and
@@ -648,7 +648,7 @@ function openCexConnect(venue, label){
     <div class="field"><label for="cexKey">API key</label><input type="text" id="cexKey" autocomplete="off" spellcheck="false"></div>
     <div class="field"><label for="cexSecret">API secret</label><input type="password" id="cexSecret" autocomplete="off" spellcheck="false"></div>
     <div class="field"><label for="cexLabel">Label (optional)</label><input type="text" id="cexLabel" maxlength="40" value="${esc(label||'')}" autocomplete="off"></div>
-    <p class="mini-note">Read-only keys only — a key that can trade or withdraw is refused. The secret stays in this browser: each request is signed here and your server only passes it on. Lighter needs no key: add its 0x address like a Hyperliquid wallet.</p>
+    <p class="mini-note">Read-only keys only — a key that can trade or withdraw is refused. The secret stays in this browser: each request is signed here and your server only passes it on. Lighter and Arcus need no key: add the 0x address like a Hyperliquid wallet.</p>
     <p class="lead neg-t" id="cexErr" role="alert"></p>
     <div class="modal-actions"><button class="btn ghost" data-cex="close">Cancel</button><button class="btn" data-cex="go">Connect</button></div></div>`;
   document.body.appendChild(bg);

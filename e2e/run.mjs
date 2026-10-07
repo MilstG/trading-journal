@@ -568,6 +568,8 @@ try {
       body: JSON.parse(r.request().postData() || '{}').type === 'userRole' ? '{"role":"missing"}' : '[]' }));
     await p.route('https://mainnet.zklighter.elliot.ai/**', r => { const a = answers[new URL(r.request().url()).pathname];
       return r.fulfill({ status: a ? 200 : 404, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(a || { code: 404 }) }); });
+    // and Arcus has never let it in
+    await p.route('https://api.arcus.xyz/**', r => r.fulfill({ status: 403, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"error":"address not on access whitelist"}' }));
     await p.goto(BASE + '/');
     await p.waitForSelector('#walletsBtn');
     if (await p.$eval('#setupPanel', e => e.classList.contains('hide'))) await p.click('#walletsBtn');
@@ -593,6 +595,36 @@ try {
     await p.keyboard.press('Escape');
     eq(await p.$('.modal.cexbox'), null);
     eq(errs, []);
+    await p.close();
+  });
+
+  await t('an Arcus address is found and loaded with nothing but the address', async () => {
+    const { page: p, errors: errs } = await openPage({ width: 1366, height: 900 });
+    const A = '0x' + 'cd'.repeat(20), T0 = Date.parse('2026-09-01T00:00:00Z'), US = 1000;
+    const fill = (id, ms, side, sz, px, fee, cp, eff) => ({ tradeId: String(id), orderId: 'o' + id, address: A, accountIndex: 0, marketId: 27, marketDisplayName: 'NVDA-USD',
+      side, originalSize: String(sz), size: String(sz), price: String(px), fee: String(fee), closedPnl: String(cp), role: 'TAKER', positionEffect: eff, createdAt: ms * US });
+    const fills = [fill(2, T0 + 3600e3, 'SELL', 1, 120, 0.06, 19.94, 'CLOSE_LONG'), fill(1, T0, 'BUY', 1, 100, 0.05, -0.05, 'OPEN_LONG')];
+    await p.route('https://api.hyperliquid.xyz/**', r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+      body: JSON.parse(r.request().postData() || '{}').type === 'userRole' ? '{"role":"missing"}' : '[]' }));
+    await p.route('https://mainnet.zklighter.elliot.ai/**', r => r.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"code":21100,"message":"account not found"}' }));
+    await p.route('https://api.arcus.xyz/**', r => { const u = new URL(r.request().url()), idx = +(u.searchParams.get('accountIndex') || 0);
+      const body = u.pathname === '/v1/account' ? (idx === 0 ? { accountIndex: 0, address: A, equity: '500', positions: {} } : { error: 'this account has no activity yet' })
+        : u.pathname === '/v1/fills' ? { fills: idx === 0 ? fills : [], total: idx === 0 ? 2 : 0 } : u.pathname === '/v1/funding' ? { fundingPayments: [], total: 0 } : { error: 'Not found' };
+      return r.fulfill({ status: body.error ? 404 : 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) }); });
+    await p.goto(BASE + '/');
+    await p.waitForSelector('#walletsBtn');
+    if (await p.$eval('#setupPanel', e => e.classList.contains('hide'))) await p.click('#walletsBtn');
+    await p.fill('#walletAddr', A); await p.click('#addWallet');
+    await p.waitForFunction(() => /Added on Arcus/.test(document.getElementById('status').textContent));
+    ok(/Arcus 0xcdcd/.test(await p.textContent('#wallets')), 'the chip names the venue');
+    await p.click('#loadAll');
+    await p.waitForSelector('#tbody tr.trow');
+    const row = await p.textContent('#tbody tr.trow');
+    ok(/NVDA/.test(row) && /Arcus/.test(row), row.replace(/\s+/g, ' ').slice(0, 120));
+    // the earlier test's wallets are on this server too (now unanswered): wait for the whole load, then read it
+    await p.waitForFunction(() => /fills →/.test(document.getElementById('status').textContent));
+    ok(/\b2 fills → 1 perp/.test(await p.textContent('#status')), await p.textContent('#status'));
+    eq(errs, [], 'no console errors (the page’s CSP lets api.arcus.xyz through)');
     await p.close();
   });
 

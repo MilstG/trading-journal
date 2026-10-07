@@ -1,6 +1,6 @@
-// Other venues: Lighter (by wallet address), Bybit and Binance (read-only API keys through the
-// server's relay). The app's real venues.js runs in a sandbox against mock exchanges built from
-// each API's documented answers (Lighter's from live samples); the Bybit and Binance mocks check
+// Other venues: Lighter and Arcus (by wallet address), Bybit and Binance (read-only API keys through
+// the server's relay). The app's real venues.js runs in a sandbox against mock exchanges built from
+// each API's documented answers (Lighter's and Arcus's from live samples); the Bybit and Binance mocks check
 // the request signatures, so the signing is tested, not just the parsing. The relay is the real
 // cex-relay.js module, and the server route is exercised over HTTP.
 import { readFileSync, mkdtempSync } from 'node:fs';
@@ -23,7 +23,7 @@ const Relay = require('../cex-relay.js');
 const server = require('../server.js');
 
 const ENGINE = ['isPerp', 'newTrade', 'tallyFill', 'reconstructTrades', 'attributeFunding', 'deriveFillPositions', 'initialPositions',
-  'ltNormTrade', 'ltFundingEstimate', 'cexCoin', 'cexSymbol', 'bybitNormExec', 'binanceNormTrade', 'gzipBytes', 'gunzipStr',
+  'ltNormTrade', 'ltFundingEstimate', 'arNormFill', 'cexCoin', 'cexSymbol', 'bybitNormExec', 'binanceNormTrade', 'gzipBytes', 'gunzipStr',
   'packFillCache', 'unpackFillCache', 'validFillCache'].map(grabFn).join('\n');
 const SHIMS = `
 const sleep=()=>Promise.resolve();
@@ -37,6 +37,7 @@ let SRV={enabled:true,token:'owner-token'};
 let srvFetch=async()=>{ throw new Error('no server'); };
 let settings={wallets:[]}; const S_KEY='s'; const Store={set:async()=>{}};
 async function reconstructCompute(fills,frows,addr){ return {perp:attributeFunding(reconstructTrades(fills,addr,'perp'),frows),spot:attributeFunding(reconstructTrades(fills,addr,'spot'),[])}; }
+${constLine('arCoin')}
 ${constLine('CEX_QUOTES')}
 ${constLine('STABLES')}
 ${constLine('cacheExtras')}
@@ -197,6 +198,131 @@ await t('wallet ids: venue, raw address, readable short form, and cache validati
   eq(S.run(`[venueOfAddr('lighter:0xab'),venueOfAddr('0xab'),venueOfAddr('bybit:0123456789ab'),venueRaw('binance:0123456789ab')]`), ['lighter', 'hyperliquid', 'bybit', '0123456789ab']);
   const ok2 = S.run(`[validFillCache('lighter:${L1}',{v:2,fills:[],last:0}),validFillCache('bybit:0123456789ab',{v:2,fills:[],last:0}),validFillCache('bybit:xyz',{v:2,fills:[],last:0}),validFillCache('kraken:${L1}',{v:2,fills:[],last:0})]`);
   eq(ok2, [true, true, false, false]);
+});
+
+/* ============================ Arcus ============================ */
+const AR = '0x8880c996750f93e4acc7769a203ec9f8ed8e9275', US = 1000; // Arcus times are microseconds
+// fills as /v1/fills returns them (fields from a live sample). Arcus's closedPnl is net of the fee.
+const arFill = (id, ms, side, sz, px, fee, closedPnl, extra) => Object.assign({
+  tradeId: String(id), orderId: 'o' + id, address: AR, accountIndex: 0, marketId: 1, marketDisplayName: 'BTC-USD', side, originalSize: String(sz), size: String(sz),
+  price: String(px), fee: String(fee), closedPnl: String(closedPnl), role: fee ? 'TAKER' : 'MAKER', positionEffect: 'OPEN_LONG', createdAt: ms * US + (id % 997) }, extra);
+const AR_FILLS = { // per sub-account, oldest first
+  0: [
+    arFill(1, T0, 'BUY', 1, 100, 0.05, -0.05),                                     // open long 1 @100 (taker)
+    arFill(2, T0 + H, 'BUY', 1, 110, 0, 0, { positionEffect: 'ADD_LONG' }),          // add 1 @110 (maker, no fee)
+    arFill(3, T0 + 5 * H, 'SELL', 2, 120, 0.12, 29.88, { positionEffect: 'CLOSE_LONG' }), // (120-105)×2 − 0.12
+  ],
+  1: [
+    arFill(11, T0, 'SELL', 1, 50, 0.025, -0.025, { accountIndex: 1, marketId: 2, marketDisplayName: 'NVDA-USD', positionEffect: 'OPEN_SHORT' }),
+    // force-closed, recorded before Arcus filled closedPnl in on liquidations ("0"): the fee is the penalty
+    arFill(12, T0 + 3 * H, 'BUY', 1, 60, 0.3, 0, { accountIndex: 1, marketId: 2, marketDisplayName: 'NVDA-USD', positionEffect: 'CLOSE_SHORT', liquidation: { method: 'LIQUIDATION', liquidatedUser: 'iIDJlnUPk+Ssx3aa' } }),
+  ],
+};
+const AR_FUND = { 0: [{ marketId: 1, marketDisplayName: 'BTC-USD', fundingRate: '0.0001', size: '2', payment: '-0.5', time: (T0 + 2 * H) * US }], 1: [] };
+let arCalls = [];
+function arcusMock(opts = {}) {
+  const fills = opts.fills || AR_FILLS, fund = opts.fund || AR_FUND, accounts = opts.accounts || { 0: { equity: '1000', positions: {} }, 1: { equity: '250', positions: {} } };
+  return async (url) => {
+    const u = new URL(url), q = Object.fromEntries(u.searchParams);
+    if (u.host === 'api.hyperliquid.xyz') return jsonRes({ role: 'missing' });
+    if (u.host !== 'api.arcus.xyz') return jsonRes({ code: 20001, message: 'unknown' }, 400);
+    arCalls.push(u.pathname + u.search);
+    if (q.address && q.address !== AR) return jsonRes({ error: 'address not on access whitelist' }, 403);
+    const idx = +(q.accountIndex || 0);
+    if (u.pathname === '/v1/account') return accounts[idx] ? jsonRes({ accountIndex: idx, address: AR, netQuoteBalance: '0', ...accounts[idx] }) : jsonRes({ error: 'this account has no activity yet' }, 404);
+    // newest first, from/to inclusive (µs), at most `limit`; from is required to be ≥ 1e14
+    const page = (rows, tOf) => { ok(+q.from >= 1e14, 'from is in microseconds'); const lim = Math.min(1000, +q.limit || 1000);
+      return rows.filter(r => tOf(r) >= +q.from && (q.to == null || tOf(r) <= +q.to)).sort((a, b) => tOf(b) - tOf(a)).slice(0, lim); };
+    if (u.pathname === '/v1/fills') { const f = page(fills[idx] || [], r => r.createdAt); return jsonRes({ fills: f, total: f.length }); }
+    if (u.pathname === '/v1/funding') { const f = page(fund[idx] || [], r => r.time); return jsonRes({ fundingPayments: f, total: f.length }); }
+    if (u.pathname === '/v1/candles') return jsonRes({ candles: [ // newest first, as the live API answers
+      { marketDisplayName: 'BTC-USD', timeframe: '1h', openTime: (T0 + H) * US, open: '104', high: '112', low: '103', close: '110' },
+      { marketDisplayName: 'BTC-USD', timeframe: '1h', openTime: T0 * US, open: '100', high: '105', low: '99', close: '104' }] });
+    return jsonRes({ error: 'Not found' }, 404);
+  };
+}
+
+console.log('\nArcus (wallet address only)');
+await t('one address: each sub-account its own stream, P&L gross of fees, funding as Arcus booked it', async () => {
+  arCalls = [];
+  const S = sandbox(arcusMock());
+  const r = await S.run(`loadArcusWallet({address:'arcus:${AR}',label:'A'},false)`);
+  eq(r.trades.length, 2);
+  const btc = r.trades.find(x => x.coin === 'BTC'), nvda = r.trades.find(x => x.coin === 'NVDA');
+  eq([btc.dir, btc.isOpen ? 1 : 0, btc.venue, btc.market], ['Long', 0, 'arcus', 'perp']);
+  near(btc.pnl, 30, 1e-9, 'the fee is added back: closedPnl here is gross, as Hyperliquid’s'); near(btc.fees, 0.17); near(btc.avgEntry, 105);
+  near(btc.funding, -0.5);
+  ok(btc.id.startsWith('arcus:' + AR + ':BTC:'), 'the main account keeps the plain wallet id (a second sub-account never renames its trades): ' + btc.id);
+  ok(nvda.id.startsWith('arcus:' + AR + '#1:NVDA:'), 'another sub-account is its own stream: ' + nvda.id);
+  eq([nvda.dir, nvda.liquidated ? 1 : 0], ['Short', 1]);
+  near(nvda.pnl, -10, 1e-9, 'an old liquidation row reading "0": its P&L is walked from the history'); near(nvda.fees, 0.325);
+  near(r.accountValue, 1250); eq(r.nFills, 5); eq(r.truncNote, null);
+  eq(arCalls.filter(c => c.startsWith('/v1/account')).length, 10, 'every sub-account index is asked once');
+});
+await t('a liquidation Arcus did price keeps its closedPnl as given (already net of the trading fee)', () => {
+  const S = sandbox();
+  const f = S.run(`arNormFill(${JSON.stringify(arFill(5, T0, 'SELL', 1, 90, 0.4, -10.2, { liquidation: { method: 'LIQUIDATION', liquidatedUser: 'x' } }))},0)`);
+  eq([f.closedPnl, f.fee, f.liquidation, f.crossed, f.side, f.time], ['-10.2', '0.4', { method: 'LIQUIDATION' }, true, 'A', T0]);
+  const adl = S.run(`arNormFill(${JSON.stringify(arFill(6, T0, 'SELL', 1, 90, 0, 3, { liquidation: { method: 'ADL', liquidatedUser: 'x' } }))},2)`);
+  eq([adl.closedPnl, adl.acct, adl.liquidation.method], ['3', 2, 'ADL']);
+  eq(S.run(`[arCoin('BTC-USD'),arCoin('f-usd'),arCoin('SPX')]`), ['BTC', 'F', 'SPX']);
+});
+await t('pages of 1,000 overlap at their edges: every fill once, newest page first', async () => {
+  const many = Array.from({ length: 2500 }, (_, i) => arFill(i + 1, T0 + Math.floor(i / 2) * 1000, i % 2 ? 'SELL' : 'BUY', 1, 100, 0, 0, { createdAt: (T0 + Math.floor(i / 2) * 1000) * US }));
+  const S = sandbox(arcusMock({ fills: { 0: many }, accounts: { 0: { equity: '1', positions: {} } } }));
+  arCalls = [];
+  const r = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  eq(r.nFills, 2500, 'two fills share each microsecond, so pages overlap by one: deduplicated');
+  eq(arCalls.filter(c => c.startsWith('/v1/fills')).length, 3);
+});
+await t('a very long history stops at 60 pages and the next load carries on further back', async () => {
+  const N = 60050, many = Array.from({ length: N }, (_, i) => arFill(i + 1, T0 + i * 1000, i % 2 ? 'SELL' : 'BUY', 1, 100, 0, 0, { createdAt: (T0 + i * 1000) * US }));
+  const S = sandbox(arcusMock({ fills: { 0: many }, accounts: { 0: { equity: '1', positions: {} } } }));
+  const r1 = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  ok(r1.nFills >= 59000 && r1.nFills < N, 'stopped at the page cap: ' + r1.nFills); ok(r1.truncNote, 'the gap is noted');
+  const r2 = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  eq(r2.nFills, N, 'the older ones arrive on the next load'); eq(r2.truncNote, null, 'and the note goes');
+});
+await t('the next load asks only for what is newer, and adds only what is new', async () => {
+  const S = sandbox(arcusMock());
+  await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  const more = { 0: AR_FILLS[0].concat([arFill(4, T0 + 9 * H, 'BUY', 1, 130, 0.065, -0.065)]), 1: AR_FILLS[1] };
+  S.ctx.fetch = arcusMock({ fills: more, accounts: { 0: { equity: '1000', positions: { 1: { marketId: 1, marketDisplayName: 'BTC-USD', side: 'LONG', size: '1', averageEntryPrice: '130', leverage: '5', positionValueNotional: '130', unrealizedPnl: '0' } } } } });
+  arCalls = [];
+  const r = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  eq(r.added, 1); eq(r.cached, true);
+  const fq = arCalls.filter(c => c.startsWith('/v1/fills'));
+  ok(fq.length === 2 && fq.every(c => +new URL('http://x' + c).searchParams.get('from') > 1e15), 'one page a sub-account, from the newest fill held: ' + fq.join(' '));
+  const open = r.trades.find(x => x.isOpen); ok(open && open.coin === 'BTC' && !open.orphan);
+  eq(r.positions.map(p => [p.coin, p.szi, p.lev, p.venue]), [['BTC', 1, 5, 'arcus']]);
+  eq(r.trades.filter(x => x.coin === 'NVDA').length, 1, 'sub-account 1 has no activity now (404): its trades are still read from the cache');
+});
+await t('opening the app rebuilds the same Arcus trades from storage alone, no network', async () => {
+  const S = sandbox(arcusMock());
+  const live = await S.run(`loadArcusWallet({address:'arcus:${AR}'},false)`);
+  S.ctx.fetch = async () => { throw new Error('offline'); };
+  const boot = await S.run(`venueBootTrades({address:'arcus:${AR}'})`);
+  eq(boot.map(x => [x.id, +x.pnl.toFixed(6), +x.funding.toFixed(6), +x.fees.toFixed(6)]).sort(), live.trades.map(x => [x.id, +x.pnl.toFixed(6), +x.funding.toFixed(6), +x.fees.toFixed(6)]).sort());
+});
+await t('pasting an address finds it on Arcus; Hyperliquid stays unless it says it has never seen it', async () => {
+  const S = sandbox(arcusMock());
+  eq(await S.run(`walletIdsFor('${AR}')`), ['arcus:' + AR], 'Hyperliquid has never seen it, Arcus has it');
+  const other = '0x' + '12'.repeat(20);
+  eq(await S.run(`walletIdsFor('${other}')`), [other], 'not let in on Arcus (403): Hyperliquid, as before');
+  eq(await S.run(`walletIdsFor('${other}',['arcus'])`), ['arcus:' + other]);
+  S.ctx.fetch = async (url, o) => new URL(url).host === 'api.arcus.xyz' ? { ok: false, status: 502, json: async () => { throw new Error('html'); } } : arcusMock()(url, o);
+  eq(await S.run(`walletIdsFor('${AR}')`), [AR], 'Arcus unreachable: Hyperliquid is kept');
+});
+await t('candles come from Arcus for Arcus trades, oldest first', async () => {
+  const S = sandbox(arcusMock());
+  const c = await S.run(`venueFetchCandles('arcus','BTC','1h',${T0},${T0 + 2 * H})`);
+  eq(c.rows, [[T0, 105, 99, 104, 100], [T0 + H, 112, 103, 110, 104]]);
+  eq(S.run(`candleVenue({venue:'arcus'})`), 'arcus');
+});
+await t('Arcus wallet ids: venue, raw address, and cache validation', () => {
+  const S = sandbox();
+  eq(S.run(`[venueOfAddr('arcus:0xab'),venueRaw('arcus:0xab'),VENUE_NAMES.arcus]`), ['arcus', '0xab', 'Arcus']);
+  eq(S.run(`[validFillCache('arcus:${AR}',{v:2,fills:[],last:0}),validFillCache('arcus:0x12',{v:2,fills:[],last:0})]`), [true, false]);
 });
 
 /* ============================ Bybit / Binance through the relay ============================ */

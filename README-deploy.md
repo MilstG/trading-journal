@@ -441,7 +441,7 @@ Point `DATA_DIR` at the restored folder (or copy it onto a fresh volume) and sta
 
 ## Exchange APIs (Bybit, Binance)
 
-Hyperliquid and Lighter are read straight from the browser and need nothing here.
+Hyperliquid, Lighter and Arcus are read straight from the browser and need nothing here.
 Bybit and Binance don't accept calls from a web page, so the browser signs each
 request with the member's read-only key and posts it to this server's
 `POST /api/cex/relay`, which forwards it. The relay only forwards `GET`s to the
