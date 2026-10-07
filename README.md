@@ -678,9 +678,38 @@ marks the day as a rest day (`rest` on the day's journal entry) and counts it in
 A rest day earns no XP, on purpose: XP for not trading could be claimed every day with no effort, and
 the leagues rank on XP. (`app/features/offday.js`)
 
+**Your work list** (`#work`, from Today; `app/features/worklist.js`). Everything your trades say to fix,
+or keep doing, as one ranked list, so one habit no longer shows up on four cards with four dollar
+figures. Every source maps onto one key per problem (`slip:revenge` takes the revenge slip, the coach's
+tilt finding and the cool-down), and each item gets one figure in one unit: about how many dollars a
+month it moves over your last 90 days. A slip is measured against your own trades that had the same
+chance and didn't take it (`rfMySlips`), so it doesn't count losses the trade would have had anyway;
+the coach's findings count only where they carry an honest dollar gap (`usd` on the finding: the trades
+it names against your other trades); taker fees are the last 30 days' taker flow priced at maker rates.
+The other ways of counting it stay on the item's page with what makes each different. The rank is
+that figure × how sure (very likely 1, probably 0.7) × how much is in your hands (habits 1, fees 0.9,
+what and when you trade 0.8). Early signals aren't ranked; they wait under **Watching**.
+
+Each item goes **Work on this** → checking → fixed. A slip uses its plug (three clean trading weeks fix
+it, a plugged slip that comes back is back on the list), so a plug started from Progress shows here too;
+anything else adopts the matching library habit when there is one. Starting a second item asks first:
+one at a time tends to stick. The check on a slip compares your chances to slip in the 90 days before
+you started with the ones since: how often you took them (the rules' two-proportion test) and how those
+trades went in typical trades, with a seeded 95% range, with a verdict after 20 chances or three weeks.
+For the rest, the habit's kept days and the figure now against when you started, and you mark it fixed;
+it comes back if it grows back to half its size. **Not now** puts an item away for two weeks, or until
+it grows by half. Your choices are kept in `settings.pzWork` (synced); "New this week" is per device.
+Today's card shows what you're working on and the one thing up next. While the list is on, **Your
+costliest slip** and **Your rules, replayed** step off Today (their sections stay on What the data says),
+Finding of the week skips what the list covers, the first look reads its top item, and the coach line
+says what to do today about what you're working on (or the top item: only its action while the card is
+on Today, so the two don't repeat each other).
+The owner can roll it out to a share of members (`work` in `rollouts.js`); members left out see the old
+cards.
+
 **Finding of the week.** One thing your own trades show, on Today all week: the strongest of the
 coach's findings that it calls probably or very likely real (edges and leaks), not shown in the six
-weeks before. With nothing new that's real there's no card; **Got it** puts it away until next week,
+weeks before. With the work list on, it skips the findings the list already ranks. With nothing new that's real there's no card; **Got it** puts it away until next week,
 and Monday's morning reminder says a new one is in. (`app/features/finding.js`)
 
 **Recap.** `#recap` is your month or your year in process: Discipline against the period before,
@@ -692,8 +721,8 @@ under Report cards. (`app/features/recap.js`)
 
 **First look.** Someone new (a journal with nothing in it yet, decided once per device) gets a card
 on Today for two weeks or until **Got it**: their last 30 trading days already scored, the slip that
-cost them most with **Plug this leak**, the XP their history already earned, and the next step.
-(`app/features/first-look.js`)
+cost them most with **Plug this leak** (with the work list on, the list's top item and its monthly
+figure instead), the XP their history already earned, and the next step. (`app/features/first-look.js`)
 
 **Process goals.** Up to three at a time, on Progress: a month's Discipline
 average (70/80/90, at least five trading days), weeks without one slip (2/4/8;

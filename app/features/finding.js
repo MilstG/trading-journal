@@ -28,7 +28,8 @@ function findSave(v){ try{ localStorage.setItem(FIND_KEY,JSON.stringify(v)); }ca
 function findCardHtml(D){
   const week=isoWeekOfKey(D.todayK), st=findLoad()||{};
   if(st.gotIt===week)return '';
-  const r=findPick(D.ctx&&D.ctx.findings,st,week); if(!r.pick)return '';
+  // what the work list already ranks isn't a surprise twice (features/worklist.js)
+  const r=findPick(((D.ctx&&D.ctx.findings)||[]).filter(f=>!(typeof wlCovers==='function'&&wlCovers(f))),st,week); if(!r.pick)return '';
   if(JSON.stringify(r.st)!==JSON.stringify(st))findSave(r.st);
   const f=r.pick;
   return `<section class="pz-card pz-kv" aria-labelledby="fdT"><div class="pz-kvrow"><b id="fdT" class="pz-kvh">Finding of the week</b><span class="pz-tag ${esc(f.tone)}">${esc(TONE_TAG[f.tone]||'Note')}</span></div>

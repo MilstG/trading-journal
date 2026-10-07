@@ -70,7 +70,7 @@ function pzProgressHtml(D){
   // leaks and plugs
   // the four costliest, plus any leak being plugged right now (a working plug costs little, so it would drop off the list with its Stop button)
   const leakAll=pzLeakMap(g,30), leaks=leakAll.slice(0,4).concat(leakAll.slice(4).filter(x=>x.plug&&!x.plug.done)), plugs=pzPlugs().filter(p=>!p.dropped);
-  const leakHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your leaks · 30 days</b><span class="pz-sub" style="font-size:12px">vs the 30 before</span></div>
+  const leakHtml=`<section class="pz-card pz-kv"><div class="pz-kvrow"><b class="pz-kvh">Your leaks · 30 days</b><span class="pz-sub" style="font-size:12px">vs the 30 before</span></div>${typeof wlActive==='function'&&wlActive()?`<a class="pz-link" href="#work" style="min-height:0">Ranked with everything else in your work list${pzI('chev',14)}</a>`:''}
     ${leaks.length?leaks.map(x=>{ const tr=x.n<x.prevN?'down':x.n>x.prevN?'up':'flat', p=x.plug;
       return `<div class="pz-leak"><div class="pz-kvrow"><b style="font-size:14px">${esc(x.label)}</b><b style="color:${x.cost<0?PZ_COL.low:'var(--pz-soft)'};white-space:nowrap" title="${esc(signedPlain(x.cost))}">${x.n?esc(pzSigned(x.cost)):'—'}</b></div>
         ${(pr=>pr&&pr.own?`<span style="font-size:13px">${esc(rfPriceLine(pr))}</span>`:'')(typeof rfPriceOf==='function'?rfPriceOf(D,x.slip):null)}

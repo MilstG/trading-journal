@@ -110,7 +110,9 @@ try {
     // screens): about 9 KB raw / 3 KB gzipped (2199 / 1931 raw, 744 / 656 gzipped).
     // Lighter's older history from its explorer, read behind the load (venues.js, engine.js: ltxNormLog, ltDeriveMixed),
     // on both screens: about 13 KB raw / 4 KB gzipped (2213 / 1944 raw, 748 / 660 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2216, 749],
+    // Oct 2026: the work list's hooks on both screens (pzRangeFindings over every market, the findings' dollar gaps, the
+    // coach line reading the list): about 1 KB raw (2217 / 750).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2217, 750],
     // Your luck measured, the crowd at your entry and your rules replayed (luck.js, crowd.js, rule-replay.js, Daruma
     // only, ~13 KB raw / 6 KB gzipped compressed apart): 1886 / 639.
     // The evaluation (evals.js, Daruma only, ~11 KB raw / 4 KB gzipped) and its Compete tile: 1898 / 644.
@@ -121,7 +123,9 @@ try {
     // Staged rollouts (pzRolledOff), first look's peer line and leak price, the focus-habit check: about 2 KB raw (1920 / 653).
     // Arcus as a fifth venue (see the journal's line): 1931 / 656.
     // Lighter's explorer backfill (see the journal's line): 1944 / 660.
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1947, 661],
+    // Your work list (worklist.js, Daruma only, ~30 KB raw / 11 KB gzipped, a third of it comments) and its hooks in the
+    // first look, the leaks, the coach line and the cards it stands in for: 1981 / 674.
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1981, 674],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);

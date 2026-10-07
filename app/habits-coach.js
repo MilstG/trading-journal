@@ -1053,20 +1053,21 @@ function buildFindings(closed, s, ext){
     add({id:'sample',tone:'info',title:`Early days: ${N} trades`,
       body:'With this few trades, most patterns are hints, not facts. Some will fade as more trades come in.',
       action:'Treat every pattern here as a hypothesis until you’re past 100 trades.',evidence:`${N} closed trades in this view`,conf:'strong',impact:0});
-  // edge-breakdown extremes
-  const scan=ext.scan;
+  // edge-breakdown extremes. usd on a finding (the work list ranks by it, features/worklist.js): what the trades it
+  // names made against your other trades, over the trades given, in dollars (negative = cost); only where that's honest
+  const scan=ext.scan, totNet=closed.reduce((a,t)=>a+t.net,0), gap=(x,n)=>N>n?(x-(totNet-x*n)/(N-n))*n:null;
   if(scan&&scan.weak&&scan.weak[0]){ const w=scan.weak[0];
     add({id:'worst-bucket',tone:'leak',title:bucketPhrase(w.dim,w.key).replace(/^./,c=>c.toUpperCase())+' lose money',
       body:`${w.n} trades averaging ${signedPlain(w.expectancy)} each — ${signedPlain(w.net)} in total.`,
       action:'Stop taking these, or redefine what makes one worth taking.',
       evidence:`${edgeLabel(w.dim)} = ${w.key} · n=${w.n} · expectancy ${fmtUsd(w.expectancy)} · p=${w.p!=null?w.p.toFixed(3):'—'}${w.sig?' · survives false-discovery correction':''}`,
-      conf:w.sig?confLevel(w.p):'early',n:w.n,impact:Math.abs(w.net),habit:bucketHabit(w.dim,w.key)}); }
+      conf:w.sig?confLevel(w.p):'early',n:w.n,impact:Math.abs(w.net),habit:bucketHabit(w.dim,w.key),dim:w.dim,bkey:String(w.key),usd:gap(w.expectancy,w.n)}); }
   if(scan&&scan.strong&&scan.strong[0]){ const b=scan.strong[0];
     add({id:'best-bucket',tone:'edge',title:bucketPhrase(b.dim,b.key).replace(/^./,c=>c.toUpperCase())+' are your best',
       body:`${b.n} trades averaging ${signedPlain(b.expectancy)} each — ${signedPlain(b.net)} in total.`,
       action:'Give these more of your attention. Wait for them instead of forcing other trades.',
       evidence:`${edgeLabel(b.dim)} = ${b.key} · n=${b.n} · expectancy ${fmtUsd(b.expectancy)} · p=${b.p!=null?b.p.toFixed(3):'—'}${b.sig?' · survives false-discovery correction':''}`,
-      conf:b.sig?confLevel(b.p):'early',n:b.n,impact:Math.abs(b.net)*0.6}); }
+      conf:b.sig?confLevel(b.p):'early',n:b.n,impact:Math.abs(b.net)*0.6,dim:b.dim,bkey:String(b.key),usd:gap(b.expectancy,b.n)}); }
   // behavior
   if(B.tilt){ const others=closed.filter(t=>!B.afterLoss.includes(t)).map(t=>t.net);
     const p=welchP(B.afterLoss.map(t=>t.net),others);
@@ -1075,7 +1076,7 @@ function buildFindings(closed, s, ext){
       action:'After a losing trade, wait an hour before the next entry.',
       evidence:`${B.afterLoss.length} trades within 60 min of a loss · ${fmtUsd(B.afterLossExp)}/trade vs ${fmtUsd(s.expectancy)} overall${p!=null?' · Welch p='+p.toFixed(3):''}`,
       conf:confLevel(p),n:B.afterLoss.length,impact:Math.max(0,(s.expectancy-B.afterLossExp)*B.afterLoss.length),
-      habit:{tpl:'cool-off'}}); }
+      habit:{tpl:'cool-off'},usd:others.length?(B.afterLossExp-_avg(others))*B.afterLoss.length:null}); }
   if(B.overtrading){ const days=B.hiDays.length;
     const cap=Math.max(1,Math.round(_avg(B.loDays.map(d=>d.n))+0.5));
     const hiN=B.hiDays.reduce((x,d)=>x+d.n,0);
@@ -1083,14 +1084,14 @@ function buildFindings(closed, s, ext){
       body:`On your ${days} busiest days you made ${signedPlain(B.hiExp)} per trade; on normal days ${signedPlain(B.loExp)}.`,
       action:`Cap yourself at about ${cap} trade${cap===1?'':'s'} a day.`,
       evidence:`${days} high-activity days (${hiN} trades) · ${fmtUsd(B.hiExp)}/trade vs ${fmtUsd(B.loExp)}`,
-      conf:days>=8?'likely':'early',n:hiN,impact:Math.max(0,(B.loExp-B.hiExp)*hiN),
+      conf:days>=8?'likely':'early',n:hiN,impact:Math.max(0,(B.loExp-B.hiExp)*hiN),usd:(B.hiExp-B.loExp)*hiN,
       habit:{tpl:'day-cap',cap,when:`I’ve taken ${cap} trade${cap===1?'':'s'} today`,then:'I’m done for the day'}}); }
   if(B.oversizing&&B.big&&B.small){
     add({id:'oversizing',tone:'leak',title:'Your biggest trades are your worst',
       body:`Your largest positions average ${signedPlain(B.bigExp)} a trade; your smallest average ${signedPlain(B.smallExp)}.`,
       action:'Keep new trades at your usual size until this flips.',
       evidence:`Largest-quartile notional: ${B.big.n} trades at ${fmtUsd(B.bigExp)} · smallest quartile: ${B.small.n} at ${fmtUsd(B.smallExp)}`,
-      conf:B.big.n>=20?'likely':'early',n:B.big.n,impact:Math.max(0,(B.smallExp-B.bigExp)*B.big.n),habit:{tpl:'size-cap'}}); }
+      conf:B.big.n>=20?'likely':'early',n:B.big.n,impact:Math.max(0,(B.smallExp-B.bigExp)*B.big.n),habit:{tpl:'size-cap'},usd:(B.bigExp-B.smallExp)*B.big.n}); }
   if(B.disposition){
     add({id:'disposition',tone:'leak',title:'You hold losers longer than winners',
       body:`Losing trades stay open ${(B.avgLHold/B.avgWHold).toFixed(1)}× as long as winners (${fmtDur(B.avgLHold)} vs ${fmtDur(B.avgWHold)}). That’s cutting winners early and hoping on losers.`,
@@ -1105,7 +1106,7 @@ function buildFindings(closed, s, ext){
       body:`Trades you flagged as mistakes average ${usdPlain(B.mistakeCost)} worse than clean ones.${top?` The most common: “${top[0]}” (${top[1]}×).`:''}`,
       action:top?`Write one rule that prevents “${top[0]}”, and check it before every entry.`:'Pick the most common flag and write a rule against it.',
       evidence:`${B.flagged.length} flagged trades at ${fmtUsd(B.flagExp)} vs ${B.clean.length} clean at ${fmtUsd(B.cleanExp)}${p!=null?' · Welch p='+p.toFixed(3):''}`,
-      conf:confLevel(p),n:B.flagged.length,impact:B.mistakeCost*B.flagged.length}); }
+      conf:confLevel(p),n:B.flagged.length,impact:B.mistakeCost*B.flagged.length,usd:-B.mistakeCost*B.flagged.length}); }
   if(B.costDragPct!=null&&B.costDragPct>0.25)
     add({id:'fees',tone:'leak',title:`Fees eat ${pc(B.costDragPct)} of what you make`,
       body:`You paid ${usdPlain(s.fees)} in fees against ${usdPlain(B.grossReal)} of gross profit.`,

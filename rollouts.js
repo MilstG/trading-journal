@@ -18,7 +18,7 @@ const DAY = 86400000;
 // what can be rolled out: the feature ids the app registers with pzFeature (app/features/*.js)
 const FEATURES = { priced: 'Your costliest slip (Today card)', luck: 'Your week, measured (Today card)', rules: 'Your rules, replayed (Today card)',
   drills: 'Replay drills', eval: 'Evaluation', finding: 'Finding of the week', firstlook: 'Your first look', offday: 'Days off the screen',
-  recap: 'Monthly recap', age: 'Trader Age', playbooks: 'Playbooks', invite: 'Invite' };
+  recap: 'Monthly recap', age: 'Trader Age', playbooks: 'Playbooks', invite: 'Invite', work: 'Work list (Today card and screen)' };
 const keyOf = ms => new Date(ms).toISOString().slice(0, 10);
 const addDays = (k, n) => keyOf(Date.parse(k + 'T00:00:00Z') + n * DAY);
 

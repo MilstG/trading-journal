@@ -33,18 +33,25 @@ function rfWeightsKey(){ const w=rfWeights(); return w?JSON.stringify(w):''; }
 // and overtrading, your other trades). R is your typical trade (median absolute result). Over the last
 // `days` (180). Pure: closed trades and the game's behavior days in, {k: {n, chances, R, lo, hi, sure, usd, per100}} out.
 const RF_MIN=3;
+// which trades had the chance to slip each way, and which slipped, from the game's behavior days (also the
+// work list's check on a leak being plugged, features/worklist.js)
+function rfSlipSets(bdays){
+  const flag=new Map(), revT=new Set(), sizeT=new Set();
+  for(const b of bdays||[]){ if(!b)continue; for(const s of (b.slips||[]))flag.set(s.id,s.f||[]); for(const id of ((b.tests&&b.tests.revenge)||[]))revT.add(id); for(const id of ((b.tests&&b.tests.sizeUp)||[]))sizeT.add(id); }
+  const loss=n=>n<-1;
+  return {slipped:(t,k)=>(flag.get(t.id)||[]).includes(k),
+    chance:{revenge:t=>revT.has(t.id),sizeUp:t=>sizeT.has(t.id),addLoser:t=>typeof hasAdd==='function'&&hasAdd(t),heldLoser:t=>loss(t.net),afterTwo:()=>true,overtrade:()=>true}};
+}
 function rfMySlips(closed, bdays, o){
   o=Object.assign({days:180,now:Date.now(),iters:200},o||{});
-  const from=o.now-o.days*86400000, flag=new Map(), revT=new Set(), sizeT=new Set();
-  for(const b of bdays||[]){ if(!b)continue; for(const s of (b.slips||[]))flag.set(s.id,s.f||[]); for(const id of ((b.tests&&b.tests.revenge)||[]))revT.add(id); for(const id of ((b.tests&&b.tests.sizeUp)||[]))sizeT.add(id); }
+  const from=o.now-o.days*86400000, SS=rfSlipSets(bdays), chance=SS.chance;
   const tr=(closed||[]).filter(t=>t&&!t.isOpen&&t.closeTime&&t.openTime&&!t.partialHistory&&t.closeTime>=from);
   const nets=tr.map(t=>Math.abs(t.net)).filter(x=>x>0), u=nets.length?nfMedian(nets):0, out={};
   if(!(u>0)||tr.length<10)return {unit:u||0,n:tr.length,slips:out};
-  const loss=n=>n<-1, R=t=>Math.max(-20,Math.min(20,t.net/u)), mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
-  const chance={revenge:t=>revT.has(t.id),sizeUp:t=>sizeT.has(t.id),addLoser:t=>typeof hasAdd==='function'&&hasAdd(t),heldLoser:t=>loss(t.net),afterTwo:()=>true,overtrade:()=>true};
+  const R=t=>Math.max(-20,Math.min(20,t.net/u)), mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
   let seed=7; const rnd=()=>{ seed^=seed<<13; seed>>>=0; seed^=seed>>17; seed^=seed<<5; seed>>>=0; return seed/4294967296; };
   for(const k of Object.keys(chance)){
-    const C=tr.filter(chance[k]), S=C.filter(t=>(flag.get(t.id)||[]).includes(k)).map(R), K=C.filter(t=>!(flag.get(t.id)||[]).includes(k)).map(R);
+    const C=tr.filter(chance[k]), S=C.filter(t=>SS.slipped(t,k)).map(R), K=C.filter(t=>!SS.slipped(t,k)).map(R);
     if(S.length<RF_MIN||K.length<RF_MIN){ if(S.length)out[k]={n:S.length,chances:C.length,R:null}; continue; }
     const d=mean(S)-mean(K), bs=[];
     for(let i=0;i<o.iters;i++){ let a=0,b=0; for(let j=0;j<S.length;j++)a+=S[Math.floor(rnd()*S.length)]; for(let j=0;j<K.length;j++)b+=K[Math.floor(rnd()*K.length)]; bs.push(a/S.length-b/K.length); }
@@ -125,6 +132,7 @@ function rfScreenHtml(D){
 }
 // ---- on Today: the slip that costs you most, priced ----
 function rfCardHtml(D){
+  if(typeof wlActive==='function'&&wlActive())return ''; // the work list ranks your slips now (features/worklist.js)
   const r=rfPriced(D)[0]; if(!r||!r.own)return '';
   return `<section class="pz-card pz-kv" aria-labelledby="rfT"><div class="pz-kvrow"><b id="rfT" class="pz-kvh">Your costliest slip</b><span class="pz-tag leak">${r.n}× · 180 days</span></div>
     <b style="font-size:16px;line-height:1.3">${esc(r.label)}</b><p class="pz-sub" style="margin:0;font-size:13px">${esc(rfPriceLine(r))}</p>

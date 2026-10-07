@@ -33,12 +33,17 @@ function flCardHtml(D){
   const s=flSummary(D.g.days,30); if(!s)return '';
   const plugging=s.leak&&typeof pzPlugs==='function'&&pzPlugs().some(p=>p.slip===s.leak.slip&&!p.dropped&&!p.done);
   const col=PZ_COL[pzBand(s.discipline)], lv=D.g.level, xp=Math.round((D.g.xp&&D.g.xp.total)||0);
+  // with the work list on, its top item and figure (features/worklist.js), so day one says what the list says
+  let wl=null; if(typeof wlTop==='function')try{ wl=wlTop(D); }catch(e){}
   return `<section class="pz-card pz-kv" aria-labelledby="flT"><div class="pz-kvrow"><b id="flT" class="pz-kvh">Your first look</b><button type="button" class="pz-linkbtn" data-fl="done">Got it</button></div>
     <p class="pz-sub" style="margin:0;font-size:13px">Your last ${s.days} trading day${s.days===1?'':'s'}, already scored on process from your fills. Nothing to fill in.</p>
     <div class="pz-grid3"><div class="pz-tile"><span class="pz-n" style="color:${col}">${s.discipline}</span><span class="pz-t">Discipline, on average</span></div>
       <div class="pz-tile"><span class="pz-n">${s.clean}<small>/${s.days}</small></span><span class="pz-t">clean days (70+)</span></div>
       <div class="pz-tile"><span class="pz-n" style="color:${PZ_COL.xp}">${lv.level}</span><span class="pz-t">level · ${xp.toLocaleString('en-US')} XP already</span></div></div>
-    ${s.leak?`<div class="pz-kv" style="gap:6px;padding-top:10px;border-top:1px solid var(--pz-line)"><span class="pz-lbl" style="color:${PZ_COL.low}">The habit that cost you most</span>
+    ${wl?`<div class="pz-kv" style="gap:6px;padding-top:10px;border-top:1px solid var(--pz-line)"><span class="pz-lbl" style="color:${PZ_COL.low}">What costs you most</span>
+      <b style="font-size:15px">${esc(wl.title)}</b><span class="pz-sub" style="font-size:13px">About ${esc(usdPlain(wl.month))} a month, from your last 90 days.</span>
+      <a class="pz-cta pz-sm" href="#work/${esc(encodeURIComponent(wl.key))}" style="align-self:flex-start;width:auto;padding:0 16px;min-height:44px;display:inline-flex;align-items:center;text-decoration:none">See what to do</a></div>`
+    :s.leak?`<div class="pz-kv" style="gap:6px;padding-top:10px;border-top:1px solid var(--pz-line)"><span class="pz-lbl" style="color:${PZ_COL.low}">The habit that cost you most</span>
       <b style="font-size:15px">${esc(PZ_BEH[s.leak.slip])}</b><span class="pz-sub" style="font-size:13px">${s.leak.n} time${s.leak.n===1?'':'s'}, about ${esc(usdPlain(s.leak.cost))} on those trades.</span>
       ${(pr=>pr&&pr.own?`<span style="font-size:13px">${esc(rfPriceLine(pr))}</span>`:'')(typeof rfPriceOf==='function'?rfPriceOf(D,s.leak.slip):null)}
       ${plugging?'<span class="pz-fine">You’re plugging it: three clean trading weeks in a row and it’s done.</span>':`<button type="button" class="pz-cta pz-sm" data-pz-plug="${esc(s.leak.slip)}" style="align-self:flex-start;width:auto;padding:0 16px;min-height:44px">Plug this leak</button>`}</div>`

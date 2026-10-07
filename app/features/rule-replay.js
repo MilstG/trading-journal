@@ -51,6 +51,7 @@ function rrSectionHtml(D){
 }
 // on Today: only when keeping your rules would have been worth it
 function rrCardHtml(D){
+  if(typeof wlActive==='function'&&wlActive())return ''; // the work list carries this (features/worklist.js); the section on #data stays
   const x=rrOf(D), r=x&&!x.few&&x.rules; if(!r||!(r.cut<0)||Math.abs(r.cut)<Math.max(1,Math.abs(x.net)*0.05))return '';
   return `<section class="pz-card pz-kv" aria-labelledby="rrC"><div class="pz-kvrow"><b id="rrC" class="pz-kvh">Your rules, replayed</b><span class="pz-tag leak">${x.days} days</span></div>
     <b style="font-size:16px;line-height:1.3">Keeping your own rules: ${esc(signedPlain(r.net))} instead of ${esc(signedPlain(x.net))}.</b>
