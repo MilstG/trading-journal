@@ -15,7 +15,7 @@ const server = require('../server.js');
 const htmlPath = new URL('../ledger.html', import.meta.url).pathname;
 const { readAppSource } = require('../app-source.js');
 const { evalModule } = makeExtractor(readAppSource(htmlPath));
-const { rfMySlips } = await evalModule(['rfMySlips', 'nfMedian', 'hasAdd'], ['rfMySlips'], 'const RF_MIN=3;');
+const { rfMySlips } = await evalModule(['rfMySlips', 'rfSlipSets', 'nfMedian', 'hasAdd'], ['rfMySlips'], 'const RF_MIN=3;');
 const HOUR = 3600000, DAY = 86400000;
 const T0 = Date.parse('2026-08-01T00:00:00Z');
 

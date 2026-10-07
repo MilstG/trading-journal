@@ -127,6 +127,9 @@ function pzCoachLine(D){
   // a clean day so far gets said so, instead of a lesson from older trades that reads like it's about today
   if(c.length&&day&&day.behavior&&!(day.behavior.slips||[]).length&&risk.net>=0&&!pzRulesBroken(D))return 'Clean so far: '+c.length+' closed, no slips'+(risk.limit>0?', inside your loss limit':'')+'. Keep the same routine for the next one — or call it a day.';
   // the slip that costs you most against your own trades in the same spot (features/research.js), when it's sure
+  // the top of your work list when it's on (features/worklist.js): the same item and figure as its card
+  let wl=null; if(typeof wlCoachLine==='function')try{ wl=wlCoachLine(D); }catch(e){}
+  if(wl)return pzPlain(wl);
   let pr=null; if(typeof rfPriced==='function')try{ pr=rfPriced(D).find(r=>r.own&&r.sure)||null; }catch(e){}
   if(pr)return 'Your costliest slip: '+pr.label.toLowerCase()+'. '+rfPriceLine(pr)+' Plugging it is in Progress → Your leaks.';
   const fd=(D.ctx.findings||[]).find(x=>x.tone==='leak'||x.tone==='caution')||(D.ctx.findings||[])[0];
@@ -939,20 +942,23 @@ function pzTrendsHtml(D){
 // The Diagnostic's findings for one range (all time reuses the coach's set). Same engine, only the
 // range's trades; memoized per range so switching back and forth is instant.
 let _pzRF={key:null,v:null};
-function pzRangeFindings(ctx, fromMs){
-  if(!fromMs&&pzMk()==='all')return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
-  const closed=ctx.closed.filter(t=>t.closeTime>=fromMs&&pzInMk(t)), key=fromMs+'|'+pzMk()+'|'+closed.length+'|'+_coachMemoAll.key+'|'+_jrev;
-  if(_pzRF.key===key)return _pzRF.v;
+// all: every market, whatever the Stats screen's market filter (the work list, features/worklist.js); memoized apart.
+let _pzRFa={key:null,v:null};
+function pzRangeFindings(ctx, fromMs, all){
+  if(!fromMs&&(all||pzMk()==='all'))return {findings:ctx.findings||[],n:ctx.closed.length,few:false};
+  const inMk=t=>all||pzInMk(t), closed=ctx.closed.filter(t=>t.closeTime>=fromMs&&inMk(t)), key=fromMs+'|'+(all?'all':pzMk())+'|'+closed.length+'|'+_coachMemoAll.key+'|'+_jrev;
+  const M=all?_pzRFa:_pzRF;
+  if(M.key===key)return M.v;
   let v;
   if(closed.length<10)v={findings:[],n:closed.length,few:true};
   else { let findings=[];
-    try{ const mon=(ctx.money||closed).filter(t=>t.closeTime&&t.closeTime>=fromMs&&pzInMk(t)); // money rows in the range: the sums and the realized curve
+    try{ const mon=(ctx.money||closed).filter(t=>t.closeTime&&t.closeTime>=fromMs&&inMk(t)); // money rows in the range: the sums and the realized curve
       const s=computeStats(closed,mon), chron=[...closed].sort((a,b)=>a.closeTime-b.closeTime), nets=chron.map(t=>t.net);
       const chronM=[...mon].sort((a,b)=>a.closeTime-b.closeTime), netsM=chronM.map(t=>t.net);
       findings=buildFindings(closed,s,{scan:diagScan(closed),sig:behaviorSignals(closed,s,mon),money:mon,cdd:currentDD(netsM),uw:underwaterStats(chronM),skew:_skew(nets),acf1:_autocorr1(nets),esig:edgeSignificance(nets)}); }
     catch(e){ console.warn('range findings failed',e); }
     v={findings,n:closed.length,few:false}; }
-  _pzRF={key,v}; return v;
+  M.key=key; M.v=v; return v;
 }
 // ---- screens: in-depth stats (#deep) and how the scores work (#how) ----
 const pzMoney=v=>v==null||!isFinite(v)?'—':pzSigned(v);
