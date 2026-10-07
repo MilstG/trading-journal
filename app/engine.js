@@ -825,7 +825,7 @@ function spotFifoLots(fills, nameByCoin){
     b.n++; b.proceeds+=r.proceeds; b.basis+=r.basis; b.gain+=r.gain; }
   return {rows, open, byYear, unknownQty};
 }
-/* ---- other venues: Lighter, Bybit, Binance → Hyperliquid-shaped fills (pure) ---- */
+/* ---- other venues: Lighter, Arcus, Bybit, Binance → Hyperliquid-shaped fills (pure) ---- */
 // Every venue's fills are normalized to the fill shape the reconstruction already takes:
 // {coin, side:'B'|'A', px, sz, time, fee (USD, + = paid), feeToken, startPosition, closedPnl,
 // crossed (taker), tid, oid, liquidation?}. Coins are plain base symbols ("BTC") for USD(T)-margined
@@ -909,6 +909,24 @@ function ltFundingEstimate(fills, fundings){
       const usdc=(r.direction==='long'?-1:1)*pos*v;
       out.push({time:t,coin:c,usdc:+usdc.toFixed(8),est:true}); } }
   return out.sort((a,b)=>a.time-b.time);
+}
+// Arcus market ("BTC-USD", "NVDA-USD") → coin ("BTC", "NVDA"): every Arcus market is a USD perp
+const arCoin=name=>{ const s=String(name||'').toUpperCase(); return s.endsWith('-USD')&&s.length>4?s.slice(0,-4):s; };
+// Arcus fill (as /v1/fills returns it) → fill. Times are epoch microseconds. Arcus's closedPnl is
+// net of the fill's fee (an opening leg reads −fee), so the fee goes back in: closedPnl here is
+// gross, as Hyperliquid's is. On the liquidated leg of a forced close the fee is the liquidation
+// penalty and closedPnl is already net of the trading fee without it, so it's kept as it is — and
+// derived (left null) on liquidation rows from before Arcus filled it in ("0"). startPosition isn't
+// given: the loader walks it from the history (deriveFillPositions).
+function arNormFill(x, idx){
+  const px=parseFloat(x.price), sz=parseFloat(x.size), coin=arCoin(x.marketDisplayName); if(!(px>0)||!(sz>0)||!coin)return null;
+  const fee=parseFloat(x.fee)||0, cp=parseFloat(x.closedPnl), liq=x.liquidation&&x.liquidation.method;
+  const f={coin,side:x.side==='BUY'?'B':'A',px:String(px),sz:String(sz),time:Math.floor(+x.createdAt/1000),fee:String(fee),feeToken:'USDC',
+    crossed:x.role==='TAKER',tid:String(x.tradeId),oid:String(x.orderId||''),acct:+idx||0};
+  if(liq)f.liquidation={method:liq};
+  if(isFinite(cp))f.closedPnl=liq==='LIQUIDATION'?(cp!==0?String(cp):null):String(+(cp+fee).toFixed(9));
+  if(f.closedPnl==null){ delete f.closedPnl; f.cpd=1; } // derived from the history instead (and never cached)
+  return f;
 }
 // Exchange symbols ↔ coins. USDT-margined perps read as the base ("BTCUSDT" → "BTC"); other
 // settle coins keep a suffix so two contracts on one asset never merge ("BTCUSDC" → "BTC-USDC",

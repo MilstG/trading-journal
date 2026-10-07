@@ -117,7 +117,7 @@ function pzSocialStats(g, habits, J, withLessons, usd){
 // The server only gets a wallet address when a toggle needs it — Verify my discipline (fills),
 // % return or dollar P&L (portfolio), or Show wallet address; otherwise it never leaves the browser.
 // (the first Hyperliquid wallet: the server reads returns and fills from Hyperliquid only)
-function socWallet(){ return settings.wallets.find(w=>!/^(lighter|bybit|binance):/.test(String(w.address))); }
+function socWallet(){ return settings.wallets.find(w=>!/^(lighter|arcus|bybit|binance):/.test(String(w.address))); }
 function socAddressFor(share){ const w=socWallet(); return w&&share&&(share.verify||share.ret||share.usd||share.addr)?w.address:null; }
 // The IANA zone the app's day keys use, so the server scores the same calendar days.
 function pzClockZone(){ try{ return settings&&settings.tz==='utc'?'UTC':Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'; }catch(e){ return 'UTC'; } }
@@ -193,7 +193,7 @@ function socWasVisitor(){ try{ return !!localStorage.getItem(SOC_VISIT_STORE); }
 const SOC_SEEN_STORE='pz_wseen';
 function socWalletsSeen(){
   if(!socAvailable()||typeof settings==='undefined'||(typeof pzS!=='undefined'&&pzS.demo))return;
-  const addrs=[...new Set((settings.wallets||[]).map(w=>String(w.address).replace(/^lighter:/i,'').toLowerCase()).filter(a=>/^0x[0-9a-f]{40}$/.test(a)))].slice(0,20);
+  const addrs=[...new Set((settings.wallets||[]).map(w=>String(w.address).replace(/^(lighter|arcus):/i,'').toLowerCase()).filter(a=>/^0x[0-9a-f]{40}$/.test(a)))].slice(0,20);
   if(!addrs.length)return;
   const memo=new Date().toISOString().slice(0,10)+'|'+addrs.slice().sort().join(',');
   try{ if(localStorage.getItem(SOC_SEEN_STORE)===memo)return; }catch(e){}

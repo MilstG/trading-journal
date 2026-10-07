@@ -29,10 +29,10 @@ const Store = {
 };
 const J_KEY='hl_journal_v1', S_KEY='hl_settings_v3';
 let journal={}, settings={wallets:[],riskDefault:null};
-// "0x1234…abcd"; other venues read "Lighter 0x1234…abcd", "Bybit key 3f9a…"
-const walletShort=a=>{ a=String(a||''); const m=/^(lighter|bybit|binance):(.+)$/.exec(a);
+// "0x1234…abcd"; other venues read "Lighter 0x1234…abcd", "Arcus 0x1234…abcd", "Bybit key 3f9a…"
+const walletShort=a=>{ a=String(a||''); const m=/^(lighter|arcus|bybit|binance):(.+)$/.exec(a);
   if(!m)return a.slice(0,6)+'…'+a.slice(-4);
-  return m[1]==='lighter'?'Lighter '+m[2].slice(0,6)+'…'+m[2].slice(-4):(m[1]==='bybit'?'Bybit':'Binance')+' key '+m[2].slice(0,4)+'…'; };
+  return m[1]==='lighter'||m[1]==='arcus'?(m[1]==='lighter'?'Lighter ':'Arcus ')+m[2].slice(0,6)+'…'+m[2].slice(-4):(m[1]==='bybit'?'Bybit':'Binance')+' key '+m[2].slice(0,4)+'…'; };
 const labelFor=w=>w&&(w.label||walletShort(w.address))||'';
 
 /* ============================ linked data file (persistence) ============================ */
@@ -72,8 +72,8 @@ async function idbKeys(prefix){ try{ const db=await idb(); return new Promise((r
 // caches keyed by a plausible EVM address pass, so a malformed backup can't poison
 // IndexedDB or reconstruction.
 function validFillCache(addr,c){
-  // a Hyperliquid 0x address, a Lighter one ("lighter:0x…"), or an exchange key's id ("bybit:<12 hex>") — venues.js
-  if(typeof addr!=='string' || !/^(?:(?:lighter:)?0x[0-9a-fA-F]{40}|(?:bybit|binance):[0-9a-f]{12})$/.test(addr) || !c) return false;
+  // a Hyperliquid 0x address, a Lighter or Arcus one ("lighter:0x…", "arcus:0x…"), or an exchange key's id ("bybit:<12 hex>") — venues.js
+  if(typeof addr!=='string' || !/^(?:(?:lighter:|arcus:)?0x[0-9a-fA-F]{40}|(?:bybit|binance):[0-9a-f]{12})$/.test(addr) || !c) return false;
   if(c.v===2) return Array.isArray(c.fills) && typeof c.last==='number'
     && c.fills.every(f=>f&&typeof f.time==='number'&&typeof f.coin==='string');
   if(c.v===3) return typeof c.last==='number' && !!c.gz

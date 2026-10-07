@@ -1,17 +1,17 @@
-// Ledger app · part 2 of 15: other venues — Lighter (by wallet address, like Hyperliquid), Bybit and Binance (read-only API keys).
+// Ledger app · part 2 of 15: other venues — Lighter and Arcus (by wallet address, like Hyperliquid), Bybit and Binance (read-only API keys).
 // ledger.html loads the parts in order as classic scripts sharing one global scope. Code that
 // runs while a part loads (not inside a function called later) may only use names declared in
 // this part or an earlier one; the boot part runs last. See "Development and testing" in README.md.
 
 /* ============================ venues ============================ */
 // A wallet's venue is in its address: Hyperliquid wallets are plain 0x addresses (as always),
-// the others carry a prefix — "lighter:0x…", "bybit:<key id>", "binance:<key id>" — so every
+// the others carry a prefix — "lighter:0x…", "arcus:0x…", "bybit:<key id>", "binance:<key id>" — so every
 // per-wallet cache, filter and sync path keeps working unchanged and Hyperliquid-only code
 // (the server's refresh, wallet claims, verified P&L) simply skips them. Each venue's loader
-// returns fills in the Hyperliquid shape (engine.js: ltNormTrade, bybitNormExec, binanceNormTrade),
+// returns fills in the Hyperliquid shape (engine.js: ltNormTrade, arNormFill, bybitNormExec, binanceNormTrade),
 // so reconstruction, stats, journal, Pulse and the tax export see one kind of trade.
-const VENUE_NAMES={hyperliquid:'Hyperliquid',lighter:'Lighter',bybit:'Bybit',binance:'Binance'};
-const VENUE_RE=/^(lighter|bybit|binance):(.+)$/;
+const VENUE_NAMES={hyperliquid:'Hyperliquid',lighter:'Lighter',arcus:'Arcus',bybit:'Bybit',binance:'Binance'};
+const VENUE_RE=/^(lighter|arcus|bybit|binance):(.+)$/;
 function venueOfAddr(a){ const m=VENUE_RE.exec(String(a||'')); return m?m[1]:'hyperliquid'; }
 function venueOf(w){ return venueOfAddr(w&&w.address); }
 function venueRaw(a){ const m=VENUE_RE.exec(String(a||'')); return m?m[2]:String(a||''); }
@@ -145,6 +145,108 @@ async function ltCandles(coin, itvName, a, b){
   for(let s=a;s<b;s+=ms*500){ const j=await ltGet('/api/v1/candles?market_id='+id+'&resolution='+itvName+'&start_timestamp='+Math.floor(s/1000)+'&end_timestamp='+Math.floor(Math.min(b,s+ms*500)/1000)+'&count_back=500');
     for(const k of j.c||[])rows.push([+k.t,+k.h,+k.l,+k.c,+k.o]); }
   return {rows,coveredTo:b}; }
+
+/* ---------------- Arcus: public by wallet address ---------------- */
+// Arcus (perps on Robinhood Chain) serves an address's fills, funding payments, positions and
+// equity with no key, and allows cross-origin calls. Each wallet has up to ten sub-accounts
+// (accountIndex 0-9), each its own position stream. Times are epoch microseconds throughout.
+const AR_API='https://api.arcus.xyz', AR_PAGE=1000;
+// Arcus weighs each request against a per-IP budget of 1,500 a minute, refilled at 25 a second
+// (fills and funding pages cost 20, account reads 2): a local bucket paces calls under it, and a
+// 429 waits it out. One queue, so two wallets loading side by side share the budget.
+let _arGate=Promise.resolve(), _arTok=1200, _arAt=0;
+function arGet(path, weight){ const w=weight||20, p=_arGate.then(async()=>{
+    const now=Date.now(); _arTok=Math.min(1200,_arTok+(_arAt?(now-_arAt)*0.025:0)); _arAt=now;
+    if(_arTok>=w)_arTok-=w; else { await sleep(Math.ceil((w-_arTok)/0.025)); _arTok=0; _arAt=Date.now(); } // the wait refilled exactly this request's weight
+    for(let i=0;i<5;i++){ let r;
+      try{ r=await fetch(AR_API+path); }catch(e){ if(i===4)throw new Error('Network error reaching Arcus'); await sleep(900*(i+1)); continue; }
+      if(r.status===429||r.status>=500){ _arTok=0; await sleep(2500*(i+1)); continue; }
+      let j=null; try{ j=await r.json(); }catch(e){}
+      if(r.ok&&j)return j;
+      const e=new Error((j&&j.error)||('Arcus HTTP '+r.status)); e.status=r.status; throw e; }
+    throw new Error('Arcus is busy — try again in a minute'); });
+  _arGate=p.catch(()=>{}); return p; }
+// the sub-accounts with activity: /v1/account answers 404 ("no activity yet") for an empty one,
+// 403 for an address Arcus has never let in. Each answer carries the positions and equity too.
+async function arAccounts(addr){
+  const out=[];
+  for(let i=0;i<10;i++){ try{ out.push({idx:i,a:await arGet('/v1/account?address='+encodeURIComponent(addr)+'&accountIndex='+i,2)}); }
+    catch(e){ if(e.status!==404&&e.status!==403)throw e; if(e.status===403)break; } }
+  return out; }
+// One kind of history (fills or funding) for one sub-account, newest first, page by page: each gap
+// {since, to} (µs, to null = now) is read from `to` down to `since`, the next page ending at the
+// oldest row of the last (pages overlap: rows are deduplicated by the caller). `budget` pages per
+// load; whatever is left is handed back as gaps, so the next load carries on where this one stopped.
+async function arPull(path, field, addr, idx, gaps, budget, timeOf){
+  const rows=[], left=[];
+  for(const g of gaps){ let to=g.to;
+    for(;;){ if(budget<=0){ left.push({since:g.since,to}); break; }
+      const j=await arGet(path+'?address='+encodeURIComponent(addr)+'&accountIndex='+idx+'&limit='+AR_PAGE+'&from='+Math.max(1e14,g.since||0)+(to!=null?'&to='+to:''));
+      budget--; const R=(j&&j[field])||[]; rows.push(...R);
+      if(R.length<AR_PAGE)break;
+      let oldest=Infinity; for(const x of R){ const t=+timeOf(x); if(t<oldest)oldest=t; }
+      if(!isFinite(oldest))break;
+      to=to!=null&&oldest>=to?to-1:oldest; // a whole page inside one microsecond: step past it
+      if(g.since&&to<g.since)break; } }
+  return {rows,gaps:left}; }
+// the newest time among the rows that pass (a loop: a spread of a big history overflows the stack)
+const arLatest=(rows,pass)=>{ let t=0; for(const x of rows)if(x.time>t&&pass(x))t=x.time; return t; };
+const AR_FILL_PAGES=60, AR_FUND_PAGES=40; // per sub-account per load: 60,000 fills, 40,000 funding rows
+// the main account (0) is the plain wallet id and the others are "#<index>" streams, so a trade's id
+// (and the notes kept on it) never changes when a second sub-account starts trading
+const arGroups=(fills,idxs)=>idxs.map(i=>[i?String(i):'',fills.filter(f=>+f.acct===i)]);
+const arFrows=rows=>rows.map(r=>({time:r.time,coin:r.coin,usdc:r.usdc,id:r.id,stream:r.acct?String(r.acct):''}));
+// startPosition per sub-account, walked from the fills; positions older than the history Arcus
+// has served so far (a long first load still carrying on) are seeded from today's
+function arDerive(fills, idxs, seed){ for(const i of idxs)deriveFillPositions(fills.filter(f=>+f.acct===i),(seed||{})[i]||{}); }
+async function loadArcusWallet(w, fresh){
+  const addr=venueRaw(w.address).toLowerCase();
+  const accts=await arAccounts(addr);
+  const key='flc:'+w.address, cache=fresh?null:await venueCache(key);
+  const idxs=[...new Set([...accts.map(a=>a.idx),...((cache&&cache.fills)||[]).map(f=>+f.acct)])].sort((a,b)=>a-b);
+  if(!idxs.length)throw new Error('No Arcus account for this address');
+  let fills=cache?cache.fills.slice():[], added=0;
+  const more=JSON.parse(JSON.stringify((cache&&cache.more)||{})), moreWas=JSON.stringify(more);
+  for(const idx of idxs){
+    const since=cache?arLatest(cache.fills,f=>+f.acct===idx)*1000:0;
+    const r=await arPull('/v1/fills','fills',addr,idx,[{since,to:null},...(more[idx]||[])],AR_FILL_PAGES,x=>x.createdAt);
+    const m=mergeFills(fills,r.rows.map(x=>arNormFill(x,idx)).filter(Boolean),f=>f.acct+'|'+f.tid); fills=m.fills; added+=m.added;
+    if(r.gaps.length)more[idx]=r.gaps; else delete more[idx]; }
+  // funding payments, as Arcus booked them (+ received, − paid), cached and topped up the same way
+  const fkey='fnd:'+w.address; let fc=null; try{ fc=fresh?null:await idbGet(fkey); }catch(e){}
+  if(!fc||fc.v!==1||!Array.isArray(fc.rows))fc={v:1,rows:[],more:{}};
+  let frowsAll=fc.rows.slice(); const fmore=JSON.parse(JSON.stringify(fc.more||{}));
+  try{ for(const idx of idxs){ if(!fills.some(f=>+f.acct===idx))continue;
+      const since=arLatest(frowsAll,r=>r.acct===idx)*1000;
+      const r=await arPull('/v1/funding','fundingPayments',addr,idx,[{since,to:null},...(fmore[idx]||[])],AR_FUND_PAGES,x=>x.time);
+      const seen=new Set(frowsAll.map(x=>x.id));
+      for(const x of r.rows){ const v=parseFloat(x.payment); if(!v)continue; const id=idx+'|'+x.marketId+'|'+x.time; if(seen.has(id))continue; seen.add(id);
+        frowsAll.push({time:Math.floor(+x.time/1000),coin:arCoin(x.marketDisplayName),usdc:v,id,acct:idx}); }
+      if(r.gaps.length)fmore[idx]=r.gaps; else delete fmore[idx]; }
+    frowsAll.sort((a,b)=>a.time-b.time); try{ await idbSet(fkey,{v:1,rows:frowsAll,more:fmore}); }catch(e){} }
+  catch(e){ if(typeof _fetchHealth!=='undefined'&&_fetchHealth)_fetchHealth.funding=true; }
+  // positions and equity, live (from the sub-account reads above)
+  const positions=[], nowPos={}; let accountValue=0;
+  for(const {idx,a} of accts){ accountValue+=parseFloat(a.equity)||0;
+    for(const p of Object.values(a.positions||{})){ const sz=parseFloat(p.size); if(!sz)continue; const coin=arCoin(p.marketDisplayName);
+      (nowPos[idx]=nowPos[idx]||{})[coin]=(nowPos[idx][coin]||0)+sz;
+      positions.push({coin,dex:'',szi:sz,entryPx:parseFloat(p.averageEntryPrice),uPnl:parseFloat(p.unrealizedPnl)||0,roe:null,liq:null,
+        lev:parseFloat(p.leverage)||null,value:Math.abs(parseFloat(p.positionValueNotional)||0),wallet:{address:w.address,label:w.label},venue:'arcus'}); } }
+  // with the whole history in, every position starts flat; while a long one is still loading,
+  // the fills that are in start from today's position minus their net
+  const seed={}; for(const i of idxs)if(more[i])seed[i]=initialPositions(fills.filter(f=>+f.acct===i),nowPos[i]||{});
+  arDerive(fills,idxs,seed);
+  // saved without what was derived: startPosition, and a closedPnl Arcus didn't give (cpd)
+  if(!cache||added||JSON.stringify(more)!==moreWas)await venueSave(key,fills.map(f=>{ if(!f.cpd)return f; const c={...f}; delete c.closedPnl; return c; }),Object.keys(more).length?{more,seed}:null,['startPosition']);
+  const {perp,spot}=await reconstructStreams(arGroups(fills,idxs),arFrows(frowsAll),w,'arcus');
+  if(accts.length)markOrphans(perp,positions);
+  return venueResult({added,cached:!!cache,nFills:fills.length,trades:perp.concat(spot),positions,accountValue:accts.length?accountValue:null,
+    truncNote:Object.keys(more).length?labelFor(w)+' (very long history — the next load continues)':null}); }
+async function arCandles(coin, itvName, a, b){
+  const ms={'1m':60e3,'5m':300e3,'15m':900e3,'1h':3600e3,'4h':14400e3,'1d':86400e3}[itvName]||3600e3, tf={'1m':'1m','5m':'5m','15m':'15m','1h':'1h','4h':'4h','1d':'1d'}[itvName]||'1h', rows=[];
+  for(let s=a;s<b;s+=ms*1000){ const j=await arGet('/v1/candles?market='+encodeURIComponent(coin+'-USD')+'&timeframe='+tf+'&from='+Math.floor(s*1000)+'&to='+Math.floor(Math.min(b,s+ms*1000)*1000));
+    for(const k of j.candles||[])rows.push([Math.floor(+k.openTime/1000),+k.high,+k.low,+k.close,+k.open]); }
+  return {rows:rows.sort((x,y)=>x[0]-y[0]),coveredTo:b}; }
 
 /* ---------------- Bybit and Binance: read-only API keys, signed here, relayed by the server ---------------- */
 // The secret never leaves this browser: each request is signed here (WebCrypto HMAC-SHA256) and
@@ -333,12 +435,13 @@ function candleVenue(t){ return t&&t.venue&&t.venue!=='hyperliquid'?t.venue:''; 
 async function venueFetchCandles(venue, coin, itvName, a, b){
   if(typeof isDemoData==='function'&&isDemoData())return demoCandles(coin,itvName,a,b); // sample mode: never the exchange
   if(venue==='lighter')return ltCandles(coin,itvName,a,b);
+  if(venue==='arcus')return arCandles(coin,itvName,a,b);
   if(isCexVenue(venue))return cexCandles(venue,coin,itvName,a,b);
   return fetchCandles(coin,itvName,a,b); }
 
 /* ---------------- loading, and opening from this device's saved copy ---------------- */
 function loadVenueWallet(w, fresh){ const v=venueOf(w);
-  return v==='lighter'?loadLighterWallet(w,fresh):v==='bybit'?loadBybitWallet(w,fresh):loadBinanceWallet(w,fresh); }
+  return v==='lighter'?loadLighterWallet(w,fresh):v==='arcus'?loadArcusWallet(w,fresh):v==='bybit'?loadBybitWallet(w,fresh):loadBinanceWallet(w,fresh); }
 // trades rebuilt from the saved fills and funding alone — no network — so the app opens at once
 // (bootFromCache); null when this device has nothing saved for the wallet yet
 async function venueBootTrades(w){
@@ -350,34 +453,39 @@ async function venueBootTrades(w){
     const r=await reconstructStreams(ltGroups(fills,idxs),frows,w,'lighter'); return r.perp.concat(r.spot); }
   let fd=null; try{ fd=await idbGet('fnd:'+w.address); }catch(e){}
   const frows=fd&&Array.isArray(fd.rows)?fd.rows:[];
+  if(v==='arcus'){ const idxs=[...new Set(fills.map(f=>+f.acct))].sort((a,b)=>a-b); arDerive(fills,idxs,c.seed);
+    const r=await reconstructStreams(arGroups(fills,idxs),arFrows(frows),w,'arcus'); return r.perp.concat(r.spot); }
   if(v==='bybit'){ bybitDerive(fills,c.seed); const r=await reconstructStreams([['',fills]],frows,w,'bybit'); return r.perp.concat(r.spot); }
   const legs=binanceLegs(fills); binanceDerive(legs,c.seed);
   const r=await reconstructStreams([...legs],legFunding(legs,frows),w,'binance'); return r.perp.concat(r.spot); }
 async function forgetVenueWallet(w){ if(isCexVenue(venueOf(w))){ try{ await idbDel(cexCredKey(w.address)); }catch(e){} } }
 
-/* ---------------- adding wallets: one address finds Hyperliquid and Lighter ---------------- */
-// Pasting an address checks both venues at once and adds the one(s) with an account, so a Lighter
-// trader doesn't have to know there's anything to choose. Hyperliquid is never dropped on doubt:
-// it's left out only when Hyperliquid itself says it has never seen the address AND Lighter has an
-// account for it. Each check is one small request with a short time limit and no retries, so
+/* ---------------- adding wallets: one address finds Hyperliquid, Lighter and Arcus ---------------- */
+// Pasting an address checks every address venue at once and adds the one(s) with an account, so a
+// Lighter or Arcus trader doesn't have to know there's anything to choose. Hyperliquid is never
+// dropped on doubt: it's left out only when Hyperliquid itself says it has never seen the address
+// AND another venue has an account for it. Each check is one small request with a short time limit and no retries, so
 // adding a wallet never waits on a slow or unreachable venue.
 async function venueProbe(url, body, ms){
   const ctl=typeof AbortController!=='undefined'?new AbortController():null, timer=ctl?setTimeout(()=>ctl.abort(),ms):null;
   try{ const r=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ctl&&ctl.signal}:{signal:ctl&&ctl.signal});
-    return r.ok||r.status===400?await r.json():null; }
+    return r.ok||r.status===400||r.status===403||r.status===404?await r.json():null; }
   catch(e){ return null; } finally{ if(timer)clearTimeout(timer); } }
 async function detectVenues(addr){
-  const [hl,lt]=await Promise.all([
+  const [hl,lt,ar]=await Promise.all([
     // {"role":"missing"} = Hyperliquid has never seen this address; anything else (or no answer) keeps it
     venueProbe('https://api.hyperliquid.xyz/info',{type:'userRole',user:addr},5000).then(j=>j&&typeof j.role==='string'?j.role!=='missing':null),
     venueProbe(LT_API+'/api/v1/accountsByL1Address?l1_address='+encodeURIComponent(addr),null,5000)
-      .then(j=>!j?null:Array.isArray(j.sub_accounts)?j.sub_accounts.length>0:j.code===21100?false:null)]);
-  const out=[]; if(hl!==false||lt!==true)out.push('hyperliquid'); if(lt===true)out.push('lighter');
+      .then(j=>!j?null:Array.isArray(j.sub_accounts)?j.sub_accounts.length>0:j.code===21100?false:null),
+    // an account answer = active; "no activity yet" (404) or not let in (403) = none
+    venueProbe(AR_API+'/v1/account?address='+encodeURIComponent(addr.toLowerCase()),null,5000)
+      .then(j=>!j?null:j.address?true:typeof j.error==='string'?false:null)]);
+  const out=[]; if(hl!==false||(lt!==true&&ar!==true))out.push('hyperliquid'); if(lt===true)out.push('lighter'); if(ar===true)out.push('arcus');
   return out; }
 // the wallet ids to add for a pasted 0x address
 async function walletIdsFor(address, forced){
   const v=forced||await detectVenues(address);
-  return v.map(x=>x==='lighter'?'lighter:'+address:address); }
+  return v.map(x=>x==='hyperliquid'?address:x+':'+address); }
 
 /* ---------------- connecting an exchange key (the full journal's dialog and Pulse's sheet share this) ---------------- */
 const CEX_HELP={

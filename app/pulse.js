@@ -1359,7 +1359,7 @@ function pzConnectHtml(){
       ${pzCexFormHtml(true)}`:`
       <div class="pz-wl-formh"><label for="pzAddr">Start with your wallet</label><button type="button" class="pz-wl-link" data-pz-cex="bybit">Bybit or Binance? Use an API key →</button></div>
       ${settings.wallets.length&&!busy&&!err?`<p class="pz-fine">No closed trades found yet for ${settings.wallets.map((w,i)=>`${esc(labelFor(w))} <button type="button" class="pz-linkbtn" data-pz-rmw="${i}" aria-label="Remove ${esc(labelFor(w))}">Remove</button>`).join(', ')}. Add another address, or look around with sample data.</p>`:''}
-      <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid or Lighter" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
+      <div class="pz-wl-bar"><input type="text" id="pzAddr" placeholder="0x…  Hyperliquid, Lighter or Arcus" aria-describedby="pzWlSafe" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="pz-cta" id="pzConnect"${busy?' disabled':''}>${busy?'<span class="pz-spin"></span>Loading your trades…':'Start day one'}</button></div>
       ${errHtml}`}</div>
     <div class="pz-wl-alt"><button type="button" class="pz-wl-link" id="pzDemo">Try it with sample data →</button>${/^https?:$/.test(location.protocol)?'<a class="pz-wl-link" href="/tutorial/">How it works →</a>':''}
       <span class="pz-wl-safe" id="pzWlSafe">${pzI('lock',14)}Read-only. ${cex?'A key that can’t trade or withdraw.':'No wallet connection, no signature, no keys.'}</span></div>
@@ -1522,7 +1522,7 @@ function pzRender(){
 }
 async function pzConnect(inputId){
   const el=$(inputId); const a=(el&&el.value||'').trim();
-  if(!/^(lighter:)?0x[0-9a-fA-F]{40}$/i.test(a)){ pzNote('That doesn’t look like a wallet address — it starts with 0x and is 42 characters long. For Bybit or Binance, connect an API key instead.','err'); const f=$(inputId); if(f)f.focus(); return; }
+  if(!/^(lighter:|arcus:)?0x[0-9a-fA-F]{40}$/i.test(a)){ pzNote('That doesn’t look like a wallet address — it starts with 0x and is 42 characters long. For Bybit or Binance, connect an API key instead.','err'); const f=$(inputId); if(f)f.focus(); return; }
   if(el)el.value=''; pzS.sheet=false; pzNote('Loading your trades…','busy');
   for(let i=0;_loading&&i<240;i++)await sleep(250); // a background refresh is running: let it finish, then load
   const had=settings.wallets.some(w=>w.address.toLowerCase()===a.toLowerCase());

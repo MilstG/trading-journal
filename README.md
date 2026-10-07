@@ -107,21 +107,26 @@ account's own copy back.
 
 ## Loading your data
 
-**Exchanges.** Ledger reads four venues, and pools them into one journal:
+**Exchanges.** Ledger reads five venues, and pools them into one journal:
 
 | Venue | What you give it | How it's read | History |
 |---|---|---|---|
 | **Hyperliquid** | a 0x wallet address | its public API, from the browser | the latest 10,000 fills, then everything Ledger keeps |
 | **Lighter** | the same kind of 0x address | its public API, from the browser | everything (paged back to the first trade) |
+| **Arcus** (perps) | the same kind of 0x address | its public API, from the browser | everything (paged back to the first fill) |
 | **Bybit** | a **read-only** API key | signed in your browser, relayed by your server | 2 years |
 | **Binance** (USD-M futures) | a **read-only** API key | signed in your browser, relayed by your server | 3 months, then everything Ledger keeps |
 
-Paste an address in **Add** (or Daruma's first screen) and Ledger checks both
-Hyperliquid and Lighter for it, adding each one that has an account: no choice to
-make, no file to export. A Lighter account's sub-accounts are each their own position
-stream. Lighter reports each fill's prior position and entry cost, so its P&L is exact;
+Paste an address in **Add** (or Daruma's first screen) and Ledger checks
+Hyperliquid, Lighter and Arcus for it, adding each one that has an account: no choice to
+make, no file to export (`lighter:0x…` or `arcus:0x…` adds just that venue). A Lighter
+account's sub-accounts are each their own position stream. Lighter reports each fill's
+prior position and entry cost, so its P&L is exact;
 funding comes from Lighter's public hourly rates times the position you held (its
 per-payment history needs a login), which matches Lighter's own funding totals.
+Arcus reports each fill's realized P&L and every funding payment as booked, so both
+are exact; its sub-accounts (up to ten per wallet) are their own position streams too.
+Arcus's spot Stock Tokens settle on-chain and aren't in its API, so only perps load.
 
 For **Bybit or Binance**, use **Connect exchange** (Daruma: *Connect a read-only API key*)
 and paste an API key and secret. Ledger refuses a key that can trade, transfer or
@@ -2658,7 +2663,7 @@ server's analytics engine and the test suites read the app through
 so they still extract the exact code that ships. The Web Worker is built at
 runtime from a Blob of the app's own function sources (no separate worker
 script). The CSP allows network access to `api.hyperliquid.xyz`,
-`mainnet.zklighter.elliot.ai` and the app's own origin only (Bybit and Binance go
+`mainnet.zklighter.elliot.ai`, `api.arcus.xyz` and the app's own origin only (Bybit and Binance go
 through the server's relay, `cex-relay.js`). Heavy compute (reconstruction, permutation mining) runs
 in the worker with a synchronous fallback; fills and candles cache in
 IndexedDB with incremental refresh.

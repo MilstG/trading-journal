@@ -106,7 +106,9 @@ try {
     // priced, the "What the data says" screen) and its hooks in the coach, the leaks, the tilt alerts, the weekly
     // challenge, the Discipline weights and the results boards' trade bar and luck notes: about 15 KB raw / 6 KB
     // gzipped on each screen (2185 / 1872 raw, 739 / 633 gzipped).
-    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2190, 741],
+    // Oct 2026: Arcus as a fifth venue (its loader, fill normalizer and candles in venues.js / engine.js, on both
+    // screens): about 9 KB raw / 3 KB gzipped (2199 / 1931 raw, 744 / 656 gzipped).
+    ['the journal (/: page + ' + journal.scripts.length + ' scripts)', journal, 2202, 745],
     // Your luck measured, the crowd at your entry and your rules replayed (luck.js, crowd.js, rule-replay.js, Daruma
     // only, ~13 KB raw / 6 KB gzipped compressed apart): 1886 / 639.
     // The evaluation (evals.js, Daruma only, ~11 KB raw / 4 KB gzipped) and its Compete tile: 1898 / 644.
@@ -115,7 +117,8 @@ try {
     // trip; the maker-share habit and lesson-beside-alert on both screens: 1914 / 651 (the journal 2187 / 740).
     // What gets used (usage.js, Daruma only, ~3 KB raw / 1 KB gzipped, and the data-use mark on Today's cards): 1917 / 652.
     // Staged rollouts (pzRolledOff), first look's peer line and leak price, the focus-habit check: about 2 KB raw (1920 / 653).
-    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1922, 654],
+    // Arcus as a fifth venue (see the journal's line): 1931 / 656.
+    ['Daruma (/daruma: page + ' + keel.scripts.length + ' scripts, no Chart.js)', keel, 1934, 657],
   ];
   t('each screen loads its code from app/, and Daruma leaves Chart.js out', () => {
     ok(journal.scripts.length > 10 && keel.scripts.length > 10);
