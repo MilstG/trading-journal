@@ -1110,6 +1110,20 @@ function createApp(opts) {
     }
     return f;
   };
+  // The admin panel (admin.html) and the screens kept out of it (admin2fa-ui.js, admin-beta-ui.js, admin-research-ui.js),
+  // next to server.js: read once per change, sent compressed, with an ETag so a reopened panel gets a 304
+  const _panelFiles = new Map(); // name -> {mtime, size, buf, gz, etag, br}
+  const panelFile = (name) => {
+    const file = path.join(__dirname, name);
+    let st; try { st = fs.statSync(file); } catch (e) { return null; }
+    let f = _panelFiles.get(name);
+    if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) {
+      const buf = fs.readFileSync(file);
+      f = { mtime: st.mtimeMs, size: st.size, buf, gz: zlib.gzipSync(buf, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20) + '"' };
+      _panelFiles.set(name, f);
+    }
+    return f;
+  };
   // The app page with its script URLs versioned, and the version itself: a hash of the HTML and every
   // script, written into the page (<meta name="app-version">) and answered by /api/version, so an app
   // that's only ever resumed (an installed phone app) can tell a deploy has happened and reload.
@@ -2990,24 +3004,18 @@ function createApp(opts) {
       return;
     }
     // --- the owner's admin panel (a static page; every action it takes needs AUTH_TOKEN) ---
-    if (req.method === 'GET' && (url === '/admin' || url === '/admin.html')) {
-      fs.readFile(path.join(__dirname, 'admin.html'), (err, buf) => {
-        if (err) return json(res, 404, { error: 'admin.html not deployed alongside server.js' });
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
-          'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" });
-        res.end(buf);
-      });
-      return;
-    }
-    // the admin panel's two-factor, beta and research screens (kept out of admin.html, which has a size budget)
-    if (req.method === 'GET' && (url === '/admin2fa-ui.js' || url === '/admin-beta-ui.js' || url === '/admin-research-ui.js')) {
-      const file = url.slice(1);
-      fs.readFile(path.join(__dirname, file), (err, buf) => {
-        if (err) return json(res, 404, { error: file + ' not deployed alongside server.js' });
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
-        res.end(buf);
-      });
-      return;
+    // the admin panel, and its two-factor, beta and research screens (kept out of admin.html, which has a size budget)
+    const panel = req.method === 'GET' && { '/admin': 'admin.html', '/admin.html': 'admin.html', '/admin2fa-ui.js': 'admin2fa-ui.js', '/admin-beta-ui.js': 'admin-beta-ui.js', '/admin-research-ui.js': 'admin-research-ui.js' }[url];
+    if (panel) {
+      const f = panelFile(panel);
+      if (!f) return json(res, 404, { error: panel + ' not deployed alongside server.js' });
+      const html = panel === 'admin.html';
+      const head = Object.assign({ 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'ETag': f.etag, 'Vary': 'Accept-Encoding', 'X-Content-Type-Options': 'nosniff' },
+        html ? { 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" } : {});
+      if ((req.headers['if-none-match'] || '') === f.etag) { res.writeHead(304, head); return res.end(); }
+      const [enc, body] = encodedFile(req, f);
+      res.writeHead(200, enc ? Object.assign(head, { 'Content-Encoding': enc }) : head);
+      return res.end(body);
     }
 
     // --- a member's public badge page: /b/<name> (the page reads /api/social/public/<name>) ---

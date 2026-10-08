@@ -486,6 +486,21 @@ await t('user guide and technical reference served without auth', async () => {
   const a = await fetch(base + '/admin');
   eq([a.headers.get('x-frame-options'), a.headers.get('content-security-policy')], ['DENY', "frame-ancestors 'none'"], '/admin');
 });
+await t('the admin panel and its screens go compressed, and a browser that has them gets a 304', async () => {
+  const http = require('node:http');
+  const raw = (p, h) => new Promise((ok2, no) => { const rq = http.request(base + p, { headers: h || {} }, r => {
+    const parts = []; r.on('data', c => parts.push(c)); r.on('end', () => ok2({ status: r.statusCode, headers: r.headers, body: Buffer.concat(parts) })); }); rq.on('error', no); rq.end(); });
+  for (const [p, f] of [['/admin', 'admin.html'], ['/admin2fa-ui.js', 'admin2fa-ui.js'], ['/admin-beta-ui.js', 'admin-beta-ui.js'], ['/admin-research-ui.js', 'admin-research-ui.js']]) {
+    const file = readFileSync(new URL('../' + f, import.meta.url));
+    const g = await raw(p, { 'Accept-Encoding': 'gzip' });
+    eq([g.status, g.headers['content-encoding']], [200, 'gzip'], p);
+    ok(g.body.length < file.length / 2 && require('node:zlib').gunzipSync(g.body).equals(file), p + ' is the file, compressed');
+    ok(/^"[0-9a-f]{20}"$/.test(g.headers.etag || ''), p + ' has an ETag');
+    const n = await raw(p, { 'If-None-Match': g.headers.etag });
+    eq([n.status, n.body.length], [304, 0], p + ' unchanged');
+    eq((await raw(p)).body.equals(file), true, p + ' as is, to a client that takes no gzip');
+  }
+});
 
 console.log('\nAPI: server-held backups');
 let bkName;
