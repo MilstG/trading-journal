@@ -125,7 +125,18 @@ try {
     eq((await call('/admin/config', { method: 'PUT', owner: true, body: { evals: { xp: 9999 } } })).status, 400);
     await call('/admin/config', { method: 'PUT', owner: true, body: { evals: { on: false } } });
     eq((await call('/evals', { key: K.dee })).d.can, 'Evaluations are switched off on this server.');
-    eq((await call('/config')).d.evals, { on: false, xp: 300 });
+    eq((await call('/config')).d.evals, { on: false, xp: 300, tile: Ev.DEFAULTS.tile });
+  });
+  await t('the Compete tile: hidden until the owner shows it, its words and link theirs', async () => {
+    eq(Ev.DEFAULTS.tile.on, false, 'off by default');
+    eq((await call('/config')).d.evals.tile.on, false);
+    eq((await call('/admin/config', { method: 'PUT', owner: true, body: { evals: { tile: { on: true, label: ' Prop  test ', title: 'Go', sub: 'x'.repeat(200), href: '#duels' } } } })).status, 200);
+    const T = (await call('/config')).d.evals.tile;
+    eq([T.on, T.label, T.title, T.sub.length, T.href], [true, 'Prop test', 'Go', 80, '#duels']);
+    await call('/admin/config', { method: 'PUT', owner: true, body: { evals: { tile: { title: '', href: 'https://elsewhere.example' } } } });
+    const U = (await call('/config')).d.evals.tile;
+    eq([U.on, U.label, U.title, U.href], [true, 'Prop test', 'Take it', '#eval'], 'empty goes back to the default; never a link out');
+    eq(Ev.DEFAULTS.tile.title, 'Take it', 'the defaults untouched');
   });
 } finally { await new Promise(r => app.close(r)); }
 report('evals');

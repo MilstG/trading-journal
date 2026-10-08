@@ -675,8 +675,9 @@ function socCompeteHubHtml(g){
   const tiles=[L?tile('good',esc(L.name),me&&!me.out?'#'+me.rank:'—',me&&!me.out?'of '+ld.size+(L.tiers&&T[ld.tier]?' · '+esc(T[ld.tier]):''):me&&me.out?'out for now':'no score yet'):tile('','League','—','not in one yet','#leagues'),
     dd?tile('',lad&&lad.me.n>0?'Duel rating':'Duels',lad&&lad.me.n>0?lad.me.r:r.w+'–'+r.l+(r.d?'–'+r.d:''),lad&&lad.me.n>0?r.w+'–'+r.l+(r.d?'–'+r.d:'')+' won–lost':'won–lost','#duels'):'',
     all?tile('','Competitions',mine.length,'you’re in',''):'',
-    // the evaluation (features/evals.js): where a running one stands, else the way in
-    typeof evOn==='function'&&evOn()?(ev=>ev?tile(ev.prog&&ev.prog.at?(ev.prog.profit>=0?'good':''):'','Evaluation',ev.prog&&ev.prog.at?evPct(ev.prog.profit):'—','running · day '+Math.min(ev.rules.days,Math.max(1,Math.ceil((Date.now()-ev.startAt)/86400000)))+' of '+ev.rules.days,'#eval'):tile('','Evaluation','Take it','trade it like it’s funded','#eval'))((((evData()||{}).d||{}).mine||[]).find(e=>e.st==='live')):''].filter(Boolean).join('');
+    // the evaluation (features/evals.js): where a running one stands, else the way in, only when the owner shows it
+    // (Admin → Duels → Evaluations: its words and link theirs)
+    typeof evOn==='function'&&evOn()?((ev,E)=>ev?tile(ev.prog&&ev.prog.at?(ev.prog.profit>=0?'good':''):'',esc(E.label||'Evaluation'),ev.prog&&ev.prog.at?evPct(ev.prog.profit):'—','running · day '+Math.min(ev.rules.days,Math.max(1,Math.ceil((Date.now()-ev.startAt)/86400000)))+' of '+ev.rules.days,'#eval'):E.on?tile('',esc(E.label||''),esc(E.title||''),esc(E.sub||''),esc(E.href||'#eval')):'')((((evData()||{}).d||{}).mine||[]).find(e=>e.st==='live'),SOC.cfg.evals.tile||{}):''].filter(Boolean).join('');
   const P=dd?dd.pods||[]:[], inv=dd?dd.duels.filter(v=>v.status==='pending'&&v.awaiting):[], act=dd?dd.duels.filter(v=>v.status==='active'&&v.me):[],
     pinv=P.filter(v=>v.my==='invited'&&(v.status==='pending'||v.status==='active')), pact=P.filter(v=>v.status==='active'&&v.my==='in');
   const inHtml=inv.map(v=>socDuelCardHtml(v,true)).join('')+pinv.map(v=>socPodCardHtml(v,true)).join('')+act.map(v=>socDuelCardHtml(v,true)).join('')+pact.map(v=>socPodCardHtml(v,true)).join('')+mine.map(x=>socCompCard(x,lv)).join('');
