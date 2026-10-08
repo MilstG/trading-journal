@@ -2831,7 +2831,7 @@ function createSocial(opts) {
         unlocks: S.config.unlocks, tiers: TIERS, week: S.league.week, members: members().filter(m => !m.banned).length,
         claims: !!sig, passkeys: true, requireClaim: !!S.config.requireClaim, approveWallets: !!S.config.approveWallets, vaultOn: !!S.config.vaultOn,
         modules: S.config.modules, levels: S.config.levels, xp: S.config.xp, profiles: S.config.profiles, guestCap: S.config.guestCap, mult: S.config.mult, standing: standingCfgOut(), mentorXp: S.config.mentorXp,
-        bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on }, evals: { on: !!S.config.evals.on, xp: S.config.evals.xp },
+        bench: { on: !!S.config.bench.on, minTrades: S.config.bench.minTrades, days: S.config.bench.days }, duels: { on: !!S.config.duels.on }, evals: { on: !!S.config.evals.on, xp: S.config.evals.xp, tile: S.config.evals.tile },
         coach: { members: S.config.coach.members, daily: S.config.coach.daily, detail: S.config.coach.detail, ai: !!opts.coachAvailable }, posts: postCfgOut(), playbooks: { on: !!S.config.playbooks.on, who: S.config.playbooks.who },
         referrals: refCfg().on ? Object.assign({ on: true, linksMax: refCfg().linksMax }, refTermsNow()) : { on: false }, // ai: visitors (no coach status of their own) know whether to show a Coach tab
         badges: Object.values(S.badges).map(b => ({ id: b.id, name: b.name, icon: b.icon, desc: b.desc, metric: b.metric, metricLabel: b.metric ? SC.BADGE_METRICS[b.metric] : null, op: b.op, value: b.value, xp: b.xp })),

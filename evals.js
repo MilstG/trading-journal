@@ -17,15 +17,24 @@ const PRESETS = {
   sprint: { label: 'Sprint', days: 14, target: 5, daily: 4, dd: 8, trail: false, minDays: 4, consistency: 50 },
 };
 // the owner's settings: on, the XP a pass pays (through a badge, like a season podium), the days to wait after
-// a failed or abandoned one before the next, the smallest account an evaluation can start on
-const DEFAULTS = { on: true, xp: 300, cooldownDays: 1, minAccount: 100 };
+// a failed or abandoned one before the next, the smallest account an evaluation can start on; tile: the Compete
+// screen's way in (shown only when the owner switches it on, its words and link theirs to set)
+const TILE = { on: false, label: 'Evaluation', title: 'Take it', sub: 'trade it like it’s funded', href: '#eval' };
+const DEFAULTS = { on: true, xp: 300, cooldownDays: 1, minAccount: 100, tile: TILE };
 const fin = v => typeof v === 'number' && isFinite(v);
 const num = (v, lo, hi, def) => { const n = +v; return v !== '' && v != null && isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
 const r2 = v => fin(v) ? Math.round(v * 100) / 100 : null;
 
 function sanitizeEvalCfg(b, prev) {
-  const out = Object.assign({}, DEFAULTS, prev || {}); if (!b || typeof b !== 'object') return out;
+  const out = Object.assign({}, DEFAULTS, prev || {}); out.tile = Object.assign({}, TILE, (prev || {}).tile);
+  if (!b || typeof b !== 'object') return out;
   if (typeof b.on === 'boolean') out.on = b.on;
+  const t = b.tile && typeof b.tile === 'object' ? b.tile : {}, T = out.tile;
+  if (typeof t.on === 'boolean') T.on = t.on;
+  // each line trimmed, one line, clipped; left empty, it goes back to the default words
+  for (const [k, max] of [['label', 30], ['title', 30], ['sub', 80]]) if (typeof t[k] === 'string') T[k] = t[k].replace(/\s+/g, ' ').trim().slice(0, max) || TILE[k];
+  // only a screen inside the app (#something), never a page elsewhere
+  if (typeof t.href === 'string') T.href = /^#[a-z0-9/_-]{1,40}$/i.test(t.href.trim()) ? t.href.trim() : TILE.href;
   if (b.xp !== undefined) out.xp = Math.round(num(b.xp, 0, 5000, out.xp));
   if (b.cooldownDays !== undefined) out.cooldownDays = Math.round(num(b.cooldownDays, 0, 30, out.cooldownDays));
   if (b.minAccount !== undefined) out.minAccount = Math.round(num(b.minAccount, 10, 1e6, out.minAccount));
