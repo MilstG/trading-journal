@@ -119,8 +119,9 @@ tests/          test suites (`npm test`; CI runs them on every push)
   runs: back up both, or stop the server first; the off-site bundle ships one consistent
   copy made by SQLite itself), and members' pictures in
   `DATA_DIR/media/` (2 GB in all). It uses Node's built-in `node:sqlite`, so the
-  server needs **Node 22.13 or newer** (`engines` in `package.json` says so; Railway
-  follows it) and still installs nothing. A server upgraded from an older version
+  server needs **Node 22.13 or newer**; `engines` in `package.json` asks for the patched
+  release of each line (22.23.4+, 24.22.1+ or 26.12.1+, the October 2026 security releases) and Railway
+  follows it. The server still installs nothing. A server upgraded from an older version
   imports `DATA_DIR/social.json` once on its first start and renames it
   `social.json.migrated`. Also on the volume: 50 days of each verifying
   member's public fills in `DATA_DIR/social-fills/`. The owner's panel is at `/admin`

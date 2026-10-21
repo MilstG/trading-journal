@@ -10,7 +10,7 @@
     "test:e2e:heavy": "node e2e/heavy.mjs"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.129.0"

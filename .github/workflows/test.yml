@@ -1,5 +1,6 @@
 # Runs the full suite on every PR and on main. The suites are offline (the exchange is
-# mocked) and dependency-free, so this is just node + the repo. Node 22.13+ for node:sqlite.
+# mocked) and dependency-free, so this is just node + the repo. Node 22.13+ for node:sqlite;
+# check-latest so each run gets the newest patch release (security fixes), not the runner's cached one.
 # A push to a PR's branch runs once (as the PR), not twice (as a push and as the PR), and a
 # newer push cancels the run it replaces: the runners this repo gets go to the latest commit.
 name: tests
@@ -21,6 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          check-latest: true
       - run: npm test
   # The real app in a real Chromium, served by the real server, offline (e2e/run.mjs).
   # Playwright is installed here only — the app and server still have no dependencies.
@@ -31,6 +33,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          check-latest: true
       - run: npm i --no-save playwright@1.56.1
       - run: npx playwright install --with-deps chromium
       # CI runners are slower than a laptop; the budgets still catch a page that got slow
